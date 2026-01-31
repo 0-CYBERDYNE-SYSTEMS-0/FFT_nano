@@ -1,11 +1,20 @@
 # Main Channel - Admin Context
 
-You are running in the **main channel**, which has elevated privileges. You can:
-- Manage registered groups (add, remove, list)
-- Schedule tasks for any group
-- View tasks from all groups
-- Access all group folders
-- **Run Bash commands** (only main has this access)
+You are running in the **main channel**, which has elevated privileges.
+
+## Container Mounts
+
+Main has access to the entire project:
+
+| Container Path | Host Path | Access |
+|----------------|-----------|--------|
+| `/workspace/project` | Project root | read-write |
+| `/workspace/group` | `groups/main/` | read-write |
+
+Key paths inside the container:
+- `/workspace/project/store/messages.db` - SQLite database
+- `/workspace/project/data/registered_groups.json` - Group config
+- `/workspace/project/groups/` - All group folders
 
 ---
 
@@ -13,25 +22,22 @@ You are running in the **main channel**, which has elevated privileges. You can:
 
 ### Finding Available Groups
 
-Groups appear in the database when messages are received. Query the SQLite database to find groups:
+Groups appear in the database when messages are received. Query the SQLite database:
 
-```sql
--- Find all group chats (JIDs ending in @g.us)
-SELECT DISTINCT chat_jid, name FROM chats WHERE chat_jid LIKE '%@g.us';
-
--- Or find chats with recent messages
-SELECT chat_jid, MAX(timestamp) as last_message
-FROM messages
-WHERE chat_jid LIKE '%@g.us'
-GROUP BY chat_jid
-ORDER BY last_message DESC;
+```bash
+sqlite3 /workspace/project/store/messages.db "
+  SELECT DISTINCT chat_jid, MAX(timestamp) as last_message
+  FROM messages
+  WHERE chat_jid LIKE '%@g.us'
+  GROUP BY chat_jid
+  ORDER BY last_message DESC
+  LIMIT 10;
+"
 ```
-
-Database location: `store/messages.db`
 
 ### Registered Groups Config
 
-Groups are registered in `data/registered_groups.json`:
+Groups are registered in `/workspace/project/data/registered_groups.json`:
 
 ```json
 {
@@ -54,10 +60,10 @@ Fields:
 ### Adding a Group
 
 1. Query the database to find the group's JID
-2. Read the current `data/registered_groups.json`
-3. Add the new group entry
+2. Read `/workspace/project/data/registered_groups.json`
+3. Add the new group entry with `containerConfig` if needed
 4. Write the updated JSON back
-5. Create the group folder: `groups/{folder-name}/`
+5. Create the group folder: `/workspace/project/groups/{folder-name}/`
 6. Optionally create an initial `CLAUDE.md` for the group
 
 Example folder name conventions:
@@ -65,22 +71,48 @@ Example folder name conventions:
 - "Work Team" → `work-team`
 - Use lowercase, hyphens instead of spaces
 
+#### Adding Additional Directories for a Group
+
+Groups can have extra directories mounted. Add `containerConfig` to their entry:
+
+```json
+{
+  "1234567890@g.us": {
+    "name": "Dev Team",
+    "folder": "dev-team",
+    "trigger": "@Andy",
+    "added_at": "2026-01-31T12:00:00Z",
+    "containerConfig": {
+      "additionalMounts": [
+        {
+          "hostPath": "/Users/gavriel/projects/webapp",
+          "containerPath": "webapp",
+          "readonly": false
+        }
+      ]
+    }
+  }
+}
+```
+
+The directory will appear at `/workspace/extra/webapp` in that group's container.
+
 ### Removing a Group
 
-1. Read `data/registered_groups.json`
+1. Read `/workspace/project/data/registered_groups.json`
 2. Remove the entry for that group
 3. Write the updated JSON back
 4. The group folder and its files remain (don't delete them)
 
 ### Listing Groups
 
-Read `data/registered_groups.json` and format it nicely for the user.
+Read `/workspace/project/data/registered_groups.json` and format it nicely.
 
 ---
 
 ## Global Memory
 
-You can read and write to `groups/CLAUDE.md` (the parent directory) for facts that should apply to all groups. Only update global memory when explicitly asked to "remember this globally" or similar.
+You can read and write to `/workspace/project/groups/CLAUDE.md` for facts that should apply to all groups. Only update global memory when explicitly asked to "remember this globally" or similar.
 
 ---
 
