@@ -21,6 +21,15 @@ If a request requires significant work (research, multiple steps, file operation
 
 This keeps users informed instead of waiting in silence.
 
+## Scheduled Tasks
+
+When you run as a scheduled task (no direct user message), use `mcp__nanoclaw__send_message` if needed to communicate with the user. Your return value is only logged internally - it won't be sent to the user.
+
+Example: If your task is "Share the weather forecast", you should:
+1. Get the weather data
+2. Call `mcp__nanoclaw__send_message` with the formatted forecast
+3. Return a brief summary for the logs
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
