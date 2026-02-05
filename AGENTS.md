@@ -20,7 +20,8 @@ npm run dev
 
 Main channel behavior:
 - `main` responds to all messages.
-- Non-main chats only respond if the message starts with `@${ASSISTANT_NAME}` (default `@FarmFriend`).
+- Non-main chats only respond if the message starts with the trigger word (default `@FarmFriend`).
+  - The trigger word is `@<ASSISTANT_NAME>` where `ASSISTANT_NAME` defaults to `FarmFriend` (see `src/config.ts`).
 
 Ways to make your Telegram DM the `main` channel:
 - Set `TELEGRAM_MAIN_CHAT_ID` (numeric chat id) and restart.
