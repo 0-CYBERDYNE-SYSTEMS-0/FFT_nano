@@ -1,7 +1,7 @@
 {
-  "name": "nanoclaw",
+  "name": "fft_nano",
   "version": "1.0.0",
-  "description": "Personal Claude assistant. Lightweight, secure, customizable.",
+  "description": "FarmFriendTerminal_nano (FFT_nano) — secure, containerized AI farm assistant.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

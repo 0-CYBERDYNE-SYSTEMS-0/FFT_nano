@@ -23,7 +23,6 @@ import { RegisteredGroup, ScheduledTask } from './types.js';
 export interface SchedulerDependencies {
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
-  getSessions: () => Record<string, string>;
 }
 
 async function runTask(
@@ -80,15 +79,9 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
-  // For group context mode, use the group's current session
-  const sessions = deps.getSessions();
-  const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
-
   try {
     const output = await runContainerAgent(group, {
       prompt: task.prompt,
-      sessionId,
       groupFolder: task.group_folder,
       chatJid: task.chat_jid,
       isMain,

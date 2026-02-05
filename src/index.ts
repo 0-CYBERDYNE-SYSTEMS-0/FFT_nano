@@ -36,18 +36,37 @@ import {
   setLastGroupSync,
   storeChatMetadata,
   storeMessage,
+  storeTextMessage,
   updateChatName,
 } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup, Session } from './types.js';
+import { NewMessage, RegisteredGroup } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
+import { getContainerRuntime } from './container-runtime.js';
+import {
+  createTelegramBot,
+  isTelegramJid,
+  parseTelegramChatId,
+} from './telegram.js';
+import type { TelegramBot } from './telegram.js';
+
+const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
+  (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
+);
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_API_BASE_URL = process.env.TELEGRAM_API_BASE_URL;
+const TELEGRAM_MAIN_CHAT_ID = process.env.TELEGRAM_MAIN_CHAT_ID;
+const TELEGRAM_ADMIN_SECRET = process.env.TELEGRAM_ADMIN_SECRET;
+const TELEGRAM_AUTO_REGISTER = !['0', 'false', 'no'].includes(
+  (process.env.TELEGRAM_AUTO_REGISTER || '1').toLowerCase(),
+);
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 let sock: WASocket;
+let telegramBot: TelegramBot | null = null;
 let lastTimestamp = '';
-let sessions: Session = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 // LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
@@ -73,6 +92,17 @@ function translateJid(jid: string): string {
 }
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
+  if (isTelegramJid(jid)) {
+    if (!telegramBot) return;
+    try {
+      await telegramBot.setTyping(jid, isTyping);
+    } catch (err) {
+      logger.debug({ jid, err }, 'Failed to update Telegram typing status');
+    }
+    return;
+  }
+
+  if (!sock) return;
   try {
     await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
   } catch (err) {
@@ -88,7 +118,6 @@ function loadState(): void {
   }>(statePath, {});
   lastTimestamp = state.last_timestamp || '';
   lastAgentTimestamp = state.last_agent_timestamp || {};
-  sessions = loadJson(path.join(DATA_DIR, 'sessions.json'), {});
   registeredGroups = loadJson(
     path.join(DATA_DIR, 'registered_groups.json'),
     {},
@@ -104,7 +133,6 @@ function saveState(): void {
     last_timestamp: lastTimestamp,
     last_agent_timestamp: lastAgentTimestamp,
   });
-  saveJson(path.join(DATA_DIR, 'sessions.json'), sessions);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -115,10 +143,40 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
+  const memoryFile = path.join(groupDir, 'CLAUDE.md');
+  if (!fs.existsSync(memoryFile)) {
+    fs.writeFileSync(
+      memoryFile,
+      `# FarmFriend\n\nThis is the memory and working directory for: ${group.name}.\n`,
+    );
+  }
+
   logger.info(
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+}
+
+function maybeRegisterWhatsAppMainChat(): void {
+  // Bootstrap: if the user hasn't registered a main group yet, default the
+  // WhatsApp self-chat to "main" so there's always an admin/control channel.
+  //
+  // WhatsApp now sometimes uses LID JIDs for self-chats; we always register the
+  // phone JID form (<phone>@s.whatsapp.net) because incoming messages are
+  // translated to that form via translateJid().
+  if (!sock?.user?.id) return;
+  if (hasMainGroup()) return;
+
+  const phoneUser = sock.user.id.split(':')[0];
+  if (!phoneUser) return;
+
+  const selfChatJid = `${phoneUser}@s.whatsapp.net`;
+  registerGroup(selfChatJid, {
+    name: `${ASSISTANT_NAME} (main)`,
+    folder: MAIN_GROUP_FOLDER,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+  });
 }
 
 /**
@@ -177,6 +235,180 @@ function getAvailableGroups(): AvailableGroup[] {
     }));
 }
 
+function maybeRegisterTelegramChat(chatJid: string, chatName: string): void {
+  if (!TELEGRAM_AUTO_REGISTER) return;
+  if (registeredGroups[chatJid]) return;
+
+  const chatId = parseTelegramChatId(chatJid);
+  if (!chatId) return;
+
+  const isMain = TELEGRAM_MAIN_CHAT_ID && chatId === TELEGRAM_MAIN_CHAT_ID;
+  const folder = isMain ? MAIN_GROUP_FOLDER : `telegram-${chatId}`;
+
+  registerGroup(chatJid, {
+    name: chatName,
+    folder,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+  });
+}
+
+function hasMainGroup(): boolean {
+  return Object.values(registeredGroups).some(
+    (g) => g.folder === MAIN_GROUP_FOLDER,
+  );
+}
+
+function promoteChatToMain(chatJid: string, chatName: string): void {
+  const prev = registeredGroups[chatJid];
+  if (prev?.folder === MAIN_GROUP_FOLDER) return;
+
+  if (hasMainGroup()) {
+    logger.warn(
+      { chatJid },
+      'Cannot promote to main: another main group already exists',
+    );
+    return;
+  }
+
+  if (prev && prev.folder !== MAIN_GROUP_FOLDER) {
+    // Best-effort folder migration so memory/logs aren't orphaned.
+    const oldDir = path.join(DATA_DIR, '..', 'groups', prev.folder);
+    const newDir = path.join(DATA_DIR, '..', 'groups', MAIN_GROUP_FOLDER);
+    try {
+      if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+        fs.renameSync(oldDir, newDir);
+      }
+    } catch (err) {
+      logger.warn(
+        { err, oldDir, newDir },
+        'Failed to migrate group folder to main',
+      );
+    }
+  }
+
+  registerGroup(chatJid, {
+    name: chatName || `${ASSISTANT_NAME} (main)`,
+    folder: MAIN_GROUP_FOLDER,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+    containerConfig: prev?.containerConfig,
+  });
+}
+
+function maybePromoteConfiguredTelegramMain(): void {
+  // If a Telegram main chat is configured via env var, promote/migrate the
+  // corresponding registered chat to main on startup.
+  if (!TELEGRAM_MAIN_CHAT_ID) return;
+  const chatJid = `telegram:${TELEGRAM_MAIN_CHAT_ID}`;
+  const prev = registeredGroups[chatJid];
+  if (!prev) return;
+  if (prev.folder === MAIN_GROUP_FOLDER) return;
+
+  promoteChatToMain(chatJid, prev.name || `${ASSISTANT_NAME} (main)`);
+}
+
+async function handleTelegramCommand(m: {
+  chatJid: string;
+  chatName: string;
+  content: string;
+}): Promise<boolean> {
+  const content = m.content.trim();
+  if (!content.startsWith('/')) return false;
+
+  const [cmd, ...rest] = content.split(/\s+/);
+
+  if (cmd === '/id') {
+    const chatId = parseTelegramChatId(m.chatJid);
+    await sendMessage(
+      m.chatJid,
+      chatId
+        ? `Chat id: ${chatId}`
+        : 'Could not parse chat id for this chat.',
+    );
+    return true;
+  }
+
+  if (cmd === '/main') {
+    const chatId = parseTelegramChatId(m.chatJid);
+    if (!chatId) {
+      await sendMessage(m.chatJid, 'Could not parse chat id for this chat.');
+      return true;
+    }
+
+    // If main is already configured, don't let random chats steal it.
+    const existingMain = hasMainGroup();
+    const alreadyMain =
+      registeredGroups[m.chatJid]?.folder === MAIN_GROUP_FOLDER;
+    if (existingMain && !alreadyMain) {
+      await sendMessage(
+        m.chatJid,
+        'Main chat is already set. If you want to change it, edit data/registered_groups.json (or delete it to re-bootstrap).',
+      );
+      return true;
+    }
+
+    if (!TELEGRAM_ADMIN_SECRET) {
+      await sendMessage(
+        m.chatJid,
+        'TELEGRAM_ADMIN_SECRET is not set on the host. Set it, restart, then run: /main <secret>',
+      );
+      return true;
+    }
+
+    const provided = rest.join(' ');
+    if (!provided || provided !== TELEGRAM_ADMIN_SECRET) {
+      await sendMessage(
+        m.chatJid,
+        'Unauthorized. Usage: /main <secret>',
+      );
+      return true;
+    }
+
+    promoteChatToMain(m.chatJid, m.chatName || `${ASSISTANT_NAME} (main)`);
+
+    await sendMessage(
+      m.chatJid,
+      'This chat is now the main/admin channel.',
+    );
+    return true;
+  }
+
+  return false;
+}
+
+function startTelegram(): void {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  if (telegramBot) return;
+
+  telegramBot = createTelegramBot({
+    token: TELEGRAM_BOT_TOKEN,
+    apiBaseUrl: TELEGRAM_API_BASE_URL,
+  });
+
+  telegramBot.startPolling(async (m) => {
+    storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
+    maybeRegisterTelegramChat(m.chatJid, m.chatName);
+
+    // Handle lightweight admin commands without invoking the agent.
+    if (await handleTelegramCommand(m)) return;
+
+    if (registeredGroups[m.chatJid]) {
+      storeTextMessage({
+        id: m.id,
+        chatJid: m.chatJid,
+        sender: m.sender,
+        senderName: m.senderName,
+        content: m.content,
+        timestamp: m.timestamp,
+        isFromMe: false,
+      });
+    }
+  });
+
+  logger.info('Telegram polling started');
+}
+
 async function processMessage(msg: NewMessage): Promise<void> {
   const group = registeredGroups[msg.chat_jid];
   if (!group) return;
@@ -196,16 +428,9 @@ async function processMessage(msg: NewMessage): Promise<void> {
   );
 
   const lines = missedMessages.map((m) => {
-    // Escape XML special characters in content
-    const escapeXml = (s: string) =>
-      s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    return `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`;
+    return `[${m.timestamp}] ${m.sender_name}: ${m.content}`;
   });
-  const prompt = `<messages>\n${lines.join('\n')}\n</messages>`;
+  const prompt = lines.join('\n');
 
   if (!prompt) return;
 
@@ -230,7 +455,6 @@ async function runAgent(
   chatJid: string,
 ): Promise<string | null> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
-  const sessionId = sessions[group.folder];
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -260,16 +484,10 @@ async function runAgent(
   try {
     const output = await runContainerAgent(group, {
       prompt,
-      sessionId,
       groupFolder: group.folder,
       chatJid,
       isMain,
     });
-
-    if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      saveJson(path.join(DATA_DIR, 'sessions.json'), sessions);
-    }
 
     if (output.status === 'error') {
       logger.error(
@@ -287,6 +505,24 @@ async function runAgent(
 }
 
 async function sendMessage(jid: string, text: string): Promise<void> {
+  if (isTelegramJid(jid)) {
+    if (!telegramBot) {
+      logger.error({ jid }, 'Telegram message send requested but Telegram is not configured');
+      return;
+    }
+    try {
+      await telegramBot.sendMessage(jid, text);
+      logger.info({ jid, length: text.length }, 'Telegram message sent');
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send Telegram message');
+    }
+    return;
+  }
+
+  if (!sock) {
+    logger.error({ jid }, 'WhatsApp message send requested but WhatsApp is not connected');
+    return;
+  }
   try {
     await sock.sendMessage(jid, { text });
     logger.info({ jid, length: text.length }, 'Message sent');
@@ -662,7 +898,7 @@ async function connectWhatsApp(): Promise<void> {
     },
     printQRInTerminal: false,
     logger,
-    browser: ['NanoClaw', 'Chrome', '1.0.0'],
+    browser: ['FFT_nano', 'Chrome', '1.0.0'],
   });
 
   sock.ev.on('connection.update', (update) => {
@@ -670,11 +906,13 @@ async function connectWhatsApp(): Promise<void> {
 
     if (qr) {
       const msg =
-        'WhatsApp authentication required. Run /setup in Claude Code.';
+        'WhatsApp authentication required. Run: npm run auth';
       logger.error(msg);
-      exec(
-        `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
-      );
+      if (process.platform === 'darwin') {
+        exec(
+          `osascript -e 'display notification "${msg}" with title "FFT_nano" sound name "Basso"'`,
+        );
+      }
       setTimeout(() => process.exit(1), 1000);
     }
 
@@ -702,6 +940,8 @@ async function connectWhatsApp(): Promise<void> {
           logger.debug({ lidUser, phoneUser }, 'LID to phone mapping set');
         }
       }
+
+      maybeRegisterWhatsAppMainChat();
       
       // Sync group metadata on startup (respects 24h cache)
       syncGroupMetadata().catch((err) =>
@@ -719,7 +959,6 @@ async function connectWhatsApp(): Promise<void> {
       startSchedulerLoop({
         sendMessage,
         registeredGroups: () => registeredGroups,
-        getSessions: () => sessions,
       });
       startIpcWatcher();
       startMessageLoop();
@@ -763,7 +1002,7 @@ async function startMessageLoop(): Promise<void> {
     return;
   }
   messageLoopRunning = true;
-  logger.info(`NanoClaw running (trigger: @${ASSISTANT_NAME})`);
+  logger.info(`FFT_nano running (trigger: @${ASSISTANT_NAME})`);
 
   while (true) {
     try {
@@ -795,6 +1034,43 @@ async function startMessageLoop(): Promise<void> {
 }
 
 function ensureContainerSystemRunning(): void {
+  const runtime = getContainerRuntime();
+  if (runtime === 'docker') {
+    try {
+      // Verifies Docker is installed and the daemon is reachable.
+      execSync('docker info', { stdio: 'pipe' });
+      logger.debug('Docker runtime available');
+      return;
+    } catch (err) {
+      logger.error({ err }, 'Docker runtime not available');
+      console.error(
+        '\n╔════════════════════════════════════════════════════════════════╗',
+      );
+      console.error(
+        '║  FATAL: Docker is required but is not available               ║',
+      );
+      console.error(
+        '║                                                                ║',
+      );
+      console.error(
+        '║  To fix:                                                       ║',
+      );
+      console.error(
+        '║  1. Install Docker (Desktop on macOS, engine on Linux/RPi)     ║',
+      );
+      console.error(
+        '║  2. Start the Docker daemon                                    ║',
+      );
+      console.error(
+        '║  3. Restart FFT_nano                                          ║',
+      );
+      console.error(
+        '╚════════════════════════════════════════════════════════════════╝\n',
+      );
+      throw new Error('Docker is required but not available');
+    }
+  }
+
   try {
     execSync('container system status', { stdio: 'pipe' });
     logger.debug('Apple Container system already running');
@@ -824,7 +1100,7 @@ function ensureContainerSystemRunning(): void {
         '║  2. Run: container system start                               ║',
       );
       console.error(
-        '║  3. Restart NanoClaw                                          ║',
+        '║  3. Restart FFT_nano                                          ║',
       );
       console.error(
         '╚════════════════════════════════════════════════════════════════╝\n',
@@ -839,10 +1115,38 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
-  await connectWhatsApp();
+  maybePromoteConfiguredTelegramMain();
+
+  const telegramEnabled = !!TELEGRAM_BOT_TOKEN;
+  if (!WHATSAPP_ENABLED && !telegramEnabled) {
+    throw new Error(
+      'No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.',
+    );
+  }
+
+  if (telegramEnabled) {
+    startTelegram();
+  }
+
+  // If Telegram is enabled we start the loops immediately so Telegram messages
+  // can be processed even before WhatsApp connects.
+  if (telegramEnabled || !WHATSAPP_ENABLED) {
+    startSchedulerLoop({
+      sendMessage,
+      registeredGroups: () => registeredGroups,
+    });
+    startIpcWatcher();
+    void startMessageLoop();
+  }
+
+  if (WHATSAPP_ENABLED) {
+    await connectWhatsApp();
+  } else {
+    logger.info('WhatsApp disabled (WHATSAPP_ENABLED=0)');
+  }
 }
 
 main().catch((err) => {
-  logger.error({ err }, 'Failed to start NanoClaw');
+  logger.error({ err }, 'Failed to start FFT_nano');
   process.exit(1);
 });

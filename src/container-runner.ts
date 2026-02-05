@@ -1,10 +1,9 @@
 /**
- * Container Runner for NanoClaw
+ * Container Runner for FFT_nano
  * Spawns agent execution in Apple Container and handles IPC
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 import {
@@ -14,27 +13,18 @@ import {
   DATA_DIR,
   GROUPS_DIR,
 } from './config.js';
+import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
+import type { ContainerRuntime } from './container-runtime.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-
-function getHomeDir(): string {
-  const home = process.env.HOME || os.homedir();
-  if (!home) {
-    throw new Error(
-      'Unable to determine home directory: HOME environment variable is not set and os.homedir() returned empty',
-    );
-  }
-  return home;
-}
+const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---FFT_NANO_OUTPUT_END---';
 
 export interface ContainerInput {
   prompt: string;
-  sessionId?: string;
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
@@ -44,7 +34,6 @@ export interface ContainerInput {
 export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
-  newSessionId?: string;
   error?: string;
 }
 
@@ -59,7 +48,6 @@ function buildVolumeMounts(
   isMain: boolean,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
-  const homeDir = getHomeDir();
   const projectRoot = process.cwd();
 
   if (isMain) {
@@ -97,17 +85,13 @@ function buildVolumeMounts(
   }
 
   // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    '.claude',
-  );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  // Each group gets their own ~/.pi to prevent cross-group session access.
+  // Pi persists sessions and auth/config under ~/.pi.
+  const groupPiHomeDir = path.join(DATA_DIR, 'pi', group.folder, '.pi');
+  fs.mkdirSync(groupPiHomeDir, { recursive: true });
   mounts.push({
-    hostPath: groupSessionsDir,
-    containerPath: '/home/node/.claude',
+    hostPath: groupPiHomeDir,
+    containerPath: '/home/node/.pi',
     readonly: false,
   });
 
@@ -123,31 +107,97 @@ function buildVolumeMounts(
   });
 
   // Environment file directory (workaround for Apple Container -i env var bug)
-  // Only expose specific auth variables needed by Claude Code, not the entire .env
+  // Only expose specific auth variables needed by the agent runtime, not the entire .env
   const envDir = path.join(DATA_DIR, 'env');
   fs.mkdirSync(envDir, { recursive: true });
   const envFile = path.join(projectRoot, '.env');
+
+  const allowedVars = [
+    // Pi / OpenAI-compatible config
+    'PI_BASE_URL',
+    'PI_API_KEY',
+    'PI_MODEL',
+    'PI_API',
+
+    // Common provider keys
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL',
+    'ANTHROPIC_API_KEY',
+    'GEMINI_API_KEY',
+    'OPENROUTER_API_KEY',
+    'GROQ_API_KEY',
+    'ZAI_API_KEY',
+
+    // Debugging
+    'FFT_NANO_DRY_RUN',
+  ];
+
+  function stripDotEnvQuotes(raw: string): string {
+    const v = raw.trim();
+    if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) {
+      return v.slice(1, -1);
+    }
+    if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+      // Minimal unescape support for common .env patterns.
+      return v
+        .slice(1, -1)
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    }
+    return v;
+  }
+
+  const fromDotEnv: Record<string, string> = {};
   if (fs.existsSync(envFile)) {
     const envContent = fs.readFileSync(envFile, 'utf-8');
-    const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
-    const filteredLines = envContent.split('\n').filter((line) => {
+    for (const line of envContent.split('\n')) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return false;
-      return allowedVars.some((v) => trimmed.startsWith(`${v}=`));
-    });
-
-    if (filteredLines.length > 0) {
-      fs.writeFileSync(
-        path.join(envDir, 'env'),
-        filteredLines.join('\n') + '\n',
-      );
-      mounts.push({
-        hostPath: envDir,
-        containerPath: '/workspace/env-dir',
-        readonly: true,
-      });
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      if (!allowedVars.includes(key)) continue;
+      const value = stripDotEnvQuotes(trimmed.slice(eq + 1));
+      fromDotEnv[key] = value;
     }
   }
+
+  const fromProcess: Record<string, string> = {};
+  for (const key of allowedVars) {
+    const v = process.env[key];
+    if (typeof v === 'string' && v.length > 0) fromProcess[key] = v;
+  }
+
+  const merged: Record<string, string> = { ...fromDotEnv, ...fromProcess };
+
+  // Compatibility: older configs may use PI_BASE_URL to mean "OpenAI-compatible base URL".
+  // pi (pi-coding-agent) uses provider-specific env vars like OPENAI_BASE_URL.
+  if (merged.PI_BASE_URL && !merged.OPENAI_BASE_URL) {
+    merged.OPENAI_BASE_URL = merged.PI_BASE_URL;
+  }
+
+  const quoteSh = (v: string) => `'${v.replace(/'/g, `'"'"'`)}'`;
+  const lines: string[] = [];
+  for (const key of allowedVars) {
+    const value = merged[key];
+    if (typeof value !== 'string' || value.length === 0) continue;
+    lines.push(`${key}=${quoteSh(value)}`);
+  }
+
+  // pi uses ~/.pi/agent for auth/models. Ensure HOME and the agent dir are
+  // consistent inside the container even if the runtime injects a host HOME.
+  lines.push(`HOME=${quoteSh('/home/node')}`);
+  lines.push(`PI_CODING_AGENT_DIR=${quoteSh('/home/node/.pi/agent')}`);
+
+  fs.writeFileSync(path.join(envDir, 'env'), lines.join('\n') + '\n');
+  mounts.push({
+    hostPath: envDir,
+    containerPath: '/workspace/env-dir',
+    readonly: true,
+  });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
@@ -162,18 +212,28 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(mounts: VolumeMount[]): string[] {
+function buildContainerArgs(
+  runtime: ContainerRuntime,
+  mounts: VolumeMount[],
+): string[] {
   const args: string[] = ['run', '-i', '--rm'];
 
-  // Apple Container: --mount for readonly, -v for read-write
-  for (const mount of mounts) {
-    if (mount.readonly) {
-      args.push(
-        '--mount',
-        `type=bind,source=${mount.hostPath},target=${mount.containerPath},readonly`,
-      );
-    } else {
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+  if (runtime === 'docker') {
+    for (const mount of mounts) {
+      const roSuffix = mount.readonly ? ':ro' : '';
+      args.push('-v', `${mount.hostPath}:${mount.containerPath}${roSuffix}`);
+    }
+  } else {
+    // Apple Container: --mount for readonly, -v for read-write
+    for (const mount of mounts) {
+      if (mount.readonly) {
+        args.push(
+          '--mount',
+          `type=bind,source=${mount.hostPath},target=${mount.containerPath},readonly`,
+        );
+      } else {
+        args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+      }
     }
   }
 
@@ -192,7 +252,9 @@ export async function runContainerAgent(
   fs.mkdirSync(groupDir, { recursive: true });
 
   const mounts = buildVolumeMounts(group, input.isMain);
-  const containerArgs = buildContainerArgs(mounts);
+  const runtime = getContainerRuntime();
+  const containerArgs = buildContainerArgs(runtime, mounts);
+  const runtimeCmd = getRuntimeCommand(runtime);
 
   logger.debug(
     {
@@ -202,6 +264,7 @@ export async function runContainerAgent(
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
       containerArgs: containerArgs.join(' '),
+      runtime,
     },
     'Container mount configuration',
   );
@@ -219,7 +282,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn(runtimeCmd, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -324,7 +387,7 @@ export async function runContainerAgent(
         logLines.push(
           `=== Input Summary ===`,
           `Prompt length: ${input.prompt.length} chars`,
-          `Session ID: ${input.sessionId || 'new'}`,
+          `Session: managed by pi (~/.pi)`,
           ``,
           `=== Mounts ===`,
           mounts
@@ -346,6 +409,25 @@ export async function runContainerAgent(
       logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
 
       if (code !== 0) {
+        // agent-runner may have written a structured JSON error to stdout even
+        // when exiting non-zero. Try to parse it for a more useful message.
+        let parsedError: string | null = null;
+        try {
+          const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
+          const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
+          if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+            const jsonLine = stdout
+              .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+              .trim();
+            const output: ContainerOutput = JSON.parse(jsonLine);
+            if (output.status === 'error' && output.error) {
+              parsedError = output.error;
+            }
+          }
+        } catch {
+          /* ignore parse failures */
+        }
+
         logger.error(
           {
             group: group.name,
@@ -360,7 +442,9 @@ export async function runContainerAgent(
         resolve({
           status: 'error',
           result: null,
-          error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
+          error:
+            parsedError ||
+            `Container exited with code ${code}: ${stderr.slice(-200)}`,
         });
         return;
       }

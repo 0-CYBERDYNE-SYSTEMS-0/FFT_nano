@@ -1,15 +1,24 @@
 #!/bin/bash
-# Build the NanoClaw agent container image
+# Build the FFT_nano agent container image
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-IMAGE_NAME="nanoclaw-agent"
+IMAGE_NAME="fft-nano-agent"
 TAG="${1:-latest}"
 
-echo "Building NanoClaw agent container image..."
+if [[ "${TAG}" == "-h" || "${TAG}" == "--help" ]]; then
+  echo "Usage: ./container/build.sh [tag]"
+  echo ""
+  echo "Builds the FFT_nano agent image using Apple Container."
+  echo "Example:"
+  echo "  ./container/build.sh latest"
+  exit 0
+fi
+
+echo "Building FFT_nano agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
 
 # Build with Apple Container

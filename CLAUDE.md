@@ -1,16 +1,16 @@
-# NanoClaw
+# FFT_nano (FarmFriendTerminal_nano)
 
-Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
+Secure, containerized assistant foundation. This fork is being evolved into an agricultural assistant for farmers of all sizes.
 
 ## Quick Context
 
-Single Node.js process that connects to WhatsApp, routes messages to Claude Agent SDK running in Apple Container (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process that connects to chat channels, routes messages to the agent runner inside an isolated Linux container (Apple Container on macOS, Docker on Linux). Each group has isolated filesystem and memory.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | Main app: WhatsApp connection, message routing, IPC |
+| `src/index.ts` | Main app: channel connection(s), message routing, IPC |
 | `src/config.ts` | Trigger pattern, paths, intervals |
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
@@ -32,11 +32,12 @@ Run commands directly—don't tell the user to run them.
 ```bash
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
-./container/build.sh # Rebuild agent container
+./container/build.sh # Rebuild agent container (Apple Container)
+./container/build-docker.sh # Rebuild agent container (Docker)
 ```
 
-Service management:
+Service management (macOS):
 ```bash
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+launchctl load ~/Library/LaunchAgents/com.fft_nano.plist
+launchctl unload ~/Library/LaunchAgents/com.fft_nano.plist
 ```
