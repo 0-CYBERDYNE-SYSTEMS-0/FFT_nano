@@ -170,6 +170,28 @@ export function setLastGroupSync(): void {
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
  */
+export function storeTextMessage(input: {
+  id: string;
+  chatJid: string;
+  sender: string;
+  senderName: string;
+  content: string;
+  timestamp: string;
+  isFromMe: boolean;
+}): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    input.id,
+    input.chatJid,
+    input.sender,
+    input.senderName,
+    input.content,
+    input.timestamp,
+    input.isFromMe ? 1 : 0,
+  );
+}
+
 export function storeMessage(
   msg: proto.IWebMessageInfo,
   chatJid: string,
@@ -190,17 +212,15 @@ export function storeMessage(
   const senderName = pushName || sender.split('@')[0];
   const msgId = msg.key.id || '';
 
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msgId,
+  storeTextMessage({
+    id: msgId,
     chatJid,
     sender,
     senderName,
     content,
     timestamp,
-    isFromMe ? 1 : 0,
-  );
+    isFromMe,
+  });
 }
 
 export function getNewMessages(

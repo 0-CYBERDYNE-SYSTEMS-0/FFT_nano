@@ -2,22 +2,12 @@
 
 ## Source Code Changes
 
-**Accepted:** Bug fixes, security fixes, simplifications, reducing code.
+FFT_nano is a product-focused fork. Contributions should:
 
-**Not accepted:** Features, capabilities, compatibility, enhancements. These should be skills.
+- Preserve the security model (container isolation + minimal mounts)
+- Stay understandable (prefer direct code over framework layers)
+- Include a clear threat-model note for new integrations
 
-## Skills
+**Accepted:** bug fixes, security fixes, farm-assistant features, docs updates.
 
-A [skill](https://code.claude.com/docs/en/skills) is a markdown file in `.claude/skills/` that teaches Claude Code how to transform a NanoClaw installation.
-
-A PR that contributes a skill should not modify any source files.
-
-Your skill should contain the **instructions** Claude follows to add the feature—not pre-built code. See `/convert-to-docker` for a good example.
-
-### Why?
-
-Every user should have clean and minimal code that does exactly what they need. Skills let users selectively add features to their fork without inheriting code for features they don't want.
-
-### Testing
-
-Test your skill by running it on a fresh clone before submitting.
+**Please avoid:** “platform/framework” work that adds abstraction without user value.

@@ -1,117 +1,144 @@
 <p align="center">
-  <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
+  <img src="assets/nanoclaw-logo.png" alt="FFT_nano" width="400">
 </p>
 
 <p align="center">
-  My personal Claude assistant that runs securely in containers. Lightweight and built to be understood and customized for your own needs.
+  FarmFriendTerminal_nano (FFT_nano): a secure, containerized AI assistant for farmers.
 </p>
 
-## Why I Built This
+## What This Is
 
-[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project with a great vision. But I can't sleep well running software I don't understand with access to my life. OpenClaw has 52+ modules, 8 config management files, 45+ dependencies, and abstractions for 15 channel providers. Security is application-level (allowlists, pairing codes) rather than OS isolation. Everything runs in one Node process with shared memory.
+FFT_nano is a fork/evolution of NanoClaw: a minimal, security-first “AI agent in a container” runtime.
 
-NanoClaw gives you the same core functionality in a codebase you can understand in 8 minutes. One process. A handful of files. Agents run in actual Linux containers with filesystem isolation, not behind permission checks.
+The goal here is to turn that foundation into a **paradigm-shifting agricultural assistant** that:
+- Works for farmers of all sizes (solo → enterprise)
+- Runs *locally where it counts* (edge devices like Raspberry Pi) and *online where it helps*
+- Is usable from a phone (WhatsApp and/or Telegram)
+- Is proactive (scheduled tasks + event-driven workflows), not just reactive prompting
+- Has long-term memory that feels like “Jarvis”: context-aware, quietly helpful, low-friction
+
+The codebase stays intentionally small: one Node process + one containerized agent runner.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/gavrielc/nanoclaw.git
-cd nanoclaw
-claude
+git clone <your-fft_nano-fork>
+cd fft_nano
+
+npm install
+./container/build.sh        # macOS (Apple Container)
+# or ./container/build-docker.sh  # Linux/RPi
+
+# If using WhatsApp:
+npm run auth
+
+npm run dev
 ```
 
-Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
+Then configure your runtime, build the agent image, and start the service.
 
-## Philosophy
+## Core Principles
 
-**Small enough to understand.** One process, a few source files. No microservices, no message queues, no abstraction layers. Have Claude Code walk you through it.
+**Small enough to understand.** One process, a few source files. No microservices, no message queues, no abstraction layers.
 
 **Secure by isolation.** Agents run in Linux containers (Apple Container on macOS, or Docker). They can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
 
-**Built for one user.** This isn't a framework. It's working software that fits my exact needs. You fork it and have Claude Code make it match your exact needs.
+**Built for one user (or one farm).** Fork it and tailor it.
 
 **Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that this is safe.
 
-**AI-native.** No installation wizard; Claude Code guides setup. No monitoring dashboard; ask Claude what's happening. No debugging tools; describe the problem, Claude fixes it.
+**AI-native.** No monitoring dashboard; ask FarmFriend what's happening. Debug by asking it to read logs and state.
 
-**Skills over features.** Contributors shouldn't add features (e.g. support for Telegram) to the codebase. Instead, they contribute [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
+**Security by isolation.** The agent runs inside an actual Linux container (Apple Container on macOS; Docker on Linux/RPi). It can only see what you mount.
 
-**Best harness, best model.** This runs on Claude Agent SDK, which means you're running Claude Code directly. The harness matters. A bad harness makes even smart models seem dumb, a good harness gives them superpowers. Claude Code is (IMO) the best harness available.
+**Minimal harness, real isolation.** The agent runs inside a real Linux container and can write/read code and memory files in its workspace.
 
 ## What It Supports
 
-- **WhatsApp I/O** - Message Claude from your phone
+- **WhatsApp I/O** - Message from your phone (via Baileys / WhatsApp Web)
+- **Telegram I/O (optional)** - Bot-based I/O for simpler, server-friendly deployments
 - **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
 - **Main channel** - Your private channel (self-chat) for admin control; every other group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run Claude and can message you back
-- **Web access** - Search and fetch content
-- **Container isolation** - Agents sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
+- **Scheduled tasks** - Recurring jobs that run FarmFriend and can message you back
+- **Web access** - Use bash (curl) and browser automation
+- **Container isolation** - Agents sandboxed in Apple Container (macOS) or Docker (Linux/RPi)
 
 ## Usage
 
-Talk to your assistant with the trigger word (default: `@Andy`):
+Talk to your assistant with the trigger word (default: `@FarmFriend`):
 
 ```
-@Andy send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
-@Andy review the git history for the past week each Friday and update the README if there's drift
-@Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
+@FarmFriend create a weekly fieldwork plan for the next 7 days (weather-aware)
+@FarmFriend remind me to service the tractor every 50 hours of runtime
+@FarmFriend log that we sprayed Field 3 with product X at rate Y today
 ```
 
 From the main channel (your self-chat), you can manage groups and tasks:
 ```
-@Andy list all scheduled tasks across groups
-@Andy pause the Monday briefing task
-@Andy join the Family Chat group
+@FarmFriend list all scheduled tasks across groups
+@FarmFriend pause the Monday briefing task
+@FarmFriend join the Family Chat group
 ```
 
 ## Customizing
 
-There are no configuration files to learn. Just tell Claude Code what you want:
+There are no configuration files to learn. Just change the code and memory files:
 
 - "Change the trigger word to @Bob"
 - "Remember in the future to make responses shorter and more direct"
 - "Add a custom greeting when I say good morning"
 - "Store conversation summaries weekly"
 
-Or run `/customize` for guided changes.
-
-The codebase is small enough that Claude can safely modify it.
+The codebase is small enough that the agent can modify it.
 
 ## Contributing
 
-**Don't add features. Add skills.**
+FFT_nano is intentionally a “fork-that-becomes-a-product”. Keep changes security-first and easy to reason about.
 
-If you want to add Telegram support, don't create a PR that adds Telegram alongside WhatsApp. Instead, contribute a skill file (`.claude/skills/add-telegram/SKILL.md`) that teaches Claude Code how to transform a NanoClaw installation to use Telegram.
+### Roadmap
 
-Users then run `/add-telegram` on their fork and get clean code that does exactly what they need, not a bloated system trying to support every use case.
-
-### RFS (Request for Skills)
-
-Skills we'd love to see:
-
-**Communication Channels**
-- `/add-telegram` - Add Telegram as channel. Should give the user option to replace WhatsApp or add as additional channel. Also should be possible to add it as a control channel (where it can trigger actions) or just a channel that can be used in actions triggered elsewhere
-- `/add-slack` - Add Slack
-- `/add-discord` - Add Discord
-
-**Platform Support**
-- `/setup-windows` - Windows via WSL2 + Docker
-
-**Session Management**
-- `/add-clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
+- WhatsApp Business API channel (scale/robustness)
+- Farm ledger (fields, operations, inventory, equipment)
+- Event-driven proactivity (alerts + digests)
+- Optional on-farm sensor ingestion (MQTT)
 
 ## Requirements
 
 - macOS or Linux
 - Node.js 20+
-- [Claude Code](https://claude.ai/download)
+- An LLM API key usable by `pi` (pi-coding-agent)
 - [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux)
+
+## Configuration
+
+- `PI_BASE_URL`: optional; if set, also treated as `OPENAI_BASE_URL` for OpenAI-compatible endpoints
+- `PI_API_KEY`: optional; passed to `pi` via `--api-key`
+- `PI_MODEL`: optional; passed to `pi` via `--model`
+- `PI_API`: optional; passed to `pi` via `--provider` (e.g. `openai`, `anthropic`, `google`)
+- `CONTAINER_RUNTIME`: `auto` (default), `apple`, or `docker`
+- `WHATSAPP_ENABLED`: `1` (default) or `0`
+- `TELEGRAM_BOT_TOKEN`: enables Telegram
+- `TELEGRAM_MAIN_CHAT_ID`: optional; maps a Telegram chat to the `main` group folder
+- `TELEGRAM_ADMIN_SECRET`: required to claim the main/admin chat via Telegram command `/main <secret>`
+- `TELEGRAM_AUTO_REGISTER`: `1` (default) or `0`
+
+Build the agent container image:
+
+```bash
+./build.sh                  # Apple Container (macOS)
+./build-docker.sh           # Docker (Linux/RPi)
+# (or run the scripts directly under ./container/)
+```
+
+Smoke test without an LLM (container only):
+
+- Set `FFT_NANO_DRY_RUN=1` on the host (so it gets mounted into the container via `.env`/env allowlist)
+- Send any message; the agent runner will return a deterministic `DRY_RUN:` response
 
 ## Architecture
 
 ```
-WhatsApp (baileys) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
+Channels (WhatsApp / Telegram) --> SQLite --> Polling loop --> Container (Pi agent runtime) --> Response
 ```
 
 Single Node.js process. Agents execute in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
@@ -125,17 +152,25 @@ Key files:
 
 ## FAQ
 
-**Why WhatsApp and not Telegram/Signal/etc?**
+**WhatsApp vs Telegram?**
 
-Because I use WhatsApp. Fork it and run a skill to change it. That's the whole point.
+WhatsApp is convenient when you want to talk from your personal account; Telegram is bot-native and often easier to deploy on servers/edge devices. FFT_nano supports WhatsApp and has optional Telegram support.
+
+**How do I make Telegram my main/admin channel?**
+
+1. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_SECRET` in the host environment
+2. Start FFT_nano
+3. DM your bot:
+   - `/id` to see your chat id
+   - `/main <secret>` to claim this DM as the `main` channel (persists in `data/registered_groups.json`)
 
 **Why Apple Container instead of Docker?**
 
-On macOS, Apple Container is lightweight, fast, and optimized for Apple silicon. But Docker is also fully supported—during `/setup`, you can choose which runtime to use. On Linux, Docker is used automatically.
+On macOS, Apple Container is lightweight and fast. On Linux/RPi, Docker is the default. You can force either with `CONTAINER_RUNTIME`.
 
 **Can I run this on Linux?**
 
-Yes. Run `/setup` and it will automatically configure Docker as the container runtime. Thanks to [@dotsetgreg](https://github.com/dotsetgreg) for contributing the `/convert-to-docker` skill.
+Yes. Install Docker, build the agent image with `./container/build-docker.sh`, and run FFT_nano with `CONTAINER_RUNTIME=docker`.
 
 **Is this secure?**
 
@@ -143,23 +178,19 @@ Agents run in containers, not behind application-level permission checks. They c
 
 **Why no configuration files?**
 
-We don't want configuration sprawl. Every user should customize it to so that the code matches exactly what they want rather than configuring a generic system. If you like having config files, tell Claude to add them.
+We don't want configuration sprawl. Every user should customize it so that the code matches exactly what they want rather than configuring a generic system.
 
 **How do I debug issues?**
 
-Ask Claude Code. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach.
+Ask FarmFriend. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach.
 
-**Why isn't the setup working for me?**
+**Why isn't it working?**
 
-I don't know. Run `claude`, then run `/debug`. If claude finds an issue that is likely affecting other users, open a PR to modify the setup SKILL.md.
+Check logs, then ask FarmFriend to diagnose.
 
 **What changes will be accepted into the codebase?**
 
-Security fixes, bug fixes, and clear improvements to the base configuration. That's it.
-
-Everything else (new capabilities, OS compatibility, hardware support, enhancements) should be contributed as skills.
-
-This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
+Security fixes, bug fixes, and changes that advance the FarmFriend mission while keeping the system understandable.
 
 ## License
 

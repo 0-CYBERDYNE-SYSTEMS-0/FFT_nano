@@ -1,4 +1,4 @@
-# NanoClaw Security Model
+# FFT_nano Security Model
 
 ## Trust Model
 
@@ -23,7 +23,7 @@ This is the primary security boundary. Rather than relying on application-level 
 
 ### 2. Mount Security
 
-**External Allowlist** - Mount permissions stored at `~/.config/nanoclaw/mount-allowlist.json`, which is:
+**External Allowlist** - Mount permissions stored at `~/.config/fft_nano/mount-allowlist.json`, which is:
 - Outside project root
 - Never mounted into containers
 - Cannot be modified by agents
@@ -42,7 +42,7 @@ private_key, .secret
 
 ### 3. Session Isolation
 
-Each group has isolated Claude sessions at `data/sessions/{group}/.claude/`:
+Each group has isolated Pi state at `data/pi/{group}/.pi/`:
 - Groups cannot see other groups' conversation history
 - Session data includes full message history and file contents read
 - Prevents cross-group information disclosure
@@ -63,7 +63,7 @@ Messages and task operations are verified against group identity:
 ### 5. Credential Handling
 
 **Mounted Credentials:**
-- Claude auth tokens (filtered from `.env`, read-only)
+- Filtered API credentials (from `.env`, read-only)
 
 **NOT Mounted:**
 - WhatsApp session (`store/auth/`) - host only
@@ -71,12 +71,9 @@ Messages and task operations are verified against group identity:
 - Any credentials matching blocked patterns
 
 **Credential Filtering:**
-Only these environment variables are exposed to containers:
-```typescript
-const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
-```
+Only a small allowlist of environment variables is exposed to containers (see `src/container-runner.ts`).
 
-> **Note:** Anthropic credentials are mounted so that Claude Code can authenticate when the agent runs. However, this means the agent itself can discover these credentials via Bash or file operations. Ideally, Claude Code would authenticate without exposing credentials to the agent's execution environment, but I couldn't figure this out. **PRs welcome** if you have ideas for credential isolation.
+> **Note:** API credentials are mounted into the container so the agent can make model calls. This means the agent can discover these credentials via Bash or file operations. Prefer using dedicated low-scope keys and isolating untrusted groups.
 
 ## Privilege Comparison
 
@@ -87,7 +84,7 @@ const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 | Global memory | Implicit via project | `/workspace/global` (ro) |
 | Additional mounts | Configurable | Read-only unless allowed |
 | Network access | Unrestricted | Unrestricted |
-| MCP tools | All | All |
+| IPC capabilities | All | All |
 
 ## Security Architecture Diagram
 

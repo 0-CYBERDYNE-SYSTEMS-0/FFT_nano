@@ -9,6 +9,10 @@ store/
 data/
 logs/
 
+# Runtime-generated group folders (keep template groups in repo)
+groups/telegram-*/
+groups/**/logs/
+
 # Secrets
 *.keys.json
 .env

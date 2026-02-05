@@ -6,7 +6,7 @@ export interface AdditionalMount {
 
 /**
  * Mount Allowlist - Security configuration for additional mounts
- * This file should be stored at ~/.config/nanoclaw/mount-allowlist.json
+ * This file should be stored at ~/.config/fft_nano/mount-allowlist.json
  * and is NOT mounted into any container, making it tamper-proof from agents.
  */
 export interface MountAllowlist {
@@ -39,10 +39,6 @@ export interface RegisteredGroup {
   trigger: string;
   added_at: string;
   containerConfig?: ContainerConfig;
-}
-
-export interface Session {
-  [folder: string]: string;
 }
 
 export interface NewMessage {

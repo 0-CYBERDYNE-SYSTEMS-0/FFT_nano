@@ -1,6 +1,6 @@
-# NanoClaw Specification
+# FFT_nano Specification
 
-A personal Claude assistant accessible via WhatsApp, with persistent memory per conversation, scheduled tasks, and email integration.
+A secure, containerized assistant accessible via chat (WhatsApp today; Telegram optional in FFT_nano), with persistent memory per conversation and scheduled tasks.
 
 ---
 
@@ -45,7 +45,7 @@ A personal Claude assistant accessible via WhatsApp, with persistent memory per 
 │                       │ spawns container                             │
 │                       ▼                                              │
 ├─────────────────────────────────────────────────────────────────────┤
-│                  APPLE CONTAINER (Linux VM)                          │
+│                  CONTAINER RUNTIME (Linux VM / container)            │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │                    AGENT RUNNER                               │   │
@@ -54,15 +54,16 @@ A personal Claude assistant accessible via WhatsApp, with persistent memory per 
 │  │  Volume mounts:                                                │   │
 │  │    • groups/{name}/ → /workspace/group                         │   │
 │  │    • groups/global/ → /workspace/global/ (non-main only)        │   │
-│  │    • data/sessions/{group}/.claude/ → /home/node/.claude/      │   │
+│  │    • data/pi/{group}/.pi/ → /home/node/.pi/                   │   │
 │  │    • Additional dirs → /workspace/extra/*                      │   │
 │  │                                                                │   │
 │  │  Tools (all groups):                                           │   │
 │  │    • Bash (safe - sandboxed in container!)                     │   │
 │  │    • Read, Write, Edit, Glob, Grep (file operations)           │   │
-│  │    • WebSearch, WebFetch (internet access)                     │   │
+│  │    • Web via bash/curl or browser automation                   │   │
 │  │    • agent-browser (browser automation)                        │   │
-│  │    • mcp__nanoclaw__* (scheduler tools via IPC)                │   │
+│  │    • pi (pi-coding-agent; LLM runtime + tool calling)           │   │
+│  │    • IPC files (/workspace/ipc) for messaging + scheduling      │   │
 │  │                                                                │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                      │
@@ -75,8 +76,8 @@ A personal Claude assistant accessible via WhatsApp, with persistent memory per 
 |-----------|------------|---------|
 | WhatsApp Connection | Node.js (@whiskeysockets/baileys) | Connect to WhatsApp, send/receive messages |
 | Message Storage | SQLite (better-sqlite3) | Store messages for polling |
-| Container Runtime | Apple Container | Isolated Linux VMs for agent execution |
-| Agent | @anthropic-ai/claude-agent-sdk (0.2.29) | Run Claude with tools and MCP servers |
+| Container Runtime | Apple Container (macOS) or Docker (Linux/RPi) | Isolated agent execution |
+| Agent | Pi agent runtime (`pi`, pi-coding-agent) | Run the model with filesystem + bash tools |
 | Browser Automation | agent-browser + Chromium | Web interaction and screenshots |
 | Runtime | Node.js 20+ | Host process for routing and scheduling |
 
@@ -85,8 +86,8 @@ A personal Claude assistant accessible via WhatsApp, with persistent memory per 
 ## Folder Structure
 
 ```
-nanoclaw/
-├── CLAUDE.md                      # Project context for Claude Code
+fft_nano/
+├── CLAUDE.md                      # Project context
 ├── docs/
 │   ├── SPEC.md                    # This specification document
 │   ├── REQUIREMENTS.md            # Architecture decisions
@@ -94,42 +95,34 @@ nanoclaw/
 ├── README.md                      # User documentation
 ├── package.json                   # Node.js dependencies
 ├── tsconfig.json                  # TypeScript configuration
-├── .mcp.json                      # MCP server configuration (reference)
+├── .mcp.json                      # Legacy MCP config (not used)
 ├── .gitignore
 │
 ├── src/
-│   ├── index.ts                   # Main application (WhatsApp + routing)
+│   ├── index.ts                   # Main application (channels + routing)
 │   ├── config.ts                  # Configuration constants
 │   ├── types.ts                   # TypeScript interfaces
 │   ├── utils.ts                   # Generic utility functions
 │   ├── db.ts                      # Database initialization and queries
 │   ├── whatsapp-auth.ts           # Standalone WhatsApp authentication
 │   ├── task-scheduler.ts          # Runs scheduled tasks when due
-│   └── container-runner.ts        # Spawns agents in Apple Containers
+│   └── container-runner.ts        # Spawns agents in Apple Container or Docker
 │
 ├── container/
-│   ├── Dockerfile                 # Container image (runs as 'node' user, includes Claude Code CLI)
-│   ├── build.sh                   # Build script for container image
+│   ├── Dockerfile                 # Container image (runs as 'node' user)
+│   ├── build.sh                   # Build with Apple Container
+│   ├── build-docker.sh            # Build with Docker (Linux/RPi)
 │   ├── agent-runner/              # Code that runs inside the container
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src/
-│   │       ├── index.ts           # Entry point (reads JSON, runs agent)
-│   │       └── ipc-mcp.ts         # MCP server for host communication
+│   │       └── index.ts           # Entry point (reads JSON, runs pi)
 │   └── skills/
 │       └── agent-browser.md       # Browser automation skill
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
 │
-├── .claude/
-│   └── skills/
-│       ├── setup/
-│       │   └── SKILL.md           # /setup skill
-│       ├── customize/
-│       │   └── SKILL.md           # /customize skill
-│       └── debug/
-│           └── SKILL.md           # /debug skill (container debugging)
-│
+├── .claude/                       # (optional) local customization helpers
 ├── groups/
 │   ├── CLAUDE.md                  # Global memory (all groups read this)
 │   ├── main/                      # Self-chat (main control channel)
@@ -145,19 +138,18 @@ nanoclaw/
 │   └── messages.db                # SQLite database (messages, scheduled_tasks, task_run_logs)
 │
 ├── data/                          # Application state (gitignored)
-│   ├── sessions.json              # Active session IDs per group
 │   ├── registered_groups.json     # Group JID → folder mapping
 │   ├── router_state.json          # Last processed timestamp + last agent timestamps
 │   ├── env/env                    # Copy of .env for container mounting
 │   └── ipc/                       # Container IPC (messages/, tasks/)
 │
 ├── logs/                          # Runtime logs (gitignored)
-│   ├── nanoclaw.log               # Host stdout
-│   └── nanoclaw.error.log         # Host stderr
+│   ├── fft_nano.log               # Host stdout
+│   └── fft_nano.error.log         # Host stderr
 │   # Note: Per-container logs are in groups/{folder}/logs/container-*.log
 │
 └── launchd/
-    └── com.nanoclaw.plist         # macOS service configuration
+    └── com.fft_nano.plist         # macOS service configuration
 ```
 
 ---
@@ -180,7 +172,7 @@ export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
 // Container configuration
-export const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+export const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'fft-nano-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(process.env.CONTAINER_TIMEOUT || '300000', 10);
 export const IPC_POLL_INTERVAL = 1000;
 
@@ -198,7 +190,7 @@ Groups can have additional directories mounted via `containerConfig` in `data/re
   "1234567890@g.us": {
     "name": "Dev Team",
     "folder": "dev-team",
-    "trigger": "@Andy",
+    "trigger": "@FarmFriend",
     "added_at": "2026-01-31T12:00:00Z",
     "containerConfig": {
       "additionalMounts": [
@@ -218,22 +210,19 @@ Additional mounts appear at `/workspace/extra/{containerPath}` inside the contai
 
 **Apple Container mount syntax note:** Read-write mounts use `-v host:container`, but readonly mounts require `--mount "type=bind,source=...,target=...,readonly"` (the `:ro` suffix doesn't work).
 
-### Claude Authentication
+### LLM Authentication
 
-Configure authentication in a `.env` file in the project root. Two options:
+Configure authentication in a `.env` file in the project root.
 
-**Option 1: Claude Subscription (OAuth token)**
-```bash
-CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
-```
-The token can be extracted from `~/.claude/.credentials.json` if you're logged in to Claude Code.
+Typical options:
 
-**Option 2: Pay-per-use API Key**
-```bash
-ANTHROPIC_API_KEY=sk-ant-api03-...
-```
+- OpenAI-compatible:
+  - `PI_BASE_URL`, `PI_API_KEY`, `PI_MODEL` (used by the container runner)
+  - or `OPENAI_BASE_URL`, `OPENAI_API_KEY`
+- Provider-specific keys:
+  - `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, etc.
 
-Only the authentication variables (`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`) are extracted from `.env` and mounted into the container at `/workspace/env-dir/env`, then sourced by the entrypoint script. This ensures other environment variables in `.env` are not exposed to the agent. This workaround is needed because Apple Container loses `-e` environment variables when using `-i` (interactive mode with piped stdin).
+Only a small allowlist of variables is extracted and mounted into the container at `/workspace/env-dir/env`, then sourced by the entrypoint script. This prevents leaking unrelated host environment into the agent.
 
 ### Changing the Assistant Name
 
@@ -250,7 +239,7 @@ Or edit the default in `src/config.ts`. This changes:
 ### Placeholder Values in launchd
 
 Files with `{{PLACEHOLDER}}` values need to be configured:
-- `{{PROJECT_ROOT}}` - Absolute path to your nanoclaw installation
+- `{{PROJECT_ROOT}}` - Absolute path to your FFT_nano installation
 - `{{NODE_PATH}}` - Path to node binary (detected via `which node`)
 - `{{HOME}}` - User's home directory
 
@@ -258,7 +247,7 @@ Files with `{{PLACEHOLDER}}` values need to be configured:
 
 ## Memory System
 
-NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
+FFT_nano uses a hierarchical memory system based on CLAUDE.md files.
 
 ### Memory Hierarchy
 
@@ -272,9 +261,9 @@ NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
 
 1. **Agent Context Loading**
    - Agent runs with `cwd` set to `groups/{group-name}/`
-   - Claude Agent SDK with `settingSources: ['project']` automatically loads:
-     - `../CLAUDE.md` (parent directory = global memory)
-     - `./CLAUDE.md` (current directory = group memory)
+   - FFT_nano agent runner builds a system prompt that includes:
+     - `../CLAUDE.md` (global memory when mounted)
+     - `./CLAUDE.md` (group memory)
 
 2. **Writing Memory**
    - When user says "remember this", agent writes to `./CLAUDE.md`
@@ -291,21 +280,13 @@ NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
 
 ## Session Management
 
-Sessions enable conversation continuity - Claude remembers what you talked about.
+Sessions enable conversation continuity.
 
 ### How Sessions Work
 
-1. Each group has a session ID stored in `data/sessions.json`
-2. Session ID is passed to Claude Agent SDK's `resume` option
-3. Claude continues the conversation with full context
-
-**data/sessions.json:**
-```json
-{
-  "main": "session-abc123",
-  "Family Chat": "session-def456"
-}
-```
+1. Each group gets a dedicated `~/.pi` directory mounted into the container
+2. The Pi runtime persists conversation state under that directory
+3. The agent runner uses `pi -c` when possible
 
 ---
 
@@ -337,14 +318,13 @@ Sessions enable conversation continuity - Claude remembers what you talked about
    └── Build prompt with full conversation context
    │
    ▼
-7. Router invokes Claude Agent SDK:
+7. Router invokes the Pi runtime:
    ├── cwd: groups/{group-name}/
    ├── prompt: conversation history + current message
-   ├── resume: session_id (for continuity)
-   └── mcpServers: nanoclaw (scheduler)
+   └── system prompt: memory + IPC conventions
    │
    ▼
-8. Claude processes message:
+8. FarmFriend processes message:
    ├── Reads CLAUDE.md files for context
    └── Uses tools as needed (search, email, etc.)
    │
@@ -352,15 +332,15 @@ Sessions enable conversation continuity - Claude remembers what you talked about
 9. Router prefixes response with assistant name and sends via WhatsApp
    │
    ▼
-10. Router updates last agent timestamp and saves session ID
+10. Router updates last agent timestamp
 ```
 
 ### Trigger Word Matching
 
-Messages must start with the trigger pattern (default: `@Andy`):
-- `@Andy what's the weather?` → ✅ Triggers Claude
+Messages must start with the trigger pattern (default: `@FarmFriend`):
+- `@FarmFriend what's the weather?` → ✅ Triggers FarmFriend
 - `@andy help me` → ✅ Triggers (case insensitive)
-- `Hey @Andy` → ❌ Ignored (trigger not at start)
+- `Hey @FarmFriend` → ❌ Ignored (trigger not at start)
 - `What's up?` → ❌ Ignored (no trigger)
 
 ### Conversation Catch-Up
@@ -370,7 +350,7 @@ When a triggered message arrives, the agent receives all messages since its last
 ```
 [Jan 31 2:32 PM] John: hey everyone, should we do pizza tonight?
 [Jan 31 2:33 PM] Sarah: sounds good to me
-[Jan 31 2:35 PM] John: @Andy what toppings do you recommend?
+[Jan 31 2:35 PM] John: @FarmFriend what toppings do you recommend?
 ```
 
 This allows the agent to understand the conversation context even if it wasn't mentioned in every message.
@@ -383,27 +363,27 @@ This allows the agent to understand the conversation context even if it wasn't m
 
 | Command | Example | Effect |
 |---------|---------|--------|
-| `@Assistant [message]` | `@Andy what's the weather?` | Talk to Claude |
+| `@Assistant [message]` | `@FarmFriend what's the weather?` | Talk to FarmFriend |
 
 ### Commands Available in Main Channel Only
 
 | Command | Example | Effect |
 |---------|---------|--------|
-| `@Assistant add group "Name"` | `@Andy add group "Family Chat"` | Register a new group |
-| `@Assistant remove group "Name"` | `@Andy remove group "Work Team"` | Unregister a group |
-| `@Assistant list groups` | `@Andy list groups` | Show registered groups |
-| `@Assistant remember [fact]` | `@Andy remember I prefer dark mode` | Add to global memory |
+| `@Assistant add group "Name"` | `@FarmFriend add group "Family Chat"` | Register a new group |
+| `@Assistant remove group "Name"` | `@FarmFriend remove group "Work Team"` | Unregister a group |
+| `@Assistant list groups` | `@FarmFriend list groups` | Show registered groups |
+| `@Assistant remember [fact]` | `@FarmFriend remember I prefer dark mode` | Add to global memory |
 
 ---
 
 ## Scheduled Tasks
 
-NanoClaw has a built-in scheduler that runs tasks as full agents in their group's context.
+FFT_nano has a built-in scheduler that runs tasks as full agents in their group's context.
 
 ### How Scheduling Works
 
 1. **Group Context**: Tasks created in a group run with that group's working directory and memory
-2. **Full Agent Capabilities**: Scheduled tasks have access to all tools (WebSearch, file operations, etc.)
+2. **Full Agent Capabilities**: Scheduled tasks have access to bash + file operations
 3. **Optional Messaging**: Tasks can send messages to their group using the `send_message` tool, or complete silently
 4. **Main Channel Privileges**: The main channel can schedule tasks for any group and view all tasks
 
@@ -418,24 +398,24 @@ NanoClaw has a built-in scheduler that runs tasks as full agents in their group'
 ### Creating a Task
 
 ```
-User: @Andy remind me every Monday at 9am to review the weekly metrics
+User: @FarmFriend remind me every Monday at 9am to review the weekly metrics
 
-Claude: [calls mcp__nanoclaw__schedule_task]
+FarmFriend: writes /workspace/ipc/tasks/*.json (schedule_task)
         {
           "prompt": "Send a reminder to review weekly metrics. Be encouraging!",
           "schedule_type": "cron",
           "schedule_value": "0 9 * * 1"
         }
 
-Claude: Done! I'll remind you every Monday at 9am.
+FarmFriend: Done! I'll remind you every Monday at 9am.
 ```
 
 ### One-Time Tasks
 
 ```
-User: @Andy at 5pm today, send me a summary of today's emails
+User: @FarmFriend at 5pm today, send me a summary of today's emails
 
-Claude: [calls mcp__nanoclaw__schedule_task]
+FarmFriend: writes /workspace/ipc/tasks/*.json (schedule_task)
         {
           "prompt": "Search for today's emails, summarize the important ones, and send the summary to the group.",
           "schedule_type": "once",
@@ -446,22 +426,22 @@ Claude: [calls mcp__nanoclaw__schedule_task]
 ### Managing Tasks
 
 From any group:
-- `@Andy list my scheduled tasks` - View tasks for this group
-- `@Andy pause task [id]` - Pause a task
-- `@Andy resume task [id]` - Resume a paused task
-- `@Andy cancel task [id]` - Delete a task
+- `@FarmFriend list my scheduled tasks` - View tasks for this group
+- `@FarmFriend pause task [id]` - Pause a task
+- `@FarmFriend resume task [id]` - Resume a paused task
+- `@FarmFriend cancel task [id]` - Delete a task
 
 From main channel:
-- `@Andy list all tasks` - View tasks from all groups
-- `@Andy schedule task for "Family Chat": [prompt]` - Schedule for another group
+- `@FarmFriend list all tasks` - View tasks from all groups
+- `@FarmFriend schedule task for "Family Chat": [prompt]` - Schedule for another group
 
 ---
 
 ## MCP Servers
 
-### NanoClaw MCP (built-in)
+### FFT_nano MCP (built-in)
 
-The `nanoclaw` MCP server is created dynamically per agent call with the current group's context.
+The `fft_nano` MCP server is created dynamically per agent call with the current group's context.
 
 **Available Tools:**
 | Tool | Purpose |
@@ -479,11 +459,11 @@ The `nanoclaw` MCP server is created dynamically per agent call with the current
 
 ## Deployment
 
-NanoClaw runs as a single macOS launchd service.
+FFT_nano runs as a single macOS launchd service.
 
 ### Startup Sequence
 
-When NanoClaw starts, it:
+When FFT_nano starts, it:
 1. **Ensures Apple Container system is running** - Automatically starts it if needed (survives reboots)
 2. Initializes the SQLite database
 3. Loads state (registered groups, sessions, router state)
@@ -492,16 +472,16 @@ When NanoClaw starts, it:
 6. Starts the scheduler loop
 7. Starts the IPC watcher for container messages
 
-### Service: com.nanoclaw
+### Service: com.fft_nano
 
-**launchd/com.nanoclaw.plist:**
+**launchd/com.fft_nano.plist:**
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.nanoclaw</string>
+    <string>com.fft_nano</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{NODE_PATH}}</string>
@@ -523,9 +503,9 @@ When NanoClaw starts, it:
         <string>Andy</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/logs/nanoclaw.log</string>
+    <string>{{PROJECT_ROOT}}/logs/fft_nano.log</string>
     <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/logs/nanoclaw.error.log</string>
+    <string>{{PROJECT_ROOT}}/logs/fft_nano.error.log</string>
 </dict>
 </plist>
 ```
@@ -534,19 +514,19 @@ When NanoClaw starts, it:
 
 ```bash
 # Install service
-cp launchd/com.nanoclaw.plist ~/Library/LaunchAgents/
+cp launchd/com.fft_nano.plist ~/Library/LaunchAgents/
 
 # Start service
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+launchctl load ~/Library/LaunchAgents/com.fft_nano.plist
 
 # Stop service
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
+launchctl unload ~/Library/LaunchAgents/com.fft_nano.plist
 
 # Check status
-launchctl list | grep nanoclaw
+launchctl list | grep fft_nano
 
 # View logs
-tail -f logs/nanoclaw.log
+tail -f logs/fft_nano.log
 ```
 
 ---
@@ -564,7 +544,7 @@ All agents run inside Apple Container (lightweight Linux VMs), providing:
 
 ### Prompt Injection Risk
 
-WhatsApp messages could contain malicious instructions attempting to manipulate Claude's behavior.
+WhatsApp messages could contain malicious instructions attempting to manipulate the agent's behavior.
 
 **Mitigations:**
 - Container isolation limits blast radius
@@ -572,7 +552,7 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 - Trigger word required (reduces accidental processing)
 - Agents can only access their group's mounted directories
 - Main can configure additional directories per group
-- Claude's built-in safety training
+- Model safety training (varies by provider)
 
 **Recommendations:**
 - Only register trusted groups
@@ -584,7 +564,7 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 
 | Credential | Storage Location | Notes |
 |------------|------------------|-------|
-| Claude CLI Auth | data/sessions/{group}/.claude/ | Per-group isolation, mounted to /home/node/.claude/ |
+| Pi State | data/pi/{group}/.pi/ | Per-group isolation, mounted to /home/node/.pi/ |
 | WhatsApp Session | store/auth/ | Auto-created, persists ~20 days |
 
 ### File Permissions
@@ -602,18 +582,18 @@ chmod 700 groups/
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| No response to messages | Service not running | Check `launchctl list | grep nanoclaw` |
-| "Claude Code process exited with code 1" | Apple Container failed to start | Check logs; NanoClaw auto-starts container system but may fail |
-| "Claude Code process exited with code 1" | Session mount path wrong | Ensure mount is to `/home/node/.claude/` not `/root/.claude/` |
-| Session not continuing | Session ID not saved | Check `data/sessions.json` |
-| Session not continuing | Mount path mismatch | Container user is `node` with HOME=/home/node; sessions must be at `/home/node/.claude/` |
+| No response to messages | Service not running | Check `launchctl list | grep fft_nano` |
+| "Agent runner exited with code 1" | Apple Container failed to start | Check logs; FFT_nano auto-starts container system but may fail |
+| "Agent runner exited with code 1" | Pi home mount path wrong | Ensure mount is to `/home/node/.pi/` |
+| Session not continuing | Pi state not persisted | Check `data/pi/<group>/.pi/` mount and container logs |
+| Session not continuing | Mount path mismatch | Container user is `node` with HOME=/home/node; state must be at `/home/node/.pi/` |
 | "QR code expired" | WhatsApp session expired | Delete store/auth/ and restart |
-| "No groups registered" | Haven't added groups | Use `@Andy add group "Name"` in main |
+| "No groups registered" | Haven't added groups | Use `@FarmFriend add group "Name"` in main |
 
 ### Log Location
 
-- `logs/nanoclaw.log` - stdout
-- `logs/nanoclaw.error.log` - stderr
+- `logs/fft_nano.log` - stdout
+- `logs/fft_nano.error.log` - stderr
 
 ### Debug Mode
 
