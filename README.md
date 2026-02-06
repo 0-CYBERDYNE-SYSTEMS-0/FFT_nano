@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="assets/nanoclaw-logo.png" alt="FFT_nano" width="400">
+  <img src="assets/fft_nano-logo.png" alt="FarmFriend_Terminal:nano (FFT_nano)" width="400">
 </p>
 
 <p align="center">
-  FarmFriendTerminal_nano (FFT_nano): a secure, containerized AI assistant for farmers.
+  FarmFriend_Terminal:nano (FFT_nano): a secure, containerized AI assistant for farmers.
 </p>
 
 ## What This Is
 
-FFT_nano is a fork/evolution of NanoClaw: a minimal, security-first “AI agent in a container” runtime.
+FarmFriend_Terminal:nano (FFT_nano) is a minimal, security-first “AI agent in a container” runtime, focused on farm workflows.
 
 The goal here is to turn that foundation into a **paradigm-shifting agricultural assistant** that:
 - Works for farmers of all sizes (solo → enterprise)
@@ -22,12 +22,19 @@ The codebase stays intentionally small: one Node process + one containerized age
 ## Quick Start
 
 ```bash
-git clone <your-fft_nano-fork>
-cd fft_nano
+git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
+cd FFT_nano
 
 npm install
 ./container/build.sh        # macOS (Apple Container)
 # or ./container/build-docker.sh  # Linux/RPi
+
+# Configure LLM (example: Z.AI GLM)
+cat > .env <<'EOF'
+PI_API=zai
+PI_MODEL=glm-4.7
+ZAI_API_KEY=...
+EOF
 
 # If using WhatsApp:
 npm run auth
