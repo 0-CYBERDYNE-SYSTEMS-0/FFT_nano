@@ -8,14 +8,14 @@ FarmFriend_Terminal:nano (FFT_nano): a secure, containerized AI assistant for fa
 
 ## What This Is
 
-FarmFriend_Terminal:nano (FFT_nano) is a minimal, security-first “AI agent in a container” runtime, focused on farm workflows.
+FarmFriend_Terminal:nano (FFT_nano) is a minimal, security-first AI agent in a container runtime for farm workflows. **Telegram and WhatsApp** - your channel, your choice.
 
-The goal here is to turn that foundation into a **paradigm-shifting agricultural assistant** that:
+The goal here is to turn that foundation into a paradigm-shifting agricultural assistant that:
 - Works for farmers of all sizes (solo → enterprise)
-- Runs *locally where it counts* (edge devices like Raspberry Pi) and *online where it helps*
-- Is usable from a phone (WhatsApp and/or Telegram)
+- Runs locally where it counts (edge devices like Raspberry Pi) and online where it helps
+- Is usable from a phone (Telegram or WhatsApp)
 - Is proactive (scheduled tasks + event-driven workflows), not just reactive prompting
-- Has long-term memory that feels like “Jarvis”: context-aware, quietly helpful, low-friction
+- Has long-term memory that feels like "Jarvis": context-aware, quietly helpful, low-friction
 
 The codebase stays intentionally small: one Node process + one containerized agent runner.
 
@@ -29,15 +29,22 @@ npm install
 ./container/build.sh        # macOS (Apple Container)
 # or ./container/build-docker.sh  # Linux/RPi
 
-# Configure LLM (example: Z.AI GLM)
+# Configure LLM (example: Z.AI GLM) and your chat channel
 cat > .env <<'EOF'
 PI_API=zai
 PI_MODEL=glm-4.7
 ZAI_API_KEY=...
+
+# Choose your channel:
+# Telegram: add your bot token
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+
+# OR WhatsApp: run npm run auth instead
 EOF
 
-# If using WhatsApp:
-npm run auth
+# Start FFT_nano:
+# - Telegram: message /start to your bot after adding the token
+# - WhatsApp: npm run auth first, then start
 
 npm run dev
 ```
@@ -56,19 +63,15 @@ Then configure your runtime, build the agent image, and start the service.
 
 **AI-native.** No monitoring dashboard; ask FarmFriend what's happening. Debug by asking it to read logs and state.
 
-**Security by isolation.** The agent runs inside an actual Linux container (Apple Container on macOS; Docker on Linux/RPi). It can only see what you mount.
-
-**Minimal harness, real isolation.** The agent runs inside a real Linux container and can write/read code and memory files in its workspace.
-
 ## What It Supports
 
-- **WhatsApp I/O** - Message from your phone (via Baileys / WhatsApp Web)
-- **Telegram I/O (optional)** - Bot-based I/O for simpler, server-friendly deployments
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
-- **Main channel** - Your private channel (self-chat) for admin control; every other group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run FarmFriend and can message you back
-- **Web access** - Use bash (curl) and browser automation
-- **Container isolation** - Agents sandboxed in Apple Container (macOS) or Docker (Linux/RPi)
+- **Telegram I/O** - Built-in bot-based messaging (server-friendly, always-on)
+- **WhatsApp I/O** - Personal WhatsApp via Baileys
+- **Isolated group context** - Each group has its own memory, filesystem, and container sandbox
+- **Main channel** - Your private channel for admin control
+- **Scheduled tasks** - Recurring jobs that run FarmFriend and message you back
+- **Web access** - bash (curl) and browser automation
+- **Container isolation** - Sandboxed agents in Apple Container (macOS) or Docker (Linux/RPi)
 
 ## Usage
 
@@ -80,7 +83,7 @@ Talk to your assistant with the trigger word (default: `@FarmFriend`):
 @FarmFriend log that we sprayed Field 3 with product X at rate Y today
 ```
 
-From the main channel (your self-chat), you can manage groups and tasks:
+From the main channel, you can manage groups and tasks:
 ```
 @FarmFriend list all scheduled tasks across groups
 @FarmFriend pause the Monday briefing task
@@ -100,7 +103,7 @@ The codebase is small enough that the agent can modify it.
 
 ## Contributing
 
-FFT_nano is intentionally a “fork-that-becomes-a-product”. Keep changes security-first and easy to reason about.
+FFT_nano is intentionally a "fork-that-becomes-a-product". Keep changes security-first and easy to reason about.
 
 ### Roadmap
 
@@ -114,44 +117,31 @@ FFT_nano is intentionally a “fork-that-becomes-a-product”. Keep changes secu
 - macOS or Linux
 - Node.js 20+
 - An LLM API key usable by `pi` (pi-coding-agent)
-- [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux)
+- Apple Container (macOS) or Docker (macOS/Linux)
 
 ## Configuration
 
-- `PI_BASE_URL`: optional; if set, also treated as `OPENAI_BASE_URL` for OpenAI-compatible endpoints
-- `PI_API_KEY`: optional; passed to `pi` via `--api-key`
-- `PI_MODEL`: optional; passed to `pi` via `--model`
-- `PI_API`: optional; passed to `pi` via `--provider` (e.g. `openai`, `anthropic`, `google`)
-- `CONTAINER_RUNTIME`: `auto` (default), `apple`, or `docker`
-- `WHATSAPP_ENABLED`: `1` (default) or `0`
-- `TELEGRAM_BOT_TOKEN`: enables Telegram
-- `TELEGRAM_MAIN_CHAT_ID`: optional; maps a Telegram chat to the `main` group folder
-- `TELEGRAM_ADMIN_SECRET`: required to claim the main/admin chat via Telegram command `/main <secret>`
-- `TELEGRAM_AUTO_REGISTER`: `1` (default) or `0`
-
-Build the agent container image:
-
-```bash
-./build.sh                  # Apple Container (macOS)
-./build-docker.sh           # Docker (Linux/RPi)
-# (or run the scripts directly under ./container/)
-```
-
-Smoke test without an LLM (container only):
-
-- Set `FFT_NANO_DRY_RUN=1` on the host (so it gets mounted into the container via `.env`/env allowlist)
-- Send any message; the agent runner will return a deterministic `DRY_RUN:` response
+| Variable | Purpose |
+|----------|---------|
+| `PI_API` | LLM provider (e.g. `zai`, `openai`, `anthropic`) |
+| `PI_MODEL` | Model name (e.g. `glm-4.7`) |
+| `ZAI_API_KEY` | Your API key |
+| `CONTAINER_RUNTIME` | `auto`, `apple`, or `docker` |
+| `TELEGRAM_BOT_TOKEN` | Enables Telegram bot |
+| `TELEGRAM_MAIN_CHAT_ID` | Maps Telegram chat to main group |
+| `TELEGRAM_ADMIN_SECRET` | Required to claim admin via `/main <secret>` |
+| `WHATSAPP_ENABLED` | `1` (default) or `0` |
 
 ## Architecture
 
 ```
-Channels (WhatsApp / Telegram) --> SQLite --> Polling loop --> Container (Pi agent runtime) --> Response
+Channels (Telegram / WhatsApp) --> SQLite --> Polling loop --> Container (Pi agent) --> Response
 ```
 
-Single Node.js process. Agents execute in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
+Single Node.js process. Agents in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
 
 Key files:
-- `src/index.ts` - Main app: WhatsApp connection, routing, IPC
+- `src/index.ts` - Main app: channel connections, routing, IPC
 - `src/container-runner.ts` - Spawns agent containers
 - `src/task-scheduler.ts` - Runs scheduled tasks
 - `src/db.ts` - SQLite operations
@@ -159,45 +149,41 @@ Key files:
 
 ## FAQ
 
-**WhatsApp vs Telegram?**
+**Telegram or WhatsApp?**
 
-WhatsApp is convenient when you want to talk from your personal account; Telegram is bot-native and often easier to deploy on servers/edge devices. FFT_nano supports WhatsApp and has optional Telegram support.
+Telegram is bot-native and server-friendly (always-on, no phone required). WhatsApp is convenient for personal use. FFT_nano supports both - pick what works for you.
 
 **How do I make Telegram my main/admin channel?**
 
-1. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_SECRET` in the host environment
+1. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_SECRET` in `.env`
 2. Start FFT_nano
 3. DM your bot:
    - `/id` to see your chat id
-   - `/main <secret>` to claim this DM as the `main` channel (persists in `data/registered_groups.json`)
+   - `/main <secret>` to claim the main channel
 
 **Why Apple Container instead of Docker?**
 
-On macOS, Apple Container is lightweight and fast. On Linux/RPi, Docker is the default. You can force either with `CONTAINER_RUNTIME`.
+On macOS, Apple Container is lightweight and fast. On Linux/RPi, Docker is the default. Force either with `CONTAINER_RUNTIME`.
 
 **Can I run this on Linux?**
 
-Yes. Install Docker, build the agent image with `./container/build-docker.sh`, and run FFT_nano with `CONTAINER_RUNTIME=docker`.
+Yes. Install Docker, build with `./container/build-docker.sh`, run with `CONTAINER_RUNTIME=docker`.
 
 **Is this secure?**
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
+Agents run in containers, not application-level permission checks. They only access mounted directories. The codebase is small enough to review. See [docs/SECURITY.md](docs/SECURITY.md).
 
 **Why no configuration files?**
 
-We don't want configuration sprawl. Every user should customize it so that the code matches exactly what they want rather than configuring a generic system.
+No configuration sprawl. Customize the code directly - it's small enough to be safe.
 
-**How do I debug issues?**
+**How do I debug?**
 
-Ask FarmFriend. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach.
+Ask FarmFriend. "Why isn't the scheduler running?" "What's in the logs?" That's the AI-native approach.
 
-**Why isn't it working?**
+**What changes will be accepted?**
 
-Check logs, then ask FarmFriend to diagnose.
-
-**What changes will be accepted into the codebase?**
-
-Security fixes, bug fixes, and changes that advance the FarmFriend mission while keeping the system understandable.
+Security fixes, bug fixes, and changes that advance the FarmFriend mission while keeping things understandable.
 
 ## License
 

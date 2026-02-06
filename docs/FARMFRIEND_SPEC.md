@@ -7,7 +7,7 @@ This document describes how to evolve FFT_nano from a secure “agent-in-a-conta
 FFT_nano currently consists of:
 
 - A single Node.js host process that:
-  - Receives messages from chat channels (WhatsApp is built-in today; Telegram is optional)
+  - Receives messages from chat channels (Telegram and WhatsApp - both built-in)
   - Stores messages (and scheduling state) in SQLite
   - Runs the agent in an isolated Linux container
   - Relays agent responses back to chat
