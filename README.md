@@ -1,10 +1,8 @@
-<p align="center">
-  <img src="assets/fft_nano-logo.png" alt="FarmFriend_Terminal:nano (FFT_nano)" width="400">
-</p>
+```text
+FFT_NANO
+```
 
-<p align="center">
-  FarmFriend_Terminal:nano (FFT_nano): a secure, containerized AI assistant for farmers.
-</p>
+FarmFriend_Terminal:nano (FFT_nano): a secure, containerized AI assistant for farmers.
 
 ## What This Is
 
