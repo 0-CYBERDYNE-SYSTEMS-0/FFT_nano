@@ -648,7 +648,9 @@ export async function runContainerAgent(
         ``,
       ];
 
-      if (isVerbose) {
+      const isError = code !== 0;
+
+      if (isVerbose || isError) {
         logLines.push(
           `=== Input ===`,
           JSON.stringify(payload, null, 2),
@@ -683,14 +685,6 @@ export async function runContainerAgent(
             .join('\n'),
           ``,
         );
-
-        if (code !== 0) {
-          logLines.push(
-            `=== Stderr (last 500 chars) ===`,
-            stderr.slice(-500),
-            ``,
-          );
-        }
       }
 
       fs.writeFileSync(logFile, logLines.join('\n'));
@@ -721,7 +715,8 @@ export async function runContainerAgent(
             group: group.name,
             code,
             duration,
-            stderr: stderr.slice(-500),
+            stderr,
+            stdout,
             logFile,
           },
           'Container exited with error',
@@ -770,7 +765,8 @@ export async function runContainerAgent(
         logger.error(
           {
             group: group.name,
-            stdout: stdout.slice(-500),
+            stdout,
+            stderr,
             error: err,
           },
           'Failed to parse container output',
