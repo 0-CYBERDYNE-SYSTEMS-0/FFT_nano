@@ -6,9 +6,12 @@ Original requirements and design decisions from the project creator.
 
 ## Why This Exists
 
-This is a lightweight, secure alternative to OpenClaw (formerly ClawBot). That project became a monstrosity - 4-5 different processes running different gateways, endless configuration files, endless integrations. It's a security nightmare where agents don't run in isolated processes; there's all kinds of leaky workarounds trying to prevent them from accessing parts of the system they shouldn't. It's impossible for anyone to realistically understand the whole codebase. When you run it you're kind of just yoloing it.
+FFT_nano is a focused, security-first AI assistant built for farm workflows. It keeps things small and understandable: one Node.js process, minimal complexity, and real isolation through containers.
 
-FFT_nano builds on the same small, security-first core.
+The goal is a personal farm assistant that's:
+- Simple enough to reason about
+- Secure by design (not by exception)
+- Built for real agricultural work
 
 ---
 
