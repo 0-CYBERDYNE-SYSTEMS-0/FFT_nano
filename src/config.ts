@@ -1,3 +1,4 @@
+import os from 'os';
 import path from 'path';
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'FarmFriend';
@@ -10,7 +11,7 @@ export const SCHEDULER_MODE =
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
-const HOME_DIR = process.env.HOME || '/Users/user';
+const HOME_DIR = process.env.HOME || os.homedir();
 
 function expandHomePath(input: string): string {
   const trimmed = input.trim();
