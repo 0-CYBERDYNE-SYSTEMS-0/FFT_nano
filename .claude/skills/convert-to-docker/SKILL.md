@@ -1,12 +1,12 @@
 ---
 name: convert-to-docker
-description: Convert NanoClaw from Apple Container to Docker for cross-platform support. Use when user wants to run on Linux, switch to Docker, enable cross-platform deployment, or migrate away from Apple Container. Triggers on "docker", "linux support", "convert to docker", "cross-platform", or "replace apple container".
+description: Convert FFT_nano from Apple Container to Docker for cross-platform support. Use when user wants to run on Linux, switch to Docker, enable cross-platform deployment, or migrate away from Apple Container. Triggers on "docker", "linux support", "convert to docker", "cross-platform", or "replace apple container".
 disable-model-invocation: true
 ---
 
 # Convert to Docker
 
-This skill migrates NanoClaw from Apple Container (macOS-only) to Docker for cross-platform support (macOS and Linux).
+This skill migrates FFT_nano from Apple Container (macOS-only) to Docker for cross-platform support (macOS and Linux).
 
 **What this changes:**
 - Container runtime: Apple Container → Docker
@@ -201,7 +201,7 @@ Docker provides cross-platform support (macOS and Linux), a large ecosystem, and
 ```markdown
 **Can I run this on Linux?**
 
-Yes. NanoClaw uses Docker, which works on both macOS and Linux. Just install Docker and run `/setup`.
+Yes. FFT_nano uses Docker, which works on both macOS and Linux. Just install Docker and run `/setup`.
 ```
 
 ## 5. Update Skills
@@ -248,8 +248,8 @@ Update build verification:
 Verify the build succeeded:
 
 \`\`\`bash
-docker images | grep nanoclaw-agent
-echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "Container OK" || echo "Container build failed"
+docker images | grep fft_nano-agent
+echo '{}' | docker run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK" || echo "Container build failed"
 \`\`\`
 ```
 
@@ -284,7 +284,7 @@ npm run build
 ./container/build.sh
 
 # Verify image exists
-docker images | grep nanoclaw-agent
+docker images | grep fft_nano-agent
 ```
 
 ## 7. Test the Migration
@@ -292,14 +292,14 @@ docker images | grep nanoclaw-agent
 ### 7a. Test basic container execution
 
 ```bash
-echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "Container OK"
+echo '{}' | docker run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK"
 ```
 
 ### 7b. Test readonly mounts
 
 ```bash
 mkdir -p /tmp/test-ro && echo "test" > /tmp/test-ro/file.txt
-docker run --rm --entrypoint /bin/bash -v /tmp/test-ro:/test:ro nanoclaw-agent:latest \
+docker run --rm --entrypoint /bin/bash -v /tmp/test-ro:/test:ro fft_nano-agent:latest \
   -c "cat /test/file.txt && touch /test/new.txt 2>&1 || echo 'Write blocked (expected)'"
 rm -rf /tmp/test-ro
 ```
@@ -310,7 +310,7 @@ Expected: Read succeeds, write fails with "Read-only file system".
 
 ```bash
 mkdir -p /tmp/test-rw
-docker run --rm --entrypoint /bin/bash -v /tmp/test-rw:/test nanoclaw-agent:latest \
+docker run --rm --entrypoint /bin/bash -v /tmp/test-rw:/test fft_nano-agent:latest \
   -c "echo 'test write' > /test/new.txt && cat /test/new.txt"
 cat /tmp/test-rw/new.txt && rm -rf /tmp/test-rw
 ```

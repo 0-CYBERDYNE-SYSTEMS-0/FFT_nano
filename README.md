@@ -1,3 +1,5 @@
+![FFT_nano Logo](logo.png)
+
 ```text
 FFT_NANO
 ```
