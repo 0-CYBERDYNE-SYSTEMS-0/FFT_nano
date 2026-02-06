@@ -8,16 +8,32 @@ FarmFriend_Terminal:nano (FFT_nano): a secure, containerized AI assistant for fa
 
 ## What This Is
 
-FarmFriend_Terminal:nano (FFT_nano) is a minimal, security-first AI agent in a container runtime for farm workflows. **Telegram and WhatsApp** - your channel, your choice.
+FFT_nano is different from any software you've used before.
 
-The goal here is to turn that foundation into a paradigm-shifting agricultural assistant that:
-- Works for farmers of all sizes (solo → enterprise)
-- Runs locally where it counts (edge devices like Raspberry Pi) and online where it helps
-- Is usable from a phone (Telegram or WhatsApp)
-- Is proactive (scheduled tasks + event-driven workflows), not just reactive prompting
-- Has long-term memory that feels like "Jarvis": context-aware, quietly helpful, low-friction
+Most farm software is rigid - you learn its menus, work around its limits, and call a dealer when something breaks. FFT_nano isn't like that. It's small enough to understand, and it talks to you. When something goes wrong, you ask it what's happening. When you want it to work differently, you tell it what you need and it adapts.
 
-The codebase stays intentionally small: one Node process + one containerized agent runner.
+This is software that learns. It reads its own documentation, understands its own code, and can modify itself based on what you ask for. You're not using software - you're working with it.
+
+## The Difference
+
+| Traditional Farm Software | FFT_nano |
+|-------------------------|----------|
+| Fixed menus and workflows | Tell it what you want, it figures it out |
+| Call a dealer to fix issues | "What's wrong?" - it reads the logs and tells you |
+| Configuration files and menus | Just ask: "change the trigger to @Bob" |
+| Updates that break your workflow | It's small enough that you control every change |
+| Closed and rigid | Open, readable, bendable to your needs |
+
+## What It Does
+
+FFT_nano connects to Telegram or WhatsApp and becomes your farm's second brain:
+- Logs field work, equipment hours, inputs applied
+- Creates weather-aware fieldwork plans
+- Sends reminders when maintenance is due
+- Answers questions about your operation
+- Learns from every conversation
+
+All through a simple chat interface on your phone.
 
 ## Quick Start
 
@@ -49,121 +65,136 @@ EOF
 npm run dev
 ```
 
-Then configure your runtime, build the agent image, and start the service.
+## Talk to It Like a Hand
 
-## Core Principles
-
-**Small enough to understand.** One process, a few source files. No microservices, no message queues, no abstraction layers.
-
-**Secure by isolation.** Agents run in Linux containers (Apple Container on macOS, or Docker). They can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
-
-**Built for one user (or one farm).** Fork it and tailor it.
-
-**Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that this is safe.
-
-**AI-native.** No monitoring dashboard; ask FarmFriend what's happening. Debug by asking it to read logs and state.
-
-## What It Supports
-
-- **Telegram I/O** - Built-in bot-based messaging (server-friendly, always-on)
-- **WhatsApp I/O** - Personal WhatsApp via Baileys
-- **Isolated group context** - Each group has its own memory, filesystem, and container sandbox
-- **Main channel** - Your private channel for admin control
-- **Scheduled tasks** - Recurring jobs that run FarmFriend and message you back
-- **Web access** - bash (curl) and browser automation
-- **Container isolation** - Sandboxed agents in Apple Container (macOS) or Docker (Linux/RPi)
-
-## Usage
-
-Talk to your assistant with the trigger word (default: `@FarmFriend`):
+FFT_nano understands plain language. No menus to learn:
 
 ```
 @FarmFriend create a weekly fieldwork plan for the next 7 days (weather-aware)
 @FarmFriend remind me to service the tractor every 50 hours of runtime
 @FarmFriend log that we sprayed Field 3 with product X at rate Y today
+@FarmFriend why isn't the scheduler running?
+@FarmFriend change the trigger word to @Bob
 ```
 
-From the main channel, you can manage groups and tasks:
+From the main channel, manage your operation:
 ```
 @FarmFriend list all scheduled tasks across groups
 @FarmFriend pause the Monday briefing task
 @FarmFriend join the Family Chat group
 ```
 
+## It Reads Its Own Docs
+
+Unlike traditional software that comes with a manual you never read, FFT_nano knows how it works. Ask it:
+
+- "How do I add a new scheduled task?"
+- "What files control the trigger word?"
+- "Why did the container fail to start?"
+- "Show me the security model"
+
+It reads the documentation and explains it in context. You don't need to learn the codebase - just ask.
+
+## It Debugged Itself
+
+When something breaks, you don't guess. You ask:
+
+- "What's in the logs?"
+- "Why did the container exit with code 1?"
+- "Is the scheduler running?"
+- "What changed in the last hour?"
+
+FFT_nano reads its own logs, checks its own state, and tells you what's wrong. Often it can fix it too.
+
+## Built for Real Farms
+
+- **Small enough to understand** - One process, a few source files
+- **Secure by design** - Agents run in isolated containers
+- **Runs anywhere** - Raspberry Pi, Mac, Linux server
+- **Your data stays yours** - SQLite locally, no cloud dependencies
+- **No vendor lock-in** - Fork it, own it, change it
+
+## How It Thinks
+
+FFT_nano runs a single Node.js process that:
+1. Receives messages from Telegram or WhatsApp
+2. Stores everything in SQLite
+3. Spins up an isolated Linux container for the AI agent
+4. Returns the response to your phone
+
+The agent runs inside a real container with only the files you allow mounted. Secure by default.
+
+## Core Philosophy
+
+**Small enough to understand.** No microservices, no queues, no abstraction layers you can't see.
+
+**Secure by isolation.** Agents run in containers. They only see what you mount. Bash is safe because it runs inside the container.
+
+**Customization = conversation.** No configuration files to learn. Just tell FFT_nano what you want.
+
+**AI-native operations.** No monitoring dashboard needed. Ask FarmFriend what's happening.
+
 ## Customizing
 
-There are no configuration files to learn. Just change the code and memory files:
+There are no configuration files to learn. Change behavior by asking:
 
-- "Change the trigger word to @Bob"
-- "Remember in the future to make responses shorter and more direct"
+- "Remember in the future to make responses shorter"
 - "Add a custom greeting when I say good morning"
-- "Store conversation summaries weekly"
+- "Log conversation summaries weekly"
+- "Change the trigger word to @Bob"
 
-The codebase is small enough that the agent can modify it.
+The codebase is small enough that the agent can read, understand, and modify it. You're not fighting software - you're directing it.
 
-## Contributing
+## Architecture
 
-FFT_nano is intentionally a "fork-that-becomes-a-product". Keep changes security-first and easy to reason about.
+```
+You (Telegram/WhatsApp) --> FFT_nano (Node.js) --> Container (AI Agent) --> Response
+                                      |
+                                      v
+                               SQLite (local storage)
+```
 
-### Roadmap
-
-- WhatsApp Business API channel (scale/robustness)
-- Farm ledger (fields, operations, inventory, equipment)
-- Event-driven proactivity (alerts + digests)
-- Optional on-farm sensor ingestion (MQTT)
+Key files:
+- `src/index.ts` - Main app: channels, routing, IPC
+- `src/container-runner.ts` - Spawns isolated agent containers
+- `src/task-scheduler.ts` - Runs scheduled tasks
+- `src/db.ts` - SQLite operations
+- `groups/*/CLAUDE.md` - Per-group memory and preferences
 
 ## Requirements
 
 - macOS or Linux
 - Node.js 20+
-- An LLM API key usable by `pi` (pi-coding-agent)
-- Apple Container (macOS) or Docker (macOS/Linux)
+- An LLM API key (e.g., Z.AI, OpenAI, Anthropic)
+- Apple Container (macOS) or Docker (Linux/RPi)
 
 ## Configuration
 
 | Variable | Purpose |
 |----------|---------|
-| `PI_API` | LLM provider (e.g. `zai`, `openai`, `anthropic`) |
-| `PI_MODEL` | Model name (e.g. `glm-4.7`) |
+| `PI_API` | LLM provider (zai, openai, anthropic) |
+| `PI_MODEL` | Model name (glm-4.7, etc.) |
 | `ZAI_API_KEY` | Your API key |
-| `CONTAINER_RUNTIME` | `auto`, `apple`, or `docker` |
-| `TELEGRAM_BOT_TOKEN` | Enables Telegram bot |
+| `CONTAINER_RUNTIME` | apple or docker |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_MAIN_CHAT_ID` | Maps Telegram chat to main group |
-| `TELEGRAM_ADMIN_SECRET` | Required to claim admin via `/main <secret>` |
-| `WHATSAPP_ENABLED` | `1` (default) or `0` |
-
-## Architecture
-
-```
-Channels (Telegram / WhatsApp) --> SQLite --> Polling loop --> Container (Pi agent) --> Response
-```
-
-Single Node.js process. Agents in isolated Linux containers with mounted directories. IPC via filesystem. No daemons, no queues, no complexity.
-
-Key files:
-- `src/index.ts` - Main app: channel connections, routing, IPC
-- `src/container-runner.ts` - Spawns agent containers
-- `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations
-- `groups/*/CLAUDE.md` - Per-group memory
+| `TELEGRAM_ADMIN_SECRET` | Secret to claim admin via /main |
+| `WHATSAPP_ENABLED` | 1 or 0 |
 
 ## FAQ
 
 **Telegram or WhatsApp?**
 
-Telegram is bot-native and server-friendly (always-on, no phone required). WhatsApp is convenient for personal use. FFT_nano supports both - pick what works for you.
+Telegram: Bot-native, server-friendly, always-on. No phone required.
+WhatsApp: Convenient for personal use, uses your phone.
 
-**How do I make Telegram my main/admin channel?**
+Pick what works for your operation.
 
-1. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_SECRET` in `.env`
+**How do I make Telegram my main channel?**
+
+1. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_SECRET` to `.env`
 2. Start FFT_nano
-3. DM your bot:
-   - `/id` to see your chat id
-   - `/main <secret>` to claim the main channel
-
-**Why Apple Container instead of Docker?**
-
-On macOS, Apple Container is lightweight and fast. On Linux/RPi, Docker is the default. Force either with `CONTAINER_RUNTIME`.
+3. Message your bot `/id` then `/main <secret>`
 
 **Can I run this on Linux?**
 
@@ -171,19 +202,19 @@ Yes. Install Docker, build with `./container/build-docker.sh`, run with `CONTAIN
 
 **Is this secure?**
 
-Agents run in containers, not application-level permission checks. They only access mounted directories. The codebase is small enough to review. See [docs/SECURITY.md](docs/SECURITY.md).
+Agents run in isolated containers with only mounted directories visible. The small codebase means you can actually review what it does. See [docs/SECURITY.md](docs/SECURITY.md).
 
 **Why no configuration files?**
 
-No configuration sprawl. Customize the code directly - it's small enough to be safe.
+Configuration files become their own complexity. Here, you customize by changing code. The codebase is small enough that this is safer than managing a dozen config files.
 
 **How do I debug?**
 
-Ask FarmFriend. "Why isn't the scheduler running?" "What's in the logs?" That's the AI-native approach.
+Ask FarmFriend. "Why isn't the scheduler running?" "What's in the logs?" It reads them for you.
 
-**What changes will be accepted?**
+**What makes this different from other farm software?**
 
-Security fixes, bug fixes, and changes that advance the FarmFriend mission while keeping things understandable.
+Most software tells you what you can do. FFT_nano asks what you want, then finds a way to make it happen. It's not a tool you learn - it's a partner you work with.
 
 ## License
 
