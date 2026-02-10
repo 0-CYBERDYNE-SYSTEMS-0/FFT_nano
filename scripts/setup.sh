@@ -23,7 +23,7 @@ node_major() {
 
 detect_runtime() {
   local raw="${CONTAINER_RUNTIME:-auto}"
-  raw="${raw,,}"
+  raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
 
   if [[ "$raw" == "apple" ]]; then
     echo "apple"; return
