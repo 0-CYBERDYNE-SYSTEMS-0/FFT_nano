@@ -384,11 +384,21 @@ async function runPiAgent(
 
   // pi --mode json emits JSON objects (one per line). We return the last assistant message.
   let lastAssistant = '';
+  let lastError: string | null = null;
   for (const line of res.stdout.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const evt = JSON.parse(trimmed) as any;
+
+      // If the model/provider returns an error stop reason, don't forward raw
+      // event streams back to chat. Surface the error instead.
+      const stopReason = evt?.message?.stopReason;
+      const errorMessage = evt?.message?.errorMessage;
+      if (stopReason === 'error' && typeof errorMessage === 'string' && errorMessage) {
+        lastError = errorMessage;
+      }
+
       if (evt?.type !== 'message_end') continue;
       if (evt?.message?.role !== 'assistant') continue;
 
@@ -410,6 +420,10 @@ async function runPiAgent(
     } catch {
       // Ignore non-JSON lines
     }
+  }
+
+  if (!lastAssistant && lastError) {
+    throw new Error(lastError);
   }
 
   if (!lastAssistant) {

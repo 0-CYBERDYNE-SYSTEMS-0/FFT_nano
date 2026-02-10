@@ -592,7 +592,12 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
-      return { result: null, streamed: false, ok: false };
+      // Reply with a short error rather than silently dropping the message.
+      // Also mark ok=true so we don't keep re-sending the same failing prompt.
+      const msg = output.error
+        ? `LLM error: ${output.error}`
+        : 'LLM error: agent runner failed (no details).';
+      return { result: msg, streamed: false, ok: true };
     }
 
     return { result: output.result, streamed: !!output.streamed, ok: true };
