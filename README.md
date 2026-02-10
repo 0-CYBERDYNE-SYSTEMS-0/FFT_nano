@@ -23,21 +23,15 @@ The codebase stays intentionally small: one Node process + one containerized age
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
 cd FFT_nano
 
-npm install
-./container/build.sh        # macOS (Apple Container)
-# or ./container/build-docker.sh  # Linux/RPi
+# One-time setup (installs deps, builds TypeScript, builds the agent image)
+./scripts/setup.sh
 
-# Configure LLM (example: Z.AI GLM)
-cat > .env <<'EOF'
-PI_API=zai
-PI_MODEL=glm-4.7
-ZAI_API_KEY=...
-EOF
-
-# If using WhatsApp:
+# Configure `.env` (copy is created from `.env.example` if missing)
+# Then, if using WhatsApp:
 npm run auth
 
-npm run dev
+# Start (dev)
+./scripts/start.sh dev
 ```
 
 Then configure your runtime, build the agent image, and start the service.
@@ -62,7 +56,7 @@ Then configure your runtime, build the agent image, and start the service.
 
 - **WhatsApp I/O** - Message from your phone (via Baileys / WhatsApp Web)
 - **Telegram I/O (optional)** - Bot-based I/O for simpler, server-friendly deployments
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
+- **Isolated group context** - Each group has its own `SOUL.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
 - **Main channel** - Your private channel (self-chat) for admin control; every other group is completely isolated
 - **Scheduled tasks** - Recurring jobs that run FarmFriend and can message you back
 - **Web access** - Use bash (curl) and browser automation
@@ -83,6 +77,9 @@ From the main channel (your self-chat), you can manage groups and tasks:
 @FarmFriend list all scheduled tasks across groups
 @FarmFriend pause the Monday briefing task
 @FarmFriend join the Family Chat group
+
+Coding agent (main/admin only):
+@FarmFriend /coder implement a new feature and run checks
 ```
 
 ## Customizing
@@ -153,7 +150,7 @@ Key files:
 - `src/container-runner.ts` - Spawns agent containers
 - `src/task-scheduler.ts` - Runs scheduled tasks
 - `src/db.ts` - SQLite operations
-- `groups/*/CLAUDE.md` - Per-group memory
+- `groups/*/SOUL.md` - Per-group memory
 
 ## FAQ
 

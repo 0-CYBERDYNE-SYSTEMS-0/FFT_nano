@@ -87,7 +87,7 @@ A secure, containerized assistant accessible via chat (WhatsApp today; Telegram 
 
 ```
 fft_nano/
-├── CLAUDE.md                      # Project context
+├── SOUL.md                      # Project context
 ├── docs/
 │   ├── SPEC.md                    # This specification document
 │   ├── REQUIREMENTS.md            # Architecture decisions
@@ -122,14 +122,15 @@ fft_nano/
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
 │
-├── .claude/                       # (optional) local customization helpers
+├── .claude/                       # (optional) dev-only helper files (not used by runtime)
 ├── groups/
-│   ├── CLAUDE.md                  # Global memory (all groups read this)
+│   ├── global/                    # Global memory scope
+│   │   ├── SOUL.md              # Global memory (all groups read; main can write)
 │   ├── main/                      # Self-chat (main control channel)
-│   │   ├── CLAUDE.md              # Main channel memory
+│   │   ├── SOUL.md              # Main channel memory
 │   │   └── logs/                  # Task execution logs
 │   └── {Group Name}/              # Per-group folders (created on registration)
-│       ├── CLAUDE.md              # Group-specific memory
+│       ├── SOUL.md              # Group-specific memory
 │       ├── logs/                  # Task logs for this group
 │       └── *.md                   # Files created by the agent
 │
@@ -247,14 +248,14 @@ Files with `{{PLACEHOLDER}}` values need to be configured:
 
 ## Memory System
 
-FFT_nano uses a hierarchical memory system based on CLAUDE.md files.
+FFT_nano uses a hierarchical memory system based on SOUL.md files.
 
 ### Memory Hierarchy
 
 | Level | Location | Read By | Written By | Purpose |
 |-------|----------|---------|------------|---------|
-| **Global** | `groups/CLAUDE.md` | All groups | Main only | Preferences, facts, context shared across all conversations |
-| **Group** | `groups/{name}/CLAUDE.md` | That group | That group | Group-specific context, conversation memory |
+| **Global** | `groups/global/SOUL.md` | All groups | Main only | Preferences, facts, context shared across all conversations |
+| **Group** | `groups/{name}/SOUL.md` | That group | That group | Group-specific context, conversation memory |
 | **Files** | `groups/{name}/*.md` | That group | That group | Notes, research, documents created during conversation |
 
 ### How Memory Works
@@ -262,12 +263,12 @@ FFT_nano uses a hierarchical memory system based on CLAUDE.md files.
 1. **Agent Context Loading**
    - Agent runs with `cwd` set to `groups/{group-name}/`
    - FFT_nano agent runner builds a system prompt that includes:
-     - `../CLAUDE.md` (global memory when mounted)
-     - `./CLAUDE.md` (group memory)
+     - `../SOUL.md` (global memory when mounted)
+     - `./SOUL.md` (group memory)
 
 2. **Writing Memory**
-   - When user says "remember this", agent writes to `./CLAUDE.md`
-   - When user says "remember this globally" (main channel only), agent writes to `../CLAUDE.md`
+   - When user says "remember this", agent writes to `./SOUL.md`
+   - When user says "remember this globally" (main channel only), agent writes to `../SOUL.md`
    - Agent can create files like `notes.md`, `research.md` in the group folder
 
 3. **Main Channel Privileges**
@@ -325,7 +326,7 @@ Sessions enable conversation continuity.
    │
    ▼
 8. FarmFriend processes message:
-   ├── Reads CLAUDE.md files for context
+   ├── Reads SOUL.md files for context
    └── Uses tools as needed (search, email, etc.)
    │
    ▼

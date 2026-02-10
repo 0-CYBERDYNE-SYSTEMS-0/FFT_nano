@@ -14,12 +14,15 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  profile?: 'farmfriend' | 'coder';
+  requestId?: string;
 }
 
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   error?: string;
+  streamed?: boolean;
 }
 
 async function readStdin(): Promise<string> {
@@ -47,6 +50,25 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
+function isTelegramChatJid(chatJid: string): boolean {
+  return chatJid.startsWith('telegram:');
+}
+
+function writeIpcMessage(chatJid: string, text: string): boolean {
+  try {
+    const dir = '/workspace/ipc/messages';
+    const ts = Date.now();
+    const rand = Math.random().toString(36).slice(2, 8);
+    const tmp = `${dir}/.tmp_${ts}_${rand}.json`;
+    const out = `${dir}/msg_${ts}_${rand}.json`;
+    fs.writeFileSync(tmp, JSON.stringify({ type: 'message', chatJid, text }));
+    fs.renameSync(tmp, out);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function readFileIfExists(filePath: string): string | null {
   try {
     if (!fs.existsSync(filePath)) return null;
@@ -57,13 +79,29 @@ function readFileIfExists(filePath: string): string | null {
 }
 
 function buildSystemPrompt(input: ContainerInput): string {
+  // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for
+  // backwards compatibility (older installs/groups).
   const globalMemory =
+    readFileIfExists('/workspace/global/SOUL.md') ||
+    readFileIfExists('/workspace/project/groups/global/SOUL.md') ||
     readFileIfExists('/workspace/global/CLAUDE.md') ||
     readFileIfExists('/workspace/project/groups/global/CLAUDE.md');
 
+  const groupMemory =
+    readFileIfExists('/workspace/group/SOUL.md') ||
+    readFileIfExists('/workspace/group/CLAUDE.md');
+
+  const isCoder = input.profile === 'coder';
+
   const lines: string[] = [];
-  lines.push('You are FarmFriend, an agricultural assistant.');
-  lines.push('Be direct, practical, and safe.');
+  if (isCoder) {
+    lines.push('You are FarmFriend (Coder), a headless coding agent.');
+    lines.push('Be direct, technical, and deterministic.');
+    lines.push('Prefer concrete file edits, commands, and verification.');
+  } else {
+    lines.push('You are FarmFriend, an agricultural assistant.');
+    lines.push('Be direct, practical, and safe.');
+  }
   lines.push('');
   lines.push('Workspace:');
   lines.push('- /workspace/group is your writable working directory and long-term memory.');
@@ -112,6 +150,19 @@ function buildSystemPrompt(input: ContainerInput): string {
     lines.push('');
   }
 
+  if (groupMemory) {
+    // Cap group memory to reduce prompt blowups.
+    const maxChars = 50_000;
+    const trimmed =
+      groupMemory.length > maxChars
+        ? groupMemory.slice(0, maxChars) +
+          `\n\n[NOTE: group memory truncated to ${maxChars} chars]\n`
+        : groupMemory;
+    lines.push('Group memory:');
+    lines.push(trimmed);
+    lines.push('');
+  }
+
   return lines.join('\n');
 }
 
@@ -137,26 +188,185 @@ function getPiArgs(
   return args;
 }
 
-async function runPiAgent(systemPrompt: string, prompt: string): Promise<string> {
+type TextDelta =
+  | { kind: 'append'; text: string }
+  | { kind: 'replace'; text: string };
+
+function extractAssistantTextDelta(evt: any): TextDelta | null {
+  if (!evt || typeof evt !== 'object') return null;
+
+  // Common delta-style shapes (best-effort).
+  if (evt.delta && typeof evt.delta.text === 'string') {
+    return { kind: 'append', text: evt.delta.text };
+  }
+  if (typeof evt.text === 'string' && evt.role === 'assistant') {
+    return { kind: 'append', text: evt.text };
+  }
+
+  // Full-message shapes (we treat as a replace).
+  if (evt.message?.role !== 'assistant') return null;
+  const content = evt.message?.content;
+  if (typeof content === 'string') return { kind: 'replace', text: content };
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (typeof block === 'string') parts.push(block);
+      else if (block && typeof block.text === 'string') parts.push(block.text);
+      else if (block && typeof block.content === 'string') parts.push(block.content);
+    }
+    return { kind: 'replace', text: parts.join('') };
+  }
+
+  return null;
+}
+
+async function runPiAgent(
+  systemPrompt: string,
+  prompt: string,
+  input: ContainerInput,
+): Promise<{ result: string; streamed: boolean }> {
+  const isCoder = input.profile === 'coder' && !input.isScheduledTask;
+  const isTelegram = isTelegramChatJid(input.chatJid);
+
+  let streamed = false;
+  let assistantSoFar = '';
+  let pendingDiff = '';
+  let lastStreamedLen = 0;
+  let lastProgressSend = 0;
+  let progressMsgCount = 0;
+
+  const maxTelegramMessages = 50;
+  const telegramMinIntervalMs = 4000;
+  const telegramMaxChunk = 900;
+
+  const maxWhatsAppMessages = 3;
+  const whatsAppMilestonesMs = [30_000, 120_000, 240_000];
+  const startTs = Date.now();
+  let milestoneIdx = 0;
+
+  const maybeSendTelegramProgress = () => {
+    if (!isCoder || !isTelegram) return;
+    if (!pendingDiff) return;
+    const now = Date.now();
+    if (progressMsgCount >= maxTelegramMessages) return;
+    if (now - lastProgressSend < telegramMinIntervalMs) return;
+
+    const chunk = pendingDiff.slice(0, telegramMaxChunk);
+    pendingDiff = pendingDiff.slice(chunk.length);
+    const ok = writeIpcMessage(
+      input.chatJid,
+      (input.requestId ? `[${input.requestId}] ` : '') + chunk,
+    );
+    if (ok) {
+      streamed = true;
+      progressMsgCount++;
+      lastProgressSend = now;
+    }
+  };
+
+  const maybeSendWhatsAppMilestone = () => {
+    if (!isCoder || isTelegram) return;
+    if (progressMsgCount >= maxWhatsAppMessages) return;
+    const now = Date.now();
+    if (milestoneIdx >= whatsAppMilestonesMs.length) return;
+    if (now - startTs < whatsAppMilestonesMs[milestoneIdx]) return;
+
+    milestoneIdx++;
+    const preview = assistantSoFar.trim()
+      ? assistantSoFar.trim().slice(-350)
+      : 'Still working...';
+    const ok = writeIpcMessage(
+      input.chatJid,
+      `${input.requestId ? `[${input.requestId}] ` : ''}Progress update: ${preview}`,
+    );
+    if (ok) {
+      streamed = true;
+      progressMsgCount++;
+    }
+  };
+
+  const applyDelta = (d: TextDelta) => {
+    if (d.kind === 'append') assistantSoFar += d.text;
+    else assistantSoFar = d.text;
+
+    // For Telegram we stream small diffs; for WhatsApp we only use it as preview
+    // in milestone updates.
+    if (isCoder && isTelegram) {
+      if (assistantSoFar.length > lastStreamedLen) {
+        pendingDiff += assistantSoFar.slice(lastStreamedLen);
+        lastStreamedLen = assistantSoFar.length;
+      } else if (assistantSoFar.length < lastStreamedLen) {
+        // If the stream resets/replaces with shorter text, reset our cursor.
+        lastStreamedLen = assistantSoFar.length;
+        pendingDiff = '';
+      }
+      maybeSendTelegramProgress();
+    }
+  };
+
   const tryRun = (useContinue: boolean) =>
     new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
       const args = getPiArgs(systemPrompt, prompt, useContinue);
+      const env = { ...process.env };
+      // Separate pi state between manager and coder runs.
+      if (input.profile === 'coder') {
+        env.PI_CODING_AGENT_DIR = '/home/node/.pi/agent-coder';
+      } else {
+        env.PI_CODING_AGENT_DIR = '/home/node/.pi/agent-farmfriend';
+      }
+
       const child = spawn('pi', args, {
         cwd: '/workspace/group',
+        env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       let stdout = '';
       let stderr = '';
+      let buf = '';
 
       child.stdout.on('data', (d) => {
-        stdout += d.toString();
+        const s = d.toString();
+        stdout += s;
+
+        if (!isCoder) return;
+
+        buf += s;
+        let idx: number;
+        while ((idx = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line);
+            const delta = extractAssistantTextDelta(evt);
+            if (delta) applyDelta(delta);
+          } catch {
+            // ignore non-JSON lines
+          }
+        }
+
+        maybeSendTelegramProgress();
+        maybeSendWhatsAppMilestone();
       });
       child.stderr.on('data', (d) => {
         stderr += d.toString();
       });
-      child.on('close', (code) => resolve({ code, stdout, stderr }));
-      child.on('error', (err) => resolve({ code: 1, stdout, stderr: String(err) }));
+      const ticker = isCoder
+        ? setInterval(() => {
+            maybeSendTelegramProgress();
+            maybeSendWhatsAppMilestone();
+          }, 1000)
+        : null;
+
+      child.on('close', (code) => {
+        if (ticker) clearInterval(ticker);
+        resolve({ code, stdout, stderr });
+      });
+      child.on('error', (err) => {
+        if (ticker) clearInterval(ticker);
+        resolve({ code: 1, stdout, stderr: String(err) });
+      });
     });
 
   // Prefer continuing prior context, but fall back cleanly.
@@ -204,10 +414,10 @@ async function runPiAgent(systemPrompt: string, prompt: string): Promise<string>
 
   if (!lastAssistant) {
     // If JSON parse fails due to formatting differences, fall back to raw stdout.
-    return res.stdout.trim();
+    return { result: res.stdout.trim(), streamed };
   }
 
-  return lastAssistant.trim();
+  return { result: lastAssistant.trim(), streamed };
 }
 
 async function main(): Promise<void> {
@@ -244,8 +454,43 @@ async function main(): Promise<void> {
       return;
     }
 
-    const result = await runPiAgent(systemPrompt, prompt);
-    writeOutput({ status: 'success', result });
+    const { result, streamed } = await runPiAgent(systemPrompt, prompt, input);
+
+    // OpenClaw-style: for coder runs, send output back to the originating chat
+    // via IPC (same platform), and suppress the host-side final send to avoid
+    // duplicate messages.
+    if (input.profile === 'coder' && !input.isScheduledTask) {
+      const outDir = '/workspace/group/coder_runs';
+      fs.mkdirSync(outDir, { recursive: true });
+      const rid = input.requestId || `coder_${Date.now()}`;
+
+      const maxInline = isTelegramChatJid(input.chatJid) ? 8000 : 3000;
+      let sent = false;
+      if (result.length <= maxInline) {
+        sent = writeIpcMessage(input.chatJid, result);
+      } else {
+        const filePath = `${outDir}/${rid}.md`;
+        try {
+          fs.writeFileSync(filePath, result);
+        } catch {
+          /* ignore */
+        }
+        const preview = result.slice(0, Math.min(1200, result.length));
+        sent = writeIpcMessage(
+          input.chatJid,
+          `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
+        );
+      }
+
+      writeOutput({
+        status: 'success',
+        result: sent ? null : result,
+        streamed: sent || streamed,
+      });
+      return;
+    }
+
+    writeOutput({ status: 'success', result, streamed });
   } catch (err) {
     writeOutput({
       status: 'error',

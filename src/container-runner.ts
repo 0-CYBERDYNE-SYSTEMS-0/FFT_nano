@@ -29,12 +29,15 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  profile?: 'farmfriend' | 'coder';
+  requestId?: string;
 }
 
 export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   error?: string;
+  streamed?: boolean;
 }
 
 interface VolumeMount {

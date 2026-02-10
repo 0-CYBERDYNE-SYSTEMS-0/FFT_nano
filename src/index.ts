@@ -143,10 +143,28 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
-  const memoryFile = path.join(groupDir, 'CLAUDE.md');
-  if (!fs.existsSync(memoryFile)) {
+  // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for
+  // backwards compatibility (older installs/groups).
+  const soulFile = path.join(groupDir, 'SOUL.md');
+  const legacyClaudeFile = path.join(groupDir, 'CLAUDE.md');
+
+  // If legacy exists but SOUL doesn't, migrate in-place to avoid split-brain.
+  if (!fs.existsSync(soulFile) && fs.existsSync(legacyClaudeFile)) {
+    try {
+      fs.renameSync(legacyClaudeFile, soulFile);
+    } catch {
+      // Cross-device or permission edge cases: fall back to copying.
+      try {
+        fs.copyFileSync(legacyClaudeFile, soulFile);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  if (!fs.existsSync(soulFile)) {
     fs.writeFileSync(
-      memoryFile,
+      soulFile,
       `# FarmFriend\n\nThis is the memory and working directory for: ${group.name}.\n`,
     );
   }
@@ -419,6 +437,31 @@ async function processMessage(msg: NewMessage): Promise<void> {
   // Main group responds to all messages; other groups require trigger prefix
   if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return;
 
+  // Explicit coder command (OpenClaw-style): /coder ...
+  // Security: only allow coder runs from main/admin chat.
+  let profile: 'farmfriend' | 'coder' = 'farmfriend';
+  let requestId: string | undefined;
+  let coderInstruction: string | null = null;
+  const stripped = isMainGroup
+    ? content
+    : content.replace(TRIGGER_PATTERN, '').trimStart();
+  if (/^\/coder\b/i.test(stripped)) {
+    if (!isMainGroup) {
+      await sendMessage(
+        msg.chat_jid,
+        `${ASSISTANT_NAME}: /coder is only available in the main/admin chat for safety.`,
+      );
+      return;
+    }
+    profile = 'coder';
+    coderInstruction = stripped.replace(/^\/coder\b/i, '').trim();
+    requestId = `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await sendMessage(
+      msg.chat_jid,
+      `${ASSISTANT_NAME}: Starting coder run (${requestId})...`,
+    );
+  }
+
   // Get all messages since last agent interaction so the session has full context
   const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || '';
   const missedMessages = getMessagesSince(
@@ -434,18 +477,33 @@ async function processMessage(msg: NewMessage): Promise<void> {
 
   if (!prompt) return;
 
+  const finalPrompt =
+    profile === 'coder' && coderInstruction
+      ? `${prompt}\n\n[CODER REQUEST]\n${coderInstruction}`
+      : prompt;
+
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
     'Processing message',
   );
 
   await setTyping(msg.chat_jid, true);
-  const response = await runAgent(group, prompt, msg.chat_jid);
+  const { result, streamed, ok } = await runAgent(
+    group,
+    finalPrompt,
+    msg.chat_jid,
+    profile,
+    requestId,
+  );
   await setTyping(msg.chat_jid, false);
 
-  if (response) {
+  // Only advance last-agent timestamp after a successful run; otherwise the
+  // next loop should retry with the same context window.
+  if (ok) {
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-    await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`);
+    if (!streamed && result) {
+      await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${result}`);
+    }
   }
 }
 
@@ -453,7 +511,9 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
-): Promise<string | null> {
+  profile: 'farmfriend' | 'coder' = 'farmfriend',
+  requestId?: string,
+): Promise<{ result: string | null; streamed: boolean; ok: boolean }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
 
   // Update tasks snapshot for container to read (filtered by group)
@@ -487,6 +547,8 @@ async function runAgent(
       groupFolder: group.folder,
       chatJid,
       isMain,
+      profile,
+      requestId,
     });
 
     if (output.status === 'error') {
@@ -494,13 +556,13 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
-      return null;
+      return { result: null, streamed: false, ok: false };
     }
 
-    return output.result;
+    return { result: output.result, streamed: !!output.streamed, ok: true };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
-    return null;
+    return { result: null, streamed: false, ok: false };
   }
 }
 
