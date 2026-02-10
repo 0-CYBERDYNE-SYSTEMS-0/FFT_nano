@@ -478,9 +478,9 @@ async function processMessage(msg: NewMessage): Promise<void> {
   let profile: 'farmfriend' | 'coder' = 'farmfriend';
   let requestId: string | undefined;
   let coderInstruction: string | null = null;
-  const stripped = isMainGroup
-    ? content
-    : content.replace(TRIGGER_PATTERN, '').trimStart();
+  // In main, allow either "/coder ..." or "@FarmFriend /coder ...".
+  // In non-main, the trigger prefix is required (checked above).
+  const stripped = content.replace(TRIGGER_PATTERN, '').trimStart();
   if (/^\/coder\b/i.test(stripped)) {
     if (!isMainGroup) {
       await sendMessage(
