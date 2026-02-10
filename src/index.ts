@@ -175,6 +175,42 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   );
 }
 
+function migrateLegacyClaudeMemoryFiles(): void {
+  // Best-effort migration: if a group folder has CLAUDE.md but no SOUL.md,
+  // rename it to SOUL.md to avoid split-brain naming.
+  const groupsRoot = path.join(DATA_DIR, '..', 'groups');
+  try {
+    if (!fs.existsSync(groupsRoot)) return;
+    const entries = fs.readdirSync(groupsRoot);
+    for (const folder of entries) {
+      const dir = path.join(groupsRoot, folder);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(dir);
+      } catch {
+        continue;
+      }
+      if (!stat.isDirectory()) continue;
+
+      const soul = path.join(dir, 'SOUL.md');
+      const legacy = path.join(dir, 'CLAUDE.md');
+      if (fs.existsSync(soul) || !fs.existsSync(legacy)) continue;
+
+      try {
+        fs.renameSync(legacy, soul);
+      } catch {
+        try {
+          fs.copyFileSync(legacy, soul);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } catch (err) {
+    logger.debug({ err }, 'Legacy CLAUDE.md migration skipped');
+  }
+}
+
 function maybeRegisterWhatsAppMainChat(): void {
   // Bootstrap: if the user hasn't registered a main group yet, default the
   // WhatsApp self-chat to "main" so there's always an admin/control channel.
@@ -1177,6 +1213,7 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  migrateLegacyClaudeMemoryFiles();
   maybePromoteConfiguredTelegramMain();
 
   const telegramEnabled = !!TELEGRAM_BOT_TOKEN;
