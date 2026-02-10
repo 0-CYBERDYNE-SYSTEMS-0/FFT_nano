@@ -31,7 +31,7 @@ cd FFT_nano
 npm run auth
 
 # Start (dev)
-./scripts/start.sh dev
+./scripts/start.sh dev telegram-only
 ```
 
 Then configure your runtime, build the agent image, and start the service.
@@ -123,6 +123,7 @@ FFT_nano is intentionally a “fork-that-becomes-a-product”. Keep changes secu
 - `TELEGRAM_MAIN_CHAT_ID`: optional; maps a Telegram chat to the `main` group folder
 - `TELEGRAM_ADMIN_SECRET`: required to claim the main/admin chat via Telegram command `/main <secret>`
 - `TELEGRAM_AUTO_REGISTER`: `1` (default) or `0`
+- `FFT_NANO_APPLE_CONTAINER_SELF_HEAL`: `1` (default) or `0` (disable). When enabled, FFT_nano will auto-restart Apple Container services once on common transient network/timeouts and retry the LLM call.
 
 Build the agent container image:
 
@@ -189,6 +190,28 @@ Ask FarmFriend. "Why isn't the scheduler running?" "What's in the recent logs?" 
 **Why isn't it working?**
 
 Check logs, then ask FarmFriend to diagnose.
+
+## Troubleshooting
+
+**Telegram receives messages but replies with LLM timeouts (Apple Container / macOS)**
+
+If the bot replies with `LLM error: Request timed out.` (or similar), the Apple Container network VM is likely stuck.
+
+Run:
+
+```bash
+container system stop
+container system start
+```
+
+FFT_nano also attempts to self-heal this automatically by default (see `FFT_NANO_APPLE_CONTAINER_SELF_HEAL`).
+
+**Telegram polling conflict ("terminated by other getUpdates request")**
+
+This happens when two FFT_nano instances are running at the same time (for example: launchd daemon + `./scripts/start.sh dev`).
+
+- Stop one of them, then retry.
+- FFT_nano also uses a lock file (`data/fft_nano.lock`) to prevent accidental double-starts.
 
 **What changes will be accepted into the codebase?**
 

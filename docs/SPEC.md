@@ -122,7 +122,6 @@ fft_nano/
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
 │
-├── .claude/                       # (optional) dev-only helper files (not used by runtime)
 ├── groups/
 │   ├── global/                    # Global memory scope
 │   │   ├── SOUL.md              # Global memory (all groups read; main can write)
