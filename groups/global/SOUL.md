@@ -37,7 +37,7 @@ Example: If your task is "Share the weather forecast", you should:
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
-Your `CLAUDE.md` file in that folder is your memory - update it with important context you want to remember.
+Your `SOUL.md` file in that folder is your memory - update it with important context you want to remember.
 
 ## Memory
 
@@ -46,5 +46,5 @@ The `conversations/` folder contains searchable history of past conversations. U
 When you learn something important:
 - Create files for structured data (e.g., `customers.md`, `preferences.md`)
 - Split files larger than 500 lines into folders
-- Add recurring context directly to this CLAUDE.md
-- Always index new memory files at the top of CLAUDE.md
+- Add recurring context directly to this SOUL.md
+- Always index new memory files at the top of SOUL.md

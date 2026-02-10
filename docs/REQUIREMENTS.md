@@ -58,7 +58,7 @@ A personal farm assistant accessible via chat, with minimal custom code.
 **Implementation approach:**
 - Use existing tools (WhatsApp connector, Pi runtime, filesystem IPC)
 - Minimal glue code
-- File-based systems where possible (CLAUDE.md for memory, folders for groups)
+- File-based systems where possible (SOUL.md for memory, folders for groups)
 
 ---
 
@@ -71,10 +71,10 @@ A personal farm assistant accessible via chat, with minimal custom code.
 - Unregistered groups are ignored completely
 
 ### Memory System
-- **Per-group memory**: Each group has a folder with its own `CLAUDE.md`
-- **Global memory**: Root `CLAUDE.md` is read by all groups, but only writable from "main" (self-chat)
+- **Per-group memory**: Each group has a folder with its own `SOUL.md`
+- **Global memory**: `groups/global/SOUL.md` is read by all groups, but only writable from "main" (self-chat)
 - **Files**: Groups can create/read files in their folder and reference them
-- Agent runs in the group's folder, automatically inherits both CLAUDE.md files
+- Agent runs in the group's folder, automatically inherits both SOUL.md files
 
 ### Session Management
 - Each group maintains a conversation session (persisted by Pi under per-group `~/.pi`)
@@ -105,7 +105,7 @@ A personal farm assistant accessible via chat, with minimal custom code.
 
 ### Main Channel Privileges
 - Main channel is the admin/control group (typically self-chat)
-- Can write to global memory (`groups/CLAUDE.md`)
+- Can write to global memory (`groups/global/SOUL.md`)
 - Can schedule tasks for any group
 - Can view and manage tasks from all groups
 - Can configure additional directory mounts for any group

@@ -6,6 +6,17 @@ This repo is a single Node.js host process that:
 - Runs the agent inside an isolated container via `pi` (pi-coding-agent)
 - Sends the agent response back to the originating chat
 
+## Memory Protocol
+
+- Canonical memory file is `SOUL.md` (per-group at `groups/<group>/SOUL.md`, global at `groups/global/SOUL.md`).
+- Legacy `CLAUDE.md` is supported for backwards compatibility.
+
+## Scripts
+
+- One-time setup: `./scripts/setup.sh`
+- Start (dev): `./scripts/start.sh dev`
+- Start (prod): `./scripts/start.sh start`
+
 ## Telegram As Main UI
 
 Telegram is enabled when `TELEGRAM_BOT_TOKEN` is set.
@@ -15,7 +26,7 @@ Recommended local/dev setup (Telegram only):
 ```bash
 export WHATSAPP_ENABLED=0
 export TELEGRAM_BOT_TOKEN="..."
-npm run dev
+./scripts/start.sh dev
 ```
 
 Main channel behavior:
@@ -43,6 +54,11 @@ ZAI_API_KEY=...
 Notes:
 - Avoid committing secrets. `.env` is gitignored.
 - `pi` session/auth/model state is stored per group under `data/pi/<group>/.pi/` on the host and mounted to `/home/node/.pi` in the container.
+
+## Coding Agent (/coder)
+
+- In the main/admin chat you can use: `@FarmFriend /coder <task>`.
+- The coder profile streams progress back to the same originating chat when possible, and avoids duplicating the final answer.
 
 ## Debugging / Tracing
 
