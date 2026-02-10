@@ -38,9 +38,19 @@ for arg in "$@"; do
   fi
 done
 
+# Prefer TELEGRAM_BOT_TOKEN from .env/exports; fall back to macOS Keychain.
+if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] && [[ "$(uname -s)" == "Darwin" ]] && command -v security >/dev/null 2>&1; then
+  ACCOUNT="$(id -un 2>/dev/null || true)"
+  if [[ -z "${ACCOUNT}" ]]; then
+    ACCOUNT="$(whoami 2>/dev/null || true)"
+  fi
+  TELEGRAM_BOT_TOKEN="$(security find-generic-password -a "${ACCOUNT}" -s "FFT_nano:TELEGRAM_BOT_TOKEN" -w 2>/dev/null || true)"
+  export TELEGRAM_BOT_TOKEN
+fi
+
 run_runtime_detect() {
   local raw="${CONTAINER_RUNTIME:-auto}"
-  raw="${raw,,}"
+  raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
   if [[ "$raw" == "apple" || "$raw" == "docker" ]]; then
     echo "$raw"; return
   fi
