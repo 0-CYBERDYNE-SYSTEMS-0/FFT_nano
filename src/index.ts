@@ -45,6 +45,11 @@ import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
 import { getContainerRuntime } from './container-runtime.js';
 import {
+  restartAppleContainerSystemSingleFlight,
+  shouldSelfHealAppleContainer,
+} from './apple-container.js';
+import { acquireSingletonLock } from './singleton-lock.js';
+import {
   createTelegramBot,
   isTelegramJid,
   parseTelegramChatId,
@@ -60,6 +65,9 @@ const TELEGRAM_MAIN_CHAT_ID = process.env.TELEGRAM_MAIN_CHAT_ID;
 const TELEGRAM_ADMIN_SECRET = process.env.TELEGRAM_ADMIN_SECRET;
 const TELEGRAM_AUTO_REGISTER = !['0', 'false', 'no'].includes(
   (process.env.TELEGRAM_AUTO_REGISTER || '1').toLowerCase(),
+);
+const APPLE_CONTAINER_SELF_HEAL = !['0', 'false', 'no'].includes(
+  (process.env.FFT_NANO_APPLE_CONTAINER_SELF_HEAL || '1').toLowerCase(),
 );
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -578,14 +586,36 @@ async function runAgent(
   );
 
   try {
-    const output = await runContainerAgent(group, {
+    const runtime = getContainerRuntime();
+    const input = {
       prompt,
       groupFolder: group.folder,
       chatJid,
       isMain,
       profile,
       requestId,
-    });
+    } as const;
+
+    let output = await runContainerAgent(group, input);
+    if (
+      output.status === 'error' &&
+      runtime === 'apple' &&
+      APPLE_CONTAINER_SELF_HEAL &&
+      typeof output.error === 'string' &&
+      output.error &&
+      shouldSelfHealAppleContainer(output.error)
+    ) {
+      const restarted = await restartAppleContainerSystemSingleFlight(
+        output.error,
+      );
+      if (restarted) {
+        logger.warn(
+          { group: group.name, error: output.error },
+          'Retrying container agent after Apple Container self-heal',
+        );
+        output = await runContainerAgent(group, input);
+      }
+    }
 
     if (output.status === 'error') {
       logger.error(
@@ -595,7 +625,11 @@ async function runAgent(
       // Reply with a short error rather than silently dropping the message.
       // Also mark ok=true so we don't keep re-sending the same failing prompt.
       const msg = output.error
-        ? `LLM error: ${output.error}`
+        ? `LLM error: ${output.error}${
+            runtime === 'apple'
+              ? '\n\nIf this persists on macOS Apple Container, run:\ncontainer system stop && container system start'
+              : ''
+          }`
         : 'LLM error: agent runner failed (no details).';
       return { result: msg, streamed: false, ok: true };
     }
@@ -1214,6 +1248,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
+  acquireSingletonLock(path.join(DATA_DIR, 'fft_nano.lock'));
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');

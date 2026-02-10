@@ -14,7 +14,7 @@ This repo is a single Node.js host process that:
 ## Scripts
 
 - One-time setup: `./scripts/setup.sh`
-- Start (dev): `./scripts/start.sh dev`
+- Start (dev): `./scripts/start.sh dev [telegram-only]`
 - Start (prod): `./scripts/start.sh start`
 
 ## Telegram As Main UI
@@ -26,7 +26,7 @@ Recommended local/dev setup (Telegram only):
 ```bash
 export WHATSAPP_ENABLED=0
 export TELEGRAM_BOT_TOKEN="..."
-./scripts/start.sh dev
+./scripts/start.sh dev telegram-only
 ```
 
 Main channel behavior:
@@ -72,3 +72,5 @@ Container logs:
 Common failure modes:
 - Missing provider key: `pi` reports "No models available" (no API key passed through).
 - Wrong `PI_API`/`PI_MODEL`: `pi` reports "Model '<provider>'/'<model>' not found".
+- Multiple instances: Telegram polling can error with "Conflict: terminated by other getUpdates request". FFT_nano now uses a lock file (`data/fft_nano.lock`) to prevent two instances from running at once.
+- Apple Container networking: if you see `Request timed out.`, restart Apple Container: `container system stop && container system start` (or rely on `FFT_NANO_APPLE_CONTAINER_SELF_HEAL=1` default).
