@@ -82,7 +82,22 @@ From the main channel, manage your operation:
 @FarmFriend list all scheduled tasks across groups
 @FarmFriend pause the Monday briefing task
 @FarmFriend join the Family Chat group
+
+Coding delegation (main/admin only, explicit triggers):
+@FarmFriend /coder implement a new feature and run checks
+@FarmFriend /coder-plan propose a refactor plan for auth middleware
+@FarmFriend use coding agent
+@FarmFriend use your coding agent skill
 ```
+
+Notes:
+- Natural-language coding requests do not auto-delegate by default.
+- Delegation is explicit via `/coder`, `/coder-plan`, or the exact alias phrases above.
+- In main chat, FarmFriend may proactively suggest these delegation triggers when a request looks like substantial software-engineering work.
+- Non-main chats cannot trigger coder delegation.
+- Telegram slash commands are available from the bot command menu (`/help`, `/status`, `/id` globally; admin commands in main chat only).
+- Telegram admin quick actions are available via `/panel` with inline buttons.
+- Telegram uploads (images, docs, voice, audio, video, stickers) are stored in `groups/<group>/inbox/telegram/` and surfaced to the agent as `/workspace/group/inbox/telegram/...` paths.
 
 ## It Reads Its Own Docs
 
@@ -159,7 +174,7 @@ Key files:
 - `src/container-runner.ts` - Spawns isolated agent containers
 - `src/task-scheduler.ts` - Runs scheduled tasks
 - `src/db.ts` - SQLite operations
-- `groups/*/CLAUDE.md` - Per-group memory and preferences
+- `groups/*/SOUL.md` - Per-group memory and preferences
 
 ## Requirements
 
@@ -179,6 +194,9 @@ Key files:
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_MAIN_CHAT_ID` | Maps Telegram chat to main group |
 | `TELEGRAM_ADMIN_SECRET` | Secret to claim admin via /main |
+| `TELEGRAM_AUTO_REGISTER` | Auto-register Telegram chats (1/0) |
+| `TELEGRAM_MEDIA_MAX_MB` | Max inbound Telegram upload size to persist |
+| `FFT_NANO_APPLE_CONTAINER_SELF_HEAL` | Auto-restart Apple Container on transient failures |
 | `WHATSAPP_ENABLED` | 1 or 0 |
 
 ## FAQ
@@ -195,6 +213,7 @@ Pick what works for your operation.
 1. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_SECRET` to `.env`
 2. Start FFT_nano
 3. Message your bot `/id` then `/main <secret>`
+4. Use `/help` for command list and `/panel` for admin shortcuts
 
 **Can I run this on Linux?**
 
