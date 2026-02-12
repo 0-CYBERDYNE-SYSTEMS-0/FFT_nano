@@ -31,6 +31,10 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   10,
 ); // 10MB default
 export const IPC_POLL_INTERVAL = 1000;
+export const TELEGRAM_MEDIA_MAX_MB = Math.max(
+  1,
+  parseInt(process.env.TELEGRAM_MEDIA_MAX_MB || '20', 10),
+);
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
