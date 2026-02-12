@@ -36,6 +36,36 @@ export const TELEGRAM_MEDIA_MAX_MB = Math.max(
   parseInt(process.env.TELEGRAM_MEDIA_MAX_MB || '20', 10),
 );
 
+function envFlag(value: string | undefined, defaultValue: boolean): boolean {
+  if (typeof value !== 'string') return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
+}
+
+function envInt(
+  value: string | undefined,
+  defaultValue: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(value || '', 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+export const MEMORY_RETRIEVAL_GATE_ENABLED = envFlag(
+  process.env.MEMORY_RETRIEVAL_GATE_ENABLED,
+  true,
+);
+export const MEMORY_TOP_K = envInt(process.env.MEMORY_TOP_K, 8, 1, 32);
+export const MEMORY_CONTEXT_CHAR_BUDGET = envInt(
+  process.env.MEMORY_CONTEXT_CHAR_BUDGET,
+  6000,
+  1000,
+  50000,
+);
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
