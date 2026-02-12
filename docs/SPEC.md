@@ -55,6 +55,7 @@ A secure, containerized assistant accessible via chat (WhatsApp today; Telegram 
 │  │    • groups/{name}/ → /workspace/group                         │   │
 │  │    • groups/global/ → /workspace/global/ (non-main only)        │   │
 │  │    • data/pi/{group}/.pi/ → /home/node/.pi/                   │   │
+│  │      (project .pi/skills/fft-* mirrored into /home/node/.pi/skills)│ │
 │  │    • Additional dirs → /workspace/extra/*                      │   │
 │  │                                                                │   │
 │  │  Tools (all groups):                                           │   │
@@ -91,12 +92,15 @@ fft_nano/
 ├── docs/
 │   ├── SPEC.md                    # This specification document
 │   ├── REQUIREMENTS.md            # Architecture decisions
-│   └── SECURITY.md                # Security model
+│   ├── SECURITY.md                # Security model
+│   └── PI_SKILLS.md               # Pi-native skill layout + validation
 ├── README.md                      # User documentation
 ├── package.json                   # Node.js dependencies
 ├── tsconfig.json                  # TypeScript configuration
 ├── .mcp.json                      # Legacy MCP config (not used)
 ├── .gitignore
+├── .pi/
+│   └── skills/                    # Project-local Pi-native skills (fft-*)
 │
 ├── src/
 │   ├── index.ts                   # Main application (channels + routing)
@@ -161,7 +165,7 @@ Configuration constants are in `src/config.ts`:
 ```typescript
 import path from 'path';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'FarmFriend';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 

@@ -60,6 +60,20 @@ Notes:
 - In the main/admin chat you can use: `@FarmFriend /coder <task>`.
 - The coder profile streams progress back to the same originating chat when possible, and avoids duplicating the final answer.
 
+## Pi-Native Project Skills
+
+- Active project skills are under `.pi/skills/`:
+  - `fft-setup`
+  - `fft-debug`
+  - `fft-telegram-ops`
+  - `fft-coder-ops`
+- On each run, project `fft-*` skills are mirrored into per-group Pi home:
+  - host: `data/pi/<group>/.pi/skills/`
+  - container: `/home/node/.pi/skills/`
+- Validate skill metadata/frontmatter with:
+  - `npm run validate:skills`
+- Legacy `.claude/skills` is archive-only and not used as active runtime skill source.
+
 ## Debugging / Tracing
 
 Useful env vars on the host:
