@@ -14,6 +14,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  memoryContext?: string;
   codingHint?:
     | 'none'
     | 'force_delegate_execute'
@@ -120,17 +121,7 @@ function readFileIfExists(filePath: string): string | null {
 }
 
 function buildSystemPrompt(input: NormalizedContainerInput): string {
-  // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for
-  // backwards compatibility (older installs/groups).
-  const globalMemory =
-    readFileIfExists('/workspace/global/SOUL.md') ||
-    readFileIfExists('/workspace/project/groups/global/SOUL.md') ||
-    readFileIfExists('/workspace/global/CLAUDE.md') ||
-    readFileIfExists('/workspace/project/groups/global/CLAUDE.md');
-
-  const groupMemory =
-    readFileIfExists('/workspace/group/SOUL.md') ||
-    readFileIfExists('/workspace/group/CLAUDE.md');
+  const providedMemoryContext = (input.memoryContext || '').trim();
 
   const delegationExtensionAvailable = fs.existsSync(PI_ON_PI_EXTENSION_PATH);
   const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
@@ -219,23 +210,41 @@ function buildSystemPrompt(input: NormalizedContainerInput): string {
   lines.push('- Prefer short paragraphs and bullet points.');
   lines.push('');
 
-  if (globalMemory) {
-    lines.push('Global memory:');
-    lines.push(globalMemory);
+  if (providedMemoryContext) {
+    lines.push('Retrieved memory context:');
+    lines.push(providedMemoryContext);
     lines.push('');
-  }
+  } else {
+    // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for
+    // backwards compatibility (older installs/groups).
+    const globalMemory =
+      readFileIfExists('/workspace/global/SOUL.md') ||
+      readFileIfExists('/workspace/project/groups/global/SOUL.md') ||
+      readFileIfExists('/workspace/global/CLAUDE.md') ||
+      readFileIfExists('/workspace/project/groups/global/CLAUDE.md');
 
-  if (groupMemory) {
-    // Cap group memory to reduce prompt blowups.
-    const maxChars = 50_000;
-    const trimmed =
-      groupMemory.length > maxChars
-        ? groupMemory.slice(0, maxChars) +
-          `\n\n[NOTE: group memory truncated to ${maxChars} chars]\n`
-        : groupMemory;
-    lines.push('Group memory:');
-    lines.push(trimmed);
-    lines.push('');
+    const groupMemory =
+      readFileIfExists('/workspace/group/SOUL.md') ||
+      readFileIfExists('/workspace/group/CLAUDE.md');
+
+    if (globalMemory) {
+      lines.push('Global memory:');
+      lines.push(globalMemory);
+      lines.push('');
+    }
+
+    if (groupMemory) {
+      // Cap group memory to reduce prompt blowups.
+      const maxChars = 50_000;
+      const trimmed =
+        groupMemory.length > maxChars
+          ? groupMemory.slice(0, maxChars) +
+            `\n\n[NOTE: group memory truncated to ${maxChars} chars]\n`
+          : groupMemory;
+      lines.push('Group memory:');
+      lines.push(trimmed);
+      lines.push('');
+    }
   }
 
   return lines.join('\n');
