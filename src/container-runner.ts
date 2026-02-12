@@ -29,12 +29,15 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  codingHint?: 'none' | 'force_delegate_execute' | 'force_delegate_plan';
+  requestId?: string;
 }
 
 export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
   error?: string;
+  streamed?: boolean;
 }
 
 interface VolumeMount {

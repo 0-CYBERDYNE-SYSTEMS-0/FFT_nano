@@ -19,7 +19,7 @@ FFT_nano currently consists of:
 This is already an unusually good base for a “real” assistant because it has:
 
 - OS-level isolation (container boundary)
-- Persistent per-conversation memory (`groups/<group>/CLAUDE.md`, session transcripts)
+- Persistent per-conversation memory (`groups/<group>/SOUL.md`, session transcripts)
 - Scheduled tasks (a prerequisite for proactive behavior)
 
 ## 2) Product Goal: “Invisible Frictionless Farming”
@@ -117,7 +117,7 @@ Implement a simple policy layer:
 
 FFT_nano already has:
 
-- Per-group memory via `groups/<group>/CLAUDE.md`
+- Per-group memory via `groups/<group>/SOUL.md`
 - Conversation archiving on compaction to `groups/<group>/conversations/`
 
 To get “Jarvis memory”, add **structured memory** alongside freeform text:
