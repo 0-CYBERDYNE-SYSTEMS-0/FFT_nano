@@ -16,6 +16,7 @@ import {
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   STORE_DIR,
+  TELEGRAM_MEDIA_MAX_MB,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -28,6 +29,7 @@ import {
 import {
   getAllChats,
   getAllTasks,
+  deleteTask,
   getLastGroupSync,
   getMessagesSince,
   getNewMessages,
@@ -37,6 +39,7 @@ import {
   storeChatMetadata,
   storeMessage,
   storeTextMessage,
+  updateTask,
   updateChatName,
 } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
@@ -54,7 +57,12 @@ import {
   isTelegramJid,
   parseTelegramChatId,
 } from './telegram.js';
-import type { TelegramBot } from './telegram.js';
+import type {
+  TelegramBot,
+  TelegramInboundCallbackQuery,
+  TelegramInboundMessage,
+  TelegramInlineKeyboard,
+} from './telegram.js';
 import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
@@ -72,12 +80,48 @@ const APPLE_CONTAINER_SELF_HEAL = !['0', 'false', 'no'].includes(
 );
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
+
+const TELEGRAM_COMMON_COMMANDS = [
+  { command: 'help', description: 'Show command help' },
+  { command: 'status', description: 'Show runtime status' },
+  { command: 'id', description: 'Show this chat id' },
+] as const;
+
+const TELEGRAM_ADMIN_COMMANDS = [
+  { command: 'main', description: 'Claim this chat as main/admin' },
+  { command: 'coder', description: 'Delegate coding execution' },
+  { command: 'coder-plan', description: 'Delegate coding plan-only' },
+  { command: 'tasks', description: 'List scheduled tasks' },
+  { command: 'task_pause', description: 'Pause a task: /task_pause <id>' },
+  { command: 'task_resume', description: 'Resume a task: /task_resume <id>' },
+  { command: 'task_cancel', description: 'Cancel a task: /task_cancel <id>' },
+  { command: 'groups', description: 'List registered groups' },
+  { command: 'reload', description: 'Refresh command state and metadata' },
+  { command: 'panel', description: 'Open admin panel buttons' },
+] as const;
+
+type TelegramCommandName =
+  | '/help'
+  | '/status'
+  | '/id'
+  | '/main'
+  | '/tasks'
+  | '/task_pause'
+  | '/task_resume'
+  | '/task_cancel'
+  | '/groups'
+  | '/reload'
+  | '/panel'
+  | '/coder'
+  | '/coder-plan';
 
 let sock: WASocket;
 let telegramBot: TelegramBot | null = null;
 let lastTimestamp = '';
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let lastTelegramMenuMainChatId: string | null = null;
 // LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
 let lidToPhoneMap: Record<string, string> = {};
 // Guards to prevent duplicate loops on WhatsApp reconnect
@@ -289,7 +333,11 @@ function getAvailableGroups(): AvailableGroup[] {
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && c.jid.endsWith('@g.us'))
+    .filter(
+      (c) =>
+        c.jid !== '__group_sync__' &&
+        (c.jid.endsWith('@g.us') || isTelegramJid(c.jid)),
+    )
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -298,12 +346,12 @@ function getAvailableGroups(): AvailableGroup[] {
     }));
 }
 
-function maybeRegisterTelegramChat(chatJid: string, chatName: string): void {
-  if (!TELEGRAM_AUTO_REGISTER) return;
-  if (registeredGroups[chatJid]) return;
+function maybeRegisterTelegramChat(chatJid: string, chatName: string): boolean {
+  if (!TELEGRAM_AUTO_REGISTER) return false;
+  if (registeredGroups[chatJid]) return false;
 
   const chatId = parseTelegramChatId(chatJid);
-  if (!chatId) return;
+  if (!chatId) return false;
 
   const isMain = TELEGRAM_MAIN_CHAT_ID && chatId === TELEGRAM_MAIN_CHAT_ID;
   const folder = isMain ? MAIN_GROUP_FOLDER : `telegram-${chatId}`;
@@ -314,6 +362,7 @@ function maybeRegisterTelegramChat(chatJid: string, chatName: string): void {
     trigger: `@${ASSISTANT_NAME}`,
     added_at: new Date().toISOString(),
   });
+  return true;
 }
 
 function hasMainGroup(): boolean {
@@ -371,6 +420,368 @@ function maybePromoteConfiguredTelegramMain(): void {
   promoteChatToMain(chatJid, prev.name || `${ASSISTANT_NAME} (main)`);
 }
 
+function isMainChat(chatJid: string): boolean {
+  return registeredGroups[chatJid]?.folder === MAIN_GROUP_FOLDER;
+}
+
+function findMainTelegramChatJid(): string | null {
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (group.folder === MAIN_GROUP_FOLDER && isTelegramJid(jid)) {
+      return jid;
+    }
+  }
+  return null;
+}
+
+function normalizeTelegramCommandToken(token: string): TelegramCommandName | null {
+  if (!token.startsWith('/')) return null;
+  const normalized = token.split('@')[0]?.toLowerCase();
+  if (!normalized) return null;
+  const command = normalized as TelegramCommandName;
+  const known: Set<TelegramCommandName> = new Set([
+    '/help',
+    '/status',
+    '/id',
+    '/main',
+    '/tasks',
+    '/task_pause',
+    '/task_resume',
+    '/task_cancel',
+    '/groups',
+    '/reload',
+    '/panel',
+    '/coder',
+    '/coder-plan',
+  ]);
+  return known.has(command) ? command : null;
+}
+
+function formatHelpText(isMainGroup: boolean): string {
+  const common = [
+    '/help - show this help',
+    '/status - runtime and queue status',
+    '/id - show current Telegram chat id',
+  ];
+  if (!isMainGroup) {
+    return [
+      'Telegram commands:',
+      ...common,
+      '',
+      `Admin commands are only available in the main chat for safety.`,
+    ].join('\n');
+  }
+
+  return [
+    'Telegram commands (main/admin):',
+    ...common,
+    '/main <secret> - claim chat as main/admin',
+    '/tasks - list scheduled tasks',
+    '/task_pause <id> - pause task',
+    '/task_resume <id> - resume task',
+    '/task_cancel <id> - cancel task',
+    '/groups - list registered groups',
+    '/reload - refresh command menus and group metadata',
+    '/panel - open admin quick actions',
+    '/coder <task> - explicit delegated coding run',
+    '/coder-plan <task> - explicit delegated planning run',
+  ].join('\n');
+}
+
+function formatStatusText(): string {
+  const runtime = getContainerRuntime();
+  const mainGroup = Object.values(registeredGroups).find(
+    (group) => group.folder === MAIN_GROUP_FOLDER,
+  );
+  const tasks = getAllTasks();
+  const active = tasks.filter((task) => task.status === 'active').length;
+  const paused = tasks.filter((task) => task.status === 'paused').length;
+  const completed = tasks.filter((task) => task.status === 'completed').length;
+
+  return [
+    'FarmFriend status:',
+    `- container_runtime: ${runtime}`,
+    `- telegram_enabled: ${TELEGRAM_BOT_TOKEN ? 'yes' : 'no'}`,
+    `- whatsapp_enabled: ${WHATSAPP_ENABLED ? 'yes' : 'no'}`,
+    `- whatsapp_connected: ${sock?.user ? 'yes' : 'no'}`,
+    `- registered_groups: ${Object.keys(registeredGroups).length}`,
+    `- main_group: ${mainGroup ? mainGroup.name : 'none'}`,
+    `- tasks_active: ${active}`,
+    `- tasks_paused: ${paused}`,
+    `- tasks_completed: ${completed}`,
+  ].join('\n');
+}
+
+function formatTasksText(): string {
+  const tasks = getAllTasks();
+  if (tasks.length === 0) {
+    return 'No scheduled tasks found.';
+  }
+  const lines = tasks.slice(0, 30).map((task) => {
+    const nextRun = task.next_run || 'n/a';
+    return `- ${task.id} [${task.status}] group=${task.group_folder} next=${nextRun}`;
+  });
+  if (tasks.length > 30) {
+    lines.push(`- ... ${tasks.length - 30} more`);
+  }
+  return ['Scheduled tasks:', ...lines].join('\n');
+}
+
+function formatGroupsText(): string {
+  const groups = Object.entries(registeredGroups);
+  if (groups.length === 0) {
+    return 'No groups are registered.';
+  }
+  const lines = groups.map(([jid, group]) => {
+    const mainTag = group.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
+    return `- ${group.name}${mainTag} -> ${jid} [folder=${group.folder}]`;
+  });
+  return ['Registered groups:', ...lines].join('\n');
+}
+
+function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
+  return [
+    [
+      { text: 'Tasks', callbackData: 'panel:tasks' },
+      { text: 'Coder', callbackData: 'panel:coder' },
+    ],
+    [
+      { text: 'Groups', callbackData: 'panel:groups' },
+      { text: 'Health', callbackData: 'panel:health' },
+    ],
+  ];
+}
+
+function sanitizeFileName(value: string): string {
+  const base = value.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_');
+  return base.slice(0, 80) || 'file';
+}
+
+function defaultExtensionForMedia(message: TelegramInboundMessage): string {
+  switch (message.media?.type) {
+    case 'photo':
+      return '.jpg';
+    case 'video':
+      return '.mp4';
+    case 'voice':
+      return '.ogg';
+    case 'audio':
+      return '.mp3';
+    case 'document':
+      return '.bin';
+    case 'sticker':
+      return '.webp';
+    default:
+      return '.bin';
+  }
+}
+
+async function persistTelegramMedia(
+  message: TelegramInboundMessage,
+): Promise<string> {
+  if (!message.media || !telegramBot) {
+    return message.content;
+  }
+
+  const group = registeredGroups[message.chatJid];
+  if (!group) {
+    return message.content;
+  }
+
+  const hintedSize = message.media.fileSize;
+  if (hintedSize && hintedSize > TELEGRAM_MEDIA_MAX_BYTES) {
+    const mb = (hintedSize / (1024 * 1024)).toFixed(1);
+    const maxMb = TELEGRAM_MEDIA_MAX_MB.toFixed(0);
+    await sendMessage(
+      message.chatJid,
+      `Attachment rejected (${mb} MB). Max allowed is ${maxMb} MB.`,
+    );
+    logger.warn(
+      { chatJid: message.chatJid, type: message.media.type, hintedSize },
+      'Telegram media rejected by size hint',
+    );
+    return `${message.content}\n[Attachment rejected: size exceeds limit]`;
+  }
+
+  try {
+    const downloaded = await telegramBot.downloadFile(message.media.fileId);
+    if (downloaded.data.length > TELEGRAM_MEDIA_MAX_BYTES) {
+      const mb = (downloaded.data.length / (1024 * 1024)).toFixed(1);
+      const maxMb = TELEGRAM_MEDIA_MAX_MB.toFixed(0);
+      await sendMessage(
+        message.chatJid,
+        `Attachment rejected (${mb} MB). Max allowed is ${maxMb} MB.`,
+      );
+      logger.warn(
+        { chatJid: message.chatJid, type: message.media.type, size: downloaded.data.length },
+        'Telegram media rejected by downloaded size',
+      );
+      return `${message.content}\n[Attachment rejected: size exceeds limit]`;
+    }
+
+    const inboxDir = path.join(
+      DATA_DIR,
+      '..',
+      'groups',
+      group.folder,
+      'inbox',
+      'telegram',
+    );
+    fs.mkdirSync(inboxDir, { recursive: true });
+
+    const suggestedName =
+      message.media.fileName ||
+      path.basename(downloaded.filePath) ||
+      `telegram_${message.media.type}`;
+    const parsedName = path.parse(suggestedName);
+    const stem = sanitizeFileName(parsedName.name || suggestedName);
+    const ext =
+      parsedName.ext ||
+      path.extname(downloaded.filePath) ||
+      defaultExtensionForMedia(message);
+    const ts = message.timestamp.replace(/[:.]/g, '-');
+    const fileName = `${ts}_${message.messageId}_${stem}${ext}`;
+    const hostPath = path.join(inboxDir, fileName);
+    fs.writeFileSync(hostPath, downloaded.data);
+
+    const workspacePath = `/workspace/group/inbox/telegram/${fileName}`;
+    logger.info(
+      {
+        chatJid: message.chatJid,
+        type: message.media.type,
+        size: downloaded.data.length,
+        workspacePath,
+      },
+      'Telegram media stored',
+    );
+
+    return [
+      message.content,
+      `[Attachment type=${message.media.type} path=${workspacePath} size=${downloaded.data.length}]`,
+    ].join('\n');
+  } catch (err) {
+    logger.error(
+      { err, chatJid: message.chatJid, mediaType: message.media.type },
+      'Failed to persist Telegram media',
+    );
+    return `${message.content}\n[Attachment download failed]`;
+  }
+}
+
+async function refreshTelegramCommandMenus(): Promise<void> {
+  if (!telegramBot) return;
+
+  const common = TELEGRAM_COMMON_COMMANDS.map((command) => ({
+    command: command.command,
+    description: command.description,
+  }));
+  const admin = [...common, ...TELEGRAM_ADMIN_COMMANDS].map((command) => ({
+    command: command.command,
+    description: command.description,
+  }));
+
+  const mainTelegramJid = findMainTelegramChatJid();
+  const mainChatId = mainTelegramJid ? parseTelegramChatId(mainTelegramJid) : null;
+
+  try {
+    await telegramBot.deleteCommands({ type: 'default' });
+  } catch (err) {
+    logger.debug({ err }, 'Failed deleting default Telegram commands');
+  }
+  await telegramBot.setCommands(common, { type: 'default' });
+
+  if (lastTelegramMenuMainChatId && lastTelegramMenuMainChatId !== mainChatId) {
+    try {
+      await telegramBot.setCommands(common, {
+        type: 'chat',
+        chatId: lastTelegramMenuMainChatId,
+      });
+    } catch (err) {
+      logger.debug({ err }, 'Failed resetting previous main Telegram command scope');
+    }
+  }
+
+  if (mainChatId) {
+    await telegramBot.setCommands(admin, { type: 'chat', chatId: mainChatId });
+  }
+
+  lastTelegramMenuMainChatId = mainChatId;
+
+  try {
+    await telegramBot.setDescription(
+      `${ASSISTANT_NAME}: secure containerized assistant`,
+      'Use /help for commands',
+    );
+  } catch (err) {
+    logger.debug({ err }, 'Failed setting Telegram bot descriptions');
+  }
+}
+
+function logTelegramCommandAudit(
+  chatJid: string,
+  command: string,
+  allowed: boolean,
+  reason: string,
+): void {
+  logger.info(
+    { chatJid, command, allowed, reason },
+    'Telegram command audit',
+  );
+}
+
+async function handleTelegramCallbackQuery(
+  q: TelegramInboundCallbackQuery,
+): Promise<void> {
+  if (!telegramBot) return;
+
+  try {
+    await telegramBot.answerCallbackQuery(q.id);
+  } catch (err) {
+    logger.debug({ err, callbackId: q.id }, 'Failed answering callback query');
+  }
+
+  if (!q.data.startsWith('panel:')) {
+    return;
+  }
+
+  if (!isMainChat(q.chatJid)) {
+    logTelegramCommandAudit(q.chatJid, q.data, false, 'non-main chat');
+    await sendMessage(
+      q.chatJid,
+      `${ASSISTANT_NAME}: admin panel actions are only available in the main/admin chat.`,
+    );
+    return;
+  }
+
+  switch (q.data) {
+    case 'panel:tasks':
+      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
+      await sendMessage(q.chatJid, formatTasksText());
+      return;
+    case 'panel:coder':
+      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
+      await sendMessage(
+        q.chatJid,
+        [
+          'Coder delegation:',
+          '- /coder <task> to execute',
+          '- /coder-plan <task> for read-only plan',
+          '- use coding agent',
+        ].join('\n'),
+      );
+      return;
+    case 'panel:groups':
+      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
+      await sendMessage(q.chatJid, formatGroupsText());
+      return;
+    case 'panel:health':
+      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
+      await sendMessage(q.chatJid, formatStatusText());
+      return;
+    default:
+      return;
+  }
+}
+
 async function handleTelegramCommand(m: {
   chatJid: string;
   chatName: string;
@@ -379,9 +790,13 @@ async function handleTelegramCommand(m: {
   const content = m.content.trim();
   if (!content.startsWith('/')) return false;
 
-  const [cmd, ...rest] = content.split(/\s+/);
+  const [rawCmd, ...rest] = content.split(/\s+/);
+  const cmd = normalizeTelegramCommandToken(rawCmd);
+  if (!cmd) return false;
+  const isMainGroup = isMainChat(m.chatJid);
 
   if (cmd === '/id') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
     const chatId = parseTelegramChatId(m.chatJid);
     await sendMessage(
       m.chatJid,
@@ -392,9 +807,36 @@ async function handleTelegramCommand(m: {
     return true;
   }
 
+  if (cmd === '/help') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+    await sendMessage(m.chatJid, formatHelpText(isMainGroup));
+    return true;
+  }
+
+  if (cmd === '/status') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+    await sendMessage(m.chatJid, formatStatusText());
+    return true;
+  }
+
+  if (cmd === '/coder' || cmd === '/coder-plan') {
+    if (!isMainGroup) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
+      await sendMessage(
+        m.chatJid,
+        `${ASSISTANT_NAME}: coder delegation is only available in the main/admin chat for safety.`,
+      );
+      return true;
+    }
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'pass-through');
+    // Let the normal agent path process /coder and /coder-plan.
+    return false;
+  }
+
   if (cmd === '/main') {
     const chatId = parseTelegramChatId(m.chatJid);
     if (!chatId) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id');
       await sendMessage(m.chatJid, 'Could not parse chat id for this chat.');
       return true;
     }
@@ -404,6 +846,7 @@ async function handleTelegramCommand(m: {
     const alreadyMain =
       registeredGroups[m.chatJid]?.folder === MAIN_GROUP_FOLDER;
     if (existingMain && !alreadyMain) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'main already configured');
       await sendMessage(
         m.chatJid,
         'Main chat is already set. If you want to change it, edit data/registered_groups.json (or delete it to re-bootstrap).',
@@ -412,6 +855,7 @@ async function handleTelegramCommand(m: {
     }
 
     if (!TELEGRAM_ADMIN_SECRET) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'missing TELEGRAM_ADMIN_SECRET');
       await sendMessage(
         m.chatJid,
         'TELEGRAM_ADMIN_SECRET is not set on the host. Set it, restart, then run: /main <secret>',
@@ -421,6 +865,7 @@ async function handleTelegramCommand(m: {
 
     const provided = rest.join(' ');
     if (!provided || provided !== TELEGRAM_ADMIN_SECRET) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid admin secret');
       await sendMessage(
         m.chatJid,
         'Unauthorized. Usage: /main <secret>',
@@ -429,6 +874,8 @@ async function handleTelegramCommand(m: {
     }
 
     promoteChatToMain(m.chatJid, m.chatName || `${ASSISTANT_NAME} (main)`);
+    await refreshTelegramCommandMenus();
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
 
     await sendMessage(
       m.chatJid,
@@ -437,32 +884,123 @@ async function handleTelegramCommand(m: {
     return true;
   }
 
+  if (!isMainGroup) {
+    logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
+    await sendMessage(
+      m.chatJid,
+      `${ASSISTANT_NAME}: this command is only available in the main/admin chat.`,
+    );
+    return true;
+  }
+
+  if (cmd === '/tasks') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+    await sendMessage(m.chatJid, formatTasksText());
+    return true;
+  }
+
+  if (cmd === '/task_pause' || cmd === '/task_resume' || cmd === '/task_cancel') {
+    const taskId = rest[0];
+    if (!taskId) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'missing task id');
+      await sendMessage(m.chatJid, `Usage: ${cmd} <taskId>`);
+      return true;
+    }
+
+    const task = getTaskById(taskId);
+    if (!task) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'task not found');
+      await sendMessage(m.chatJid, `Task not found: ${taskId}`);
+      return true;
+    }
+
+    if (cmd === '/task_pause') {
+      updateTask(taskId, { status: 'paused' });
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      await sendMessage(m.chatJid, `Paused task: ${taskId}`);
+      return true;
+    }
+    if (cmd === '/task_resume') {
+      updateTask(taskId, { status: 'active' });
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      await sendMessage(m.chatJid, `Resumed task: ${taskId}`);
+      return true;
+    }
+
+    deleteTask(taskId);
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+    await sendMessage(m.chatJid, `Canceled task: ${taskId}`);
+    return true;
+  }
+
+  if (cmd === '/groups') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+    await sendMessage(m.chatJid, formatGroupsText());
+    return true;
+  }
+
+  if (cmd === '/reload') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+    if (WHATSAPP_ENABLED && sock) {
+      await syncGroupMetadata(true);
+    }
+    await refreshTelegramCommandMenus();
+    await sendMessage(m.chatJid, 'Command menus and metadata refreshed.');
+    return true;
+  }
+
+  if (cmd === '/panel') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+    if (!telegramBot) return true;
+    await telegramBot.sendMessageWithKeyboard(
+      m.chatJid,
+      'Admin panel:',
+      buildAdminPanelKeyboard(),
+    );
+    return true;
+  }
+
   return false;
 }
 
-function startTelegram(): void {
+async function startTelegram(): Promise<void> {
   if (!TELEGRAM_BOT_TOKEN) return;
   if (telegramBot) return;
 
   telegramBot = createTelegramBot({
     token: TELEGRAM_BOT_TOKEN,
     apiBaseUrl: TELEGRAM_API_BASE_URL,
+    assistantName: ASSISTANT_NAME,
+    triggerPattern: TRIGGER_PATTERN,
   });
+  await refreshTelegramCommandMenus();
 
-  telegramBot.startPolling(async (m) => {
+  telegramBot.startPolling(async (event) => {
+    if (event.kind === 'callback_query') {
+      await handleTelegramCallbackQuery(event);
+      return;
+    }
+
+    const m = event;
     storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
-    maybeRegisterTelegramChat(m.chatJid, m.chatName);
+    const didRegister = maybeRegisterTelegramChat(m.chatJid, m.chatName);
+    if (didRegister && isMainChat(m.chatJid)) {
+      await refreshTelegramCommandMenus();
+    }
 
     // Handle lightweight admin commands without invoking the agent.
     if (await handleTelegramCommand(m)) return;
 
     if (registeredGroups[m.chatJid]) {
+      const finalContent = m.media
+        ? await persistTelegramMedia(m)
+        : m.content;
       storeTextMessage({
         id: m.id,
         chatJid: m.chatJid,
         sender: m.sender,
         senderName: m.senderName,
-        content: m.content,
+        content: finalContent,
         timestamp: m.timestamp,
         isFromMe: false,
       });
@@ -1280,7 +1818,7 @@ async function main(): Promise<void> {
   }
 
   if (telegramEnabled) {
-    startTelegram();
+    await startTelegram();
   }
 
   // If Telegram is enabled we start the loops immediately so Telegram messages
