@@ -12,10 +12,12 @@ import {
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  MEMORY_RETRIEVAL_GATE_ENABLED,
 } from './config.js';
 import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
 import type { ContainerRuntime } from './container-runtime.js';
 import { logger } from './logger.js';
+import { buildMemoryContext } from './memory-retrieval.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { syncProjectPiSkillsToGroupPiHome } from './pi-skills.js';
 import { RegisteredGroup } from './types.js';
@@ -32,6 +34,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   codingHint?: 'none' | 'force_delegate_execute' | 'force_delegate_plan';
   requestId?: string;
+  memoryContext?: string;
 }
 
 export interface ContainerOutput {
@@ -262,6 +265,35 @@ export async function runContainerAgent(
   input: ContainerInput,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+  let payload: ContainerInput = input;
+
+  if (MEMORY_RETRIEVAL_GATE_ENABLED) {
+    try {
+      const memory = buildMemoryContext({
+        groupFolder: group.folder,
+        prompt: input.prompt,
+      });
+      if (memory.context) {
+        payload = { ...input, memoryContext: memory.context };
+      }
+      logger.debug(
+        {
+          group: group.name,
+          chunksTotal: memory.chunksTotal,
+          selectedK: memory.selectedK,
+          contextChars: memory.contextChars,
+          queryChars: memory.queryChars,
+          gateEnabled: MEMORY_RETRIEVAL_GATE_ENABLED,
+        },
+        'Built retrieval-gated memory context',
+      );
+    } catch (err) {
+      logger.warn(
+        { group: group.name, err },
+        'Failed to build memory context; continuing without retrieval context',
+      );
+    }
+  }
 
   const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
@@ -306,7 +338,7 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    container.stdin.write(JSON.stringify(input));
+    container.stdin.write(JSON.stringify(payload));
     container.stdin.end();
 
     container.stdout.on('data', (data) => {
@@ -379,7 +411,7 @@ export async function runContainerAgent(
       if (isVerbose) {
         logLines.push(
           `=== Input ===`,
-          JSON.stringify(input, null, 2),
+          JSON.stringify(payload, null, 2),
           ``,
           `=== Container Args ===`,
           containerArgs.join(' '),
@@ -401,7 +433,8 @@ export async function runContainerAgent(
       } else {
         logLines.push(
           `=== Input Summary ===`,
-          `Prompt length: ${input.prompt.length} chars`,
+          `Prompt length: ${payload.prompt.length} chars`,
+          `Memory context length: ${(payload.memoryContext || '').length} chars`,
           `Session: managed by pi (~/.pi)`,
           ``,
           `=== Mounts ===`,
