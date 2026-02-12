@@ -29,7 +29,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
-  profile?: 'farmfriend' | 'coder';
+  codingHint?: 'none' | 'force_delegate_execute' | 'force_delegate_plan';
   requestId?: string;
 }
 

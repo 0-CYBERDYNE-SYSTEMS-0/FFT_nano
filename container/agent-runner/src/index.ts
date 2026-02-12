@@ -14,8 +14,19 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
-  profile?: 'farmfriend' | 'coder';
+  codingHint?:
+    | 'none'
+    | 'force_delegate_execute'
+    | 'force_delegate_plan'
+    | 'auto'
+    | 'force_delegate';
   requestId?: string;
+}
+
+type CodingHint = 'none' | 'force_delegate_execute' | 'force_delegate_plan';
+
+interface NormalizedContainerInput extends Omit<ContainerInput, 'codingHint'> {
+  codingHint: CodingHint;
 }
 
 interface ContainerOutput {
@@ -39,6 +50,7 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---FFT_NANO_OUTPUT_END---';
+const PI_ON_PI_EXTENSION_PATH = '/app/dist/extensions/pi-on-pi.js';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -48,6 +60,35 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+function normalizeCodingHint(value: ContainerInput['codingHint']): CodingHint {
+  if (value === 'force_delegate') return 'force_delegate_execute';
+  if (
+    value === 'force_delegate_execute' ||
+    value === 'force_delegate_plan' ||
+    value === 'none'
+  ) {
+    return value;
+  }
+  return 'none';
+}
+
+function normalizeInput(input: ContainerInput): NormalizedContainerInput {
+  return {
+    ...input,
+    codingHint: normalizeCodingHint(input.codingHint),
+  };
+}
+
+function isForceDelegateHint(hint: CodingHint): boolean {
+  return hint === 'force_delegate_execute' || hint === 'force_delegate_plan';
+}
+
+function getForcedDelegateMode(hint: CodingHint): 'execute' | 'plan' | null {
+  if (hint === 'force_delegate_execute') return 'execute';
+  if (hint === 'force_delegate_plan') return 'plan';
+  return null;
 }
 
 function isTelegramChatJid(chatJid: string): boolean {
@@ -78,7 +119,7 @@ function readFileIfExists(filePath: string): string | null {
   }
 }
 
-function buildSystemPrompt(input: ContainerInput): string {
+function buildSystemPrompt(input: NormalizedContainerInput): string {
   // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for
   // backwards compatibility (older installs/groups).
   const globalMemory =
@@ -91,37 +132,70 @@ function buildSystemPrompt(input: ContainerInput): string {
     readFileIfExists('/workspace/group/SOUL.md') ||
     readFileIfExists('/workspace/group/CLAUDE.md');
 
-  const isCoder = input.profile === 'coder';
+  const delegationExtensionAvailable = fs.existsSync(PI_ON_PI_EXTENSION_PATH);
+  const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
+  const canDelegateToCoder =
+    !!forcedDelegateMode &&
+    input.isMain &&
+    !input.isScheduledTask &&
+    delegationExtensionAvailable;
 
   const lines: string[] = [];
-  if (isCoder) {
-    lines.push('You are FarmFriend (Coder), a headless coding agent.');
-    lines.push('Be direct, technical, and deterministic.');
-    lines.push('Prefer concrete file edits, commands, and verification.');
-  } else {
-    lines.push('You are FarmFriend, an agricultural assistant.');
-    lines.push('Be direct, practical, and safe.');
-  }
+  lines.push('You are FarmFriend, a practical assistant with optional delegated coding capabilities.');
+  lines.push('Be direct, safe, and deterministic.');
   lines.push('');
   lines.push('Workspace:');
   lines.push('- /workspace/group is your writable working directory and long-term memory.');
   lines.push('- /workspace/ipc is the bridge to the host process (messages + scheduling).');
   lines.push('');
+  lines.push('Runtime hints:');
+  lines.push(`- coding_hint: ${input.codingHint}`);
+  if (input.requestId) {
+    lines.push(`- request_id: ${input.requestId}`);
+  }
+  lines.push('');
+
+  if (canDelegateToCoder) {
+    lines.push('Coding delegation rules:');
+    lines.push(
+      `- This turn is explicit delegation: call delegate_to_coding_agent exactly once with mode="${forcedDelegateMode}".`,
+    );
+    if (forcedDelegateMode === 'plan') {
+      lines.push('- Return a concrete implementation plan only; do not directly apply file edits in this outer session.');
+    } else {
+      lines.push('- Execute via delegated coder and return the delegated outcome.');
+    }
+    lines.push('');
+  } else if (isForceDelegateHint(input.codingHint)) {
+    // Avoid instructing tool use when the extension is not actually loaded.
+    lines.push(
+      'Coding delegation status: unavailable for this run (not main, scheduled task, or delegate extension not loaded).',
+    );
+    lines.push('- Handle this request directly in this session and explain that delegation is unavailable.');
+    lines.push('');
+  } else if (input.isMain && !input.isScheduledTask) {
+    lines.push('Coding delegation offer policy (main chat):');
+    lines.push('- Do not delegate automatically on normal turns.');
+    lines.push(
+      '- If the user appears to want substantial software engineering work (multi-file changes, deep debugging, larger refactors, broad test work), proactively offer explicit coder delegation.',
+    );
+    lines.push(
+      '- Offer this concise opt-in: "/coder <task>" to execute, "/coder-plan <task>" for plan-only, or "use coding agent".',
+    );
+    lines.push(
+      '- For lightweight tasks (small snippets, quick commands, minor edits, simple API calls), continue directly unless the user asks to delegate.',
+    );
+    lines.push('');
+  }
+
   lines.push('Messaging (no MCP):');
   lines.push(
     'To proactively message the current chat, write a JSON file into /workspace/ipc/messages/*.json with:',
   );
   lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
   lines.push('Write atomically (temp file then rename) to avoid partial reads.');
-  lines.push('Example:');
-  lines.push(
-    '  bash: tmp=/workspace/ipc/messages/.tmp_$(date +%s).json; ' +
-      'printf %s \'{"type":"message","chatJid":"' +
-      input.chatJid +
-      '","text":"Hello"}\' > "$tmp"; ' +
-      'mv "$tmp" /workspace/ipc/messages/msg_$(date +%s).json',
-  );
   lines.push('');
+
   lines.push('Scheduling:');
   lines.push(
     'To schedule tasks, write JSON into /workspace/ipc/tasks/*.json with one of:',
@@ -139,6 +213,7 @@ function buildSystemPrompt(input: ContainerInput): string {
   lines.push('You can read current tasks at /workspace/ipc/current_tasks.json.');
   lines.push('Main can read groups at /workspace/ipc/available_groups.json.');
   lines.push('');
+
   lines.push('Formatting constraints (WhatsApp-friendly):');
   lines.push('- Avoid markdown headings (##).');
   lines.push('- Prefer short paragraphs and bullet points.');
@@ -170,6 +245,7 @@ function getPiArgs(
   systemPrompt: string,
   prompt: string,
   useContinue: boolean,
+  loadDelegationExtension: boolean,
 ): string[] {
   const args: string[] = ['--mode', 'json'];
   if (useContinue) args.push('-c');
@@ -182,138 +258,43 @@ function getPiArgs(
   if (model) args.push('--model', model);
   if (apiKey) args.push('--api-key', apiKey);
 
+  if (loadDelegationExtension) {
+    args.push('--extension', PI_ON_PI_EXTENSION_PATH);
+  }
+
   args.push('--system-prompt', systemPrompt);
   args.push(prompt);
 
   return args;
 }
 
-type TextDelta =
-  | { kind: 'append'; text: string }
-  | { kind: 'replace'; text: string };
-
-function extractAssistantTextDelta(evt: any): TextDelta | null {
-  if (!evt || typeof evt !== 'object') return null;
-
-  // Common delta-style shapes (best-effort).
-  if (evt.delta && typeof evt.delta.text === 'string') {
-    return { kind: 'append', text: evt.delta.text };
-  }
-  if (typeof evt.text === 'string' && evt.role === 'assistant') {
-    return { kind: 'append', text: evt.text };
-  }
-
-  // Full-message shapes (we treat as a replace).
-  if (evt.message?.role !== 'assistant') return null;
-  const content = evt.message?.content;
-  if (typeof content === 'string') return { kind: 'replace', text: content };
-  if (Array.isArray(content)) {
-    const parts: string[] = [];
-    for (const block of content) {
-      if (typeof block === 'string') parts.push(block);
-      else if (block && typeof block.text === 'string') parts.push(block.text);
-      else if (block && typeof block.content === 'string') parts.push(block.content);
-    }
-    return { kind: 'replace', text: parts.join('') };
-  }
-
-  return null;
-}
-
 async function runPiAgent(
   systemPrompt: string,
   prompt: string,
-  input: ContainerInput,
+  input: NormalizedContainerInput,
 ): Promise<{ result: string; streamed: boolean }> {
-  const isCoder = input.profile === 'coder' && !input.isScheduledTask;
-  const isTelegram = isTelegramChatJid(input.chatJid);
-
-  let streamed = false;
-  let assistantSoFar = '';
-  let pendingDiff = '';
-  let lastStreamedLen = 0;
-  let lastProgressSend = 0;
-  let progressMsgCount = 0;
-
-  const maxTelegramMessages = 50;
-  const telegramMinIntervalMs = 4000;
-  const telegramMaxChunk = 900;
-
-  const maxWhatsAppMessages = 3;
-  const whatsAppMilestonesMs = [30_000, 120_000, 240_000];
-  const startTs = Date.now();
-  let milestoneIdx = 0;
-
-  const maybeSendTelegramProgress = () => {
-    if (!isCoder || !isTelegram) return;
-    if (!pendingDiff) return;
-    const now = Date.now();
-    if (progressMsgCount >= maxTelegramMessages) return;
-    if (now - lastProgressSend < telegramMinIntervalMs) return;
-
-    const chunk = pendingDiff.slice(0, telegramMaxChunk);
-    pendingDiff = pendingDiff.slice(chunk.length);
-    const ok = writeIpcMessage(
-      input.chatJid,
-      (input.requestId ? `[${input.requestId}] ` : '') + chunk,
-    );
-    if (ok) {
-      streamed = true;
-      progressMsgCount++;
-      lastProgressSend = now;
-    }
-  };
-
-  const maybeSendWhatsAppMilestone = () => {
-    if (!isCoder || isTelegram) return;
-    if (progressMsgCount >= maxWhatsAppMessages) return;
-    const now = Date.now();
-    if (milestoneIdx >= whatsAppMilestonesMs.length) return;
-    if (now - startTs < whatsAppMilestonesMs[milestoneIdx]) return;
-
-    milestoneIdx++;
-    const preview = assistantSoFar.trim()
-      ? assistantSoFar.trim().slice(-350)
-      : 'Still working...';
-    const ok = writeIpcMessage(
-      input.chatJid,
-      `${input.requestId ? `[${input.requestId}] ` : ''}Progress update: ${preview}`,
-    );
-    if (ok) {
-      streamed = true;
-      progressMsgCount++;
-    }
-  };
-
-  const applyDelta = (d: TextDelta) => {
-    if (d.kind === 'append') assistantSoFar += d.text;
-    else assistantSoFar = d.text;
-
-    // For Telegram we stream small diffs; for WhatsApp we only use it as preview
-    // in milestone updates.
-    if (isCoder && isTelegram) {
-      if (assistantSoFar.length > lastStreamedLen) {
-        pendingDiff += assistantSoFar.slice(lastStreamedLen);
-        lastStreamedLen = assistantSoFar.length;
-      } else if (assistantSoFar.length < lastStreamedLen) {
-        // If the stream resets/replaces with shorter text, reset our cursor.
-        lastStreamedLen = assistantSoFar.length;
-        pendingDiff = '';
-      }
-      maybeSendTelegramProgress();
-    }
-  };
+  const loadDelegationExtension =
+    input.isMain &&
+    !input.isScheduledTask &&
+    isForceDelegateHint(input.codingHint) &&
+    fs.existsSync(PI_ON_PI_EXTENSION_PATH);
 
   const tryRun = (useContinue: boolean) =>
     new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-      const args = getPiArgs(systemPrompt, prompt, useContinue);
-      const env = { ...process.env };
-      // Separate pi state between manager and coder runs.
-      if (input.profile === 'coder') {
-        env.PI_CODING_AGENT_DIR = '/home/node/.pi/agent-coder';
-      } else {
-        env.PI_CODING_AGENT_DIR = '/home/node/.pi/agent-farmfriend';
-      }
+      const args = getPiArgs(
+        systemPrompt,
+        prompt,
+        useContinue,
+        loadDelegationExtension,
+      );
+      const env = {
+        ...process.env,
+        PI_CODING_AGENT_DIR: '/home/node/.pi/agent-farmfriend',
+        FFT_NANO_CHAT_JID: input.chatJid,
+        FFT_NANO_REQUEST_ID: input.requestId || '',
+        FFT_NANO_CODING_HINT: input.codingHint,
+        FFT_NANO_IS_MAIN: input.isMain ? '1' : '0',
+      };
 
       const child = spawn('pi', args, {
         cwd: '/workspace/group',
@@ -323,48 +304,17 @@ async function runPiAgent(
 
       let stdout = '';
       let stderr = '';
-      let buf = '';
 
       child.stdout.on('data', (d) => {
-        const s = d.toString();
-        stdout += s;
-
-        if (!isCoder) return;
-
-        buf += s;
-        let idx: number;
-        while ((idx = buf.indexOf('\n')) !== -1) {
-          const line = buf.slice(0, idx).trim();
-          buf = buf.slice(idx + 1);
-          if (!line) continue;
-          try {
-            const evt = JSON.parse(line);
-            const delta = extractAssistantTextDelta(evt);
-            if (delta) applyDelta(delta);
-          } catch {
-            // ignore non-JSON lines
-          }
-        }
-
-        maybeSendTelegramProgress();
-        maybeSendWhatsAppMilestone();
+        stdout += d.toString();
       });
       child.stderr.on('data', (d) => {
         stderr += d.toString();
       });
-      const ticker = isCoder
-        ? setInterval(() => {
-            maybeSendTelegramProgress();
-            maybeSendWhatsAppMilestone();
-          }, 1000)
-        : null;
-
       child.on('close', (code) => {
-        if (ticker) clearInterval(ticker);
         resolve({ code, stdout, stderr });
       });
       child.on('error', (err) => {
-        if (ticker) clearInterval(ticker);
         resolve({ code: 1, stdout, stderr: String(err) });
       });
     });
@@ -372,7 +322,9 @@ async function runPiAgent(
   // Prefer continuing prior context, but fall back cleanly.
   let res = await tryRun(true);
   if (res.code !== 0) {
-    const looksLikeNoSession = /no\s+previous\s+session|no\s+session/i.test(res.stderr);
+    const looksLikeNoSession = /no\s+previous\s+session|no\s+session/i.test(
+      res.stderr,
+    );
     if (looksLikeNoSession) {
       res = await tryRun(false);
     }
@@ -395,7 +347,11 @@ async function runPiAgent(
       // event streams back to chat. Surface the error instead.
       const stopReason = evt?.message?.stopReason;
       const errorMessage = evt?.message?.errorMessage;
-      if (stopReason === 'error' && typeof errorMessage === 'string' && errorMessage) {
+      if (
+        stopReason === 'error' &&
+        typeof errorMessage === 'string' &&
+        errorMessage
+      ) {
         lastError = errorMessage;
       }
 
@@ -412,7 +368,9 @@ async function runPiAgent(
         for (const block of content) {
           if (typeof block === 'string') parts.push(block);
           else if (block && typeof block.text === 'string') parts.push(block.text);
-          else if (block && typeof block.content === 'string') parts.push(block.content);
+          else if (block && typeof block.content === 'string') {
+            parts.push(block.content);
+          }
         }
         const joined = parts.join('');
         if (joined) lastAssistant = joined;
@@ -428,17 +386,17 @@ async function runPiAgent(
 
   if (!lastAssistant) {
     // If JSON parse fails due to formatting differences, fall back to raw stdout.
-    return { result: res.stdout.trim(), streamed };
+    return { result: res.stdout.trim(), streamed: false };
   }
 
-  return { result: lastAssistant.trim(), streamed };
+  return { result: lastAssistant.trim(), streamed: false };
 }
 
 async function main(): Promise<void> {
-  let input: ContainerInput;
+  let rawInput: ContainerInput;
 
   try {
-    input = JSON.parse(await readStdin()) as ContainerInput;
+    rawInput = JSON.parse(await readStdin()) as ContainerInput;
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -448,6 +406,8 @@ async function main(): Promise<void> {
     process.exit(1);
     return;
   }
+
+  const input = normalizeInput(rawInput);
 
   const systemPrompt = buildSystemPrompt(input);
   const prompt = input.isScheduledTask
@@ -470,10 +430,12 @@ async function main(): Promise<void> {
 
     const { result, streamed } = await runPiAgent(systemPrompt, prompt, input);
 
-    // OpenClaw-style: for coder runs, send output back to the originating chat
-    // via IPC (same platform), and suppress the host-side final send to avoid
-    // duplicate messages.
-    if (input.profile === 'coder' && !input.isScheduledTask) {
+    let finalResult: string | null = result;
+    let finalStreamed = streamed;
+
+    // Keep explicit delegation behavior resilient for long outputs by sending
+    // through IPC with file fallback, then suppressing the host final send.
+    if (isForceDelegateHint(input.codingHint) && !input.isScheduledTask) {
       const outDir = '/workspace/group/coder_runs';
       fs.mkdirSync(outDir, { recursive: true });
       const rid = input.requestId || `coder_${Date.now()}`;
@@ -496,15 +458,13 @@ async function main(): Promise<void> {
         );
       }
 
-      writeOutput({
-        status: 'success',
-        result: sent ? null : result,
-        streamed: sent || streamed,
-      });
-      return;
+      if (sent) {
+        finalResult = null;
+        finalStreamed = true;
+      }
     }
 
-    writeOutput({ status: 'success', result, streamed });
+    writeOutput({ status: 'success', result: finalResult, streamed: finalStreamed });
   } catch (err) {
     writeOutput({
       status: 'error',

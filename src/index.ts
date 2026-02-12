@@ -55,6 +55,7 @@ import {
   parseTelegramChatId,
 } from './telegram.js';
 import type { TelegramBot } from './telegram.js';
+import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -481,29 +482,42 @@ async function processMessage(msg: NewMessage): Promise<void> {
   // Main group responds to all messages; other groups require trigger prefix
   if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return;
 
-  // Explicit coder command (OpenClaw-style): /coder ...
-  // Security: only allow coder runs from main/admin chat.
-  let profile: 'farmfriend' | 'coder' = 'farmfriend';
+  // Deterministic two-lane model:
+  // - default: orchestrator handles message directly
+  // - explicit triggers (/coder, /coder-plan, alias phrases) force delegation
+  let codingHint: CodingHint = 'none';
   let requestId: string | undefined;
-  let coderInstruction: string | null = null;
-  // In main, allow either "/coder ..." or "@FarmFriend /coder ...".
-  // In non-main, the trigger prefix is required (checked above).
+  let delegationInstruction: string | null = null;
+  let delegationMarker: string | null = null;
+
+  // In main, allow "/coder...", "/coder-plan...", or explicit alias phrases.
+  // In non-main, trigger prefix is required (checked above) and delegation is blocked.
   const stripped = content.replace(TRIGGER_PATTERN, '').trimStart();
-  if (/^\/coder\b/i.test(stripped)) {
-    if (!isMainGroup) {
-      await sendMessage(
-        msg.chat_jid,
-        `${ASSISTANT_NAME}: /coder is only available in the main/admin chat for safety.`,
-      );
-      return;
-    }
-    profile = 'coder';
-    coderInstruction = stripped.replace(/^\/coder\b/i, '').trim();
-    requestId = `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const parsedTrigger = parseDelegationTrigger(stripped);
+  const wantsDelegation = parsedTrigger.hint !== 'none';
+
+  if (wantsDelegation && !isMainGroup) {
     await sendMessage(
       msg.chat_jid,
-      `${ASSISTANT_NAME}: Starting coder run (${requestId})...`,
+      `${ASSISTANT_NAME}: coder delegation is only available in the main/admin chat for safety.`,
     );
+    return;
+  }
+
+  if (wantsDelegation) {
+    codingHint = parsedTrigger.hint;
+    delegationInstruction = parsedTrigger.instruction;
+    delegationMarker =
+      codingHint === 'force_delegate_plan'
+        ? '[CODER PLAN REQUEST]'
+        : '[CODER EXECUTE REQUEST]';
+    requestId = `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const startMessage =
+      codingHint === 'force_delegate_plan'
+        ? `${ASSISTANT_NAME}: Starting coder plan run (${requestId})...`
+        : `${ASSISTANT_NAME}: Starting coder run (${requestId})...`;
+    await sendMessage(msg.chat_jid, startMessage);
   }
 
   // Get all messages since last agent interaction so the session has full context
@@ -522,8 +536,10 @@ async function processMessage(msg: NewMessage): Promise<void> {
   if (!prompt) return;
 
   const finalPrompt =
-    profile === 'coder' && coderInstruction
-      ? `${prompt}\n\n[CODER REQUEST]\n${coderInstruction}`
+    codingHint !== 'none' && delegationMarker
+      ? delegationInstruction
+        ? `${prompt}\n\n${delegationMarker}\n${delegationInstruction}`
+        : `${prompt}\n\n${delegationMarker}`
       : prompt;
 
   logger.info(
@@ -536,7 +552,7 @@ async function processMessage(msg: NewMessage): Promise<void> {
     group,
     finalPrompt,
     msg.chat_jid,
-    profile,
+    codingHint,
     requestId,
   );
   await setTyping(msg.chat_jid, false);
@@ -555,7 +571,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
-  profile: 'farmfriend' | 'coder' = 'farmfriend',
+  codingHint: CodingHint = 'none',
   requestId?: string,
 ): Promise<{ result: string | null; streamed: boolean; ok: boolean }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
@@ -592,7 +608,7 @@ async function runAgent(
       groupFolder: group.folder,
       chatJid,
       isMain,
-      profile,
+      codingHint,
       requestId,
     } as const;
 

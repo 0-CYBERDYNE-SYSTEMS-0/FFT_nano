@@ -78,9 +78,18 @@ From the main channel (your self-chat), you can manage groups and tasks:
 @FarmFriend pause the Monday briefing task
 @FarmFriend join the Family Chat group
 
-Coding agent (main/admin only):
+Coding delegation (main/admin only, explicit triggers):
 @FarmFriend /coder implement a new feature and run checks
+@FarmFriend /coder-plan propose a refactor plan for auth middleware
+@FarmFriend use coding agent
+@FarmFriend use your coding agent skill
 ```
+
+Notes:
+- Natural-language coding requests do not auto-delegate by default.
+- Delegation is explicit via `/coder`, `/coder-plan`, or the exact alias phrases above.
+- In main chat, FarmFriend may proactively suggest these delegation triggers when a request looks like substantial software-engineering work.
+- Non-main chats cannot trigger coder delegation.
 
 ## Customizing
 
