@@ -10,6 +10,7 @@
     "dev": "tsx src/index.ts",
     "test": "node --import tsx --test tests/**/*.test.ts",
     "auth": "tsx src/whatsapp-auth.ts",
+    "validate:skills": "tsx scripts/validate-pi-skills.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\""

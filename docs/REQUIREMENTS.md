@@ -23,11 +23,11 @@ The entire codebase should be something you can read and understand. One Node.js
 
 ### Security Through True Isolation
 
-Instead of application-level permission systems trying to prevent agents from accessing things, agents run in actual Linux containers (Apple Container). The isolation is at the OS level. Agents can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your Mac.
+Instead of application-level permission systems trying to prevent agents from accessing things, agents run in actual Linux containers (Apple Container on macOS, Docker on Linux). The isolation is at the OS level. Agents can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
 
 ### Built for One User
 
-This isn't a framework or a platform. It's working software for my specific needs. I use WhatsApp and Email, so it supports WhatsApp and Email. I don't use Telegram, so it doesn't support Telegram. I add the integrations I actually want, not every possible integration.
+This isn't a framework or a platform. It's working software for focused operational needs. FFT_nano currently supports Telegram and WhatsApp. Keep integrations intentional and avoid unnecessary platform sprawl.
 
 ### Customization = Code Changes
 
@@ -51,8 +51,8 @@ A personal farm assistant accessible via chat, with minimal custom code.
 
 **Core components:**
 - **Pi agent runtime** as the core agent
-- **Apple Container** for isolated agent execution (Linux VMs)
-- **WhatsApp** as the primary I/O channel
+- **Apple Container or Docker** for isolated agent execution
+- **Telegram and WhatsApp** as chat I/O channels
 - **Persistent memory** per conversation and globally
 - **Scheduled tasks** that run FarmFriend and can message back
 - **Web access** via bash/curl or browser automation
@@ -68,7 +68,7 @@ A personal farm assistant accessible via chat, with minimal custom code.
 ## Architecture Decisions
 
 ### Message Routing
-- A router listens to WhatsApp and routes messages based on configuration
+- A router listens to Telegram and/or WhatsApp and routes messages based on configuration
 - Only messages from registered groups are processed
 - Trigger: `@FarmFriend` prefix (case insensitive), configurable via `ASSISTANT_NAME` env var
 - Unregistered groups are ignored completely
@@ -84,7 +84,7 @@ A personal farm assistant accessible via chat, with minimal custom code.
 - Sessions auto-compact when context gets too long, preserving critical information
 
 ### Container Isolation
-- All agents run inside Apple Container (lightweight Linux VMs)
+- Agents run inside Apple Container on macOS or Docker on Linux
 - Each agent invocation spawns a container with mounted directories
 - Containers provide filesystem isolation - agents can only see mounted paths
 - Bash access is safe because commands run inside the container, not on the host
@@ -122,6 +122,11 @@ A personal farm assistant accessible via chat, with minimal custom code.
 - Messages stored in SQLite, polled by router
 - QR code authentication during setup
 
+### Telegram
+- Bot API polling + command handling (`/help`, `/status`, `/id`, admin commands in main only)
+- Main/admin chat can be claimed with `/main <secret>` when `TELEGRAM_ADMIN_SECRET` is set
+- Media uploads are persisted to group inbox paths for agent access
+
 ### Scheduler
 - Built-in scheduler runs on the host, spawns containers for task execution
 - File-based IPC (`/workspace/ipc`) provides messaging + scheduling
@@ -150,9 +155,10 @@ A personal farm assistant accessible via chat, with minimal custom code.
 - Each user gets a custom setup matching their exact needs
 
 ### Common Tasks
-- Install deps: `npm install`
+- One-time setup: `./scripts/setup.sh`
 - WhatsApp auth: `npm run auth`
-- Run (dev): `npm run dev`
+- Run (dev): `./scripts/start.sh dev`
+- Run (dev, Telegram-only): `./scripts/start.sh dev telegram-only`
 - Build: `npm run build`
 
 ### Deployment
@@ -168,7 +174,7 @@ These are the creator's settings, stored here for reference:
 - **Trigger**: `@FarmFriend` (case insensitive)
 - **Response prefix**: `FarmFriend:`
 - **Persona**: FarmFriend
-- **Main channel**: Self-chat (messaging yourself in WhatsApp)
+- **Main channel**: Admin chat (WhatsApp self-chat or Telegram DM)
 
 ---
 

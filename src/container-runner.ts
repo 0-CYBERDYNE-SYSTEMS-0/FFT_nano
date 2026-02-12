@@ -17,6 +17,7 @@ import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
 import type { ContainerRuntime } from './container-runtime.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { syncProjectPiSkillsToGroupPiHome } from './pi-skills.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -92,6 +93,17 @@ function buildVolumeMounts(
   // Pi persists sessions and auth/config under ~/.pi.
   const groupPiHomeDir = path.join(DATA_DIR, 'pi', group.folder, '.pi');
   fs.mkdirSync(groupPiHomeDir, { recursive: true });
+  const skillSync = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHomeDir);
+  if (skillSync.sourceDirExists) {
+    logger.debug(
+      {
+        group: group.name,
+        copiedSkills: skillSync.copied,
+        removedSkills: skillSync.removed,
+      },
+      'Synced project Pi skills into group Pi home',
+    );
+  }
   mounts.push({
     hostPath: groupPiHomeDir,
     containerPath: '/home/node/.pi',
