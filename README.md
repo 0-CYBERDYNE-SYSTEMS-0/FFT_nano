@@ -90,6 +90,9 @@ Notes:
 - Delegation is explicit via `/coder`, `/coder-plan`, or the exact alias phrases above.
 - In main chat, FarmFriend may proactively suggest these delegation triggers when a request looks like substantial software-engineering work.
 - Non-main chats cannot trigger coder delegation.
+- Telegram slash commands are available from the bot command menu (`/help`, `/status`, `/id` globally; admin commands in main chat only).
+- Telegram admin quick actions are available via `/panel` with inline buttons.
+- Telegram uploads (images, docs, voice, audio, video, stickers) are stored in `groups/<group>/inbox/telegram/` and surfaced to the agent as `/workspace/group/inbox/telegram/...` paths.
 
 ## Customizing
 
@@ -132,6 +135,7 @@ FFT_nano is intentionally a “fork-that-becomes-a-product”. Keep changes secu
 - `TELEGRAM_MAIN_CHAT_ID`: optional; maps a Telegram chat to the `main` group folder
 - `TELEGRAM_ADMIN_SECRET`: required to claim the main/admin chat via Telegram command `/main <secret>`
 - `TELEGRAM_AUTO_REGISTER`: `1` (default) or `0`
+- `TELEGRAM_MEDIA_MAX_MB`: max Telegram inbound upload size to persist for agent use (default `20`)
 - `FFT_NANO_APPLE_CONTAINER_SELF_HEAL`: `1` (default) or `0` (disable). When enabled, FFT_nano will auto-restart Apple Container services once on common transient network/timeouts and retry the LLM call.
 
 Build the agent container image:
@@ -175,6 +179,8 @@ WhatsApp is convenient when you want to talk from your personal account; Telegra
 3. DM your bot:
    - `/id` to see your chat id
    - `/main <secret>` to claim this DM as the `main` channel (persists in `data/registered_groups.json`)
+   - `/help` for command list
+   - `/panel` for admin button shortcuts
 
 **Why Apple Container instead of Docker?**
 
