@@ -11,6 +11,9 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
+  FARM_STATE_DIR,
+  FARM_STATE_ENABLED,
+  FFT_DASHBOARD_REPO_PATH,
   GROUPS_DIR,
   MEMORY_RETRIEVAL_GATE_ENABLED,
 } from './config.js';
@@ -118,11 +121,43 @@ function buildVolumeMounts(
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'actions'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'action_results'), { recursive: true });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
   });
+
+  // Farm state ledger (read-only for all groups)
+  if (FARM_STATE_ENABLED && fs.existsSync(FARM_STATE_DIR)) {
+    mounts.push({
+      hostPath: FARM_STATE_DIR,
+      containerPath: '/workspace/farm-state',
+      readonly: true,
+    });
+  }
+
+  // Dashboard workspace (read-write in main only)
+  if (FARM_STATE_ENABLED && isMain && FFT_DASHBOARD_REPO_PATH) {
+    const haConfigPath = path.join(FFT_DASHBOARD_REPO_PATH, 'ha_config');
+    if (fs.existsSync(haConfigPath)) {
+      mounts.push({
+        hostPath: haConfigPath,
+        containerPath: '/workspace/dashboard',
+        readonly: false,
+      });
+    }
+
+    const templatesPath = path.join(FFT_DASHBOARD_REPO_PATH, 'dashboard-templates');
+    if (fs.existsSync(templatesPath)) {
+      mounts.push({
+        hostPath: templatesPath,
+        containerPath: '/workspace/dashboard-templates',
+        readonly: true,
+      });
+    }
+  }
 
   // Environment file directory (workaround for Apple Container -i env var bug)
   // Only expose specific auth variables needed by the agent runtime, not the entire .env
@@ -148,6 +183,10 @@ function buildVolumeMounts(
 
     // Debugging
     'FFT_NANO_DRY_RUN',
+
+    // Farm bridge / Home Assistant
+    'HA_URL',
+    'HA_TOKEN',
   ];
 
   function stripDotEnvQuotes(raw: string): string {

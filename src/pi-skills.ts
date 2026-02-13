@@ -7,6 +7,8 @@ export const REQUIRED_PROJECT_PI_SKILLS = [
   'fft-debug',
   'fft-telegram-ops',
   'fft-coder-ops',
+  'fft-farm-ops',
+  'fft-dashboard-ops',
 ] as const;
 
 export interface SkillValidationIssue {
