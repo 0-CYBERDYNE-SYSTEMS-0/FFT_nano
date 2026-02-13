@@ -73,3 +73,18 @@ export interface TaskRunLog {
   result: string | null;
   error: string | null;
 }
+
+export interface FarmActionRequest {
+  type: 'farm_action';
+  action: string;
+  params: Record<string, unknown>;
+  requestId: string;
+}
+
+export interface FarmActionResult {
+  requestId: string;
+  status: 'success' | 'error';
+  result?: unknown;
+  error?: string;
+  executedAt: string;
+}

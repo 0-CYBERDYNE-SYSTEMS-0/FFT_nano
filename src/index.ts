@@ -12,6 +12,7 @@ import makeWASocket, {
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  FARM_STATE_ENABLED,
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -43,7 +44,7 @@ import {
   updateChatName,
 } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup } from './types.js';
+import { FarmActionRequest, NewMessage, RegisteredGroup } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
 import { getContainerRuntime } from './container-runtime.js';
@@ -64,6 +65,8 @@ import type {
   TelegramInlineKeyboard,
 } from './telegram.js';
 import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
+import { executeFarmAction } from './farm-action-gateway.js';
+import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -128,6 +131,7 @@ let lidToPhoneMap: Record<string, string> = {};
 let messageLoopRunning = false;
 let ipcWatcherRunning = false;
 let groupSyncTimerStarted = false;
+let shuttingDown = false;
 
 /**
  * Translate a JID from LID format to phone format if we have a mapping.
@@ -1335,6 +1339,63 @@ function startIpcWatcher(): void {
       } catch (err) {
         logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
       }
+
+      // Process farm actions from this group's IPC directory
+      try {
+        const actionsDir = path.join(ipcBaseDir, sourceGroup, 'actions');
+        if (fs.existsSync(actionsDir)) {
+          const actionFiles = fs
+            .readdirSync(actionsDir)
+            .filter((f) => f.endsWith('.json'));
+
+          for (const file of actionFiles) {
+            const filePath = path.join(actionsDir, file);
+            try {
+              const request = JSON.parse(
+                fs.readFileSync(filePath, 'utf-8'),
+              ) as FarmActionRequest;
+
+              if (request.type === 'farm_action') {
+                const result = await executeFarmAction(request, isMain);
+                const resultDir = path.join(
+                  ipcBaseDir,
+                  sourceGroup,
+                  'action_results',
+                );
+                fs.mkdirSync(resultDir, { recursive: true });
+                const resultPath = path.join(
+                  resultDir,
+                  `${request.requestId}.json`,
+                );
+                fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
+              } else {
+                logger.warn(
+                  { sourceGroup, file },
+                  'Ignoring IPC action file with unsupported type',
+                );
+              }
+
+              fs.unlinkSync(filePath);
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing IPC farm action',
+              );
+              const errorDir = path.join(ipcBaseDir, 'errors');
+              fs.mkdirSync(errorDir, { recursive: true });
+              fs.renameSync(
+                filePath,
+                path.join(errorDir, `${sourceGroup}-${file}`),
+              );
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading IPC actions directory',
+        );
+      }
     }
 
     setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
@@ -1801,7 +1862,30 @@ function ensureContainerSystemRunning(): void {
   }
 }
 
+function stopFarmServicesForShutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, 'Shutting down FFT_nano services');
+
+  if (FARM_STATE_ENABLED) {
+    stopFarmStateCollector();
+  }
+}
+
+function registerShutdownHandlers(): void {
+  process.on('SIGINT', () => {
+    stopFarmServicesForShutdown('SIGINT');
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', () => {
+    stopFarmServicesForShutdown('SIGTERM');
+    process.exit(0);
+  });
+}
+
 async function main(): Promise<void> {
+  registerShutdownHandlers();
   acquireSingletonLock(path.join(DATA_DIR, 'fft_nano.lock'));
   ensureContainerSystemRunning();
   initDatabase();
@@ -1810,8 +1894,14 @@ async function main(): Promise<void> {
   migrateLegacyClaudeMemoryFiles();
   maybePromoteConfiguredTelegramMain();
 
+  if (FARM_STATE_ENABLED) {
+    startFarmStateCollector();
+  }
+
   const telegramEnabled = !!TELEGRAM_BOT_TOKEN;
-  if (!WHATSAPP_ENABLED && !telegramEnabled) {
+  const farmOnlyMode = FARM_STATE_ENABLED && !WHATSAPP_ENABLED && !telegramEnabled;
+  
+  if (!WHATSAPP_ENABLED && !telegramEnabled && !FARM_STATE_ENABLED) {
     throw new Error(
       'No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.',
     );
@@ -1823,6 +1913,7 @@ async function main(): Promise<void> {
 
   // If Telegram is enabled we start the loops immediately so Telegram messages
   // can be processed even before WhatsApp connects.
+  // Also start in farm-state-only mode for integration testing.
   if (telegramEnabled || !WHATSAPP_ENABLED) {
     startSchedulerLoop({
       sendMessage,
@@ -1832,7 +1923,9 @@ async function main(): Promise<void> {
     void startMessageLoop();
   }
 
-  if (WHATSAPP_ENABLED) {
+  if (farmOnlyMode) {
+    logger.info('Running in farm-state-only mode (no channels enabled)');
+  } else if (WHATSAPP_ENABLED) {
     await connectWhatsApp();
   } else {
     logger.info('WhatsApp disabled (WHATSAPP_ENABLED=0)');
@@ -1840,6 +1933,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  stopFarmServicesForShutdown('startup_error');
   logger.error({ err }, 'Failed to start FFT_nano');
   process.exit(1);
 });

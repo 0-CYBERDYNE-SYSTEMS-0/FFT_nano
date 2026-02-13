@@ -19,6 +19,29 @@ export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
+export const FARM_STATE_ENABLED = envFlag(process.env.FARM_STATE_ENABLED, false);
+export const FARM_STATE_DIR = path.resolve(DATA_DIR, 'farm-state');
+export const FARM_STATE_FAST_MS = envInt(
+  process.env.FARM_STATE_FAST_MS,
+  15000,
+  5000,
+  60000,
+);
+export const FARM_STATE_MEDIUM_MS = envInt(
+  process.env.FARM_STATE_MEDIUM_MS,
+  120000,
+  30000,
+  600000,
+);
+export const FARM_STATE_SLOW_MS = envInt(
+  process.env.FARM_STATE_SLOW_MS,
+  900000,
+  300000,
+  3600000,
+);
+export const HA_URL = process.env.HA_URL || 'http://localhost:8123';
+export const HA_TOKEN = process.env.HA_TOKEN || '';
+export const FFT_DASHBOARD_REPO_PATH = process.env.FFT_DASHBOARD_REPO_PATH || '';
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'fft-nano-agent:latest';
