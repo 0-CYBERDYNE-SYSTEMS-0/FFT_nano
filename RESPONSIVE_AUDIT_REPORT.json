@@ -1,5 +1,5 @@
 {
-  "audit_date": "2026-02-14T15:24:54.730239",
+  "audit_date": "2026-02-14T15:32:54.543540",
   "file": "/Users/scrimwiggins/clawd/fft-nano-work/index.html",
   "viewport_meta": {
     "present": true,
@@ -198,9 +198,9 @@
       "type": "relative",
       "count": 148,
       "examples": [
-        "2rem",
-        "0.75rem",
         "1rem",
+        "0.75rem",
+        "2rem",
         "0.5rem"
       ]
     },
@@ -208,10 +208,10 @@
       "type": "fixed",
       "count": 168,
       "examples": [
-        "768px",
         "480px",
+        "20px",
         "1px",
-        "20px"
+        "768px"
       ]
     }
   ],
@@ -231,7 +231,7 @@
         "display\\s*flex": 22,
         "display\\s*inline-flex": 1,
         "flex-direction\\s*[^;]+": 8,
-        "justify-content\\s*[^;]+": 14,
+        "justify-content\\s*[^;]+": 16,
         "align-items\\s*[^;]+": 18,
         "flex-wrap\\s*[^;]+": 3
       },
