@@ -8,6 +8,14 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 const PROJECT_ROOT = process.cwd();
 const HOME_DIR = process.env.HOME || '/Users/user';
 
+function expandHomePath(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return HOME_DIR;
+  if (trimmed === '~') return HOME_DIR;
+  if (trimmed.startsWith('~/')) return path.join(HOME_DIR, trimmed.slice(2));
+  return trimmed;
+}
+
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
   HOME_DIR,
@@ -19,6 +27,9 @@ export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
+export const MAIN_WORKSPACE_DIR = path.resolve(
+  expandHomePath(process.env.FFT_NANO_MAIN_WORKSPACE_DIR || '~/nano'),
+);
 export const FARM_STATE_ENABLED = envFlag(process.env.FARM_STATE_ENABLED, false);
 export const FARM_STATE_DIR = path.resolve(DATA_DIR, 'farm-state');
 export const FARM_STATE_FAST_MS = envInt(
@@ -93,8 +104,21 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const aliasEnv = process.env.ASSISTANT_ALIASES || '';
+const parsedAliases = aliasEnv
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const defaultAliases = ['F-15'];
+
+export const ASSISTANT_TRIGGER_ALIASES = Array.from(
+  new Set([ASSISTANT_NAME, ...defaultAliases, ...parsedAliases]),
+);
+
 export const TRIGGER_PATTERN = new RegExp(
-  `^@${escapeRegex(ASSISTANT_NAME)}\\b`,
+  `^(?:${ASSISTANT_TRIGGER_ALIASES.map(
+    (name) => `@${escapeRegex(name)}\\b`,
+  ).join('|')})`,
   'i',
 );
 

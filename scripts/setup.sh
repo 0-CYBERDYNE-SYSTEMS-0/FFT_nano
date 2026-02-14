@@ -135,8 +135,9 @@ scaffold_mount_allowlist
 
 say ""
 say "Next:"
-say "  ./scripts/start.sh dev"
+say "  ./scripts/start.sh telegram-only"
 say "  ./scripts/start.sh start"
+say "  ./scripts/start.sh dev   # optional debugging mode"
 say ""
 say "If using WhatsApp, authenticate once:"
 say "  npm run auth"

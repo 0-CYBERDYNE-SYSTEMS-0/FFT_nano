@@ -3,6 +3,8 @@ import path from 'path';
 
 import {
   GROUPS_DIR,
+  MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
   MEMORY_CONTEXT_CHAR_BUDGET,
   MEMORY_RETRIEVAL_GATE_ENABLED,
   MEMORY_TOP_K,
@@ -274,9 +276,11 @@ export function buildMemoryContext(
 
   const allChunks: MemoryChunk[] = [];
 
-  const groupChunks = getPreferredMemoryChunks(
-    path.join(GROUPS_DIR, input.groupFolder),
-  );
+  const groupBaseDir =
+    input.groupFolder === MAIN_GROUP_FOLDER
+      ? MAIN_WORKSPACE_DIR
+      : path.join(GROUPS_DIR, input.groupFolder);
+  const groupChunks = getPreferredMemoryChunks(groupBaseDir);
   for (let i = 0; i < groupChunks.length; i += 1) {
     allChunks.push({ source: 'group', index: i, text: groupChunks[i] });
   }

@@ -14,8 +14,8 @@ This repo is a single Node.js host process that:
 ## Scripts
 
 - One-time setup: `./scripts/setup.sh`
-- Start (dev): `./scripts/start.sh dev [telegram-only]`
-- Start (prod): `./scripts/start.sh start`
+- Start (normal): `./scripts/start.sh [start] [telegram-only]`
+- Start (debug-only): `./scripts/start.sh dev [telegram-only]`
 
 ## Telegram As Main UI
 
@@ -26,7 +26,7 @@ Recommended local/dev setup (Telegram only):
 ```bash
 export WHATSAPP_ENABLED=0
 export TELEGRAM_BOT_TOKEN="..."
-./scripts/start.sh dev telegram-only
+./scripts/start.sh telegram-only
 ```
 
 Main channel behavior:
@@ -59,6 +59,17 @@ Notes:
 
 - In the main/admin chat you can use: `@FarmFriend /coder <task>`.
 - The coder profile streams progress back to the same originating chat when possible, and avoids duplicating the final answer.
+- Coder delegation behavior is runtime-mode independent (`start` and `dev` both support it).
+- Main/admin natural-language coding requests can auto-delegate when the model decides deeper coding execution is appropriate.
+
+## Main Workspace + Heartbeat
+
+- Main/admin container working directory maps to `~/nano` by default.
+- Override workspace path with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
+- Main workspace bootstrap/context files are auto-seeded if missing:
+  - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`
+- Heartbeat is enabled by default and reads `HEARTBEAT.md` periodically.
+- Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `30m`).
 
 ## Pi-Native Project Skills
 

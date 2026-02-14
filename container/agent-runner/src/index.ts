@@ -16,6 +16,11 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  provider?: string;
+  model?: string;
+  thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningLevel?: 'off' | 'on' | 'stream';
+  noContinue?: boolean;
   memoryContext?: string;
   codingHint?:
     | 'none'
@@ -26,10 +31,17 @@ interface ContainerInput {
   requestId?: string;
 }
 
-type CodingHint = 'none' | 'force_delegate_execute' | 'force_delegate_plan';
+type CodingHint =
+  | 'none'
+  | 'auto'
+  | 'force_delegate_execute'
+  | 'force_delegate_plan';
 
 interface NormalizedContainerInput extends Omit<ContainerInput, 'codingHint'> {
   codingHint: CodingHint;
+  thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningLevel?: 'off' | 'on' | 'stream';
+  noContinue?: boolean;
 }
 
 interface ContainerOutput {
@@ -37,6 +49,13 @@ interface ContainerOutput {
   result: string | null;
   error?: string;
   streamed?: boolean;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    provider?: string;
+    model?: string;
+  };
 }
 
 async function readStdin(): Promise<string> {
@@ -68,6 +87,7 @@ function log(message: string): void {
 function normalizeCodingHint(value: ContainerInput['codingHint']): CodingHint {
   if (value === 'force_delegate') return 'force_delegate_execute';
   if (
+    value === 'auto' ||
     value === 'force_delegate_execute' ||
     value === 'force_delegate_plan' ||
     value === 'none'
@@ -77,10 +97,38 @@ function normalizeCodingHint(value: ContainerInput['codingHint']): CodingHint {
   return 'none';
 }
 
+function normalizeThinkLevel(
+  value: ContainerInput['thinkLevel'],
+): 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | undefined {
+  if (
+    value === 'off' ||
+    value === 'minimal' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeReasoningLevel(
+  value: ContainerInput['reasoningLevel'],
+): 'off' | 'on' | 'stream' | undefined {
+  if (value === 'off' || value === 'on' || value === 'stream') {
+    return value;
+  }
+  return undefined;
+}
+
 function normalizeInput(input: ContainerInput): NormalizedContainerInput {
   return {
     ...input,
     codingHint: normalizeCodingHint(input.codingHint),
+    thinkLevel: normalizeThinkLevel(input.thinkLevel),
+    reasoningLevel: normalizeReasoningLevel(input.reasoningLevel),
+    noContinue: input.noContinue === true,
   };
 }
 
@@ -122,11 +170,69 @@ function readFileIfExists(filePath: string): string | null {
   }
 }
 
+function formatWorkspaceFileSection(
+  fileName: string,
+  raw: string,
+  maxChars = 12000,
+): string {
+  const normalized = raw.replace(/\r\n?/g, '\n').trim();
+  if (!normalized) return `Workspace file ${fileName}: [empty]`;
+  if (normalized.length <= maxChars) {
+    return `Workspace file ${fileName}:\n${normalized}`;
+  }
+  return (
+    `Workspace file ${fileName}:\n` +
+    `${normalized.slice(0, maxChars)}\n\n[NOTE: ${fileName} truncated to ${maxChars} chars]`
+  );
+}
+
+function getWorkspaceContextSections(isMain: boolean): string[] {
+  if (!isMain) return [];
+
+  const fileOrder = [
+    'AGENTS.md',
+    'SOUL.md',
+    'USER.md',
+    'IDENTITY.md',
+    'PRINCIPLES.md',
+    'TOOLS.md',
+    'HEARTBEAT.md',
+    'MEMORY.md',
+  ];
+  const sections: string[] = [];
+  for (const fileName of fileOrder) {
+    const content = readFileIfExists(`/workspace/group/${fileName}`);
+    if (!content) continue;
+    sections.push(formatWorkspaceFileSection(fileName, content));
+  }
+
+  const now = new Date();
+  const day = (offsetDays: number): string => {
+    const d = new Date(now.getTime() + offsetDays * 24 * 60 * 60 * 1000);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+  for (const dateStr of [day(0), day(-1)]) {
+    const content = readFileIfExists(`/workspace/group/memory/${dateStr}.md`);
+    if (!content) continue;
+    sections.push(formatWorkspaceFileSection(`memory/${dateStr}.md`, content, 8000));
+  }
+
+  return sections;
+}
+
 function buildSystemPrompt(input: NormalizedContainerInput): string {
   const providedMemoryContext = (input.memoryContext || '').trim();
 
   const delegationExtensionAvailable = fs.existsSync(PI_ON_PI_EXTENSION_PATH);
   const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
+  const autoDelegationEnabled =
+    input.codingHint === 'auto' &&
+    input.isMain &&
+    !input.isScheduledTask &&
+    delegationExtensionAvailable;
   const canDelegateToCoder =
     !!forcedDelegateMode &&
     input.isMain &&
@@ -137,16 +243,52 @@ function buildSystemPrompt(input: NormalizedContainerInput): string {
   lines.push('You are FarmFriend, a practical assistant with optional delegated coding capabilities.');
   lines.push('Be direct, safe, and deterministic.');
   lines.push('');
+  lines.push('Capabilities:');
+  lines.push('- You run inside pi coding runtime with filesystem and shell tools.');
+  lines.push('- Available tools include read, bash, edit, write (and often grep/find/ls).');
+  lines.push(
+    '- Do not claim you are text-only or that you cannot access local files/commands before trying tools.',
+  );
+  lines.push(
+    '- When asked to verify files, status, or environment state, run tools and report concrete results.',
+  );
+  lines.push('');
   lines.push('Workspace:');
-  lines.push('- /workspace/group is your writable working directory and long-term memory.');
+  lines.push('- /workspace/group is your writable workspace (main maps to ~/nano on host).');
   lines.push('- /workspace/ipc is the bridge to the host process (messages + scheduling).');
   lines.push('');
   lines.push('Runtime hints:');
   lines.push(`- coding_hint: ${input.codingHint}`);
+  if (input.provider) {
+    lines.push(`- provider_override: ${input.provider}`);
+  }
+  if (input.model) {
+    lines.push(`- model_override: ${input.model}`);
+  }
+  if (input.thinkLevel) {
+    lines.push(`- think_level: ${input.thinkLevel}`);
+  }
+  if (input.reasoningLevel) {
+    lines.push(`- reasoning_level: ${input.reasoningLevel}`);
+  }
+  lines.push(`- continue_session: ${input.noContinue ? 'false' : 'true'}`);
   if (input.requestId) {
     lines.push(`- request_id: ${input.requestId}`);
   }
   lines.push('');
+
+  if (input.reasoningLevel === 'on' || input.reasoningLevel === 'stream') {
+    lines.push('Reasoning visibility policy:');
+    lines.push(
+      '- Do not reveal private chain-of-thought. Instead provide a brief high-level rationale summary when useful.',
+    );
+    if (input.reasoningLevel === 'stream') {
+      lines.push(
+        '- For longer tasks, send 1-2 concise progress updates to chat via /workspace/ipc/messages.',
+      );
+    }
+    lines.push('');
+  }
 
   if (canDelegateToCoder) {
     lines.push('Coding delegation rules:');
@@ -166,18 +308,24 @@ function buildSystemPrompt(input: NormalizedContainerInput): string {
     );
     lines.push('- Handle this request directly in this session and explain that delegation is unavailable.');
     lines.push('');
+  } else if (autoDelegationEnabled) {
+    lines.push('Coding delegation policy (main chat, automatic):');
+    lines.push(
+      '- You MAY call delegate_to_coding_agent when the task is substantial software engineering (multi-file changes, deep debugging, significant refactors, broad tests).',
+    );
+    lines.push(
+      '- If intent is ambiguous, ask one concise clarification before delegating.',
+    );
+    lines.push(
+      '- For lightweight coding asks, use local tools directly in this outer session.',
+    );
+    lines.push(
+      '- If the user explicitly requests deep coding mode or coder delegation, delegate without extra confirmation.',
+    );
+    lines.push('');
   } else if (input.isMain && !input.isScheduledTask) {
-    lines.push('Coding delegation offer policy (main chat):');
-    lines.push('- Do not delegate automatically on normal turns.');
-    lines.push(
-      '- If the user appears to want substantial software engineering work (multi-file changes, deep debugging, larger refactors, broad test work), proactively offer explicit coder delegation.',
-    );
-    lines.push(
-      '- Offer this concise opt-in: "/coder <task>" to execute, "/coder-plan <task>" for plan-only, or "use coding agent".',
-    );
-    lines.push(
-      '- For lightweight tasks (small snippets, quick commands, minor edits, simple API calls), continue directly unless the user asks to delegate.',
-    );
+    lines.push('Coding delegation status: unavailable in this run (delegate extension missing).');
+    lines.push('- Complete tasks directly with available tools.');
     lines.push('');
   }
 
@@ -211,6 +359,13 @@ function buildSystemPrompt(input: NormalizedContainerInput): string {
   lines.push('- Avoid markdown headings (##).');
   lines.push('- Prefer short paragraphs and bullet points.');
   lines.push('');
+
+  const workspaceSections = getWorkspaceContextSections(input.isMain);
+  if (workspaceSections.length > 0) {
+    lines.push('Workspace context files:');
+    lines.push(...workspaceSections);
+    lines.push('');
+  }
 
   if (providedMemoryContext) {
     lines.push('Retrieved memory context:');
@@ -257,23 +412,28 @@ function getPiArgs(
   prompt: string,
   useContinue: boolean,
   loadDelegationExtension: boolean,
+  input: NormalizedContainerInput,
 ): string[] {
   const args: string[] = ['--mode', 'json'];
   if (useContinue) args.push('-c');
 
-  const model = process.env.PI_MODEL;
-  const provider = process.env.PI_API;
+  const model = input.model || process.env.PI_MODEL;
+  const provider = input.provider || process.env.PI_API;
   const apiKey = process.env.PI_API_KEY;
 
   if (provider) args.push('--provider', provider);
   if (model) args.push('--model', model);
+  if (input.thinkLevel) args.push('--thinking', input.thinkLevel);
   if (apiKey) args.push('--api-key', apiKey);
 
   if (loadDelegationExtension) {
     args.push('--extension', PI_ON_PI_EXTENSION_PATH);
   }
 
-  args.push('--system-prompt', systemPrompt);
+  // Keep pi's default coding system prompt (tool behavior + conventions) and
+  // append FFT-specific runtime context on top.
+  args.push('--append-system-prompt', systemPrompt);
+  args.push('--tools', 'read,bash,edit,write,grep,find,ls');
   args.push(prompt);
 
   return args;
@@ -283,11 +443,21 @@ async function runPiAgent(
   systemPrompt: string,
   prompt: string,
   input: NormalizedContainerInput,
-): Promise<{ result: string; streamed: boolean }> {
+): Promise<{
+  result: string;
+  streamed: boolean;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    provider?: string;
+    model?: string;
+  };
+}> {
   const loadDelegationExtension =
     input.isMain &&
     !input.isScheduledTask &&
-    isForceDelegateHint(input.codingHint) &&
+    (isForceDelegateHint(input.codingHint) || input.codingHint === 'auto') &&
     fs.existsSync(PI_ON_PI_EXTENSION_PATH);
 
   const tryRun = (useContinue: boolean) =>
@@ -297,6 +467,7 @@ async function runPiAgent(
         prompt,
         useContinue,
         loadDelegationExtension,
+        input,
       );
       const env = {
         ...process.env,
@@ -330,15 +501,11 @@ async function runPiAgent(
       });
     });
 
-  // Prefer continuing prior context, but fall back cleanly.
-  let res = await tryRun(true);
-  if (res.code !== 0) {
-    const looksLikeNoSession = /no\s+previous\s+session|no\s+session/i.test(
-      res.stderr,
-    );
-    if (looksLikeNoSession) {
-      res = await tryRun(false);
-    }
+  // Prefer continuing prior context unless caller requested a fresh run.
+  let res = input.noContinue ? await tryRun(false) : await tryRun(true);
+  if (!input.noContinue && res.code !== 0) {
+    const looksLikeNoSession = /no\s+previous\s+session|no\s+session/i.test(res.stderr);
+    if (looksLikeNoSession) res = await tryRun(false);
   }
 
   if (res.code !== 0) {
@@ -348,11 +515,68 @@ async function runPiAgent(
   // pi --mode json emits JSON objects (one per line). We return the last assistant message.
   let lastAssistant = '';
   let lastError: string | null = null;
+  let usage:
+    | {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        provider?: string;
+        model?: string;
+      }
+    | undefined;
+  const toNumber = (value: unknown): number | undefined => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+    return value >= 0 ? value : undefined;
+  };
+
+  const extractUsage = (evt: any) => {
+    const messageUsage = evt?.message?.usage;
+    const directUsage = evt?.usage;
+    const usageCandidate = messageUsage && typeof messageUsage === 'object'
+      ? messageUsage
+      : directUsage && typeof directUsage === 'object'
+        ? directUsage
+        : undefined;
+    if (!usageCandidate) return;
+
+    const inputTokens =
+      toNumber(usageCandidate.inputTokens) ??
+      toNumber(usageCandidate.input_tokens) ??
+      toNumber(usageCandidate.promptTokens) ??
+      toNumber(usageCandidate.prompt_tokens);
+    const outputTokens =
+      toNumber(usageCandidate.outputTokens) ??
+      toNumber(usageCandidate.output_tokens) ??
+      toNumber(usageCandidate.completionTokens) ??
+      toNumber(usageCandidate.completion_tokens);
+    const totalTokens =
+      toNumber(usageCandidate.totalTokens) ??
+      toNumber(usageCandidate.total_tokens) ??
+      (typeof inputTokens === 'number' || typeof outputTokens === 'number'
+        ? (inputTokens || 0) + (outputTokens || 0)
+        : undefined);
+
+    usage = {
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      provider:
+        (typeof evt?.message?.provider === 'string' && evt.message.provider) ||
+        (typeof evt?.provider === 'string' && evt.provider) ||
+        input.provider,
+      model:
+        (typeof evt?.message?.model === 'string' && evt.message.model) ||
+        (typeof evt?.model === 'string' && evt.model) ||
+        input.model,
+    };
+  };
+
   for (const line of res.stdout.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const evt = JSON.parse(trimmed) as any;
+      extractUsage(evt);
 
       // If the model/provider returns an error stop reason, don't forward raw
       // event streams back to chat. Surface the error instead.
@@ -397,10 +621,10 @@ async function runPiAgent(
 
   if (!lastAssistant) {
     // If JSON parse fails due to formatting differences, fall back to raw stdout.
-    return { result: res.stdout.trim(), streamed: false };
+    return { result: res.stdout.trim(), streamed: false, usage };
   }
 
-  return { result: lastAssistant.trim(), streamed: false };
+  return { result: lastAssistant.trim(), streamed: false, usage };
 }
 
 async function main(): Promise<void> {
@@ -441,6 +665,15 @@ async function main(): Promise<void> {
 
     let result: string;
     let streamed: boolean;
+    let usage:
+      | {
+          inputTokens?: number;
+          outputTokens?: number;
+          totalTokens?: number;
+          provider?: string;
+          model?: string;
+        }
+      | undefined;
 
     const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
     const canRunDelegatedCoderDirectly =
@@ -460,10 +693,12 @@ async function main(): Promise<void> {
       );
       result = `${directRun.result}\n\n[coder-metrics] tools=${directRun.stats.toolExecutionCount} mutating=${directRun.stats.mutatingToolExecutionCount} failed=${directRun.stats.failedToolExecutionCount} changed_files=${directRun.stats.changedFiles.length}`;
       streamed = directRun.streamed;
+      usage = undefined;
     } else {
       const piRun = await runPiAgent(systemPrompt, prompt, input);
       result = piRun.result;
       streamed = piRun.streamed;
+      usage = piRun.usage;
     }
 
     let finalResult: string | null = result;
@@ -500,7 +735,12 @@ async function main(): Promise<void> {
       }
     }
 
-    writeOutput({ status: 'success', result: finalResult, streamed: finalStreamed });
+    writeOutput({
+      status: 'success',
+      result: finalResult,
+      streamed: finalStreamed,
+      usage,
+    });
   } catch (err) {
     writeOutput({
       status: 'error',

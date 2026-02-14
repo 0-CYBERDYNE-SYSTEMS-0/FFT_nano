@@ -7,22 +7,45 @@ cd "$ROOT_DIR"
 usage() {
   cat <<'USAGE'
 Usage:
+  ./scripts/start.sh [start] [telegram-only]
   ./scripts/start.sh dev [telegram-only]
-  ./scripts/start.sh start [telegram-only]
 
 Notes:
 - Sources .env if present.
+- Defaults to start mode when mode is omitted.
 - telegram-only sets WHATSAPP_ENABLED=0.
 USAGE
 }
 
-mode="${1:-}"
-shift || true
+mode="start"
+mode_set=0
+telegram_only=0
 
-if [[ -z "$mode" || "$mode" == "-h" || "$mode" == "--help" ]]; then
-  usage
-  exit 0
-fi
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    start|dev)
+      if [[ "$mode_set" -eq 1 ]]; then
+        echo "ERROR: multiple modes supplied (use one of: start|dev)" >&2
+        usage
+        exit 2
+      fi
+      mode="$arg"
+      mode_set=1
+      ;;
+    telegram-only)
+      telegram_only=1
+      ;;
+    *)
+      echo "ERROR: unknown argument: $arg" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
 
 # Load .env if present
 if [[ -f .env ]]; then
@@ -32,11 +55,9 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-for arg in "$@"; do
-  if [[ "$arg" == "telegram-only" ]]; then
-    export WHATSAPP_ENABLED=0
-  fi
-done
+if [[ "$telegram_only" -eq 1 ]]; then
+  export WHATSAPP_ENABLED=0
+fi
 
 # Prefer TELEGRAM_BOT_TOKEN from .env/exports; fall back to macOS Keychain.
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] && [[ "$(uname -s)" == "Darwin" ]] && command -v security >/dev/null 2>&1; then
@@ -71,6 +92,10 @@ telegram="${TELEGRAM_BOT_TOKEN:-}"
 wa="${WHATSAPP_ENABLED:-1}"
 
 echo "FFT_nano start (mode=$mode, runtime=$runtime, whatsapp=$wa, telegram=$([[ -n "$telegram" ]] && echo enabled || echo disabled))"
+
+if [[ "$mode" == "dev" ]]; then
+  echo "Note: dev mode is for debugging only; normal runtime should use start mode (or omit mode)." >&2
+fi
 
 case "$mode" in
   dev)

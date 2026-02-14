@@ -3,11 +3,51 @@ import path from 'path';
 
 import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
+import { renderTelegramHtmlText, splitTelegramText as splitTelegramMarkdownText } from './telegram-format.js';
 import { loadJson, saveJson } from './utils.js';
 
 export const TELEGRAM_JID_PREFIX = 'telegram:';
 const TELEGRAM_MAX_MESSAGE_LEN = 4096;
 const TELEGRAM_SAFE_MESSAGE_LEN = 4000;
+const TELEGRAM_PARSE_ERROR_RE = /can't parse entities|parse entities|find end of the entity/i;
+const TELEGRAM_MESSAGE_TOO_LONG_RE = /message is too long/i;
+const TELEGRAM_RETRYABLE_ERROR_RE =
+  /timed out|timeout|temporarily unavailable|too many requests|retry after|internal server error|bad gateway|service unavailable/i;
+const TELEGRAM_RETRY_ATTEMPTS = Math.max(
+  1,
+  Math.min(
+    10,
+    Number.parseInt(process.env.FFT_NANO_TELEGRAM_RETRY_ATTEMPTS || '4', 10) || 4,
+  ),
+);
+const TELEGRAM_RETRY_MIN_DELAY_MS = Math.max(
+  100,
+  Number.parseInt(process.env.FFT_NANO_TELEGRAM_RETRY_MIN_MS || '300', 10) || 300,
+);
+const TELEGRAM_RETRY_MAX_DELAY_MS = Math.max(
+  TELEGRAM_RETRY_MIN_DELAY_MS,
+  Number.parseInt(process.env.FFT_NANO_TELEGRAM_RETRY_MAX_MS || '2500', 10) ||
+    2500,
+);
+
+class TelegramApiError extends Error {
+  method: string;
+  statusCode?: number;
+  retryAfterSeconds?: number;
+
+  constructor(opts: {
+    method: string;
+    message: string;
+    statusCode?: number;
+    retryAfterSeconds?: number;
+  }) {
+    super(opts.message);
+    this.name = 'TelegramApiError';
+    this.method = opts.method;
+    this.statusCode = opts.statusCode;
+    this.retryAfterSeconds = opts.retryAfterSeconds;
+  }
+}
 
 export function isTelegramJid(jid: string): boolean {
   return jid.startsWith(TELEGRAM_JID_PREFIX);
@@ -88,6 +128,10 @@ interface TelegramApiResponse<T> {
   ok: boolean;
   result?: T;
   description?: string;
+  error_code?: number;
+  parameters?: {
+    retry_after?: number;
+  };
 }
 
 interface TelegramUpdate {
@@ -397,32 +441,46 @@ export function splitTelegramText(
   text: string,
   maxLen = TELEGRAM_SAFE_MESSAGE_LEN,
 ): string[] {
-  if (text.length <= maxLen) return [text];
+  return splitTelegramMarkdownText(text, maxLen);
+}
 
-  const parts: string[] = [];
-  let remaining = text;
+export function splitTelegramTextForHtmlLimit(
+  text: string,
+  maxRenderedLen = TELEGRAM_MAX_MESSAGE_LEN,
+): string[] {
+  if (!text) return [''];
 
-  while (remaining.length > maxLen) {
-    let splitAt = remaining.lastIndexOf('\n', maxLen);
-    if (splitAt < Math.floor(maxLen * 0.5)) {
-      splitAt = remaining.lastIndexOf(' ', maxLen);
-    }
-    if (splitAt < Math.floor(maxLen * 0.5)) {
-      splitAt = maxLen;
+  const pending = [text];
+  const output: string[] = [];
+
+  while (pending.length > 0) {
+    const chunk = pending.shift();
+    if (chunk === undefined) break;
+    const htmlText = renderTelegramHtmlText(chunk, { textMode: 'markdown' });
+    if (htmlText.length <= maxRenderedLen || chunk.length <= 1) {
+      output.push(chunk);
+      continue;
     }
 
-    const chunk = remaining.slice(0, splitAt).trimEnd();
-    if (chunk) {
-      parts.push(chunk);
+    const proportionalLimit = Math.floor((chunk.length * maxRenderedLen) / htmlText.length);
+    const targetLimit = Math.max(1, Math.min(chunk.length - 1, proportionalLimit));
+    let parts = splitTelegramText(chunk, targetLimit);
+    if (parts.length <= 1 && chunk.length > 1) {
+      const fallbackLimit = Math.max(1, Math.floor(chunk.length / 2));
+      parts = splitTelegramText(chunk, fallbackLimit);
     }
-    remaining = remaining.slice(splitAt).trimStart();
+
+    if (parts.length <= 1) {
+      output.push(chunk);
+      continue;
+    }
+
+    for (let i = parts.length - 1; i >= 0; i--) {
+      pending.unshift(parts[i]);
+    }
   }
 
-  if (remaining) {
-    parts.push(remaining);
-  }
-
-  return parts.length ? parts : [''];
+  return output;
 }
 
 export interface TelegramBotOptions {
@@ -508,16 +566,182 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   }
 
   async function apiPost<T>(method: string, payload: object): Promise<T> {
-    const res = await fetch(`${base}/${method}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const body = (await res.json()) as TelegramApiResponse<T>;
-    if (!body.ok || body.result === undefined) {
-      throw new Error(body.description || `Telegram API error calling ${method}`);
+    let res: Response;
+    try {
+      res = await fetch(`${base}/${method}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new TelegramApiError({
+        method,
+        message: `Telegram API request failed (${method}): ${msg}`,
+      });
+    }
+
+    let body: TelegramApiResponse<T> | null = null;
+    try {
+      body = (await res.json()) as TelegramApiResponse<T>;
+    } catch {
+      body = null;
+    }
+
+    if (!res.ok || !body?.ok || body.result === undefined) {
+      const description =
+        body?.description || `Telegram API error calling ${method} (status ${res.status})`;
+      const retryAfter =
+        typeof body?.parameters?.retry_after === 'number'
+          ? body.parameters.retry_after
+          : undefined;
+      throw new TelegramApiError({
+        method,
+        message: description,
+        statusCode: body?.error_code || res.status || undefined,
+        retryAfterSeconds: retryAfter,
+      });
     }
     return body.result;
+  }
+
+  function isParseEntityError(err: unknown): boolean {
+    if (!(err instanceof TelegramApiError)) return false;
+    return TELEGRAM_PARSE_ERROR_RE.test(err.message);
+  }
+
+  function isMessageTooLongError(err: unknown): boolean {
+    if (err instanceof TelegramApiError) {
+      return TELEGRAM_MESSAGE_TOO_LONG_RE.test(err.message);
+    }
+    if (err instanceof Error) {
+      return TELEGRAM_MESSAGE_TOO_LONG_RE.test(err.message);
+    }
+    return false;
+  }
+
+  function isRetryableTelegramError(err: unknown): boolean {
+    if (err instanceof TelegramApiError) {
+      const statusCode = err.statusCode;
+      if (statusCode === 429) return true;
+      if (typeof statusCode === 'number' && statusCode >= 500) return true;
+      if (statusCode === 408) return true;
+      return TELEGRAM_RETRYABLE_ERROR_RE.test(err.message);
+    }
+    if (err instanceof Error) {
+      return TELEGRAM_RETRYABLE_ERROR_RE.test(err.message);
+    }
+    return false;
+  }
+
+  function resolveRetryDelayMs(err: unknown, attempt: number): number {
+    if (err instanceof TelegramApiError && typeof err.retryAfterSeconds === 'number') {
+      const ms = err.retryAfterSeconds * 1000;
+      return Math.min(TELEGRAM_RETRY_MAX_DELAY_MS, Math.max(TELEGRAM_RETRY_MIN_DELAY_MS, ms));
+    }
+    const exp = TELEGRAM_RETRY_MIN_DELAY_MS * Math.pow(2, Math.max(0, attempt - 1));
+    return Math.min(TELEGRAM_RETRY_MAX_DELAY_MS, exp);
+  }
+
+  async function apiPostWithRetry<T>(method: string, payload: object): Promise<T> {
+    let attempt = 0;
+    let lastErr: unknown;
+
+    while (attempt < TELEGRAM_RETRY_ATTEMPTS) {
+      attempt++;
+      try {
+        return await apiPost<T>(method, payload);
+      } catch (err) {
+        lastErr = err;
+        if (!isRetryableTelegramError(err) || attempt >= TELEGRAM_RETRY_ATTEMPTS) {
+          throw err;
+        }
+        const delayMs = resolveRetryDelayMs(err, attempt);
+        logger.warn(
+          { method, attempt, delayMs, err: err instanceof Error ? err.message : String(err) },
+          'Telegram API call failed; retrying',
+        );
+        await sleep(delayMs);
+      }
+    }
+
+    throw lastErr instanceof Error ? lastErr : new Error(`Telegram API failed (${method})`);
+  }
+
+  async function sendMessageChunk(
+    chatId: string,
+    chunk: string,
+    replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
+  ): Promise<void> {
+    const pending: Array<{
+      text: string;
+      replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+    }> = [{ text: chunk, replyMarkup }];
+
+    while (pending.length > 0) {
+      const current = pending.shift();
+      if (!current) break;
+
+      const boundedChunks = splitTelegramTextForHtmlLimit(
+        current.text,
+        TELEGRAM_MAX_MESSAGE_LEN,
+      );
+      if (boundedChunks.length > 1) {
+        for (let i = boundedChunks.length - 1; i >= 0; i--) {
+          pending.unshift({
+            text: boundedChunks[i],
+            replyMarkup: i === 0 ? current.replyMarkup : undefined,
+          });
+        }
+        continue;
+      }
+
+      const textChunk = boundedChunks[0] ?? current.text;
+      const htmlText = renderTelegramHtmlText(textChunk, { textMode: 'markdown' });
+
+      try {
+        await apiPostWithRetry('sendMessage', {
+          chat_id: chatId,
+          text: htmlText,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          ...(current.replyMarkup ? { reply_markup: current.replyMarkup } : {}),
+        });
+        continue;
+      } catch (err) {
+        if (isMessageTooLongError(err) && textChunk.length > 1) {
+          const fallbackChunks = splitTelegramText(
+            textChunk,
+            Math.max(1, Math.floor(textChunk.length / 2)),
+          );
+          if (fallbackChunks.length > 1) {
+            logger.warn(
+              { err: err instanceof Error ? err.message : String(err) },
+              'Telegram payload still too long after HTML conversion; re-splitting chunk',
+            );
+            for (let i = fallbackChunks.length - 1; i >= 0; i--) {
+              pending.unshift({
+                text: fallbackChunks[i],
+                replyMarkup: i === 0 ? current.replyMarkup : undefined,
+              });
+            }
+            continue;
+          }
+        }
+        if (!isParseEntityError(err)) throw err;
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          'Telegram HTML parse error; falling back to plain text send',
+        );
+      }
+
+      await apiPostWithRetry('sendMessage', {
+        chat_id: chatId,
+        text: textChunk,
+        disable_web_page_preview: true,
+        ...(current.replyMarkup ? { reply_markup: current.replyMarkup } : {}),
+      });
+    }
   }
 
   function persistOffset(): void {
@@ -646,12 +870,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }
 
     for (const chunk of splitTelegramText(text, TELEGRAM_SAFE_MESSAGE_LEN)) {
-      if (chunk.length <= TELEGRAM_MAX_MESSAGE_LEN) {
-        await apiPost('sendMessage', {
-          chat_id: chatId,
-          text: chunk,
-          disable_web_page_preview: true,
-        });
+      if (chunk && chunk.length <= TELEGRAM_MAX_MESSAGE_LEN) {
+        await sendMessageChunk(chatId, chunk);
       }
     }
   }
@@ -666,19 +886,20 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
     }
 
-    await apiPost('sendMessage', {
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
-      reply_markup: buildReplyMarkup(keyboard),
-    });
+    const replyMarkup = buildReplyMarkup(keyboard);
+    const chunks = splitTelegramText(text, TELEGRAM_SAFE_MESSAGE_LEN);
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (!chunk || chunk.length > TELEGRAM_MAX_MESSAGE_LEN) continue;
+      await sendMessageChunk(chatId, chunk, i === 0 ? replyMarkup : undefined);
+    }
   }
 
   async function setTyping(chatJid: string, isTyping: boolean): Promise<void> {
     if (!isTyping) return;
     const chatId = parseTelegramChatId(chatJid);
     if (!chatId) return;
-    await apiPost('sendChatAction', { chat_id: chatId, action: 'typing' });
+    await apiPostWithRetry('sendChatAction', { chat_id: chatId, action: 'typing' });
   }
 
   async function setCommands(
@@ -695,7 +916,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (scopePayload) {
       payload.scope = scopePayload;
     }
-    await apiPost('setMyCommands', payload);
+    await apiPostWithRetry('setMyCommands', payload);
   }
 
   async function deleteCommands(scope?: TelegramCommandScope): Promise<void> {
@@ -704,7 +925,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (scopePayload) {
       payload.scope = scopePayload;
     }
-    await apiPost('deleteMyCommands', payload);
+    await apiPostWithRetry('deleteMyCommands', payload);
   }
 
   async function setDescription(
@@ -712,10 +933,10 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     shortDescription?: string,
   ): Promise<void> {
     if (description.trim()) {
-      await apiPost('setMyDescription', { description });
+      await apiPostWithRetry('setMyDescription', { description });
     }
     if (shortDescription && shortDescription.trim()) {
-      await apiPost('setMyShortDescription', {
+      await apiPostWithRetry('setMyShortDescription', {
         short_description: shortDescription,
       });
     }
@@ -725,7 +946,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     callbackQueryId: string,
     text?: string,
   ): Promise<void> {
-    await apiPost('answerCallbackQuery', {
+    await apiPostWithRetry('answerCallbackQuery', {
       callback_query_id: callbackQueryId,
       ...(text ? { text } : {}),
     });
