@@ -8,6 +8,8 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 
+import { runDelegatedCodingWorker } from './coder-worker.js';
+
 interface ContainerInput {
   prompt: string;
   groupFolder: string;
@@ -437,7 +439,32 @@ async function main(): Promise<void> {
       return;
     }
 
-    const { result, streamed } = await runPiAgent(systemPrompt, prompt, input);
+    let result: string;
+    let streamed: boolean;
+
+    const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
+    const canRunDelegatedCoderDirectly =
+      !!forcedDelegateMode && input.isMain && !input.isScheduledTask;
+
+    if (canRunDelegatedCoderDirectly) {
+      const directRun = await runDelegatedCodingWorker({
+        params: {
+          task: prompt,
+          mode: forcedDelegateMode,
+        },
+        chatJid: input.chatJid,
+        requestId: input.requestId,
+      });
+      log(
+        `Direct coder run stats: tools=${directRun.stats.toolExecutionCount} mutating=${directRun.stats.mutatingToolExecutionCount} changed_files=${directRun.stats.changedFiles.length}`,
+      );
+      result = `${directRun.result}\n\n[coder-metrics] tools=${directRun.stats.toolExecutionCount} mutating=${directRun.stats.mutatingToolExecutionCount} failed=${directRun.stats.failedToolExecutionCount} changed_files=${directRun.stats.changedFiles.length}`;
+      streamed = directRun.streamed;
+    } else {
+      const piRun = await runPiAgent(systemPrompt, prompt, input);
+      result = piRun.result;
+      streamed = piRun.streamed;
+    }
 
     let finalResult: string | null = result;
     let finalStreamed = streamed;
