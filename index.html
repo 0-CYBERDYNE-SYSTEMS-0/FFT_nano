@@ -1,0 +1,1825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FFT Nano - Talk to Your Farm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Cormorant+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.0/css/all.min.css">
+  <style>
+    :root {
+      --brand-primary: #4a7c59;
+      --brand-primary-dark: #3d6b4a;
+      --brand-primary-light: #6b9b7a;
+      --brand-accent: #c4a35a;
+      --earth-dark: #1a1814;
+      --earth-mid: #2d2820;
+      --earth-light: #3d3630;
+      --cream: #f5f2ed;
+      --text-light: #e8e4dd;
+      --text-muted: #a8a198;
+      --border-subtle: rgba(74, 124, 89, 0.2);
+      --font-display: 'Cormorant Garamond', serif;
+      --font-body: 'Space Grotesk', sans-serif;
+    }
+
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--earth-dark);
+      color: var(--text-light);
+      min-height: 100vh;
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    /* Navigation */
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 1000;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(26, 24, 20, 0.95);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-subtle);
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .logo {
+      font-family: var(--font-display);
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: var(--brand-primary);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 45px;
+      height: 45px;
+      object-fit: contain;
+      border-radius: 12px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2.5rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-light);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      position: relative;
+      transition: color 0.3s;
+      cursor: pointer;
+    }
+
+    .nav-links a::after {
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      left: 0;
+      width: 0;
+      height: 2px;
+      background: var(--brand-primary);
+      transition: width 0.3s;
+    }
+
+    .nav-links a:hover {
+      color: var(--brand-primary);
+    }
+
+    .nav-links a:hover::after {
+      width: 100%;
+    }
+
+    /* Search Bar */
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-input {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 0.6rem 1rem 0.6rem 2.5rem;
+      color: var(--text-light);
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+      width: 200px;
+      transition: all 0.3s;
+    }
+    .search-input::placeholder {
+      color: var(--text-muted);
+    }
+    .search-input:focus {
+      outline: 2px solid var(--brand-primary);
+      outline-offset: 2px;
+      border-color: var(--brand-primary);
+      background: rgba(255,255,255,0.15);
+    }
+
+    /* Mobile Menu Button */
+    .mobile-menu-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-light);
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.5rem;
+    }
+
+    /* Mobile Menu Overlay */
+    .mobile-menu-overlay {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    .mobile-menu-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .mobile-menu {
+      position: fixed;
+      top: 0;
+      right: -300px;
+      width: 300px;
+      height: 100vh;
+      background: var(--earth-mid);
+      z-index: 1000;
+      padding: 5rem 2rem 2rem;
+      transition: right 0.3s;
+      box-shadow: -5px 0 20px rgba(0,0,0,0.3);
+    }
+    .mobile-menu.open {
+      right: 0;
+    }
+
+    /* Main Content */
+    main {
+      margin-top: 80px;
+    }
+
+    /* Hero Section */
+    .hero {
+      min-height: 90vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 4rem 2rem;
+      background: linear-gradient(135deg, var(--earth-dark) 0%, var(--earth-mid) 100%);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Animated Particles */
+    .particles {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .particle {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      background: var(--brand-primary);
+      border-radius: 50%;
+      opacity: 0.6;
+      animation: float 15s infinite;
+    }
+    @keyframes float {
+      0%, 100% {
+        transform: translateY(100vh) rotate(0deg);
+        opacity: 0;
+      }
+      10% { opacity: 0.6; }
+      90% { opacity: 0.6; }
+      100% {
+        transform: translateY(-100vh) rotate(720deg);
+        opacity: 0;
+      }
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: radial-gradient(circle at 30% 50%, rgba(74, 124, 89, 0.1) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      max-width: 900px;
+    }
+
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.5rem, 5vw, 4rem);
+      font-weight: 700;
+      color: var(--text-light);
+      margin-bottom: 1.5rem;
+      line-height: 1.2;
+    }
+
+    .hero h1 span {
+      color: var(--brand-primary);
+    }
+
+    .hero-sub {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero-stats {
+      display: flex;
+      justify-content: center;
+      gap: 3rem;
+      margin-bottom: 2.5rem;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      font-size: 1rem;
+      color: var(--brand-accent);
+      font-weight: 500;
+    }
+
+    .hero-cta {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 1rem 2rem;
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+      border-radius: 8px;
+      transition: all 0.3s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary {
+      background: var(--brand-primary);
+      color: white;
+      border: 2px solid var(--brand-primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--brand-primary-dark);
+      border-color: var(--brand-primary-dark);
+      transform: translateY(-2px);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-light);
+      border: 2px solid var(--brand-accent);
+    }
+
+    .btn-secondary:hover {
+      background: var(--brand-accent);
+      color: var(--earth-dark);
+      transform: translateY(-2px);
+    }
+
+    /* Focus Styles for Accessibility */
+    .btn:focus,
+    .btn-primary:focus,
+    .btn-secondary:focus {
+      outline: 2px solid var(--brand-primary);
+      outline-offset: 4px;
+    }
+
+    .nav-links a:focus {
+      outline: 2px solid var(--brand-primary);
+      outline-offset: 4px;
+    }
+
+    a:focus {
+      outline: 2px solid var(--brand-primary);
+      outline-offset: 2px;
+    }
+
+    .feature-card:focus,
+    .matters-card:focus,
+    .product-card:focus {
+      outline: 2px solid var(--brand-primary);
+      outline-offset: 4px;
+    }
+
+    /* Section Styles */
+    section {
+      padding: 6rem 2rem;
+      max-width: 1400px;
+      margin: 0 auto;
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    section.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 4rem;
+    }
+
+    .section-header h2 {
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 4vw, 3rem);
+      color: var(--brand-primary);
+      margin-bottom: 1rem;
+    }
+
+    .section-header p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    /* What is FFT Nano Section */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+      grid-auto-rows: 1fr;
+      align-items: stretch;
+    }
+
+    .feature-card {
+      background: rgba(255, 255, 255, 0.05);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      padding: 2.5rem;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 320px;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-8px);
+      border-color: var(--brand-primary);
+      box-shadow: 0 12px 40px rgba(74, 124, 89, 0.3);
+    }
+
+    .feature-icon {
+      width: 60px;
+      height: 60px;
+      background: rgba(74, 124, 89, 0.1);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+      font-size: 1.5rem;
+      color: var(--brand-primary);
+    }
+
+    .feature-card h3 {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      color: var(--text-light);
+      margin-bottom: 1rem;
+    }
+
+    .feature-card p {
+      color: var(--text-muted);
+      line-height: 1.7;
+      flex: 1;
+    }
+
+    /* Why This Matters Section */
+    .why-matters {
+      background: var(--earth-mid);
+    }
+
+    .matters-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 2rem;
+      grid-auto-rows: 1fr;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .matters-card {
+      background: rgba(255, 255, 255, 0.05);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      padding: 2.5rem;
+      border-radius: 16px;
+      border-left: 4px solid var(--brand-accent);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 400px;
+    }
+
+    .matters-card:hover {
+      transform: translateY(-5px);
+      border-color: var(--brand-accent);
+      box-shadow: 0 12px 40px rgba(196, 163, 90, 0.3);
+    }
+
+    .matters-card h3 {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      color: var(--brand-accent);
+      margin-bottom: 1rem;
+    }
+
+    .matters-card p {
+      color: var(--text-muted);
+      line-height: 1.7;
+      flex: 1;
+    }
+
+    .matters-card ul {
+      list-style: none;
+      margin-top: 1rem;
+      padding-left: 0;
+    }
+
+    .matters-card li {
+      color: var(--text-muted);
+      padding: 0.5rem 0;
+      padding-left: 1.5rem;
+      position: relative;
+    }
+
+    .matters-card li::before {
+      content: '→';
+      position: absolute;
+      left: 0;
+      color: var(--brand-primary);
+    }
+
+    /* Products Section */
+    .products-section {
+      background: var(--earth-dark);
+    }
+
+    .products-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+      grid-auto-rows: 1fr;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .product-card {
+      background: rgba(255, 255, 255, 0.05);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 450px;
+      width: 100%;
+    }
+
+    .product-card:hover {
+      transform: translateY(-8px);
+      border-color: var(--brand-primary);
+      box-shadow: 0 12px 40px rgba(74, 124, 89, 0.3);
+    }
+
+    .product-header {
+      background: linear-gradient(135deg, var(--brand-primary-dark), var(--brand-primary));
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .product-header.free {
+      background: linear-gradient(135deg, #3d6b4a, #6b9b7a);
+    }
+
+    .product-price {
+      font-size: 2rem;
+      font-weight: 700;
+      color: white;
+      margin-bottom: 0.5rem;
+    }
+
+    .product-name {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      color: var(--cream);
+    }
+
+    .product-body {
+      padding: 2rem;
+      flex: 1;
+    }
+
+    .product-body ul {
+      list-style: none;
+    }
+
+    .product-body li {
+      color: var(--text-muted);
+      padding: 0.75rem 0;
+      padding-left: 2rem;
+      position: relative;
+      line-height: 1.6;
+    }
+
+    .product-body li::before {
+      content: '✓';
+      position: absolute;
+      left: 0;
+      color: var(--brand-primary);
+      font-weight: 700;
+    }
+
+    /* Get Started Section */
+    .get-started {
+      text-align: center;
+      background: linear-gradient(135deg, var(--earth-mid) 0%, var(--earth-light) 100%);
+    }
+
+    .steps-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+      margin: 3rem 0;
+      grid-auto-rows: 1fr;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .step {
+      background: var(--earth-dark);
+      padding: 2rem;
+      border-radius: 12px;
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 380px;
+      width: 100%;
+    }
+
+    .step-number {
+      width: 40px;
+      height: 40px;
+      background: var(--brand-primary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .step h3 {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      color: var(--text-light);
+      margin-bottom: 0.5rem;
+    }
+
+    .step code {
+      background: var(--earth-mid);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      color: var(--brand-accent);
+      display: block;
+      margin: 1rem 0;
+      text-align: left;
+      overflow-x: auto;
+    }
+
+    /* Footer */
+    footer {
+      background: var(--earth-dark);
+      padding: 4rem 2rem;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .footer-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))
+      gap: 3rem;
+    }
+
+    .footer-section h4 {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      color: var(--brand-primary);
+      margin-bottom: 1.5rem;
+    }
+
+    .footer-section ul {
+      list-style: none;
+    }
+
+    .footer-section li {
+      margin-bottom: 0.75rem;
+    }
+
+    .footer-section a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.3s;
+    }
+
+    .footer-section a:hover {
+      color: var(--brand-primary);
+    }
+
+    .footer-bottom {
+      text-align: center;
+      padding-top: 3rem;
+      margin-top: 3rem;
+      border-top: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    /* Support Section */
+    .support-section {
+      background: linear-gradient(135deg, var(--earth-mid) 0%, var(--earth-dark) 100%);
+      padding: 6rem 2rem;
+      max-width: 1400px;
+      margin: 0 auto;
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    .support-section.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .sponsors-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .sponsors-button-wrapper,
+    .sponsors-card-wrapper {
+      text-align: center;
+      padding: 2rem;
+      background: rgba(255, 255, 255, 0.05);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .sponsors-button-wrapper:hover,
+    .sponsors-card-wrapper:hover {
+      transform: translateY(-8px);
+      border-color: var(--brand-primary);
+      box-shadow: 0 12px 40px rgba(74, 124, 89, 0.3);
+    }
+
+    .sponsors-iframe {
+      border-radius: 12px;
+      transition: transform 0.3s ease;
+      max-width: 100%;
+    }
+
+    .sponsors-iframe:hover {
+      transform: scale(1.02);
+    }
+
+    /* Responsive Design */
+    @media (max-width: 1400px) {
+      section {
+        max-width: 1200px;
+      }
+
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 992px) {
+      .steps-container {
+        grid-template-columns: 1fr;
+        max-width: 500px;
+        margin: 3rem auto;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .desktop-nav {
+        display: none;
+      }
+
+      .mobile-menu-btn {
+        display: block;
+      }
+
+      .search-box {
+        display: none;
+      }
+
+      .mobile-menu .search-box {
+        display: flex;
+      }
+
+      .hero-stats {
+        gap: 1.5rem;
+      }
+
+      .hero-cta {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .hero-cta .btn {
+        width: 100%;
+        max-width: 300px;
+        justify-content: center;
+      }
+
+      section {
+        padding: 4rem 1.5rem;
+      }
+
+      .support-section {
+        padding: 4rem 1.5rem;
+      }
+
+      .sponsors-container {
+        gap: 2rem;
+      }
+
+      .sponsors-button-wrapper,
+      .sponsors-card-wrapper {
+        padding: 1.5rem;
+      }
+
+      .sponsors-iframe {
+        width: 100%;
+        height: auto;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .hero h1 {
+        font-size: 2.25rem;
+      }
+
+      .hero-sub {
+        font-size: 1rem;
+      }
+
+      .product-card {
+        min-height: auto;
+      }
+
+      .step {
+        min-height: auto;
+      }
+    }
+
+    /* Reduced Motion for Accessibility */
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+
+      .particle {
+        display: none;
+      }
+    }
+
+    /* FFT Nano Slide Viewer */
+    .presentation-section {
+      padding: 6rem 2rem;
+      background: var(--earth-dark);
+    }
+
+    .fft-presentation-container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .fft-slide-viewer {
+      background: rgba(10, 15, 20, 0.95);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4), 0 0 60px rgba(0, 255, 136, 0.15);
+      border: 2px solid rgba(0, 255, 136, 0.2);
+      margin: 3rem 0;
+    }
+
+    .slide-container {
+      position: relative;
+      width: 100%;
+      height: 70vh;
+      max-height: 800px;
+      background: #0A0A0A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fft-slide-image {
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      display: block;
+    }
+
+    .fft-slide-image.fade-out {
+      opacity: 0;
+      transition: opacity 300ms ease-out;
+    }
+
+    .fft-slide-image.fade-in {
+      opacity: 1;
+      transition: opacity 300ms ease-in;
+    }
+
+    /* Slide Controls */
+    .fft-slide-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px;
+      background: rgba(0, 255, 136, 0.08);
+      border-bottom: 1px solid rgba(0, 255, 136, 0.15);
+    }
+
+    .slide-info {
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      color: rgba(245, 247, 255, 0.7);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .fft-slide-counter {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--brand-primary);
+    }
+
+    .fft-slide-nav-buttons {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .fft-nav-btn {
+      padding: 12px 24px;
+      border-radius: 8px;
+      border: 2px solid rgba(0, 255, 136, 0.3);
+      background: transparent;
+      color: var(--brand-primary);
+      font-weight: 600;
+      font-size: 0.9rem;
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      cursor: pointer;
+    }
+
+    .fft-nav-btn:hover:not(:disabled) {
+      background: var(--brand-primary);
+      color: var(--earth-dark);
+      transform: translateY(-2px);
+    }
+
+    .fft-nav-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .fft-nav-btn-primary {
+      background: linear-gradient(135deg, var(--brand-primary-dark), var(--brand-primary));
+      color: var(--earth-dark);
+      border: none;
+    }
+
+    .fft-nav-btn-primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(0, 255, 136, 0.3);
+    }
+
+    /* Thumbnails */
+    .fft-thumbnails {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 12px;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    .fft-thumb {
+      position: relative;
+      cursor: pointer;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 2px solid rgba(0, 255, 136, 0.2);
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .fft-thumb:hover {
+      transform: translateY(-4px);
+      border-color: rgba(0, 255, 136, 0.6);
+    }
+
+    .fft-thumb.active {
+      border-color: rgba(0, 255, 136, 1);
+      box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+    }
+
+    .fft-thumb img {
+      width: 100%;
+      height: 60px;
+      object-fit: cover;
+      display: block;
+    }
+
+    .presentation-actions {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      margin: 3rem 0;
+      flex-wrap: wrap;
+    }
+
+    /* Scroll Reveal for Presentation */
+    .fft-slide-viewer,
+    .fft-slide-controls,
+    .fft-thumbnails,
+    .presentation-actions {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .fft-slide-viewer.revealed,
+    .fft-slide-controls.revealed,
+    .fft-thumbnails.revealed,
+    .presentation-actions.revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .fft-slide-viewer { transition-delay: 0.1s; }
+    .fft-slide-controls { transition-delay: 0.2s; }
+    .fft-thumbnails { transition-delay: 0.3s; }
+    .presentation-actions { transition-delay: 0.4s; }
+
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+      .fft-slide-viewer {
+        margin: 2rem 0;
+      }
+
+      .slide-container {
+        height: 50vh;
+        max-height: 600px;
+      }
+
+      .fft-slide-controls {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+      }
+
+      .fft-slide-nav-buttons {
+        display: flex;
+        gap: 0.5rem;
+        width: 100%;
+      }
+
+      .fft-nav-btn {
+        flex: 1;
+        padding: 10px 16px;
+        font-size: 0.9rem;
+      }
+
+      .fft-thumbnails {
+        grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+        gap: 8px;
+        padding: 12px;
+      }
+
+      .fft-thumb img {
+        height: 40px;
+      }
+
+      .presentation-actions {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .presentation-actions .btn {
+        width: 100%;
+        max-width: 300px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Navigation -->
+  <nav class="nav">
+    <a href="#" class="logo">
+      <img src="assets/logo.png" alt="FFT Nano" class="logo-icon">
+      <span>FFT Nano</span>
+    </a>
+    <ul class="nav-links desktop-nav">
+      <li><a href="#what-is">What is FFT Nano?</a></li>
+      <li><a href="#why-matters">Why This Matters</a></li>
+      <li><a href="#products">Real Products</a></li>
+      <li><a href="#get-started">Get Started</a></li>
+      <li><a href="#technical-presentation">Presentation</a></li>
+      <li><a href="#support" style="color: var(--brand-accent);"><i class="fas fa-heart"></i> Support</a></li>
+    </ul>
+    
+    <!-- Search Box -->
+    <div class="search-box">
+      <input type="text" class="search-input" placeholder="Search...">
+      <i class="fas fa-search" style="position: absolute; right: 1rem; color: var(--text-muted);"></i>
+    </div>
+    
+    <button class="mobile-menu-btn" onclick="toggleMenu()">
+      <i class="fas fa-bars"></i>
+    </button>
+  </nav>
+
+  <!-- Mobile Menu Overlay -->
+  <div class="mobile-menu-overlay" onclick="toggleMenu()" id="mobileMenuOverlay"></div>
+  <nav class="mobile-menu" id="mobileMenu">
+    <!-- Close Button -->
+    <button class="mobile-close-btn" onclick="toggleMenu()" style="position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-light); font-size: 1.5rem; cursor: pointer; padding: 0.5rem;">
+      <i class="fas fa-times"></i>
+    </button>
+
+    <!-- Mobile Search Box -->
+    <div class="search-box" style="margin-bottom: 2rem; width: 100%;">
+      <input type="text" class="search-input" placeholder="Search..." style="width: 100%;">
+      <i class="fas fa-search" style="position: absolute; right: 1rem; color: var(--text-muted);"></i>
+    </div>
+
+    <ul class="nav-links mobile-nav">
+      <li><a href="#what-is" onclick="toggleMenu()">What is FFT Nano?</a></li>
+      <li><a href="#why-matters" onclick="toggleMenu()">Why This Matters</a></li>
+      <li><a href="#products" onclick="toggleMenu()">Real Products</a></li>
+      <li><a href="#get-started" onclick="toggleMenu()">Get Started</a></li>
+      <li><a href="#technical-presentation" onclick="toggleMenu()">Presentation</a></li>
+      <li><a href="#support" onclick="toggleMenu()" style="color: var(--brand-accent);"><i class="fas fa-heart"></i> Support</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="particles" id="particles"></div>
+      <div class="hero-content">
+        <h1>Talk to Your Farm.<br><span>FFT Nano Will Create Entire Systems For You.</span></h1>
+        <p class="hero-sub">The first AI platform that generates its own capabilities. Describe what you want in plain English — FFT Nano writes code, deploys it to edge devices, coordinates an intelligent swarm, and learns from your entire farm.</p>
+        
+        <div class="hero-stats">
+          <div class="stat">1 Platform</div>
+          <div class="stat">∞ Possibilities</div>
+          <div class="stat">0 Gatekeepers</div>
+        </div>
+        
+        <div class="hero-cta">
+          <a href="#get-started" class="btn btn-primary">
+            <i class="fas fa-download"></i> Download Free
+          </a>
+          <a href="#what-is" class="btn btn-secondary">
+            <i class="fas fa-play"></i> See It In Action
+          </a>
+          <a href="#technical-presentation" class="btn btn-secondary">
+            <i class="fas fa-file-powerpoint"></i> View Presentation
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- What is FFT Nano Section -->
+    <section id="what-is">
+      <div class="section-header">
+        <h2>What is FFT Nano?</h2>
+        <p>Single FFT Nano Instance. Infinite Possibilities.</p>
+      </div>
+      
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <i class="fas fa-code"></i>
+          </div>
+          <h3>Natural Language Code Generation</h3>
+          <p>You speak plain English, FFT Nano writes working code. Python, Bash, Node.js, C, Rust — whatever the task needs. No coding required. No software engineers needed. Just describe what you want, and FFT Nano creates it.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <i class="fas fa-exchange-alt"></i>
+          </div>
+          <h3>Universal Protocol Translation</h3>
+          <p>Your 1998 grain elevator (RS232) needs to talk to your 2026 cloud fleet system (REST API)? FFT Nano generates protocol bridges instantly. CAN bus ↔ Modbus ↔ MQTT ↔ REST APIs ↔ RS232. Legacy equipment ↔ Modern systems. One platform, unlimited translation.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <i class="fas fa-tools"></i>
+          </div>
+          <h3>Instant Tool Creation</h3>
+          <p>Need a fertilizer optimizer? Describe it. Need an equipment monitor? Describe it. Need a safety system? Describe it. FFT Nano creates, deploys, and runs it. In minutes, not months. No expensive software packages. No vendor contracts.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <i class="fas fa-chart-line"></i>
+          </div>
+          <h3>Self-Improving Workflows</h3>
+          <p>FFT Nano doesn't just run scripts. It learns from them. Soil patterns, crop needs, equipment health, herd behavior. Optimizes workflows over time. Gets smarter every day. Self-improving automation.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Why This Matters Section -->
+    <section id="why-matters" class="why-matters">
+      <div class="section-header">
+        <h2>Why This Matters</h2>
+        <p>Democratizing Agricultural Intelligence</p>
+      </div>
+      
+      <div class="matters-grid">
+        <div class="matters-card">
+          <h3>Democratizing Agriculture</h3>
+          <p>Today's agricultural technology is controlled by a handful of corporations. John Deere, Bayer, Corteva, Climate Corp — they decide what features farmers get, what data farmers can see, and how much farmers pay. Farmers are renters of their own technology, not owners.</p>
+          <p style="margin-top: 1rem;"><strong>FFT Nano is different:</strong></p>
+          <ul>
+            <li>Open source (anyone can use, modify, improve)</li>
+            <li>Runs on YOUR farm (data stays local)</li>
+            <li>Free (no subscriptions, no usage limits)</li>
+            <li>Universal (works with ANY equipment)</li>
+            <li>Farmer-owned (you own everything)</li>
+          </ul>
+        </div>
+        
+        <div class="matters-card">
+          <h3>Food & Medicine in Local Hands</h3>
+          <p>When farmers control their own AI and data, communities decide what to grow. Local knowledge is preserved. Traditional varieties are saved. Food systems stay local. Medicine & nutrition knowledge stays in community hands.</p>
+          <ul>
+            <li>Communities decide what to grow (not corporate seed mandates)</li>
+            <li>Local knowledge is preserved (traditional varieties saved)</li>
+            <li>Seed saving is possible (not restricted by IP)</li>
+            <li>Food systems stay local (not corporate-controlled)</li>
+            <li>Medicine & nutrition preserved</li>
+            <li>Resilient, independent agriculture</li>
+          </ul>
+        </div>
+        
+        <div class="matters-card">
+          <h3>Don't Fear AI — Own It</h3>
+          <p>FFT Nano AUGMENTS you, doesn't replace you. It's YOUR tool, not YOUR boss. You are in the driver's seat. FFT Nano is your intelligent assistant.</p>
+          <p style="margin-top: 1rem;"><strong>What FFT Nano Does:</strong></p>
+          <ul>
+            <li>Automates repetitive tasks (checking sensors, logging data)</li>
+            <li>Remembers details (maintenance dates, spray records)</li>
+            <li>Coordinates systems (protocol translation, device coordination)</li>
+            <li>Provides insights (patterns, optimizations, predictions)</li>
+          </ul>
+          <p style="margin-top: 1rem;"><strong>What YOU Still Do:</strong></p>
+          <ul>
+            <li>Make strategic decisions (what to grow, when to harvest)</li>
+            <li>Provide expertise (soil science, crop knowledge)</li>
+            <li>Own the farm (land, equipment, livestock)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Real Products Section -->
+    <section id="products" class="products-section">
+      <div class="section-header">
+        <h2>Real Products</h2>
+        <p>Honest Offerings. No Fake Products. Just What You Need.</p>
+      </div>
+      
+      <div class="products-grid">
+        <div class="product-card">
+          <div class="product-header free">
+            <div class="product-price">FREE</div>
+            <div class="product-name">FFT Nano Software</div>
+          </div>
+          <div class="product-body">
+            <ul>
+              <li>Natural Language Code Generation</li>
+              <li>Universal Protocol Translation</li>
+              <li>Instant Tool Creation</li>
+              <li>Self-Improving Workflows</li>
+              <li>Swarm Coordination</li>
+              <li>Open Source (MIT License)</li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="product-card">
+          <div class="product-header">
+            <div class="product-price">$299</div>
+            <div class="product-name">Protocol Bridge Generator</div>
+          </div>
+          <div class="product-body">
+            <ul>
+              <li>FFT Nano analyzes your equipment protocols</li>
+              <li>Generates working bridge code</li>
+              <li>Includes error handling, retries, buffering</li>
+              <li>Deploys to your Raspberry Pi</li>
+              <li>Documents setup and usage</li>
+              <li>Legacy ↔ Modern systems</li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="product-card">
+          <div class="product-header">
+            <div class="product-price">$199</div>
+            <div class="product-name">Custom Tool Generator</div>
+          </div>
+          <div class="product-body">
+            <ul>
+              <li>Describe any farm tool in plain English</li>
+              <li>FFT Nano generates working code</li>
+              <li>Includes error handling, logging, alerts</li>
+              <li>Deploys to your system</li>
+              <li>Teaches you how to modify</li>
+              <li>Create unlimited custom tools</li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="product-card">
+          <div class="product-header">
+            <div class="product-price">$599</div>
+            <div class="product-name">Swarm Starter Kit</div>
+          </div>
+          <div class="product-body">
+            <ul>
+              <li>Raspberry Pi 5 8GB</li>
+              <li>256GB NVMe SSD</li>
+              <li>4G LTE modem</li>
+              <li>IP67 enclosure</li>
+              <li>FFT Nano pre-installed</li>
+              <li>Swarm orchestrator ready</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Get Started Section -->
+    <section id="get-started" class="get-started">
+      <div class="section-header">
+        <h2>Get Started</h2>
+        <p>Three Simple Steps to Own Your Farm's Intelligence</p>
+      </div>
+      
+      <div class="steps-container">
+        <div class="step">
+          <div class="step-number">1</div>
+          <h3>Download</h3>
+          <code>git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git</code>
+          <code>cd FFT_nano</code>
+        </div>
+        
+        <div class="step">
+          <div class="step-number">2</div>
+          <h3>Install</h3>
+          <code>npm install</code>
+          <code>npm run build</code>
+        </div>
+        
+        <div class="step">
+          <div class="step-number">3</div>
+          <h3>Command</h3>
+          <code>"Create a moisture monitoring agent for my north field."</code>
+        </div>
+      </div>
+      
+      <p style="color: var(--text-muted); margin-top: 2rem;">That's it. FFT Nano generates the code, deploys the agent, and your farm is now more intelligent.</p>
+      
+      <div style="margin-top: 3rem;">
+        <p style="color: var(--brand-accent); font-size: 1.2rem; font-weight: 600;">Try It Free</p>
+        <p style="color: var(--text-muted); margin-top: 0.5rem;">No credit card. No subscription. No commitment.<br>Just download, install, and own your farm's intelligence.</p>
+      </div>
+      
+      <div class="hero-cta" style="margin-top: 3rem;">
+        <a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano" class="btn btn-primary" target="_blank">
+          <i class="fab fa-github"></i> Download from GitHub
+        </a>
+        <a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#readme" class="btn btn-secondary" target="_blank">
+          <i class="fas fa-book"></i> View Documentation
+        </a>
+      </div>
+    </section>
+
+    <!-- Technical Presentation Section -->
+    <section class="presentation-section" id="technical-presentation">
+      <div class="section-header">
+        <h2>Technical Presentation</h2>
+        <p>Complete 17-slide presentation explaining FFT Nano architecture, skills system, and orchestration layer. Navigate through slides using controls below or use arrow keys.</p>
+      </div>
+
+      <div class="fft-presentation-container">
+        <!-- Slide Viewer -->
+        <div class="fft-slide-viewer">
+          <div class="slide-container">
+            <img
+              src="slides/terminal-pitchdeck/slide-01.png"
+              alt="FFT Nano Technical Architecture - Slide 1"
+              class="fft-slide-image"
+              id="fft-current-slide"
+              loading="lazy"
+            >
+          </div>
+        </div>
+
+        <!-- Slide Controls -->
+        <div class="fft-slide-controls">
+          <div class="slide-info">
+            <span class="fft-slide-counter">Slide <span id="fft-slide-number">1</span> of 17</span>
+          </div>
+          <div class="fft-slide-nav-buttons">
+            <button class="fft-nav-btn" id="fft-prev-btn" disabled>← Previous</button>
+            <button class="fft-nav-btn fft-nav-btn-primary" id="fft-next-btn">Next →</button>
+          </div>
+        </div>
+
+        <!-- Thumbnails -->
+        <div class="fft-thumbnails" id="fft-thumbnails">
+          <!-- Thumbnails generated by JavaScript -->
+        </div>
+      </div>
+
+      <!-- Section Actions -->
+      <div class="presentation-actions">
+        <a href="#products" class="btn btn-secondary">
+          View Products
+        </a>
+        <a href="https://calendly.com/scrim_wiggins/farm-friend-on-board" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
+          Schedule Technical Walkthrough
+        </a>
+      </div>
+    </section>
+
+    <!-- Support Section -->
+    <section id="support" class="support-section">
+      <div class="section-header">
+        <h2>Support FFT Nano</h2>
+        <p>Help democratize agricultural intelligence. FFT Nano is open source, free to use, and owned by the farming community. Your sponsorship helps us develop new features, improve documentation, and keep the project sustainable.</p>
+        <p style="color: var(--brand-accent); font-weight: 600; margin-top: 1rem;"><i class="fas fa-heart"></i> Every contribution matters</p>
+      </div>
+
+      <div class="sponsors-container">
+        <!-- Sponsors Button -->
+        <div class="sponsors-button-wrapper">
+          <p style="color: var(--text-muted); margin-bottom: 1rem;">
+            <i class="fas fa-heart" style="color: var(--brand-accent);"></i>
+            Support Open Source Agriculture
+          </p>
+          <iframe
+            src="https://github.com/sponsors/0-CYBERDYNE-SYSTEMS-0/button"
+            title="Sponsor 0-CYBERDYNE-SYSTEMS-0"
+            aria-label="Sponsor FFT Nano on GitHub"
+            height="32"
+            width="114"
+            style="border: 0; border-radius: 6px;"
+            tabindex="0">
+          </iframe>
+        </div>
+
+        <!-- Sponsors Card -->
+        <div class="sponsors-card-wrapper">
+          <p style="color: var(--text-muted); margin-bottom: 1rem;">
+            <i class="fas fa-star" style="color: var(--brand-primary);"></i>
+            Become a Sponsor
+          </p>
+          <iframe
+            src="https://github.com/sponsors/0-CYBERDYNE-SYSTEMS-0/card"
+            title="Sponsor 0-CYBERDYNE-SYSTEMS-0 - View all sponsorship tiers"
+            aria-label="GitHub Sponsors card showing available sponsorship tiers"
+            height="225"
+            width="600"
+            style="border: 0;"
+            class="sponsors-iframe"
+            tabindex="0">
+          </iframe>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-content">
+      <div class="footer-section">
+        <h4>FFT Nano</h4>
+        <p style="color: var(--text-muted); line-height: 1.7;">Democratizing agricultural intelligence. Keeping food & medicine in local hands. One platform. Infinite possibilities. You control everything.</p>
+      </div>
+      
+      <div class="footer-section">
+        <h4>Resources</h4>
+        <ul>
+          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano">GitHub Repository</a></li>
+          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#readme">Documentation</a></li>
+          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#api-reference">API Reference</a></li>
+          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#tutorials">Tutorials</a></li>
+        </ul>
+      </div>
+      
+      <div class="footer-section">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://discord.gg/" title="Coming Soon">Discord Server</a></li>
+          <li><a href="https://t.me/" title="Coming Soon">Telegram Group</a></li>
+          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/discussions" title="GitHub Discussions">Forums</a></li>
+          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/blob/main/CONTRIBUTING.md" title="GitHub Contributing Guide">Contributing</a></li>
+        </ul>
+      </div>
+      
+      <div class="footer-section">
+        <h4>Connect</h4>
+        <ul>
+          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano"><i class="fab fa-github"></i> GitHub</a></li>
+          <li><a href="https://x.com/" title="Coming Soon" target="_blank"><i class="fab fa-twitter"></i> Twitter</a></li>
+          <li><a href="https://youtube.com/" title="Coming Soon" target="_blank"><i class="fab fa-youtube"></i> YouTube</a></li>
+          <li><a href="mailto:contact@farm-friend.com" title="Email Us"><i class="fas fa-envelope"></i> Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    
+    <div class="footer-bottom">
+      <p>&copy; 2026 FFT Nano. Open Source. MIT License. Democratizing Agricultural Intelligence.</p>
+    </div>
+  </footer>
+
+  <script>
+    function toggleMenu() {
+      const mobileMenu = document.getElementById('mobileMenu');
+      const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
+
+      mobileMenu.classList.toggle('open');
+      mobileMenuOverlay.classList.toggle('open');
+    }
+
+    // Close mobile menu with Escape key for accessibility
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const mobileMenu = document.getElementById('mobileMenu');
+        const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
+
+        if (mobileMenu.classList.contains('open')) {
+          mobileMenu.classList.remove('open');
+          mobileMenuOverlay.classList.remove('open');
+        }
+      }
+    });
+
+    // Close mobile menu when clicking a link
+    document.querySelectorAll('.mobile-nav a').forEach(link => {
+      link.addEventListener('click', () => {
+        const mobileMenu = document.getElementById('mobileMenu');
+        const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
+
+        mobileMenu.classList.remove('open');
+        mobileMenuOverlay.classList.remove('open');
+      });
+    });
+
+    // Search functionality - Google search
+    const searchInputs = document.querySelectorAll('.search-input');
+    searchInputs.forEach(searchInput => {
+      searchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          const query = searchInput.value.trim();
+          if (query) {
+            // Search the FFT Nano GitHub repo
+            window.open(`https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/search?q=${encodeURIComponent(query)}&type=code`, '_blank');
+            searchInput.value = '';
+          }
+        }
+      });
+
+      // Add search icon click to trigger search
+      const searchBox = searchInput.closest('.search-box');
+      if (searchBox) {
+        const searchIcon = searchBox.querySelector('i.fa-search');
+        if (searchIcon) {
+          searchIcon.style.cursor = 'pointer';
+          searchIcon.addEventListener('click', () => {
+            const query = searchInput.value.trim();
+            if (query) {
+              window.open(`https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/search?q=${encodeURIComponent(query)}&type=code`, '_blank');
+              searchInput.value = '';
+            }
+          });
+        }
+      }
+    });
+
+    // Generate particles
+    function createParticles() {
+      const particlesContainer = document.getElementById('particles');
+      const particleCount = 25;
+      
+      for (let i = 0; i < particleCount; i++) {
+        const particle = document.createElement('div');
+        particle.classList.add('particle');
+        
+        // Random positioning
+        particle.style.left = Math.random() * 100 + '%';
+        particle.style.top = Math.random() * 100 + '%';
+        
+        // Random size variation
+        const size = Math.random() * 4 + 2;
+        particle.style.width = size + 'px';
+        particle.style.height = size + 'px';
+        
+        // Random animation delay
+        particle.style.animationDelay = Math.random() * 15 + 's';
+        particle.style.animationDuration = (Math.random() * 10 + 10) + 's';
+        
+        particlesContainer.appendChild(particle);
+      }
+    }
+
+    // Initialize particles on load
+    window.addEventListener('load', createParticles);
+
+    // Scroll reveal animations
+    const observerOptions = {
+      threshold: 0.2,
+      rootMargin: '0px 0px -100px 0px'
+    };
+
+    const sectionObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, observerOptions);
+
+    document.querySelectorAll('section').forEach(section => {
+      sectionObserver.observe(section);
+    });
+
+    // Presentation Section Scroll Reveal
+    const presentationSection = document.querySelector('.presentation-section');
+    if (presentationSection) {
+      const presentationObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const elements = entry.target.querySelectorAll(
+              '.fft-slide-viewer, .fft-slide-controls, .fft-thumbnails, .presentation-actions'
+            );
+            elements.forEach((el, index) => {
+              setTimeout(() => {
+                el.classList.add('revealed');
+              }, index * 100);
+            });
+          }
+        });
+      }, { threshold: 0.2 });
+
+      presentationObserver.observe(presentationSection);
+    }
+
+    // Smooth scroll for navigation
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+          });
+        }
+      });
+    });
+
+    // FFT Nano Slide Viewer
+    (function() {
+      // Configuration
+      const FFT_TOTAL_SLIDES = 17;
+      const FFT_SLIDES_PATH = 'slides/terminal-pitchdeck/slide-';
+      let fftCurrentSlide = 1;
+      const fftThumbnails = [];
+
+      // Generate thumbnails
+      function fftGenerateThumbnails() {
+        const container = document.getElementById('fft-thumbnails');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        for (let i = 1; i <= FFT_TOTAL_SLIDES; i++) {
+          const thumb = document.createElement('div');
+          thumb.className = 'fft-thumb' + (i === fftCurrentSlide ? ' active' : '');
+          thumb.onclick = () => fftGoToSlide(i);
+
+          const img = document.createElement('img');
+          img.src = `${FFT_SLIDES_PATH}${String(i).padStart(2, '0')}.png`;
+          img.alt = `Slide ${i}`;
+          img.loading = 'lazy';
+
+          const number = document.createElement('div');
+          number.className = 'fft-thumb-number';
+          number.textContent = i;
+          number.style.cssText = 'position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: 600;';
+
+          thumb.appendChild(img);
+          thumb.appendChild(number);
+          container.appendChild(thumb);
+        }
+
+        fftThumbnails.push(...container.children);
+      }
+
+      // Update slide display
+      function fftUpdateSlide() {
+        const slideImage = document.getElementById('fft-current-slide');
+        const slideNumber = document.getElementById('fft-slide-number');
+        const prevBtn = document.getElementById('fft-prev-btn');
+        const nextBtn = document.getElementById('fft-next-btn');
+        const thumbs = document.querySelectorAll('.fft-thumb');
+
+        if (!slideImage || !slideNumber || !prevBtn || !nextBtn) return;
+
+        // Add fade-out class
+        slideImage.classList.add('fade-out');
+
+        // Update after fade completes
+        setTimeout(() => {
+          slideImage.src = `${FFT_SLIDES_PATH}${String(fftCurrentSlide).padStart(2, '0')}.png`;
+          slideNumber.textContent = fftCurrentSlide;
+
+          // Update thumbnails
+          thumbs.forEach((thumb, index) => {
+            const slideNum = index + 1;
+            if (slideNum === fftCurrentSlide) {
+              thumb.classList.add('active');
+            } else {
+              thumb.classList.remove('active');
+            }
+          });
+
+          // Update buttons
+          prevBtn.disabled = fftCurrentSlide <= 1;
+          nextBtn.disabled = fftCurrentSlide >= FFT_TOTAL_SLIDES;
+
+          // Remove fade-out, add fade-in
+          setTimeout(() => {
+            slideImage.classList.remove('fade-out');
+            slideImage.classList.add('fade-in');
+
+            setTimeout(() => {
+              slideImage.classList.remove('fade-in');
+            }, 300);
+          }, 300);
+        }, 300);
+      }
+
+      // Navigation functions
+      function fftGoToSlide(slideNum) {
+        if (slideNum >= 1 && slideNum <= FFT_TOTAL_SLIDES) {
+          fftCurrentSlide = slideNum;
+          fftUpdateSlide();
+        }
+      }
+
+      function fftNextSlide() {
+        if (fftCurrentSlide < FFT_TOTAL_SLIDES) {
+          fftCurrentSlide++;
+          fftUpdateSlide();
+        }
+      }
+
+      function fftPrevSlide() {
+        if (fftCurrentSlide > 1) {
+          fftCurrentSlide--;
+          fftUpdateSlide();
+        }
+      }
+
+      // Keyboard navigation
+      document.addEventListener('keydown', function(e) {
+        // Only handle if slide viewer is visible in viewport
+        const viewer = document.getElementById('fft-current-slide');
+        if (!viewer) return;
+
+        const rect = viewer.getBoundingClientRect();
+        const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+
+        if (isVisible) {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            fftNextSlide();
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            fftPrevSlide();
+          }
+        }
+      });
+
+      // Event Listeners
+      document.addEventListener('DOMContentLoaded', function() {
+        const prevBtn = document.getElementById('fft-prev-btn');
+        const nextBtn = document.getElementById('fft-next-btn');
+
+        if (prevBtn) prevBtn.addEventListener('click', fftPrevSlide);
+        if (nextBtn) nextBtn.addEventListener('click', fftNextSlide);
+
+        // Generate thumbnails on load
+        fftGenerateThumbnails();
+      });
+    })();
+  </script>
+</body>
+</html>
