@@ -29,6 +29,11 @@ const TELEGRAM_RETRY_MAX_DELAY_MS = Math.max(
   Number.parseInt(process.env.FFT_NANO_TELEGRAM_RETRY_MAX_MS || '2500', 10) ||
     2500,
 );
+const TELEGRAM_TYPING_REFRESH_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.FFT_NANO_TELEGRAM_TYPING_REFRESH_MS || '4000', 10) ||
+    4000,
+);
 
 class TelegramApiError extends Error {
   method: string;
@@ -552,6 +557,11 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   let offset = state.offset || 0;
   let lastPersistedOffset = offset;
   let botUsername: string | null = null;
+  interface TypingLoopState {
+    interval: ReturnType<typeof setInterval>;
+    inFlight: boolean;
+  }
+  const typingLoops = new Map<string, TypingLoopState>();
 
   async function apiGet<T>(method: string, params: Record<string, string>): Promise<T> {
     const url = new URL(`${base}/${method}`);
@@ -896,10 +906,59 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   }
 
   async function setTyping(chatJid: string, isTyping: boolean): Promise<void> {
-    if (!isTyping) return;
     const chatId = parseTelegramChatId(chatJid);
     if (!chatId) return;
-    await apiPostWithRetry('sendChatAction', { chat_id: chatId, action: 'typing' });
+
+    if (!isTyping) {
+      const loop = typingLoops.get(chatId);
+      if (loop) {
+        clearInterval(loop.interval);
+        typingLoops.delete(chatId);
+      }
+      return;
+    }
+
+    if (typingLoops.has(chatId)) return;
+
+    const sendTypingAction = async (): Promise<void> => {
+      await apiPostWithRetry('sendChatAction', { chat_id: chatId, action: 'typing' });
+    };
+
+    const state: TypingLoopState = {
+      interval: setInterval(() => {
+        const current = typingLoops.get(chatId);
+        if (!current || current.inFlight) return;
+        current.inFlight = true;
+        void sendTypingAction()
+          .catch((err) => {
+            logger.debug(
+              { chatJid, err: err instanceof Error ? err.message : String(err) },
+              'Failed to refresh Telegram typing indicator',
+            );
+          })
+          .finally(() => {
+            const latest = typingLoops.get(chatId);
+            if (latest) latest.inFlight = false;
+          });
+      }, TELEGRAM_TYPING_REFRESH_MS),
+      inFlight: false,
+    };
+    typingLoops.set(chatId, state);
+
+    if (!state.inFlight) {
+      state.inFlight = true;
+      void sendTypingAction()
+        .catch((err) => {
+          logger.warn(
+            { chatJid, err: err instanceof Error ? err.message : String(err) },
+            'Failed to start Telegram typing indicator',
+          );
+        })
+        .finally(() => {
+          const latest = typingLoops.get(chatId);
+          if (latest) latest.inFlight = false;
+        });
+    }
   }
 
   async function setCommands(
