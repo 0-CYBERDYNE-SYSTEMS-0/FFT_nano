@@ -1,9 +1,15 @@
 export type CodingHint =
   | 'none'
+  | 'auto'
   | 'force_delegate_execute'
   | 'force_delegate_plan';
 
-export type DelegationTrigger = 'none' | 'coder' | 'coder-plan' | 'alias';
+export type DelegationTrigger =
+  | 'none'
+  | 'coder'
+  | 'coder-plan'
+  | 'coder_plan'
+  | 'alias';
 
 interface DelegationParseResult {
   hint: CodingHint;
@@ -27,6 +33,14 @@ export function normalizeDelegationAlias(text: string): string {
 
 export function parseDelegationTrigger(text: string): DelegationParseResult {
   const trimmed = text.trimStart();
+
+  if (/^\/coder_plan\b/i.test(trimmed)) {
+    return {
+      hint: 'force_delegate_plan',
+      trigger: 'coder_plan',
+      instruction: trimmed.replace(/^\/coder_plan\b/i, '').trim() || null,
+    };
+  }
 
   if (/^\/coder-plan\b/i.test(trimmed)) {
     return {
@@ -55,4 +69,3 @@ export function parseDelegationTrigger(text: string): DelegationParseResult {
 
   return { hint: 'none', trigger: 'none', instruction: null };
 }
-

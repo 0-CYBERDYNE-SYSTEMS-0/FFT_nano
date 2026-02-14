@@ -15,6 +15,7 @@ import {
   FARM_STATE_ENABLED,
   FFT_DASHBOARD_REPO_PATH,
   GROUPS_DIR,
+  MAIN_WORKSPACE_DIR,
   MEMORY_RETRIEVAL_GATE_ENABLED,
 } from './config.js';
 import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
@@ -35,9 +36,14 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
-  codingHint?: 'none' | 'force_delegate_execute' | 'force_delegate_plan';
+  codingHint?: 'none' | 'auto' | 'force_delegate_execute' | 'force_delegate_plan';
   requestId?: string;
   memoryContext?: string;
+  provider?: string;
+  model?: string;
+  thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningLevel?: 'off' | 'on' | 'stream';
+  noContinue?: boolean;
 }
 
 export interface ContainerOutput {
@@ -45,12 +51,103 @@ export interface ContainerOutput {
   result: string | null;
   error?: string;
   streamed?: boolean;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    provider?: string;
+    model?: string;
+  };
 }
 
 interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly?: boolean;
+}
+
+function ensureMainWorkspaceSeed(): void {
+  fs.mkdirSync(MAIN_WORKSPACE_DIR, { recursive: true });
+
+  const defaults: Array<{ name: string; body: string }> = [
+    {
+      name: 'AGENTS.md',
+      body: [
+        '# FFT_nano Main Workspace',
+        '',
+        'Session start:',
+        '1. Read SOUL.md',
+        '2. Read USER.md',
+        '3. Read IDENTITY.md',
+        '4. Read PRINCIPLES.md',
+        '5. Read TOOLS.md',
+        '6. Read HEARTBEAT.md',
+        '',
+        'Notes:',
+        '- Use coding tools directly when needed.',
+        '- Delegate deeper implementation work via coding delegation tools when appropriate.',
+      ].join('\n'),
+    },
+    {
+      name: 'SOUL.md',
+      body: [
+        '# SOUL',
+        '',
+        'You are FarmFriend: concise, practical, and technically rigorous.',
+      ].join('\n'),
+    },
+    {
+      name: 'USER.md',
+      body: [
+        '# USER',
+        '',
+        'Primary operator: Scrim Wiggins.',
+      ].join('\n'),
+    },
+    {
+      name: 'IDENTITY.md',
+      body: [
+        '# IDENTITY',
+        '',
+        'Name: FarmFriend',
+        'Role: Main orchestrator + coding-capable assistant',
+      ].join('\n'),
+    },
+    {
+      name: 'PRINCIPLES.md',
+      body: [
+        '# PRINCIPLES',
+        '',
+        '- Be truthful about tool usage and edits.',
+        '- Prefer deterministic, testable changes.',
+        '- Ask clarifying questions before high-impact external actions.',
+      ].join('\n'),
+    },
+    {
+      name: 'TOOLS.md',
+      body: [
+        '# TOOLS',
+        '',
+        'Local operator notes for tool conventions go here.',
+      ].join('\n'),
+    },
+    {
+      name: 'HEARTBEAT.md',
+      body: [
+        '# HEARTBEAT',
+        '',
+        '# Keep minimal. Add only periodic checks you actually want.',
+      ].join('\n'),
+    },
+  ];
+
+  for (const file of defaults) {
+    const filePath = path.join(MAIN_WORKSPACE_DIR, file.name);
+    if (fs.existsSync(filePath)) continue;
+    fs.writeFileSync(filePath, `${file.body}\n`);
+  }
+
+  fs.mkdirSync(path.join(MAIN_WORKSPACE_DIR, 'memory'), { recursive: true });
 }
 
 function buildVolumeMounts(
@@ -61,6 +158,8 @@ function buildVolumeMounts(
   const projectRoot = process.cwd();
 
   if (isMain) {
+    ensureMainWorkspaceSeed();
+
     // Main gets the entire project root mounted
     mounts.push({
       hostPath: projectRoot,
@@ -68,9 +167,9 @@ function buildVolumeMounts(
       readonly: false,
     });
 
-    // Main also gets its group folder as the working directory
+    // Main uses dedicated workspace as the primary working directory.
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: MAIN_WORKSPACE_DIR,
       containerPath: '/workspace/group',
       readonly: false,
     });
@@ -302,6 +401,7 @@ function buildContainerArgs(
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
+  abortSignal?: AbortSignal,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
   let payload: ContainerInput = input;
@@ -371,11 +471,24 @@ export async function runContainerAgent(
     const container = spawn(runtimeCmd, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    let settled = false;
+    let onAbort: (() => void) | null = null;
+    let exited = false;
+    let abortEscalationTimer: ReturnType<typeof setTimeout> | null = null;
 
     let stdout = '';
     let stderr = '';
     let stdoutTruncated = false;
     let stderrTruncated = false;
+
+    const finish = (output: ContainerOutput) => {
+      if (settled) return;
+      settled = true;
+      if (abortSignal && onAbort) {
+        abortSignal.removeEventListener('abort', onAbort);
+      }
+      resolve(output);
+    };
 
     container.stdin.write(JSON.stringify(payload));
     container.stdin.end();
@@ -419,14 +532,52 @@ export async function runContainerAgent(
     const timeout = setTimeout(() => {
       logger.error({ group: group.name }, 'Container timeout, killing');
       container.kill('SIGKILL');
-      resolve({
+      finish({
         status: 'error',
         result: null,
         error: `Container timed out after ${CONTAINER_TIMEOUT}ms`,
       });
     }, group.containerConfig?.timeout || CONTAINER_TIMEOUT);
 
+    container.once('exit', () => {
+      exited = true;
+      if (abortEscalationTimer) {
+        clearTimeout(abortEscalationTimer);
+        abortEscalationTimer = null;
+      }
+    });
+
+    onAbort = () => {
+      logger.info({ group: group.name }, 'Container run aborted by signal');
+      if (!exited) {
+        container.kill('SIGTERM');
+      }
+      abortEscalationTimer = setTimeout(() => {
+        if (exited) return;
+        logger.warn(
+          { group: group.name },
+          'Container did not exit after SIGTERM; escalating to SIGKILL',
+        );
+        container.kill('SIGKILL');
+      }, 750);
+      clearTimeout(timeout);
+      finish({
+        status: 'error',
+        result: null,
+        error: 'Aborted by user',
+      });
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        onAbort();
+      } else {
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
+
     container.on('close', (code) => {
+      if (settled) return;
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
 
@@ -526,7 +677,7 @@ export async function runContainerAgent(
           'Container exited with error',
         );
 
-        resolve({
+        finish({
           status: 'error',
           result: null,
           error:
@@ -564,7 +715,7 @@ export async function runContainerAgent(
           'Container completed',
         );
 
-        resolve(output);
+        finish(output);
       } catch (err) {
         logger.error(
           {
@@ -575,7 +726,7 @@ export async function runContainerAgent(
           'Failed to parse container output',
         );
 
-        resolve({
+        finish({
           status: 'error',
           result: null,
           error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
@@ -584,9 +735,10 @@ export async function runContainerAgent(
     });
 
     container.on('error', (err) => {
+      if (settled) return;
       clearTimeout(timeout);
       logger.error({ group: group.name, error: err }, 'Container spawn error');
-      resolve({
+      finish({
         status: 'error',
         result: null,
         error: `Container spawn error: ${err.message}`,

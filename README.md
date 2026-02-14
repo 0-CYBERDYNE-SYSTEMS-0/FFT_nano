@@ -9,7 +9,8 @@ FarmFriend Terminal nano (`FFT_nano`) is a single-process Node.js host that runs
 - Receives inbound chat messages
 - Stores chat + scheduling metadata in SQLite
 - Runs the agent in an isolated container (Apple Container on macOS, Docker on Linux)
-- Persists memory per group in `groups/<group>/SOUL.md`
+- Uses `~/nano` as the main/admin workspace (configurable via `FFT_NANO_MAIN_WORKSPACE_DIR`)
+- Persists non-main memory per group in `groups/<group>/SOUL.md`
 - Sends agent output back to the originating chat
 
 ## Quickstart (Accurate)
@@ -54,22 +55,22 @@ Other supported keys include:
 
 ### 3. Start
 
-Telegram-only dev:
+Normal runtime (recommended):
 
 ```bash
-./scripts/start.sh dev telegram-only
+./scripts/start.sh telegram-only
 ```
 
-General dev:
-
-```bash
-./scripts/start.sh dev
-```
-
-Production:
+Explicit production-style start:
 
 ```bash
 ./scripts/start.sh start
+```
+
+Debug mode (optional, not required for coding delegation):
+
+```bash
+./scripts/start.sh dev telegram-only
 ```
 
 If WhatsApp is enabled, authenticate once before first full run:
@@ -109,7 +110,7 @@ Recommended Telegram-only local/dev mode:
 ```bash
 export WHATSAPP_ENABLED=0
 export TELEGRAM_BOT_TOKEN="..."
-./scripts/start.sh dev telegram-only
+./scripts/start.sh telegram-only
 ```
 
 Main/admin chat setup:
@@ -134,7 +135,16 @@ Main/admin chat supports explicit delegation triggers:
 - `/coder-plan <task>`: plan only
 - aliases: `use coding agent`, `use your coding agent skill`
 
-Natural-language coding requests do not auto-delegate.
+Main/admin chat normal-language runs can auto-delegate to coding worker when the model determines deep engineering work is needed (and can ask for clarification when ambiguous).
+Delegation behavior is the same in both `start` and `dev` runtime modes.
+
+## Main Workspace and Heartbeat
+
+- Main/admin chat container CWD maps to `~/nano` by default.
+- Override with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
+- Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`.
+- Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
+- Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
 
 ## Pi-Native Project Skills
 
