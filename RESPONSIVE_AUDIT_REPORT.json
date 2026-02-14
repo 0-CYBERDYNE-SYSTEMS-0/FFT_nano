@@ -1,5 +1,5 @@
 {
-  "audit_date": "2026-02-14T14:55:20.897761",
+  "audit_date": "2026-02-14T14:58:52.800218",
   "file": "/Users/scrimwiggins/clawd/fft-nano-work/index.html",
   "viewport_meta": {
     "present": true,
@@ -10,61 +10,151 @@
   "media_queries": [
     {
       "index": 1,
-      "condition": "(max-width: 1400px)",
+      "condition": "(max-width: 768px)",
       "breakpoints": {
         "min_width": [],
         "max_width": [
-          "1400px"
+          "768px"
         ]
       }
     },
     {
       "index": 2,
-      "condition": "(max-width: 1400px)",
+      "condition": "(max-width: 768px)",
       "breakpoints": {
         "min_width": [],
         "max_width": [
-          "1400px"
+          "768px"
         ]
       }
     },
     {
       "index": 3,
-      "condition": "(max-width: 1400px)",
+      "condition": "(max-width: 768px)",
       "breakpoints": {
         "min_width": [],
         "max_width": [
-          "1400px"
+          "768px"
         ]
       }
     },
     {
       "index": 4,
-      "condition": "(max-width: 1400px)",
+      "condition": "(max-width: 768px)",
       "breakpoints": {
         "min_width": [],
         "max_width": [
-          "1400px"
+          "768px"
         ]
       }
     },
     {
       "index": 5,
-      "condition": "(max-width: 1400px)",
+      "condition": "(max-width: 768px)",
       "breakpoints": {
         "min_width": [],
         "max_width": [
-          "1400px"
+          "768px"
         ]
       }
     },
     {
       "index": 6,
-      "condition": "(max-width: 1400px)",
+      "condition": "(max-width: 768px)",
       "breakpoints": {
         "min_width": [],
         "max_width": [
-          "1400px"
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 7,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 8,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 9,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 10,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 11,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 12,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 13,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 14,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 15,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
         ]
       }
     }
@@ -79,30 +169,29 @@
     },
     {
       "type": "percentage",
-      "count": 38,
+      "count": 40,
       "examples": [
-        "100%",
-        "0%"
+        "100%"
       ]
     },
     {
       "type": "relative",
-      "count": 124,
+      "count": 134,
       "examples": [
-        "1.75rem",
-        "2rem",
         "1rem",
+        "2rem",
         "0.75rem",
-        "2.5rem"
+        "0.5rem"
       ]
     },
     {
       "type": "fixed",
-      "count": 145,
+      "count": 161,
       "examples": [
-        "45px",
-        "20px",
-        "1px"
+        "768px",
+        "480px",
+        "1px",
+        "20px"
       ]
     }
   ],
@@ -111,7 +200,7 @@
       "features": {
         "display\\s*grid": 6,
         "grid-template-columns\\s*[^;]+": 9,
-        "gap\\s*[^;]+": 20
+        "gap\\s*[^;]+": 22
       },
       "total_features": 3
     }
@@ -119,11 +208,11 @@
   "flexbox": [
     {
       "features": {
-        "display\\s*flex": 21,
+        "display\\s*flex": 22,
         "display\\s*inline-flex": 1,
         "flex-direction\\s*[^;]+": 8,
-        "justify-content\\s*[^;]+": 13,
-        "align-items\\s*[^;]+": 17,
+        "justify-content\\s*[^;]+": 14,
+        "align-items\\s*[^;]+": 18,
         "flex-wrap\\s*[^;]+": 3
       },
       "total_features": 6
@@ -139,6 +228,10 @@
     }
   ],
   "touch_optimizations": [
+    {
+      "feature": "touch_target_sizes",
+      "count": 2
+    },
     {
       "feature": "cursor_pointer",
       "count": 5
@@ -159,7 +252,7 @@
       {
         "practice": "Found 1 unique breakpoints",
         "breakpoints": [
-          "1400px"
+          "768px"
         ]
       },
       {
@@ -179,6 +272,10 @@
         "description": "Uses modern CSS function for smooth text scaling"
       },
       {
+        "practice": "Touch target size optimizations detected",
+        "description": "Minimum touch targets for mobile usability"
+      },
+      {
         "practice": "All images are responsive via general CSS rule"
       },
       {
@@ -196,8 +293,8 @@
     "critical_issues": 0,
     "major_issues": 0,
     "minor_issues": 0,
-    "best_practices_followed": 7,
-    "total_media_queries": 6,
+    "best_practices_followed": 8,
+    "total_media_queries": 15,
     "uses_grid": true,
     "uses_flexbox": true,
     "has_fluid_typography": true,
