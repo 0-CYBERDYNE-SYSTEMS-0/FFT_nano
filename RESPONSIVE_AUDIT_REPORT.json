@@ -1,0 +1,206 @@
+{
+  "audit_date": "2026-02-14T14:55:20.897761",
+  "file": "/Users/scrimwiggins/clawd/fft-nano-work/index.html",
+  "viewport_meta": {
+    "present": true,
+    "content": "width=device-width, initial-scale=1.0",
+    "has_initial_scale": true,
+    "has_width_device": true
+  },
+  "media_queries": [
+    {
+      "index": 1,
+      "condition": "(max-width: 1400px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "1400px"
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "condition": "(max-width: 1400px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "1400px"
+        ]
+      }
+    },
+    {
+      "index": 3,
+      "condition": "(max-width: 1400px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "1400px"
+        ]
+      }
+    },
+    {
+      "index": 4,
+      "condition": "(max-width: 1400px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "1400px"
+        ]
+      }
+    },
+    {
+      "index": 5,
+      "condition": "(max-width: 1400px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "1400px"
+        ]
+      }
+    },
+    {
+      "index": 6,
+      "condition": "(max-width: 1400px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "1400px"
+        ]
+      }
+    }
+  ],
+  "responsive_units": [
+    {
+      "type": "viewport",
+      "count": 9,
+      "examples": [
+        "vh"
+      ]
+    },
+    {
+      "type": "percentage",
+      "count": 38,
+      "examples": [
+        "100%",
+        "0%"
+      ]
+    },
+    {
+      "type": "relative",
+      "count": 124,
+      "examples": [
+        "1.75rem",
+        "2rem",
+        "1rem",
+        "0.75rem",
+        "2.5rem"
+      ]
+    },
+    {
+      "type": "fixed",
+      "count": 145,
+      "examples": [
+        "45px",
+        "20px",
+        "1px"
+      ]
+    }
+  ],
+  "grid_layouts": [
+    {
+      "features": {
+        "display\\s*grid": 6,
+        "grid-template-columns\\s*[^;]+": 9,
+        "gap\\s*[^;]+": 20
+      },
+      "total_features": 3
+    }
+  ],
+  "flexbox": [
+    {
+      "features": {
+        "display\\s*flex": 21,
+        "display\\s*inline-flex": 1,
+        "flex-direction\\s*[^;]+": 8,
+        "justify-content\\s*[^;]+": 13,
+        "align-items\\s*[^;]+": 17,
+        "flex-wrap\\s*[^;]+": 3
+      },
+      "total_features": 6
+    }
+  ],
+  "fluid_typography": [
+    {
+      "count": 2,
+      "examples": [
+        "clamp(2.5rem, 5vw, 4rem)",
+        "clamp(2rem, 4vw, 3rem)"
+      ]
+    }
+  ],
+  "touch_optimizations": [
+    {
+      "feature": "cursor_pointer",
+      "count": 5
+    }
+  ],
+  "images": {
+    "total": 2,
+    "responsive": 2,
+    "srcset": 0,
+    "has_general_css_rule": true
+  },
+  "findings": {
+    "critical": [],
+    "major": [],
+    "minor": [],
+    "suggestions": [],
+    "best_practices": [
+      {
+        "practice": "Found 1 unique breakpoints",
+        "breakpoints": [
+          "1400px"
+        ]
+      },
+      {
+        "practice": "CSS Grid detected for layout",
+        "features": [
+          "display\\s*grid",
+          "grid-template-columns\\s*[^;]+",
+          "gap\\s*[^;]+"
+        ]
+      },
+      {
+        "practice": "Responsive grid with auto-fit + minmax detected",
+        "description": "Uses modern CSS Grid pattern for automatic column adjustment"
+      },
+      {
+        "practice": "Fluid typography with clamp() found (2 instances)",
+        "description": "Uses modern CSS function for smooth text scaling"
+      },
+      {
+        "practice": "All images are responsive via general CSS rule"
+      },
+      {
+        "practice": "Reduced motion media query detected",
+        "description": "Respects user preference for reduced animations"
+      },
+      {
+        "practice": "Mobile navigation pattern detected",
+        "description": "Mobile-specific navigation (hamburger menu, drawer, etc.)"
+      }
+    ]
+  },
+  "summary": {
+    "health_score": "EXCELLENT",
+    "critical_issues": 0,
+    "major_issues": 0,
+    "minor_issues": 0,
+    "best_practices_followed": 7,
+    "total_media_queries": 6,
+    "uses_grid": true,
+    "uses_flexbox": true,
+    "has_fluid_typography": true,
+    "images_responsive": true
+  }
+}
