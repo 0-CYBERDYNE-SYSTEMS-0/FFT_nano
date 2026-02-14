@@ -1,5 +1,5 @@
 {
-  "audit_date": "2026-02-14T14:58:52.800218",
+  "audit_date": "2026-02-14T15:24:54.730239",
   "file": "/Users/scrimwiggins/clawd/fft-nano-work/index.html",
   "viewport_meta": {
     "present": true,
@@ -157,6 +157,26 @@
           "768px"
         ]
       }
+    },
+    {
+      "index": 16,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
+    },
+    {
+      "index": 17,
+      "condition": "(max-width: 768px)",
+      "breakpoints": {
+        "min_width": [],
+        "max_width": [
+          "768px"
+        ]
+      }
     }
   ],
   "responsive_units": [
@@ -176,17 +196,17 @@
     },
     {
       "type": "relative",
-      "count": 134,
+      "count": 148,
       "examples": [
-        "1rem",
         "2rem",
         "0.75rem",
+        "1rem",
         "0.5rem"
       ]
     },
     {
       "type": "fixed",
-      "count": 161,
+      "count": 168,
       "examples": [
         "768px",
         "480px",
@@ -200,7 +220,7 @@
       "features": {
         "display\\s*grid": 6,
         "grid-template-columns\\s*[^;]+": 9,
-        "gap\\s*[^;]+": 22
+        "gap\\s*[^;]+": 25
       },
       "total_features": 3
     }
@@ -294,7 +314,7 @@
     "major_issues": 0,
     "minor_issues": 0,
     "best_practices_followed": 8,
-    "total_media_queries": 15,
+    "total_media_queries": 17,
     "uses_grid": true,
     "uses_flexbox": true,
     "has_fluid_typography": true,

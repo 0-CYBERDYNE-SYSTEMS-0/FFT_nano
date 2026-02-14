@@ -842,11 +842,57 @@
       }
     }
 
+    /* Fix header text collision on medium screens */
+    @media (max-width: 1200px) {
+      .nav-links {
+        gap: 1.75rem;
+      }
+
+      .search-input {
+        width: 180px;
+      }
+
+      .logo-icon {
+        width: 42px;
+        height: 42px;
+      }
+    }
+
+    @media (max-width: 1024px) {
+      .nav-links {
+        gap: 1.5rem;
+      }
+
+      .search-input {
+        width: 170px;
+        padding: 0.55rem 0.9rem 0.55rem 2.2rem;
+      }
+
+      .nav-links a {
+        font-size: 0.875rem;
+      }
+    }
+
     @media (max-width: 992px) {
       .steps-container {
         grid-template-columns: 1fr;
         max-width: 500px;
         margin: 3rem auto;
+      }
+
+      /* Fix header text collision on tablets/small desktops */
+      .nav-links {
+        gap: 1.25rem;
+      }
+
+      .search-input {
+        width: 160px;
+        font-size: 0.85rem;
+        padding: 0.5rem 0.8rem 0.5rem 2rem;
+      }
+
+      .nav-links a {
+        font-size: 0.85rem;
       }
     }
 
