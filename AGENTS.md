@@ -16,6 +16,27 @@ This repo is a single Node.js host process that:
 - One-time setup: `./scripts/setup.sh`
 - Start (normal): `./scripts/start.sh [start] [telegram-only]`
 - Start (debug-only): `./scripts/start.sh dev [telegram-only]`
+- Farm bootstrap (demo): `./scripts/farm-bootstrap.sh --mode demo`
+- Farm bootstrap (production): `./scripts/farm-bootstrap.sh --mode production`
+
+## Farm Modes (Demo vs Production)
+
+- `demo` mode:
+  - Uses `FFT_demo_dash` dashboard + simulated telemetry flow for showcase.
+  - Fast path for proving end-to-end capabilities.
+- `production` mode:
+  - Runs Home Assistant onboarding with real entity discovery.
+  - Writes `data/farm-profile.json` mappings.
+  - Requires validation pass before host-side control actions are allowed.
+
+Required env for farm flows:
+- `FARM_MODE=demo|production`
+- `FARM_PROFILE_PATH` (defaults to `data/farm-profile.json`)
+- `FARM_STATE_ENABLED=true`
+- `HA_URL`, `HA_TOKEN`
+- `FFT_DASHBOARD_REPO_PATH`
+- `FFT_DASHBOARD_REPO_URL` (companion source)
+- `FFT_DASHBOARD_REPO_REF` (companion branch/SHA pin)
 
 ## Telegram As Main UI
 
@@ -78,6 +99,9 @@ Notes:
   - `fft-debug`
   - `fft-telegram-ops`
   - `fft-coder-ops`
+  - `fft-farm-bootstrap`
+  - `fft-farm-onboarding`
+  - `fft-farm-validate`
 - On each run, project `fft-*` skills are mirrored into per-group Pi home:
   - host: `data/pi/<group>/.pi/skills/`
   - container: `/home/node/.pi/skills/`

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fft_nano.local/schemas/farm-profile.schema.json",
+  "title": "FFT_nano Farm Profile",
+  "type": "object",
+  "required": ["site", "entities", "capabilities", "validation"],
+  "properties": {
+    "site": {
+      "type": "object",
+      "required": ["name", "timezone", "units", "createdAt"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "timezone": { "type": "string", "minLength": 1 },
+        "units": { "type": "string", "enum": ["imperial", "metric"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true
+    },
+    "entities": {
+      "type": "object",
+      "required": ["required", "optional"],
+      "properties": {
+        "required": {
+          "type": "object",
+          "required": [
+            "irrigation_north",
+            "irrigation_south",
+            "irrigation_west",
+            "irrigation_east",
+            "irrigation_vegetable",
+            "irrigation_nursery",
+            "pump_main",
+            "pump_well_1",
+            "pump_well_2",
+            "tank_main_level",
+            "tank_secondary_level",
+            "outdoor_temp",
+            "wind_speed",
+            "rainfall_today",
+            "critical_alert"
+          ],
+          "properties": {
+            "irrigation_north": { "type": ["string", "null"] },
+            "irrigation_south": { "type": ["string", "null"] },
+            "irrigation_west": { "type": ["string", "null"] },
+            "irrigation_east": { "type": ["string", "null"] },
+            "irrigation_vegetable": { "type": ["string", "null"] },
+            "irrigation_nursery": { "type": ["string", "null"] },
+            "pump_main": { "type": ["string", "null"] },
+            "pump_well_1": { "type": ["string", "null"] },
+            "pump_well_2": { "type": ["string", "null"] },
+            "tank_main_level": { "type": ["string", "null"] },
+            "tank_secondary_level": { "type": ["string", "null"] },
+            "outdoor_temp": { "type": ["string", "null"] },
+            "wind_speed": { "type": ["string", "null"] },
+            "rainfall_today": { "type": ["string", "null"] },
+            "critical_alert": { "type": ["string", "null"] }
+          },
+          "additionalProperties": true
+        },
+        "optional": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "confidence": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "irrigationControl": { "type": "boolean" },
+        "pumpControl": { "type": "boolean" },
+        "dashboardApply": { "type": "boolean" },
+        "restartHomeAssistant": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "validation": {
+      "type": "object",
+      "required": ["status", "timestamp"],
+      "properties": {
+        "status": { "type": "string", "enum": ["pending", "pass", "fail"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "issues": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

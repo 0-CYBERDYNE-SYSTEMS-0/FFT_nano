@@ -10,6 +10,9 @@ Project-local source of truth:
 - `.pi/skills/fft-debug/SKILL.md`
 - `.pi/skills/fft-telegram-ops/SKILL.md`
 - `.pi/skills/fft-coder-ops/SKILL.md`
+- `.pi/skills/fft-farm-bootstrap/SKILL.md`
+- `.pi/skills/fft-farm-onboarding/SKILL.md`
+- `.pi/skills/fft-farm-validate/SKILL.md`
 
 Optional assets used by these skills:
 
@@ -76,3 +79,9 @@ Recommended smoke sequence:
    - `./scripts/start.sh dev telegram-only`
 2. In main chat, issue one skill-scoped prompt per skill and verify expected behavior.
 3. Confirm no behavior relies on `.claude/skills`.
+
+## Farm Skill Responsibilities
+
+- `fft-farm-bootstrap`: mode selection, prerequisite checks, companion repo sync/pin, HA startup, token validation, env wiring, handoff.
+- `fft-farm-onboarding`: production entity discovery, auto-suggested mapping, confirmation for uncertain matches, profile write.
+- `fft-farm-validate`: readiness checks and final control gate authority (`validation.status=pass` required for control actions).

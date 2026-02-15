@@ -6,7 +6,13 @@ import { promisify } from 'util';
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 
-import { FARM_STATE_DIR, FFT_DASHBOARD_REPO_PATH, HA_URL } from './config.js';
+import {
+  FARM_MODE,
+  FARM_PROFILE_PATH,
+  FARM_STATE_DIR,
+  FFT_DASHBOARD_REPO_PATH,
+  HA_URL,
+} from './config.js';
 import { HomeAssistantAdapter } from './home-assistant.js';
 import { logger } from './logger.js';
 import type { FarmActionRequest, FarmActionResult } from './types.js';
@@ -31,6 +37,12 @@ const allowedActions = new Set([
 ]);
 
 const adapter = new HomeAssistantAdapter();
+const controlActions = new Set([
+  'ha_call_service',
+  'ha_set_entity',
+  'ha_restart',
+  'ha_apply_dashboard',
+]);
 
 function appendAudit(record: Record<string, unknown>): void {
   fs.mkdirSync(FARM_STATE_DIR, { recursive: true });
@@ -49,6 +61,34 @@ function ensureMainChatOnly(isMain: boolean, action: string): void {
 function ensureAllowedAction(action: string): void {
   if (!allowedActions.has(action)) {
     throw new Error(`Action "${action}" is not allowlisted`);
+  }
+}
+
+function ensureControlActionGate(action: string): void {
+  if (!controlActions.has(action)) return;
+  if (FARM_MODE !== 'production') return;
+
+  if (!fs.existsSync(FARM_PROFILE_PATH)) {
+    throw new Error(
+      `Action "${action}" blocked: production mode requires validated farm profile at ${FARM_PROFILE_PATH}`,
+    );
+  }
+
+  const raw = fs.readFileSync(FARM_PROFILE_PATH, 'utf-8');
+  let profile: unknown;
+  try {
+    profile = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Action "${action}" blocked: farm profile is not valid JSON (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+
+  const validation = (profile as { validation?: { status?: string } }).validation;
+  if (validation?.status !== 'pass') {
+    throw new Error(
+      `Action "${action}" blocked: production validation status is "${validation?.status || 'missing'}"; run farm-validate first`,
+    );
   }
 }
 
@@ -290,6 +330,7 @@ export async function executeFarmAction(
     const parsed = actionRequestSchema.parse(request);
     ensureAllowedAction(parsed.action);
     ensureMainChatOnly(isMain, parsed.action);
+    ensureControlActionGate(parsed.action);
 
     let result: unknown;
     switch (parsed.action) {

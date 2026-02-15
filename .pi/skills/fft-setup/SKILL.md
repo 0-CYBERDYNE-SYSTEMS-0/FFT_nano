@@ -79,3 +79,10 @@ ZAI_API_KEY=replace-me
 - Main chat behavior is correct:
   - main chat responds to normal messages
   - non-main chat requires `@FarmFriend` (or configured `@<ASSISTANT_NAME>`)
+
+## Farm Mode Handoff
+
+For farm bridge onboarding, use the dedicated dual-mode bootstrap:
+
+- Demo (simulated telemetry + showcase): `./scripts/farm-bootstrap.sh --mode demo`
+- Production (real devices + mapping + validation): `./scripts/farm-bootstrap.sh --mode production`
