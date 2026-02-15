@@ -1,0 +1,29 @@
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.keys.json
+*.pem
+*.p12
+*.pfx
+
+# Runtime/local state
+data/
+logs/
+store/
+tmp/
+tmp-ipc/
+groups/
+
+# Local dependencies and editor/system noise
+node_modules/
+.DS_Store
+.idea/
+.vscode/
+
+# Release artifacts and local outputs
+dist/release/
+coverage/
+
+# Local home/workspace mirrors
+nano/

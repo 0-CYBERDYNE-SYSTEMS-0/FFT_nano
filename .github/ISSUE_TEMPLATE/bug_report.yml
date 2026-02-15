@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a reproducible bug in FFT_nano
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please provide reproducible details.
+        If this is a security issue, use the private process in `.github/SECURITY.md`.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version/Tag
+      placeholder: v1.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15.x (Apple Container) / Linux (Docker)
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      placeholder: Describe expected vs actual behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs/output
+      render: shell
+      placeholder: Paste sanitized logs or command output.
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Low
+        - Medium
+        - High
+    validations:
+      required: true
