@@ -36,7 +36,7 @@
 
     body {
       font-family: var(--font-body);
-      background: var(--earth-dark);
+      background: var(--earth-dark) url('assets/backgrounds/4k-diamond-tessellation-cream.png') center/cover no-repeat fixed;
       color: var(--text-light);
       min-height: 100vh;
       overflow-x: hidden;
@@ -260,7 +260,8 @@
       justify-content: center;
       text-align: center;
       padding: 4rem 2rem;
-      background: linear-gradient(135deg, var(--earth-dark) 0%, var(--earth-mid) 100%);
+      background: linear-gradient(135deg, rgba(250, 248, 245, 0.85) 0%, rgba(240, 235, 224, 0.85) 100%);
+      backdrop-filter: blur(10px);
       position: relative;
       overflow: hidden;
     }
@@ -471,12 +472,12 @@
     }
 
     .feature-card {
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(250, 248, 245, 0.75);
       -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       padding: 2.5rem;
       border-radius: 16px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(181, 86, 32, 0.2);
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       display: flex;
       flex-direction: column;
@@ -487,7 +488,8 @@
     .feature-card:hover {
       transform: translateY(-8px);
       border-color: var(--brand-primary);
-      box-shadow: 0 12px 40px rgba(74, 124, 89, 0.3);
+      box-shadow: 0 12px 40px rgba(181, 86, 32, 0.2);
+      background: rgba(250, 248, 245, 0.9);
     }
 
     .feature-icon {
@@ -518,7 +520,8 @@
 
     /* Why This Matters Section */
     .why-matters {
-      background: var(--earth-mid);
+      background: rgba(240, 235, 224, 0.7);
+      backdrop-filter: blur(10px);
     }
 
     .matters-grid {
@@ -531,13 +534,13 @@
     }
 
     .matters-card {
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(250, 248, 245, 0.75);
       -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       padding: 2.5rem;
       border-radius: 16px;
       border-left: 4px solid var(--brand-accent);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(90, 154, 184, 0.2);
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       display: flex;
       flex-direction: column;
@@ -548,7 +551,8 @@
     .matters-card:hover {
       transform: translateY(-5px);
       border-color: var(--brand-accent);
-      box-shadow: 0 12px 40px rgba(196, 163, 90, 0.3);
+      box-shadow: 0 12px 40px rgba(90, 154, 184, 0.2);
+      background: rgba(250, 248, 245, 0.9);
     }
 
     .matters-card h3 {
@@ -586,7 +590,8 @@
 
     /* Products Section */
     .products-section {
-      background: var(--earth-dark);
+      background: rgba(250, 248, 245, 0.85);
+      backdrop-filter: blur(10px);
     }
 
     .products-grid {
@@ -598,12 +603,12 @@
     }
 
     .product-card {
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(250, 248, 245, 0.75);
       -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       border-radius: 16px;
       overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(181, 86, 32, 0.2);
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       display: flex;
       flex-direction: column;
@@ -615,7 +620,8 @@
     .product-card:hover {
       transform: translateY(-8px);
       border-color: var(--brand-primary);
-      box-shadow: 0 12px 40px rgba(74, 124, 89, 0.3);
+      box-shadow: 0 12px 40px rgba(181, 86, 32, 0.2);
+      background: rgba(250, 248, 245, 0.9);
     }
 
     .product-header {
@@ -669,7 +675,8 @@
     /* Get Started Section */
     .get-started {
       text-align: center;
-      background: linear-gradient(135deg, var(--earth-mid) 0%, var(--earth-light) 100%);
+      background: linear-gradient(135deg, rgba(240, 235, 224, 0.85) 0%, rgba(230, 226, 219, 0.85) 100%);
+      backdrop-filter: blur(10px);
     }
 
     .steps-container {
@@ -682,10 +689,11 @@
     }
 
     .step {
-      background: var(--earth-dark);
+      background: rgba(250, 248, 245, 0.75);
+      backdrop-filter: blur(10px);
       padding: 2rem;
       border-radius: 12px;
-      border: 1px solid var(--border-subtle);
+      border: 1px solid rgba(181, 86, 32, 0.2);
       display: flex;
       flex-direction: column;
       height: 100%;
@@ -728,7 +736,8 @@
 
     /* Footer */
     footer {
-      background: var(--earth-dark);
+      background: rgba(250, 248, 245, 0.9);
+      backdrop-filter: blur(10px);
       padding: 4rem 2rem;
       border-top: 1px solid var(--border-subtle);
     }

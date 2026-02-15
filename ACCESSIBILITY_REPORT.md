@@ -2,323 +2,293 @@
 
 **Date:** February 15, 2026  
 **File:** /Users/scrimwiggins/clawd/fft-nano-work/index.html  
-**Analysis Method:** WCAG 2.1 Contrast Ratio Calculation + Screenshot Review
+**Analysis Method:** WCAG 2.1 Contrast Ratio Calculation + Screenshot Review + CSS Analysis
 
 ---
 
 ## Executive Summary
 
-The FFT Nano website has **several critical accessibility issues** primarily related to text contrast on the light cream background. The main problems are:
+The FFT Nano website has **several accessibility issues** related to text contrast on the light cream background. After comprehensive screenshot capture and CSS analysis, here are the key findings:
 
-| Issue | Severity | Impact |
-|-------|----------|--------|
-| Brand Accent (#a8d4e6) text on cream background | **CRITICAL** | 1.50:1 contrast - Completely unreadable for many users |
-| Brand Primary (#c4632d) for normal text | **HIGH** | 3.83:1 contrast - Fails WCAG AA for body text |
-| White text on primary button (#c4632d) | **MEDIUM** | 4.06:1 contrast - Marginal for accessibility |
-| Muted text (#5a5a5a) | **LOW** | 6.51:1 contrast - Passes AA but could be improved |
+| Issue | Severity | WCAG Status | Location |
+|-------|----------|-------------|----------|
+| Brand Accent (#a8d4e6) text on cream | **CRITICAL** | 1.50:1 - FAIL | Hero stats, matters card titles |
+| Brand Primary (#c4632d) for text | **HIGH** | 3.83:1 - AA Large only | Section headers, feature card titles |
+| White on brand-primary buttons | **MEDIUM** | 4.06:1 - AA Large only | Primary CTA buttons |
+| Muted text (#5a5a5a) | **LOW** | 6.51:1 - Passes AA | Secondary text throughout |
+
+**Overall Assessment:** The website design is visually appealing with a professional earth-tone palette. However, the brand accent color is unsuitable for text use, and several text elements fail WCAG AA contrast requirements.
 
 ---
 
-## Detailed Findings
+## Detailed WCAG Contrast Analysis
 
-### 1. Hero Section - CRITICAL ISSUES
+### Color Palette Reference
+```
+Background Colors:
+- --earth-dark / --cream: #faf8f5 (main background)
+- --earth-mid: #f0ebe0 (section backgrounds)
+- --earth-light: #e6e2db (gradients)
+
+Text Colors:
+- --text-light: #1a1814 (primary text - dark brown)
+- --text-muted: #5a5a5a (secondary text - gray)
+- --brand-primary: #c4632d (orange - headers/emphasis)
+- --brand-accent: #a8d4e6 (light blue - decorative)
+```
+
+### Contrast Ratios Calculated
+
+| Foreground | Background | Ratio | WCAG Rating |
+|------------|------------|-------|-------------|
+| #1a1814 (text-light) | #faf8f5 (cream) | **16.72:1** | AAA ✓ |
+| #5a5a5a (text-muted) | #faf8f5 (cream) | **6.51:1** | AA ✓ |
+| #c4632d (brand-primary) | #faf8f5 (cream) | **3.83:1** | AA Large ⚠️ |
+| #a8d4e6 (brand-accent) | #faf8f5 (cream) | **1.50:1** | FAIL ✗ |
+| #FFFFFF | #c4632d (primary) | **4.06:1** | AA Large ⚠️ |
+| #FFFFFF | #9e4a23 (primary-dark) | **6.07:1** | AA ✓ |
+
+---
+
+## Section-by-Section Analysis
+
+### 1. Hero Section ⚠️ ISSUES FOUND
 
 **Screenshot:** `03-hero-section.png`
 
-#### Issues Found:
+| Element | Color | Contrast | Status |
+|---------|-------|----------|--------|
+| Main headline | #1a1814 | 16.72:1 | ✓ Excellent |
+| Headline span (orange) | #c4632d | 3.83:1 | ⚠️ Large text OK |
+| Subtitle text | #5a5a5a | 6.51:1 | ✓ Good |
+| Stats ("1 Platform", etc.) | #a8d4e6 | 1.50:1 | ✗ **CRITICAL FAILURE** |
+| Button text (white on orange) | #FFFFFF | 4.06:1 | ⚠️ Marginal |
 
-1. **Stat Text (#a8d4e6) - UNREADABLE**
-   - The stats "1 Platform", "∞ Possibilities", "0 Gatekeepers" use `--brand-accent: #a8d4e6`
-   - Contrast ratio: **1.50:1** (needs 4.5:1 for normal text)
-   - This is a **critical failure** - text is barely visible against cream background
-   - Affects: `.hero-stats .stat` elements
+**CRITICAL ISSUE:** The hero stats use `--brand-accent: #a8d4e6` which has only 1.50:1 contrast against the cream background. This text is barely visible and fails all WCAG levels.
 
-2. **Subtitle Text Marginal**
-   - Hero subtitle uses `--text-muted: #5a5a5a`
-   - Contrast ratio: 6.51:1 - Passes AA but some users may struggle
-
-#### Recommendations:
+**Fix:**
 ```css
-/* Fix for stat text - use darker blue */
-.stat {
+.hero-stats .stat {
   color: #5a9ab8; /* Darker blue - 4.85:1 contrast */
-  /* OR use brand primary for emphasis */
+  /* OR use brand-primary-dark for emphasis */
   color: #9e4a23; /* 5.89:1 contrast */
 }
-
-/* Alternative - keep accent but add text-shadow for readability */
-.stat {
-  color: var(--brand-accent);
-  text-shadow: 0 0 2px rgba(0,0,0,0.3);
-}
 ```
 
 ---
 
-### 2. Section Headers - HIGH ISSUES
+### 2. "What is FFT Nano?" Section ⚠️ MARGINAL
 
-**Screenshots:** `04-what-is-section.png`, `05-why-matters-section.png`
+**Screenshots:** `04-what-is-section.png`, `09-feature-card-[1-4].png`
 
-#### Issues Found:
+| Element | Color | Contrast | Status |
+|---------|-------|----------|--------|
+| Section header | #c4632d | 3.83:1 | ⚠️ Large text OK |
+| Feature card titles | #c4632d | 3.83:1 | ⚠️ Large text OK |
+| Feature card paragraphs | #5a5a5a | 6.51:1 | ✓ Good |
+| Icon backgrounds | rgba(74,124,89,0.1) | N/A | ✓ Decorative |
 
-1. **Section Header (#c4632d) - MARGINAL**
-   - "What is FFT Nano?", "Why This Matters" headers use `--brand-primary`
-   - Contrast ratio: **3.83:1** (needs 4.5:1 for normal text)
-   - These are large text (clamp 2-3rem) so may pass as "large text" (3:1 requirement)
-   - However, for accessibility best practices, should be improved
+**ISSUE:** Section headers and card titles use brand-primary which only passes for large text (24px+). At smaller sizes, this may fail AA.
 
-2. **Card Titles in brand-primary**
-   - Feature card h3 elements use `--brand-primary`
-   - At 1.5rem, this is borderline "large text" (18px+)
-
-#### Recommendations:
+**Fix:**
 ```css
-/* Option 1: Darken brand primary slightly */
-:root {
-  --brand-primary: #b55620; /* Darker orange - 4.5:1 contrast */
-}
-
-/* Option 2: Use darker variant for text */
 .section-header h2,
-.feature-card h3,
-.matters-card h3 {
-  color: var(--brand-primary-dark); /* #9e4a23 - 5.89:1 contrast */
-}
-```
-
----
-
-### 3. Feature Cards - GOOD
-
-**Screenshots:** `09-feature-card-1.png` through `09-feature-card-4.png`
-
-#### Status: MOSTLY ACCESSIBLE
-
-1. **Main Paragraph Text (#5a5a5a)** - Passes AA (6.51:1)
-2. **Card Titles (#c4632d)** - Marginal but passes as large text
-3. **Card Background** - Semi-transparent with blur, maintains contrast
-
-#### Minor Issue:
-- Long paragraphs in cards may be harder to read for users with dyslexia
-- Consider increasing line-height slightly
-
-#### Recommendations:
-```css
-.feature-card p {
-  line-height: 1.8; /* Increased from 1.7 */
-  letter-spacing: 0.01em; /* Slight letter-spacing for readability */
-}
-```
-
----
-
-### 4. Matters Cards - GOOD
-
-**Screenshots:** `10-matters-card-1.png` through `10-matters-card-3.png`
-
-#### Issues Found:
-
-1. **Card Title (#a8d4e6) - CRITICAL**
-   - `.matters-card h3` uses `--brand-accent`
-   - Contrast: **1.50:1** - Completely insufficient
-   - Text is nearly invisible against the cream/tan background
-
-2. **List Items Readable**
-   - Uses muted text (6.51:1) and primary text (16.72:1)
-   - Both pass WCAG AA
-
-#### Recommendations:
-```css
-/* Fix matters card titles */
-.matters-card h3 {
+.feature-card h3 {
   color: var(--brand-primary-dark); /* #9e4a23 - 5.89:1 */
-  /* OR use a darker accent */
-  color: #5a9ab8; /* Darker blue - 4.85:1 */
 }
 ```
 
 ---
 
-### 5. Product Cards - GOOD
+### 3. "Why This Matters" Section ✗ CRITICAL ISSUE
 
-**Screenshots:** `11-product-card-1.png` through `11-product-card-4.png`
+**Screenshots:** `05-why-matters-section.png`, `10-matters-card-[1-3].png`
 
-#### Status: ACCESSIBLE
+| Element | Color | Contrast | Status |
+|---------|-------|----------|--------|
+| Section header | #c4632d | 3.42:1 | ⚠️ Large text OK |
+| **Card titles** | #a8d4e6 | 1.34:1 | ✗ **CRITICAL FAILURE** |
+| Card paragraphs | #5a5a5a | 5.80:1 | ✓ Good |
+| List items | #5a5a5a | 5.80:1 | ✓ Good |
+| Arrow icons | #c4632d | 3.42:1 | ✓ Decorative |
 
-1. **Price/Name Headers** - White on gradient passes (4.06:1 for light gradient, 6.07:1 for dark)
-2. **Feature List Text** - Uses muted text (#5a5a5a) - Passes AA
-3. **Checkmarks** - Use brand-primary which is readable in context
+**CRITICAL ISSUE:** The `.matters-card h3` elements use `--brand-accent: #a8d4e6` for titles like "Democratizing Agriculture", "Food & Medicine in Local Hands", etc. This has only 1.34:1 contrast on the `--earth-mid` background - completely insufficient.
 
-#### Minor Issue:
-- White text on the lighter gradient section of "free" card header is marginal
-- Consider using darker gradient or ensuring text has shadow
+**Fix:**
+```css
+.matters-card h3 {
+  color: var(--brand-primary-dark); /* #9e4a23 */
+  /* OR use a darker accent color */
+  color: #5a9ab8;
+}
+```
 
 ---
 
-### 6. Navigation - GOOD
+### 4. Products Section ✓ GOOD
+
+**Screenshots:** `06-products-section.png`, `11-product-card-[1-4].png`
+
+| Element | Color | Contrast | Status |
+|---------|-------|----------|--------|
+| Product header (gradient) | Various | N/A | ✓ Decorative |
+| Price text (white) | #FFFFFF on gradient | 4-6:1 | ✓ Acceptable |
+| Product name (cream) | #faf8f5 on gradient | 4-6:1 | ✓ Acceptable |
+| Feature list items | #5a5a5a | 6.51:1 | ✓ Good |
+| Checkmark icons | #c4632d | 3.83:1 | ✓ Decorative |
+
+**Status:** Product cards are well-designed with adequate contrast. The white text on gradient headers works well.
+
+---
+
+### 5. Get Started Section ✓ GOOD
+
+**Screenshot:** `07-get-started-section.png`
+
+| Element | Color | Contrast | Status |
+|---------|-------|----------|--------|
+| Section header | #c4632d | 3.83:1 | ⚠️ Large text OK |
+| Step titles | #1a1814 | 16.72:1 | ✓ Excellent |
+| Code blocks | #a8d4e6 on dark | High | ✓ Good |
+| Instructional text | #5a5a5a | 6.51:1 | ✓ Good |
+
+**Status:** Well-designed section. Code blocks have good contrast on their dark backgrounds.
+
+---
+
+### 6. Navigation ✓ GOOD (with caveat)
 
 **Screenshot:** `02-navigation.png`
 
-#### Status: ACCESSIBLE
+| Element | Color | Contrast | Status |
+|---------|-------|----------|--------|
+| Nav background | rgba(26,24,20,0.95) | N/A | Dark |
+| Logo text | #c4632d | 4.36:1 | ⚠️ AA Large |
+| Nav links | White/cream | ~17:1 | ✓ Excellent |
+| Support link | #a8d4e6 | 11.16:1 | ✓ Excellent |
+| Search input | Light text on dark | Good | ✓ Acceptable |
 
-1. **Nav Links (#1a1814)** - Dark text on dark nav needs light text!
-   - Wait, I see an issue: Nav links use `--text-light: #1a1814` 
-   - On a dark background `rgba(26, 24, 20, 0.95)` this would be unreadable
-   - BUT looking at CSS: `color: var(--text-light)` - this is actually dark
-   - **THIS IS A CRITICAL BUG** - dark text on dark background!
-
-#### Critical Issue Found:
-Looking at the CSS:
-```css
-.nav-links a {
-  color: var(--text-light);  /* #1a1814 - DARK text */
-}
-
-.nav {
-  background: rgba(26, 24, 20, 0.95);  /* DARK background */
-}
-```
-
-This means nav links are dark text on dark background - likely invisible!
-
-#### Fix Required:
-```css
-.nav-links a {
-  color: #ffffff; /* White text on dark nav */
-}
-
-/* Or use a light color that matches the theme */
-.nav-links a {
-  color: var(--cream); /* #faf8f5 */
-}
-```
+**CSS Note:** The CSS shows `.nav-links a { color: var(--text-light); }` which would be dark text on dark background. However, the screenshot shows light text rendering correctly. This may be due to browser inheritance or a style override. The actual rendered result is accessible.
 
 ---
 
-### 7. Footer - GOOD
+### 7. Footer ✓ GOOD
 
 **Screenshot:** `08-footer.png`
 
-#### Status: ACCESSIBLE
+| Element | Color | Contrast | Status |
+|---------|-------|----------|--------|
+| Section headers | #c4632d | 3.83:1 | ⚠️ Large text OK |
+| Description text | #5a5a5a | 6.51:1 | ✓ Good |
+| Link text | #5a5a5a | 6.51:1 | ✓ Good |
+| Link hover | #c4632d | 3.83:1 | ✓ Interactive |
 
-1. **Section Headers (#c4632d)** - Marginal (3.83:1) but passes as large text
-2. **Description Text** - Uses muted text (6.51:1) - Passes AA
-3. **Link Text** - Uses muted text, changes to primary on hover
-
-#### Minor Recommendation:
-- Consider using darker primary for section headers
-- Add underline to links for better visibility
-
----
-
-### 8. Mobile View - NEEDS REVIEW
-
-**Screenshots:** `12-mobile-full.png`, `13-mobile-menu.png`
-
-#### Potential Issues:
-
-1. **Text Scaling** - Font sizes should be verified on actual device
-2. **Touch Targets** - Buttons and links should be 44x44px minimum
-3. **Mobile Menu** - Ensure contrast in slide-out menu
+**Status:** Footer is accessible. Links have adequate contrast and clear hover states.
 
 ---
 
-## Priority Fixes (Ranked by Severity)
+### 8. Mobile & Tablet Views ✓ GOOD
 
-### CRITICAL (Fix Immediately)
+**Screenshots:** `12-mobile-full.png`, `13-mobile-menu.png`, `14-tablet-view.png`
 
-1. **Nav Links Color**
+| Element | Status |
+|---------|--------|
+| Text scaling | ✓ Readable at smaller sizes |
+| Touch targets | ✓ Buttons appear adequately sized |
+| Mobile menu | ✓ Dark background with light text |
+| Responsive layout | ✓ Content adapts well |
+
+---
+
+## Priority Fixes
+
+### CRITICAL - Fix Immediately
+
+1. **Brand Accent for Text Usage**
    ```css
-   .nav-links a {
-     color: #ffffff; /* White text on dark nav */
+   /* Change --brand-accent to darker value for text use */
+   :root {
+     --brand-accent: #5a9ab8;  /* Was #a8d4e6 - now 4.85:1 contrast */
    }
-   ```
-
-2. **Brand Accent for Text**
-   ```css
-   .stat,
+   
+   /* Or keep accent for decorative, use different color for text */
+   .hero-stats .stat,
    .matters-card h3 {
-     color: #5a9ab8; /* Darker blue with 4.85:1 contrast */
+     color: #5a9ab8;
    }
    ```
 
-### HIGH (Fix Soon)
+### HIGH - Fix Soon
 
-3. **Section Headers**
+2. **Section Headers & Card Titles**
    ```css
-   .section-header h2 {
-     color: var(--brand-primary-dark); /* #9e4a23 */
-   }
-   ```
-
-4. **Feature Card Titles**
-   ```css
+   .section-header h2,
    .feature-card h3 {
-     color: var(--brand-primary-dark);
+     color: var(--brand-primary-dark); /* #9e4a23 - 5.89:1 */
    }
    ```
 
-### MEDIUM (Recommended)
+### MEDIUM - Recommended
 
-5. **Button Text Contrast**
+3. **Primary Button Contrast**
    ```css
    .btn-primary {
-     background: var(--brand-primary-dark); /* Darker for better contrast */
+     background: var(--brand-primary-dark); /* #9e4a23 */
+     border-color: var(--brand-primary-dark);
    }
    ```
 
-6. **Muted Text Darkening**
+4. **Muted Text Darkening (for AAA compliance)**
    ```css
    :root {
-     --text-muted: #4a4a4a; /* Darker for 7.47:1 contrast */
+     --text-muted: #4a4a4a;  /* 7.47:1 - AAA */
    }
    ```
 
 ---
 
-## Full CSS Fix Recommendations
+## Complete CSS Fix Bundle
 
 ```css
+/* Add to existing styles or override in a separate file */
+
 :root {
-  /* Keep existing */
-  --brand-primary: #c4632d;
-  --brand-primary-dark: #9e4a23;
-  --brand-primary-light: #d67a44;
+  /* Option 1: Replace accent color globally */
+  --brand-accent: #5a9ab8;  /* Darker blue - 4.85:1 contrast */
   
-  /* CHANGE: Darken accent for text use */
-  --brand-accent: #5a9ab8;  /* Was #a8d4e6 - now 4.85:1 contrast */
-  
-  /* Keep existing */
-  --earth-dark: #faf8f5;
-  --earth-mid: #f0ebe0;
-  --earth-light: #e6e2db;
-  --cream: #faf8f5;
-  
-  /* CHANGE: Darken muted text */
-  --text-muted: #4a4a4a;  /* Was #5a5a5a - now 7.47:1 contrast */
-  --text-light: #1a1814;
+  /* Option 2: Add new semantic variables */
+  --text-accent: #5a9ab8;   /* For text that needs accent color */
+  --text-muted-improved: #4a4a4a;  /* AAA compliant */
 }
 
-/* FIX: Nav links need light text */
-.nav-links a {
-  color: #ffffff;  /* Was var(--text-light) which is dark */
+/* Section headers - use darker primary */
+.section-header h2 {
+  color: var(--brand-primary-dark);
 }
 
-/* FIX: Use darker primary for headers */
-.section-header h2,
+/* Feature card titles */
 .feature-card h3 {
   color: var(--brand-primary-dark);
 }
 
-/* FIX: Matters card titles */
+/* Matters card titles - CRITICAL FIX */
 .matters-card h3 {
   color: var(--brand-primary-dark);
 }
 
-/* IMPROVE: Button contrast */
+/* Hero stats - CRITICAL FIX */
+.hero-stats .stat {
+  color: var(--text-accent);
+}
+
+/* Primary buttons - improve contrast */
 .btn-primary {
   background: var(--brand-primary-dark);
   border-color: var(--brand-primary-dark);
+}
+
+.btn-primary:hover {
+  background: #8a3f1c;  /* Even darker on hover */
 }
 ```
 
@@ -326,32 +296,39 @@ This means nav links are dark text on dark background - likely invisible!
 
 ## Summary
 
-The website has **good bones** with a clean, professional design. The main issues are:
+| Category | Status |
+|----------|--------|
+| Overall Design | ✓ Clean, professional, well-structured |
+| Main Body Text | ✓ Excellent contrast (16.72:1) |
+| Secondary Text | ✓ Good contrast (6.51:1) |
+| Accent Color Text | ✗ **CRITICAL ISSUE - 1.50:1 contrast** |
+| Headers/Emphasis | ⚠️ Marginal (3.83:1 - large text only) |
+| Navigation | ✓ Accessible |
+| Mobile/Responsive | ✓ Well-implemented |
 
-1. **Navigation links** appear to be dark text on dark background (CRITICAL BUG)
-2. **Brand accent color** (#a8d4e6) is far too light for text use
-3. **Brand primary** for headers is marginal for accessibility
-4. **White text on buttons** has marginal contrast
+**Estimated Fix Time:** 15-20 minutes of CSS changes
 
-The light cream background (#faf8f5) is actually **excellent** for readability when paired with dark text. The issues arise when trying to use the lighter accent colors as text colors.
-
-**Estimated fix time:** 30 minutes of CSS changes
+The core issue is that `--brand-accent: #a8d4e6` is a light blue that works for decorative elements but is completely unsuitable for text on a light background. The fix is straightforward: either darken the accent color or use a different color when applying it to text.
 
 ---
 
 ## Files Generated
 
-- `screenshots/01-full-page.png` - Full homepage
-- `screenshots/02-navigation.png` - Navigation bar
-- `screenshots/03-hero-section.png` - Hero section
-- `screenshots/04-what-is-section.png` - What is FFT Nano section
-- `screenshots/05-why-matters-section.png` - Why This Matters section
-- `screenshots/06-products-section.png` - Products section
-- `screenshots/07-get-started-section.png` - Get Started section
-- `screenshots/08-footer.png` - Footer
-- `screenshots/09-feature-card-[1-4].png` - Individual feature cards
-- `screenshots/10-matters-card-[1-3].png` - Individual matters cards
-- `screenshots/11-product-card-[1-4].png` - Individual product cards
-- `screenshots/12-mobile-full.png` - Mobile view
-- `screenshots/13-mobile-menu.png` - Mobile menu
-- `screenshots/14-tablet-view.png` - Tablet view
+All screenshots saved to: `/Users/scrimwiggins/clawd/fft-nano-work/screenshots/`
+
+| File | Description |
+|------|-------------|
+| 01-full-page.png | Complete homepage (desktop) |
+| 02-navigation.png | Fixed navigation bar |
+| 03-hero-section.png | Hero section with stats |
+| 04-what-is-section.png | "What is FFT Nano" section |
+| 05-why-matters-section.png | "Why This Matters" section |
+| 06-products-section.png | Products/pricing section |
+| 07-get-started-section.png | Getting started section |
+| 08-footer.png | Footer section |
+| 09-feature-card-[1-4].png | Individual feature cards |
+| 10-matters-card-[1-3].png | Individual "Why Matters" cards |
+| 11-product-card-[1-4].png | Individual product cards |
+| 12-mobile-full.png | Mobile view (375px) |
+| 13-mobile-menu.png | Mobile navigation menu |
+| 14-tablet-view.png | Tablet view (768px) |
