@@ -1,41 +1,46 @@
 # Pi-Native Skills (FFT_nano)
 
-This document defines the active project-local Pi-native skills for FFT_nano.
+This document defines skill layout and runtime sync behavior for FFT_nano.
 
-## Active Skills
+## Skill Types
 
-Project-local source of truth:
+FFT_nano uses two skill types:
 
-- `.pi/skills/fft-setup/SKILL.md`
-- `.pi/skills/fft-debug/SKILL.md`
-- `.pi/skills/fft-telegram-ops/SKILL.md`
-- `.pi/skills/fft-coder-ops/SKILL.md`
-- `.pi/skills/fft-farm-bootstrap/SKILL.md`
-- `.pi/skills/fft-farm-onboarding/SKILL.md`
-- `.pi/skills/fft-farm-validate/SKILL.md`
+- Setup-only skills (bootstrap/install guidance, not runtime mirrored):
+  - `skills/setup/`
+- Runtime agent skills (mirrored into Pi home on each run):
+  - `skills/runtime/`
+- Main workspace user runtime skills:
+  - `~/nano/skills/` (only merged for main/admin runs)
 
-Optional assets used by these skills:
+Current bundled runtime skills include:
 
-- `.pi/skills/fft-setup/scripts/check-prereqs.sh`
-- `.pi/skills/fft-debug/scripts/collect-debug-snapshot.sh`
-- `.pi/skills/fft-telegram-ops/references/commands.md`
-- `.pi/skills/fft-coder-ops/references/safety.md`
+- `fft-setup`
+- `fft-debug`
+- `fft-telegram-ops`
+- `fft-coder-ops`
+- `fft-farm-bootstrap`
+- `fft-farm-onboarding`
+- `fft-farm-validate`
+- `fft-farm-ops`
+- `fft-dashboard-ops`
 
 ## Runtime Discovery/Wiring
 
-During container run setup, FFT_nano mirrors project `fft-*` skills into per-group Pi home:
+During container run setup, FFT_nano mirrors runtime skills into per-group Pi home:
 
 - host destination: `data/pi/<group>/.pi/skills/`
 - container path: `/home/node/.pi/skills/`
 
+Merge and cleanup behavior:
+
+- Main/admin runs merge `project runtime skills` + `~/nano/skills/`
+- Non-main runs mirror `project runtime skills` only
+- Name collisions are resolved by source order; main workspace overrides project
+- A managed manifest (`.fft_nano_managed_skills.json`) tracks synced skill names
+- Only previously managed stale skills are removed, so manually installed runtime skills are preserved
+
 This keeps skills discoverable to Pi runtime without relying on host-global installations.
-
-## Legacy Claude Skills
-
-Legacy `.claude/skills` may exist in this repository for historical reference.
-
-- They are archive-only.
-- Active runtime behavior should come from `.pi/skills`.
 
 ## Guardrails Required in Every Skill
 
@@ -55,7 +60,7 @@ npm run validate:skills
 
 Validation checks:
 
-- required skill directories exist
+- required bundled runtime skill directories exist
 - each `SKILL.md` has valid frontmatter
 - `name` matches folder name
 - `description` exists
@@ -77,8 +82,10 @@ Recommended smoke sequence:
 
 1. Start runtime with Telegram in dev:
    - `./scripts/start.sh dev telegram-only`
-2. In main chat, issue one skill-scoped prompt per skill and verify expected behavior.
-3. Confirm no behavior relies on `.claude/skills`.
+2. In main chat, issue one skill-scoped prompt for:
+   - one bundled runtime skill
+   - one user skill from `~/nano/skills`
+3. Confirm non-main run does not load `~/nano/skills`.
 
 ## Farm Skill Responsibilities
 

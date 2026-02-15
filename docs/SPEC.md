@@ -55,7 +55,7 @@ A secure, containerized assistant accessible via chat (WhatsApp today; Telegram 
 │  │    • groups/{name}/ → /workspace/group                         │   │
 │  │    • groups/global/ → /workspace/global/ (non-main only)        │   │
 │  │    • data/pi/{group}/.pi/ → /home/node/.pi/                   │   │
-│  │      (project .pi/skills/fft-* mirrored into /home/node/.pi/skills)│ │
+│  │      (runtime skills mirrored into /home/node/.pi/skills)      │   │
 │  │    • Additional dirs → /workspace/extra/*                      │   │
 │  │                                                                │   │
 │  │  Tools (all groups):                                           │   │
@@ -88,7 +88,7 @@ A secure, containerized assistant accessible via chat (WhatsApp today; Telegram 
 
 ```
 fft_nano/
-├── SOUL.md                      # Project context
+├── AGENTS.md                    # Repo-level coding-agent instructions
 ├── docs/
 │   ├── SPEC.md                    # This specification document
 │   ├── REQUIREMENTS.md            # Architecture decisions
@@ -99,8 +99,9 @@ fft_nano/
 ├── tsconfig.json                  # TypeScript configuration
 ├── .mcp.json                      # Legacy MCP config (not used)
 ├── .gitignore
-├── .pi/
-│   └── skills/                    # Project-local Pi-native skills (fft-*)
+├── skills/
+│   ├── setup/                     # Setup-only skills
+│   └── runtime/                   # Project runtime skills
 │
 ├── src/
 │   ├── index.ts                   # Main application (channels + routing)
@@ -121,8 +122,6 @@ fft_nano/
 │   │   ├── tsconfig.json
 │   │   └── src/
 │   │       └── index.ts           # Entry point (reads JSON, runs pi)
-│   └── skills/
-│       └── agent-browser.md       # Browser automation skill
 │
 ├── dist/                          # Compiled JavaScript (gitignored)
 │

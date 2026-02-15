@@ -257,25 +257,32 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 
 - Main/admin chat container CWD maps to `~/nano` by default.
 - Override with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
-- Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md` + `memory/`.
+- Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md` + `memory/` + `skills/`.
 - Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
 - Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
 
 ## Pi-Native Project Skills
 
-Project-local skills now live in:
+Two skill types are supported:
 
-- `.pi/skills/fft-setup`
-- `.pi/skills/fft-debug`
-- `.pi/skills/fft-telegram-ops`
-- `.pi/skills/fft-coder-ops`
+- Setup-only skills:
+  - `skills/setup/`
+- Runtime skills used by the Pi agent:
+  - `skills/runtime/`
+- User-created runtime skills in main workspace:
+  - `~/nano/skills/`
 
-These are mirrored into each group Pi home at runtime:
+Runtime skills are mirrored into each group Pi home at runtime:
 
 - host: `data/pi/<group>/.pi/skills/`
 - container: `/home/node/.pi/skills/`
 
-Legacy `.claude/skills` is archive-only and not the active project skill source.
+Merge rules:
+
+- Main/admin runs: project runtime skills + `~/nano/skills/`
+- Non-main runs: project runtime skills only
+- If names collide, later source wins (`~/nano/skills/` overrides project on main)
+- Only skills previously managed by FFT_nano are pruned on sync; manually installed skills are preserved.
 
 Detailed skill spec: `docs/PI_SKILLS.md`
 
@@ -347,9 +354,9 @@ global memory in `groups/global/MEMORY.md`.
 
 Per group at `data/pi/<group>/.pi/`, mounted into container as `/home/node/.pi`.
 
-### Do I need `.claude/skills`?
+### Do I need legacy skill directories?
 
-No. Active project skills are `.pi/skills/*`.
+No. Use `skills/setup` and `skills/runtime` in this repo.
 
 ## Security Model
 

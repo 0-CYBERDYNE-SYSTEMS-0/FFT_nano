@@ -1,14 +1,18 @@
 #!/usr/bin/env -S npx tsx
 import path from 'path';
 
-import { validateProjectPiSkills } from '../src/pi-skills.js';
+import {
+  resolveProjectRuntimeSkillsDir,
+  validateProjectPiSkills,
+} from '../src/pi-skills.js';
 
 const projectRoot = process.cwd();
 const result = validateProjectPiSkills(projectRoot);
 
 if (result.ok) {
+  const skillsRoot = resolveProjectRuntimeSkillsDir(projectRoot);
   console.log(
-    `Pi skill validation passed for ${path.join(projectRoot, '.pi', 'skills')}`,
+    `Pi skill validation passed for ${path.relative(projectRoot, skillsRoot) || '.'}`,
   );
   process.exit(0);
 }
