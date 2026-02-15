@@ -31,7 +31,11 @@ export const MAIN_WORKSPACE_DIR = path.resolve(
   expandHomePath(process.env.FFT_NANO_MAIN_WORKSPACE_DIR || '~/nano'),
 );
 export const FARM_STATE_ENABLED = envFlag(process.env.FARM_STATE_ENABLED, false);
+export const FARM_MODE = (process.env.FARM_MODE || 'demo').trim().toLowerCase();
 export const FARM_STATE_DIR = path.resolve(DATA_DIR, 'farm-state');
+export const FARM_PROFILE_PATH = path.resolve(
+  expandHomePath(process.env.FARM_PROFILE_PATH || path.join(DATA_DIR, 'farm-profile.json')),
+);
 export const FARM_STATE_FAST_MS = envInt(
   process.env.FARM_STATE_FAST_MS,
   15000,
