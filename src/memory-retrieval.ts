@@ -255,10 +255,33 @@ function formatSnippet(rank: number, chunk: MemoryChunk): string {
 }
 
 function getPreferredMemoryChunks(baseDir: string): string[] {
-  // SOUL.md is canonical; CLAUDE.md remains supported for backwards compatibility.
-  const soulChunks = getChunkedFile(path.join(baseDir, 'SOUL.md'));
-  if (soulChunks.length > 0) return soulChunks;
-  return getChunkedFile(path.join(baseDir, 'CLAUDE.md'));
+  const collected: string[] = [];
+
+  // Prefer dedicated memory documents.
+  const primaryMemoryPath = path.join(baseDir, 'MEMORY.md');
+  const legacyMemoryPath = path.join(baseDir, 'memory.md');
+  if (fs.existsSync(primaryMemoryPath)) {
+    collected.push(...getChunkedFile(primaryMemoryPath));
+  } else if (fs.existsSync(legacyMemoryPath)) {
+    collected.push(...getChunkedFile(legacyMemoryPath));
+  }
+
+  const memoryDir = path.join(baseDir, 'memory');
+  try {
+    if (fs.existsSync(memoryDir)) {
+      const entries = fs
+        .readdirSync(memoryDir)
+        .filter((name) => name.toLowerCase().endsWith('.md'))
+        .sort();
+      for (const name of entries) {
+        collected.push(...getChunkedFile(path.join(memoryDir, name)));
+      }
+    }
+  } catch {
+    // ignore directory read failures; fallback memory files still apply
+  }
+
+  return collected;
 }
 
 export function buildMemoryContext(

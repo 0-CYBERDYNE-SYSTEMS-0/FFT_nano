@@ -15,6 +15,7 @@ import {
   FARM_STATE_ENABLED,
   FFT_DASHBOARD_REPO_PATH,
   GROUPS_DIR,
+  MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
   MEMORY_RETRIEVAL_GATE_ENABLED,
 } from './config.js';
@@ -25,6 +26,7 @@ import { buildMemoryContext } from './memory-retrieval.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { syncProjectPiSkillsToGroupPiHome } from './pi-skills.js';
 import { RegisteredGroup } from './types.js';
+import { ensureMemoryScaffold } from './memory-paths.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
@@ -139,6 +141,14 @@ function ensureMainWorkspaceSeed(): void {
         '# Keep minimal. Add only periodic checks you actually want.',
       ].join('\n'),
     },
+    {
+      name: 'MEMORY.md',
+      body: [
+        '# MEMORY',
+        '',
+        'Durable facts, decisions, and compaction summaries belong here.',
+      ].join('\n'),
+    },
   ];
 
   for (const file of defaults) {
@@ -148,6 +158,7 @@ function ensureMainWorkspaceSeed(): void {
   }
 
   fs.mkdirSync(path.join(MAIN_WORKSPACE_DIR, 'memory'), { recursive: true });
+  ensureMemoryScaffold(MAIN_GROUP_FOLDER);
 }
 
 function buildVolumeMounts(
@@ -174,6 +185,7 @@ function buildVolumeMounts(
       readonly: false,
     });
   } else {
+    ensureMemoryScaffold(group.folder);
     // Other groups only get their own folder
     mounts.push({
       hostPath: path.join(GROUPS_DIR, group.folder),

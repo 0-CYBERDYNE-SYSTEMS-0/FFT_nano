@@ -11,6 +11,18 @@ let db: Database.Database;
 
 export function initDatabase(): void {
   const dbPath = path.join(STORE_DIR, 'messages.db');
+  initDatabaseAtPath(dbPath);
+}
+
+export function initDatabaseAtPath(dbPath: string): void {
+  if (db) {
+    try {
+      db.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
@@ -77,6 +89,52 @@ export function initDatabase(): void {
   } catch {
     /* column already exists */
   }
+
+  const hadMessagesFts =
+    !!db
+      .prepare(
+        `SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='messages_fts'`,
+      )
+      .get();
+
+  // Episodic memory index over chat transcripts.
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      chat_jid UNINDEXED,
+      sender_name,
+      content,
+      timestamp UNINDEXED,
+      content='messages',
+      content_rowid='rowid'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, chat_jid, sender_name, content, timestamp)
+      VALUES (new.rowid, new.chat_jid, coalesce(new.sender_name, ''), coalesce(new.content, ''), coalesce(new.timestamp, ''));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, chat_jid, sender_name, content, timestamp)
+      VALUES ('delete', old.rowid, old.chat_jid, coalesce(old.sender_name, ''), coalesce(old.content, ''), coalesce(old.timestamp, ''));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, chat_jid, sender_name, content, timestamp)
+      VALUES ('delete', old.rowid, old.chat_jid, coalesce(old.sender_name, ''), coalesce(old.content, ''), coalesce(old.timestamp, ''));
+      INSERT INTO messages_fts(rowid, chat_jid, sender_name, content, timestamp)
+      VALUES (new.rowid, new.chat_jid, coalesce(new.sender_name, ''), coalesce(new.content, ''), coalesce(new.timestamp, ''));
+    END;
+  `);
+  if (!hadMessagesFts) {
+    db.exec(`INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')`);
+  }
+}
+
+export function closeDatabase(): void {
+  if (!db) return;
+  db.close();
+  // @ts-expect-error allow tests to reset singleton
+  db = undefined;
 }
 
 /**
@@ -413,4 +471,56 @@ export function getTaskRunLogs(taskId: string, limit = 10): TaskRunLog[] {
   `,
     )
     .all(taskId, limit) as TaskRunLog[];
+}
+
+export interface TranscriptSearchRow {
+  rowid: number;
+  chat_jid: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  snippet: string;
+  rank: number;
+}
+
+function buildFtsQuery(raw: string): string {
+  const tokens = (raw.toLowerCase().match(/[a-z0-9][a-z0-9_-]*/g) || []).filter(
+    (token) => token.length > 1,
+  );
+  if (tokens.length === 0) {
+    const fallback = raw.trim().replace(/"/g, ' ').slice(0, 80);
+    return fallback ? `"${fallback}"` : '';
+  }
+  const unique = Array.from(new Set(tokens)).slice(0, 12);
+  return unique.map((token) => `"${token}"`).join(' OR ');
+}
+
+export function searchMessagesByFts(
+  chatJids: string[],
+  query: string,
+  limit = 10,
+): TranscriptSearchRow[] {
+  if (!db || chatJids.length === 0 || !query.trim()) return [];
+
+  const ftsQuery = buildFtsQuery(query);
+  if (!ftsQuery) return [];
+
+  const placeholders = chatJids.map(() => '?').join(',');
+  const sql = `
+    SELECT
+      m.rowid as rowid,
+      m.chat_jid,
+      m.sender_name,
+      m.content,
+      m.timestamp,
+      snippet(messages_fts, 2, '[', ']', '...', 20) AS snippet,
+      bm25(messages_fts) AS rank
+    FROM messages_fts
+    JOIN messages m ON m.rowid = messages_fts.rowid
+    WHERE messages_fts MATCH ? AND m.chat_jid IN (${placeholders})
+    ORDER BY rank ASC
+    LIMIT ?
+  `;
+
+  return db.prepare(sql).all(ftsQuery, ...chatJids, limit) as TranscriptSearchRow[];
 }

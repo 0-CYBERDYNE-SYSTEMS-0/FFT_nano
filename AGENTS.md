@@ -8,7 +8,8 @@ This repo is a single Node.js host process that:
 
 ## Memory Protocol
 
-- Canonical memory file is `SOUL.md` (per-group at `groups/<group>/SOUL.md`, global at `groups/global/SOUL.md`).
+- Canonical memory file is `MEMORY.md` (per-group at `groups/<group>/MEMORY.md`, global at `groups/global/MEMORY.md`).
+- `SOUL.md` is identity/policy context and should stay stable (not used as compaction log storage).
 - Legacy `CLAUDE.md` is supported for backwards compatibility.
 
 ## Scripts
@@ -88,7 +89,7 @@ Notes:
 - Main/admin container working directory maps to `~/nano` by default.
 - Override workspace path with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
 - Main workspace bootstrap/context files are auto-seeded if missing:
-  - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`
+  - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md` + `memory/`
 - Heartbeat is enabled by default and reads `HEARTBEAT.md` periodically.
 - Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `30m`).
 

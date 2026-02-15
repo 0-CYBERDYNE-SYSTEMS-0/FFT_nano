@@ -44,7 +44,12 @@ import {
   updateChatName,
 } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { FarmActionRequest, NewMessage, RegisteredGroup } from './types.js';
+import {
+  FarmActionRequest,
+  MemoryActionRequest,
+  NewMessage,
+  RegisteredGroup,
+} from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
 import { getContainerRuntime } from './container-runtime.js';
@@ -67,6 +72,12 @@ import type {
 import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
 import { executeFarmAction } from './farm-action-gateway.js';
 import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
+import { executeMemoryAction } from './memory-action-gateway.js';
+import {
+  appendCompactionSummaryToMemory,
+  migrateCompactionsForGroup,
+} from './memory-maintenance.js';
+import { ensureMemoryScaffold } from './memory-paths.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -109,6 +120,7 @@ const TELEGRAM_COMMON_COMMANDS = [
 
 const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'main', description: 'Claim this chat as main/admin' },
+  { command: 'freechat', description: 'Manage non-main free-chat allowlist' },
   { command: 'coder', description: 'Delegate coding execution' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
@@ -149,7 +161,8 @@ type TelegramCommandName =
   | '/panel'
   | '/coder'
   | '/coder-plan'
-  | '/coder_plan';
+  | '/coder_plan'
+  | '/freechat';
 
 interface ActiveCoderRun {
   requestId: string;
@@ -178,6 +191,7 @@ interface ChatRunPreferences {
   queueDebounceMs?: number;
   queueCap?: number;
   queueDrop?: QueueDropPolicy;
+  freeChat?: boolean;
   nextRunNoContinue?: boolean;
 }
 
@@ -317,10 +331,41 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     );
   }
 
+  ensureMemoryScaffold(group.folder);
+
   logger.info(
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+}
+
+function migrateCompactionSummariesFromSoul(): void {
+  const groupFolders = new Set<string>();
+  for (const group of Object.values(registeredGroups)) {
+    groupFolders.add(group.folder);
+  }
+  groupFolders.add(MAIN_GROUP_FOLDER);
+  groupFolders.add('global');
+
+  let movedSections = 0;
+  for (const groupFolder of groupFolders) {
+    try {
+      const result = migrateCompactionsForGroup(groupFolder);
+      movedSections += result.movedSections;
+    } catch (err) {
+      logger.debug(
+        { groupFolder, err },
+        'Compaction summary migration skipped for group',
+      );
+    }
+  }
+
+  if (movedSections > 0) {
+    logger.info(
+      { movedSections, groupCount: groupFolders.size },
+      'Migrated legacy compaction summaries from SOUL.md to MEMORY.md',
+    );
+  }
 }
 
 function migrateLegacyClaudeMemoryFiles(): void {
@@ -519,6 +564,18 @@ function isMainChat(chatJid: string): boolean {
   return registeredGroups[chatJid]?.folder === MAIN_GROUP_FOLDER;
 }
 
+function parseTelegramTargetJid(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  if (isTelegramJid(value)) {
+    return parseTelegramChatId(value) ? value : null;
+  }
+  if (/^-?\d+$/.test(value)) {
+    return `telegram:${value}`;
+  }
+  return null;
+}
+
 function findMainTelegramChatJid(): string | null {
   for (const [jid, group] of Object.entries(registeredGroups)) {
     if (group.folder === MAIN_GROUP_FOLDER && isTelegramJid(jid)) {
@@ -673,6 +730,7 @@ function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPreference
     next.queueCap = Math.floor(prefs.queueCap);
   }
   if (prefs.queueDrop && prefs.queueDrop !== 'old') next.queueDrop = prefs.queueDrop;
+  if (prefs.freeChat === true) next.freeChat = true;
   if (prefs.nextRunNoContinue) next.nextRunNoContinue = true;
   return Object.keys(next).length > 0 ? next : null;
 }
@@ -714,6 +772,7 @@ function formatChatRuntimePreferences(chatJid: string): string[] {
   const prefs = chatRunPreferences[chatJid] || {};
   const think = prefs.thinkLevel || 'off';
   const reasoning = prefs.reasoningLevel || 'off';
+  const freeChat = prefs.freeChat ? 'yes' : 'no';
   const newPending = prefs.nextRunNoContinue ? 'yes' : 'no';
   const queueMode = prefs.queueMode || 'collect';
   const queueDebounce = prefs.queueDebounceMs || 0;
@@ -723,6 +782,7 @@ function formatChatRuntimePreferences(chatJid: string): string[] {
     `- chat_model: ${getEffectiveModelLabel(chatJid)}`,
     `- chat_think: ${think}`,
     `- chat_reasoning: ${reasoning}`,
+    `- chat_free_chat: ${freeChat}`,
     `- chat_queue: mode=${queueMode} debounce_ms=${queueDebounce} cap=${queueCap} drop=${queueDrop}`,
     `- chat_new_pending: ${newPending}`,
   ];
@@ -910,6 +970,7 @@ function normalizeTelegramCommandToken(token: string): TelegramCommandName | nul
     '/coder',
     '/coder-plan',
     '/coder_plan',
+    '/freechat',
   ]);
   return known.has(command) ? command : null;
 }
@@ -948,6 +1009,9 @@ function formatHelpText(isMainGroup: boolean): string {
     '/task_resume <id> - resume task',
     '/task_cancel <id> - cancel task',
     '/groups - list registered groups',
+    '/freechat add <chatId> - enable free chat in a non-main Telegram chat',
+    '/freechat remove <chatId> - disable free chat in a non-main Telegram chat',
+    '/freechat list - list chats with free chat enabled',
     '/reload - refresh command menus and group metadata',
     '/panel - open admin quick actions',
     '/coder <task> - explicit delegated coding run',
@@ -1121,16 +1185,8 @@ async function runCompactionForChat(
       return 'Compaction returned no summary text.';
     }
 
-    const soulPath = path.join(DATA_DIR, '..', 'groups', group.folder, 'SOUL.md');
     const ts = new Date().toISOString();
-    const block = [
-      '',
-      `## Session Compaction ${ts}`,
-      '',
-      summary,
-      '',
-    ].join('\n');
-    fs.appendFileSync(soulPath, block, 'utf8');
+    appendCompactionSummaryToMemory(group.folder, summary, ts);
 
     updateChatRunPreferences(chatJid, (current) => {
       current.nextRunNoContinue = true;
@@ -1140,7 +1196,7 @@ async function runCompactionForChat(
     const preview = summary.length > 1200 ? `${summary.slice(0, 1200)}\n\n...truncated...` : summary;
     return [
       `Compaction complete (${compactRequestId}).`,
-      `Saved summary to /workspace/group/SOUL.md and scheduled fresh next session.`,
+      'Saved summary to /workspace/group/MEMORY.md and scheduled fresh next session.',
       '',
       preview,
     ].join('\n');
@@ -1799,6 +1855,98 @@ async function handleTelegramCommand(m: {
     return true;
   }
 
+  if (cmd === '/freechat') {
+    const action = (rest[0] || '').toLowerCase();
+    if (!action || action === 'help') {
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
+      await sendMessage(
+        m.chatJid,
+        [
+          'Free chat admin (main only):',
+          '- /freechat list',
+          '- /freechat add <chatId|telegram:<chatId>>',
+          '- /freechat remove <chatId|telegram:<chatId>>',
+        ].join('\n'),
+      );
+      return true;
+    }
+
+    if (action === 'list') {
+      const entries = Object.entries(chatRunPreferences)
+        .filter(([, prefs]) => prefs.freeChat === true)
+        .map(([jid]) => {
+          const group = registeredGroups[jid];
+          const name = group?.name || '(unregistered)';
+          const mainTag = group?.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
+          return `- ${jid} -> ${name}${mainTag}`;
+        })
+        .sort();
+
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
+      await sendMessage(
+        m.chatJid,
+        entries.length > 0
+          ? ['Free chat enabled for:', ...entries].join('\n')
+          : 'No chats currently have free chat enabled.',
+      );
+      return true;
+    }
+
+    if (action !== 'add' && action !== 'remove') {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
+      await sendMessage(
+        m.chatJid,
+        'Usage: /freechat add <chatId> | /freechat remove <chatId> | /freechat list',
+      );
+      return true;
+    }
+
+    const targetRaw = rest[1] || '';
+    const targetJid = parseTelegramTargetJid(targetRaw);
+    if (!targetJid) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id');
+      await sendMessage(
+        m.chatJid,
+        'Invalid chat id. Use /id in that chat, then pass the numeric id (or telegram:<id>).',
+      );
+      return true;
+    }
+
+    const targetGroup = registeredGroups[targetJid];
+    if (targetGroup?.folder === MAIN_GROUP_FOLDER) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'target is main');
+      await sendMessage(
+        m.chatJid,
+        'Main chat already runs without trigger prefix; free chat setting is unnecessary there.',
+      );
+      return true;
+    }
+
+    if (action === 'add') {
+      updateChatRunPreferences(targetJid, (prefs) => {
+        prefs.freeChat = true;
+        return prefs;
+      });
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'add');
+      await sendMessage(
+        m.chatJid,
+        `Free chat enabled for ${targetJid}${targetGroup ? ` (${targetGroup.name})` : ''}.`,
+      );
+      return true;
+    }
+
+    updateChatRunPreferences(targetJid, (prefs) => {
+      delete prefs.freeChat;
+      return prefs;
+    });
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'remove');
+    await sendMessage(
+      m.chatJid,
+      `Free chat disabled for ${targetJid}${targetGroup ? ` (${targetGroup.name})` : ''}.`,
+    );
+    return true;
+  }
+
   if (cmd === '/tasks') {
     logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
     await sendMessage(m.chatJid, formatTasksText());
@@ -2048,9 +2196,10 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
     typeof queuePrefs.queueDebounceMs === 'number' && queuePrefs.queueDebounceMs > 0
       ? Math.floor(queuePrefs.queueDebounceMs)
       : 0;
+  const freeChatEnabled = queuePrefs.freeChat === true;
 
   // Main group responds to all messages; other groups require trigger prefix
-  if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return true;
+  if (!isMainGroup && !freeChatEnabled && !TRIGGER_PATTERN.test(content)) return true;
 
   if (queueDebounceMs > 0) {
     logger.debug(
@@ -2524,18 +2673,30 @@ function startIpcWatcher(): void {
           for (const file of actionFiles) {
             const filePath = path.join(actionsDir, file);
             try {
-              const request = JSON.parse(
-                fs.readFileSync(filePath, 'utf-8'),
-              ) as FarmActionRequest;
+              const request = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as
+                | FarmActionRequest
+                | MemoryActionRequest;
+
+              const resultDir = path.join(
+                ipcBaseDir,
+                sourceGroup,
+                'action_results',
+              );
+              fs.mkdirSync(resultDir, { recursive: true });
 
               if (request.type === 'farm_action') {
                 const result = await executeFarmAction(request, isMain);
-                const resultDir = path.join(
-                  ipcBaseDir,
-                  sourceGroup,
-                  'action_results',
+                const resultPath = path.join(
+                  resultDir,
+                  `${request.requestId}.json`,
                 );
-                fs.mkdirSync(resultDir, { recursive: true });
+                fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
+              } else if (request.type === 'memory_action') {
+                const result = await executeMemoryAction(request, {
+                  sourceGroup,
+                  isMain,
+                  registeredGroups,
+                });
                 const resultPath = path.join(
                   resultDir,
                   `${request.requestId}.json`,
@@ -3136,6 +3297,7 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
   migrateLegacyClaudeMemoryFiles();
+  migrateCompactionSummariesFromSoul();
   maybePromoteConfiguredTelegramMain();
 
   if (FARM_STATE_ENABLED) {

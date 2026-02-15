@@ -128,12 +128,16 @@ fft_nano/
 │
 ├── groups/
 │   ├── global/                    # Global memory scope
-│   │   ├── SOUL.md              # Global memory (all groups read; main can write)
+│   │   ├── MEMORY.md            # Global memory (all groups read; main can write)
+│   │   ├── SOUL.md              # Global identity/policy context
 │   ├── main/                      # Self-chat (main control channel)
-│   │   ├── SOUL.md              # Main channel memory
+│   │   ├── MEMORY.md            # Main channel memory
+│   │   ├── SOUL.md              # Main channel identity/policy
 │   │   └── logs/                  # Task execution logs
 │   └── {Group Name}/              # Per-group folders (created on registration)
-│       ├── SOUL.md              # Group-specific memory
+│       ├── MEMORY.md            # Group-specific memory
+│       ├── SOUL.md              # Group-specific identity/policy
+│       ├── memory/              # Additional memory notes
 │       ├── logs/                  # Task logs for this group
 │       └── *.md                   # Files created by the agent
 │
@@ -251,14 +255,14 @@ Files with `{{PLACEHOLDER}}` values need to be configured:
 
 ## Memory System
 
-FFT_nano uses a hierarchical memory system based on SOUL.md files.
+FFT_nano uses a hierarchical memory system based on MEMORY.md files.
 
 ### Memory Hierarchy
 
 | Level | Location | Read By | Written By | Purpose |
 |-------|----------|---------|------------|---------|
-| **Global** | `groups/global/SOUL.md` | All groups | Main only | Preferences, facts, context shared across all conversations |
-| **Group** | `groups/{name}/SOUL.md` | That group | That group | Group-specific context, conversation memory |
+| **Global** | `groups/global/MEMORY.md` | All groups | Main only | Preferences, facts, context shared across all conversations |
+| **Group** | `groups/{name}/MEMORY.md` | That group | That group | Group-specific durable facts and compaction memory |
 | **Files** | `groups/{name}/*.md` | That group | That group | Notes, research, documents created during conversation |
 
 ### How Memory Works
@@ -266,12 +270,12 @@ FFT_nano uses a hierarchical memory system based on SOUL.md files.
 1. **Agent Context Loading**
    - Agent runs with `cwd` set to `groups/{group-name}/`
    - FFT_nano agent runner builds a system prompt that includes:
-     - `../SOUL.md` (global memory when mounted)
-     - `./SOUL.md` (group memory)
+     - `../MEMORY.md` (global memory when mounted)
+     - `./MEMORY.md` (group memory)
 
 2. **Writing Memory**
-   - When user says "remember this", agent writes to `./SOUL.md`
-   - When user says "remember this globally" (main channel only), agent writes to `../SOUL.md`
+   - When user says "remember this", agent writes to `./MEMORY.md`
+   - When user says "remember this globally" (main channel only), agent writes to `../MEMORY.md`
    - Agent can create files like `notes.md`, `research.md` in the group folder
 
 3. **Main Channel Privileges**
@@ -329,7 +333,8 @@ Sessions enable conversation continuity.
    │
    ▼
 8. FarmFriend processes message:
-   ├── Reads SOUL.md files for context
+   ├── Reads MEMORY.md + memory/*.md for recall
+   ├── Reads SOUL.md for stable behavior/policy
    └── Uses tools as needed (search, email, etc.)
    │
    ▼
