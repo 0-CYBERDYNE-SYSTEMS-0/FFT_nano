@@ -1,6 +1,6 @@
 {
   "name": "fft_nano",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "FarmFriendTerminal_nano (FFT_nano) — secure, containerized AI farm assistant.",
   "type": "module",
   "main": "dist/index.js",
@@ -11,6 +11,9 @@
     "test": "node --import tsx --test tests/**/*.test.ts",
     "auth": "tsx src/whatsapp-auth.ts",
     "validate:skills": "tsx scripts/validate-pi-skills.ts",
+    "secret-scan": "bash scripts/secret-scan.sh",
+    "release-check": "bash scripts/release-check.sh",
+    "release:sha256": "bash scripts/release/generate-sha256s.sh",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\""
