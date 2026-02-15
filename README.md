@@ -10,7 +10,7 @@ FarmFriend Terminal nano (`FFT_nano`) is a single-process Node.js host that runs
 - Stores chat + scheduling metadata in SQLite
 - Runs the agent in an isolated container (Apple Container on macOS, Docker on Linux)
 - Uses `~/nano` as the main/admin workspace (configurable via `FFT_NANO_MAIN_WORKSPACE_DIR`)
-- Persists non-main memory per group in `groups/<group>/SOUL.md`
+- Persists non-main memory per group in `groups/<group>/MEMORY.md` (plus `groups/<group>/memory/*.md`)
 - Sends agent output back to the originating chat
 
 ## Quickstart (Single-Repo Install)
@@ -257,7 +257,7 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 
 - Main/admin chat container CWD maps to `~/nano` by default.
 - Override with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
-- Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`.
+- Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md` + `memory/`.
 - Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
 - Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
 
@@ -340,7 +340,8 @@ Coder delegation is intentionally restricted to main/admin chat for safety.
 
 ### Where is long-term memory stored?
 
-Per-group in `groups/<group>/SOUL.md`; global memory in `groups/global/SOUL.md`.
+Per-group in `groups/<group>/MEMORY.md` (plus `groups/<group>/memory/*.md`);
+global memory in `groups/global/MEMORY.md`.
 
 ### Where does Pi session/auth state live?
 

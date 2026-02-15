@@ -88,3 +88,43 @@ export interface FarmActionResult {
   error?: string;
   executedAt: string;
 }
+
+export interface MemoryActionRequest {
+  type: 'memory_action';
+  action: 'memory_search' | 'memory_get';
+  params: {
+    query?: string;
+    path?: string;
+    topK?: number;
+    sources?: 'memory' | 'sessions' | 'all';
+    groupFolder?: string;
+  };
+  requestId: string;
+}
+
+export interface MemorySearchHit {
+  source: 'memory_doc' | 'session_transcript';
+  score: number;
+  groupFolder: string;
+  title: string;
+  snippet: string;
+  path?: string;
+  chatJid?: string;
+  senderName?: string;
+  timestamp?: string;
+}
+
+export interface MemoryActionResult {
+  requestId: string;
+  status: 'success' | 'error';
+  result?: {
+    hits?: MemorySearchHit[];
+    document?: {
+      groupFolder: string;
+      path: string;
+      content: string;
+    };
+  };
+  error?: string;
+  executedAt: string;
+}

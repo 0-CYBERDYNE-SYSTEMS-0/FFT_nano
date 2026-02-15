@@ -256,6 +256,11 @@ function buildSystemPrompt(input: NormalizedContainerInput): string {
   lines.push('Workspace:');
   lines.push('- /workspace/group is your writable workspace (main maps to ~/nano on host).');
   lines.push('- /workspace/ipc is the bridge to the host process (messages + scheduling).');
+  lines.push('- Store durable memory in /workspace/group/MEMORY.md and /workspace/group/memory/*.md.');
+  lines.push('- Keep SOUL.md focused on stable behavior and identity, not compaction logs.');
+  lines.push(
+    '- Use explicit memory tools via bash when needed: `node /app/dist/memory-tool.js search --query "..." --sources all --top-k 8` and `node /app/dist/memory-tool.js get --path MEMORY.md`.',
+  );
   lines.push('');
   lines.push('Runtime hints:');
   lines.push(`- coding_hint: ${input.codingHint}`);
@@ -367,22 +372,40 @@ function buildSystemPrompt(input: NormalizedContainerInput): string {
     lines.push('');
   }
 
+  // SOUL.md is behavior/policy context and should be provided independently
+  // from memory retrieval payloads.
+  const globalSoul =
+    readFileIfExists('/workspace/global/SOUL.md') ||
+    readFileIfExists('/workspace/project/groups/global/SOUL.md');
+  const groupSoul = readFileIfExists('/workspace/group/SOUL.md');
+
+  if (!input.isMain && globalSoul) {
+    lines.push('Global behavior context (SOUL.md):');
+    lines.push(globalSoul);
+    lines.push('');
+  }
+
+  if (!input.isMain && groupSoul) {
+    lines.push('Group behavior context (SOUL.md):');
+    lines.push(groupSoul);
+    lines.push('');
+  }
+
   if (providedMemoryContext) {
     lines.push('Retrieved memory context:');
     lines.push(providedMemoryContext);
     lines.push('');
   } else {
-    // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for
-    // backwards compatibility (older installs/groups).
+    // Memory fallback: prefer dedicated memory docs.
     const globalMemory =
-      readFileIfExists('/workspace/global/SOUL.md') ||
-      readFileIfExists('/workspace/project/groups/global/SOUL.md') ||
-      readFileIfExists('/workspace/global/CLAUDE.md') ||
-      readFileIfExists('/workspace/project/groups/global/CLAUDE.md');
+      readFileIfExists('/workspace/global/MEMORY.md') ||
+      readFileIfExists('/workspace/project/groups/global/MEMORY.md') ||
+      readFileIfExists('/workspace/global/memory.md') ||
+      readFileIfExists('/workspace/project/groups/global/memory.md');
 
     const groupMemory =
-      readFileIfExists('/workspace/group/SOUL.md') ||
-      readFileIfExists('/workspace/group/CLAUDE.md');
+      readFileIfExists('/workspace/group/MEMORY.md') ||
+      readFileIfExists('/workspace/group/memory.md');
 
     if (globalMemory) {
       lines.push('Global memory:');
