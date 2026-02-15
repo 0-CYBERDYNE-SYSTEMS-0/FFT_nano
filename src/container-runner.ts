@@ -158,6 +158,7 @@ function ensureMainWorkspaceSeed(): void {
   }
 
   fs.mkdirSync(path.join(MAIN_WORKSPACE_DIR, 'memory'), { recursive: true });
+  fs.mkdirSync(path.join(MAIN_WORKSPACE_DIR, 'skills'), { recursive: true });
   ensureMemoryScaffold(MAIN_GROUP_FOLDER);
 }
 
@@ -210,11 +211,18 @@ function buildVolumeMounts(
   // Pi persists sessions and auth/config under ~/.pi.
   const groupPiHomeDir = path.join(DATA_DIR, 'pi', group.folder, '.pi');
   fs.mkdirSync(groupPiHomeDir, { recursive: true });
-  const skillSync = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHomeDir);
+  const runtimeSkillSourceDirs = isMain
+    ? [path.join(MAIN_WORKSPACE_DIR, 'skills')]
+    : [];
+  const skillSync = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHomeDir, {
+    additionalSkillSourceDirs: runtimeSkillSourceDirs,
+  });
   if (skillSync.sourceDirExists) {
     logger.debug(
       {
         group: group.name,
+        sourceDirs: skillSync.sourceDirs,
+        managedSkills: skillSync.managed,
         copiedSkills: skillSync.copied,
         removedSkills: skillSync.removed,
       },

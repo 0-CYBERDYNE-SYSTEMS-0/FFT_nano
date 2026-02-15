@@ -95,20 +95,17 @@ Notes:
 
 ## Pi-Native Project Skills
 
-- Active project skills are under `.pi/skills/`:
-  - `fft-setup`
-  - `fft-debug`
-  - `fft-telegram-ops`
-  - `fft-coder-ops`
-  - `fft-farm-bootstrap`
-  - `fft-farm-onboarding`
-  - `fft-farm-validate`
-- On each run, project `fft-*` skills are mirrored into per-group Pi home:
+- Two skill types:
+  - Setup-only skills: `skills/setup/`
+  - Runtime agent skills: `skills/runtime/`
+- Main workspace user-created runtime skills live at `~/nano/skills/`.
+- On each run, runtime skills are mirrored into per-group Pi home:
   - host: `data/pi/<group>/.pi/skills/`
   - container: `/home/node/.pi/skills/`
+- Main/admin runs merge project runtime skills + `~/nano/skills/` (main workspace overrides on name collision).
+- Non-main groups only get project runtime skills by default.
 - Validate skill metadata/frontmatter with:
   - `npm run validate:skills`
-- Legacy `.claude/skills` is archive-only and not used as active runtime skill source.
 
 ## Debugging / Tracing
 
