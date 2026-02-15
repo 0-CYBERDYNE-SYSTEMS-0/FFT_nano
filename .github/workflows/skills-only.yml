@@ -15,7 +15,7 @@ jobs:
       - name: Check for mixed skill + source changes
         run: |
           # Check if PR adds new skill files (not just modifies existing)
-          ADDED_SKILLS=$(git diff --name-only --diff-filter=A origin/main...HEAD | grep '^\.claude/skills/' || true)
+          ADDED_SKILLS=$(git diff --name-only --diff-filter=A origin/main...HEAD | grep '^skills/' || true)
 
           # Check if PR touches source
           CHANGED=$(git diff --name-only origin/main...HEAD)
@@ -44,7 +44,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `This PR adds a skill while also modifying source code. A skill PR should not change source files—the skill should contain **instructions** for Claude to follow. See \`/convert-to-docker\` for an example.
+              body: `This PR adds a skill while also modifying source code. A skill PR should not change source files—the skill should contain **instructions** for the agent to follow. See \`skills/setup/convert-to-docker\` for an example.
 
             If you're fixing a bug or simplifying code, please submit that as a separate PR.
 

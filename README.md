@@ -321,6 +321,23 @@ npm run typecheck
 npm test
 ```
 
+## Release Checks
+
+Run the release gate locally before tagging:
+
+```bash
+npm run release-check
+```
+
+This runs skills validation, typecheck, tests, and secret scanning over tracked files.
+
+Versioning and official release flow are documented in `docs/RELEASE.md`.
+
+## Distribution Policy
+
+- Official distribution is **GitHub Releases** (source archives + checksums).
+- npm publish is intentionally deferred until this repo ships a dedicated end-user CLI packaging path.
+
 ## Architecture (Short)
 
 ```text
