@@ -210,7 +210,7 @@
       right: -300px;
       width: 300px;
       height: 100vh;
-      background: var(--earth-mid);
+      background: #faf8f5;
       z-index: 1001;
       padding: 5rem 2rem 2rem;
       transition: right 0.3s;
@@ -227,12 +227,19 @@
       right: 1rem;
       background: none;
       border: none;
-      color: var(--text-light);
+      color: #0a0a0a;
       font-size: 1.5rem;
+      font-weight: 600;
       cursor: pointer;
       padding: 0.5rem;
       min-width: 44px;
       min-height: 44px;
+      transition: all 0.2s;
+    }
+
+    .mobile-close-btn:hover {
+      background: rgba(0,0,0,0.05);
+      transform: scale(1.1);
     }
 
     .mobile-nav {
@@ -247,6 +254,13 @@
       padding: 0.8rem 0.25rem;
       font-size: 1rem;
       line-height: 1.35;
+      color: #0a0a0a;
+      font-weight: 500;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .mobile-nav a:hover {
+      background: rgba(0, 0, 0, 0.05);
     }
 
     @media (max-width: 1200px) {
