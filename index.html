@@ -44,6 +44,10 @@
       line-height: 1.6;
     }
 
+    body.menu-open {
+      overflow: hidden;
+    }
+
     /* Responsive Images */
     img {
       max-width: 100%;
@@ -57,39 +61,33 @@
       left: 0;
       right: 0;
       z-index: 1000;
-      padding: 1rem 2rem;
+      padding: 0.75rem clamp(0.875rem, 2.5vw, 2rem);
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 1rem;
       background: rgba(26, 24, 20, 0.95);
       -webkit-backdrop-filter: blur(20px);
       backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--border-subtle);
       max-width: 100%;
-      overflow: hidden;
-    }
-
-    @media (max-width: 768px) {
-      .nav {
-        padding: 0.75rem 1rem;
-      }
-    }
-
-    @media (max-width: 480px) {
-      .nav {
-        padding: 0.5rem 0.75rem;
-      }
     }
 
     .logo {
       font-family: var(--font-display);
-      font-size: 1.75rem;
+      font-size: clamp(1.35rem, 2vw, 1.75rem);
       font-weight: 600;
       color: var(--brand-primary);
       text-decoration: none;
       display: flex;
       align-items: center;
       gap: 0.75rem;
+      min-width: 0;
+      line-height: 1;
+    }
+
+    .logo span {
+      white-space: nowrap;
     }
 
     .logo-icon {
@@ -116,20 +114,17 @@
 
     .nav-links {
       display: flex;
-      gap: 2.5rem;
+      align-items: center;
+      gap: clamp(0.75rem, 1.2vw, 1.75rem);
       list-style: none;
+      margin: 0;
+      padding: 0;
+      flex-wrap: nowrap;
+      min-width: 0;
     }
 
-    @media (max-width: 1200px) {
-      .nav-links {
-        gap: 2rem;
-      }
-    }
-
-    @media (max-width: 768px) {
-      .nav-links {
-        gap: 1.5rem;
-      }
+    .nav-links li {
+      flex: 0 0 auto;
     }
 
     .nav-links a {
@@ -142,6 +137,10 @@
       position: relative;
       transition: color 0.3s;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      white-space: nowrap;
     }
 
     .nav-links a::after {
@@ -163,42 +162,6 @@
       width: 100%;
     }
 
-    /* Search Bar */
-    .search-box {
-      position: relative;
-      display: flex;
-      align-items: center;
-    }
-    .search-input {
-      background: rgba(255,255,255,0.1);
-      border: 1px solid var(--border-subtle);
-      border-radius: 8px;
-      padding: 0.6rem 1rem 0.6rem 2.5rem;
-      color: var(--text-light);
-      font-family: var(--font-body);
-      font-size: 0.9rem;
-      width: 200px;
-      max-width: 100%;
-      min-width: 120px;
-      transition: all 0.3s;
-    }
-
-    @media (max-width: 768px) {
-      .search-input {
-        width: 100%;
-        min-width: auto;
-      }
-    }
-    .search-input::placeholder {
-      color: var(--text-muted);
-    }
-    .search-input:focus {
-      outline: 2px solid var(--brand-primary);
-      outline-offset: 2px;
-      border-color: var(--brand-primary);
-      background: rgba(255,255,255,0.15);
-    }
-
     /* Mobile Menu Button */
     .mobile-menu-btn {
       display: none;
@@ -210,9 +173,17 @@
       padding: 0.5rem;
       min-width: 44px;
       min-height: 44px;
-      display: flex;
       align-items: center;
       justify-content: center;
+      border-radius: 8px;
+    }
+
+    .mobile-menu-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .desktop-nav {
+      margin-left: auto;
     }
 
     /* Mobile Menu Overlay */
@@ -239,13 +210,63 @@
       width: 300px;
       height: 100vh;
       background: var(--earth-mid);
-      z-index: 1000;
+      z-index: 1001;
       padding: 5rem 2rem 2rem;
       transition: right 0.3s;
       box-shadow: -5px 0 20px rgba(0,0,0,0.3);
+      overflow-y: auto;
     }
     .mobile-menu.open {
       right: 0;
+    }
+
+    .mobile-close-btn {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background: none;
+      border: none;
+      color: var(--text-light);
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.5rem;
+      min-width: 44px;
+      min-height: 44px;
+    }
+
+    .mobile-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      width: 100%;
+    }
+
+    .mobile-nav a {
+      display: block;
+      padding: 0.8rem 0.25rem;
+      font-size: 1rem;
+      line-height: 1.35;
+    }
+
+    @media (max-width: 1200px) {
+      .desktop-nav {
+        display: none;
+      }
+
+      .mobile-menu-btn {
+        display: inline-flex;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .logo span {
+        display: none;
+      }
+
+      .mobile-menu {
+        width: min(320px, 88vw);
+        right: -100%;
+      }
     }
 
     /* Main Content */
@@ -459,6 +480,31 @@
     section > * {
       position: relative;
       z-index: 1;
+    }
+
+    /* Hard-stop visual bleed in first content section */
+    #what-is {
+      background: var(--cream);
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    #what-is::before {
+      display: none;
+    }
+
+    #what-is .section-header,
+    #what-is .feature-card {
+      background: rgba(250, 248, 245, 0.98);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+
+    #what-is .feature-card .measurement-marks,
+    #what-is .feature-card .edge-ticks,
+    #what-is .feature-card .plus-mark,
+    #what-is .feature-card .ref-number {
+      display: none;
     }
 
     @media (max-width: 768px) {
@@ -1546,69 +1592,26 @@
 
     /* Responsive Design */
 
-    /* Fix header text collision on medium screens */
-    @media (max-width: 1200px) {
-      .nav-links {
-        gap: 1.75rem;
-      }
-
-      .search-input {
-        width: 180px;
-      }
-
-      .logo-icon {
-        width: 42px;
-        height: 42px;
+    /* Header responsive polish */
+    @media (max-width: 1400px) {
+      .nav-links a {
+        font-size: 0.82rem;
       }
     }
 
     @media (max-width: 1024px) {
       .nav-links {
-        gap: 1.5rem;
-      }
-
-      .search-input {
-        width: 170px;
-        padding: 0.55rem 0.9rem 0.55rem 2.2rem;
+        gap: 1rem;
       }
 
       .nav-links a {
-        font-size: 0.875rem;
-      }
-    }
-
-    @media (max-width: 992px) {
-      /* Fix header text collision on tablets/small desktops */
-      .nav-links {
-        gap: 1.25rem;
-      }
-
-      .search-input {
-        width: 160px;
-        font-size: 0.85rem;
-        padding: 0.5rem 0.8rem 0.5rem 2rem;
-      }
-
-      .nav-links a {
-        font-size: 0.85rem;
+        font-size: 0.8rem;
       }
     }
 
     @media (max-width: 768px) {
-      .desktop-nav {
-        display: none;
-      }
-
-      .mobile-menu-btn {
-        display: block;
-      }
-
-      .search-box {
-        display: none;
-      }
-
-      .mobile-menu .search-box {
-        display: flex;
+      .nav {
+        padding: 0.625rem 0.875rem;
       }
 
       .hero-stats {
@@ -1650,6 +1653,10 @@
     }
 
     @media (max-width: 480px) {
+      .nav {
+        padding: 0.5rem 0.75rem;
+      }
+
       .hero h1 {
         font-size: 2.25rem;
       }
@@ -1930,14 +1937,7 @@
       <li><a href="#skills-ecosystem">Skills</a></li>
       <li><a href="#support" style="color: var(--brand-accent);"><i class="fas fa-heart"></i> Support</a></li>
     </ul>
-    
-    <!-- Search Box -->
-    <div class="search-box">
-      <input type="text" class="search-input" placeholder="Search...">
-      <i class="fas fa-search" style="position: absolute; right: 1rem; color: var(--text-muted);"></i>
-    </div>
-    
-    <button class="mobile-menu-btn" onclick="toggleMenu()">
+    <button class="mobile-menu-btn" onclick="toggleMenu()" type="button" aria-label="Open menu" aria-controls="mobileMenu" aria-expanded="false">
       <i class="fas fa-bars"></i>
     </button>
   </nav>
@@ -1946,24 +1946,18 @@
   <div class="mobile-menu-overlay" onclick="toggleMenu()" id="mobileMenuOverlay"></div>
   <nav class="mobile-menu" id="mobileMenu">
     <!-- Close Button -->
-    <button class="mobile-close-btn" onclick="toggleMenu()" style="position: absolute; top: 1rem; right: 1rem; background: none; border: none; color: var(--text-light); font-size: 1.5rem; cursor: pointer; padding: 0.5rem;">
+    <button class="mobile-close-btn" onclick="toggleMenu()" type="button" aria-label="Close menu">
       <i class="fas fa-times"></i>
     </button>
 
-    <!-- Mobile Search Box -->
-    <div class="search-box" style="margin-bottom: 2rem; width: 100%;">
-      <input type="text" class="search-input" placeholder="Search..." style="width: 100%;">
-      <i class="fas fa-search" style="position: absolute; right: 1rem; color: var(--text-muted);"></i>
-    </div>
-
     <ul class="nav-links mobile-nav">
-      <li><a href="#what-is" onclick="toggleMenu()">What is FFT Nano?</a></li>
-      <li><a href="#why-matters" onclick="toggleMenu()">Why This Matters</a></li>
-      <li><a href="#products" onclick="toggleMenu()">Real Products</a></li>
-      <li><a href="#get-started" onclick="toggleMenu()">Get Started</a></li>
-      <li><a href="#technical-presentation" onclick="toggleMenu()">Presentation</a></li>
-      <li><a href="#skills-ecosystem" onclick="toggleMenu()">Skills</a></li>
-      <li><a href="#support" onclick="toggleMenu()" style="color: var(--brand-accent);"><i class="fas fa-heart"></i> Support</a></li>
+      <li><a href="#what-is">What is FFT Nano?</a></li>
+      <li><a href="#why-matters">Why This Matters</a></li>
+      <li><a href="#products">Real Products</a></li>
+      <li><a href="#get-started">Get Started</a></li>
+      <li><a href="#technical-presentation">Presentation</a></li>
+      <li><a href="#skills-ecosystem">Skills</a></li>
+      <li><a href="#support" style="color: var(--brand-accent);"><i class="fas fa-heart"></i> Support</a></li>
     </ul>
   </nav>
 
@@ -2412,7 +2406,7 @@
       <div class="section-header">
         <span class="ref-number top-right">SEC-04</span>
         <h2>Get Started</h2>
-        <p>Three Simple Steps to Own Your Farm's Intelligence</p>
+        <p>Four Simple Steps to Own Your Farm's Intelligence</p>
       </div>
       
       <div class="steps-container">
@@ -2447,8 +2441,9 @@
           <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
           <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="step-number">3</div>
-          <h3>Command</h3>
-          <code>"Create a moisture monitoring agent for my north field."</code>
+          <h3>Deploy</h3>
+          <code>npm run dev</code>
+          <p style="color: var(--text-muted); margin-top: 0.5rem;">FFT Nano runtime is now live and ready for your command.</p>
         </div>
         
         <div class="step" tabindex="0">
@@ -2458,17 +2453,17 @@
           <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
           <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="step-number">4</div>
-          <h3>Deploy</h3>
-          <code>npm run dev</code>
+          <h3>Command</h3>
+          <code>"Create a moisture monitoring agent for my north field."</code>
           <p style="color: var(--text-muted); margin-top: 0.5rem;">Your agent is now monitoring your field 24/7.</p>
         </div>
       </div>
       
-      <p style="color: var(--text-muted); margin-top: 2rem;">That's it. FFT Nano generates the code, deploys the agent, and your farm is now more intelligent.</p>
+      <p style="color: var(--text-muted); margin-top: 2rem;">That's it. Download, install, deploy FFT Nano, then issue your command and your farm is now more intelligent.</p>
       
       <div style="margin-top: 3rem;">
         <p style="color: var(--brand-accent); font-size: 1.2rem; font-weight: 600;">Try It Free</p>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">No credit card. No subscription. No commitment.<br>Just download, install, and own your farm's intelligence.</p>
+        <p style="color: var(--text-muted); margin-top: 0.5rem;">No credit card. No subscription. No commitment.<br>Just download, install, deploy, and own your farm's intelligence.</p>
       </div>
       
       <div class="hero-cta" style="margin-top: 3rem;">
@@ -2713,66 +2708,50 @@
   </footer>
 
   <script>
+    function closeMenu() {
+      const mobileMenu = document.getElementById('mobileMenu');
+      const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
+      const menuButton = document.querySelector('.mobile-menu-btn');
+
+      mobileMenu.classList.remove('open');
+      mobileMenuOverlay.classList.remove('open');
+      document.body.classList.remove('menu-open');
+      if (menuButton) {
+        menuButton.setAttribute('aria-expanded', 'false');
+      }
+    }
+
     function toggleMenu() {
       const mobileMenu = document.getElementById('mobileMenu');
       const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
+      const menuButton = document.querySelector('.mobile-menu-btn');
+      const isOpen = mobileMenu.classList.toggle('open');
 
-      mobileMenu.classList.toggle('open');
-      mobileMenuOverlay.classList.toggle('open');
+      mobileMenuOverlay.classList.toggle('open', isOpen);
+      document.body.classList.toggle('menu-open', isOpen);
+      if (menuButton) {
+        menuButton.setAttribute('aria-expanded', String(isOpen));
+      }
     }
 
     // Close mobile menu with Escape key for accessibility
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         const mobileMenu = document.getElementById('mobileMenu');
-        const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
-
         if (mobileMenu.classList.contains('open')) {
-          mobileMenu.classList.remove('open');
-          mobileMenuOverlay.classList.remove('open');
+          closeMenu();
         }
       }
     });
 
     // Close mobile menu when clicking a link
     document.querySelectorAll('.mobile-nav a').forEach(link => {
-      link.addEventListener('click', () => {
-        const mobileMenu = document.getElementById('mobileMenu');
-        const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
-
-        mobileMenu.classList.remove('open');
-        mobileMenuOverlay.classList.remove('open');
-      });
+      link.addEventListener('click', closeMenu);
     });
 
-    // Search functionality - Google search
-    const searchInputs = document.querySelectorAll('.search-input');
-    searchInputs.forEach(searchInput => {
-      searchInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          const query = searchInput.value.trim();
-          if (query) {
-            // Search the FFT Nano GitHub repo
-            window.open(`https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/search?q=${encodeURIComponent(query)}&type=code`, '_blank');
-            searchInput.value = '';
-          }
-        }
-      });
-
-      // Add search icon click to trigger search
-      const searchBox = searchInput.closest('.search-box');
-      if (searchBox) {
-        const searchIcon = searchBox.querySelector('i.fa-search');
-        if (searchIcon) {
-          searchIcon.style.cursor = 'pointer';
-          searchIcon.addEventListener('click', () => {
-            const query = searchInput.value.trim();
-            if (query) {
-              window.open(`https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/search?q=${encodeURIComponent(query)}&type=code`, '_blank');
-              searchInput.value = '';
-            }
-          });
-        }
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 1200) {
+        closeMenu();
       }
     });
 
