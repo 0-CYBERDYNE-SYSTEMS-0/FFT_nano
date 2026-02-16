@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FFT Nano - Talk to Your Farm</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Cormorant+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Cormorant+Garamond:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.0/css/all.min.css">
   <style>
     :root {
@@ -22,6 +22,7 @@
       --border-subtle: rgba(26, 24, 20, 0.15);
       --font-display: 'Cormorant Garamond', serif;
       --font-body: 'Space Grotesk', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     }
 
     *, *::before, *::after {
@@ -424,6 +425,28 @@
       opacity: 0;
       transform: translateY(30px);
       transition: opacity 0.8s ease, transform 0.8s ease;
+      position: relative;
+    }
+
+    /* Industrial Grid Overlay - Very subtle */
+    section::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-image: 
+        linear-gradient(rgba(90, 154, 184, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(90, 154, 184, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    section > * {
+      position: relative;
+      z-index: 1;
     }
 
     @media (max-width: 768px) {
@@ -473,24 +496,126 @@
     /* What is FFT Nano Section */
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
       gap: 2rem;
-      grid-auto-rows: 1fr;
-      align-items: stretch;
+      justify-content: stretch;
+      grid-auto-flow: dense;
     }
 
     .feature-card {
       background: rgba(250, 248, 245, 0.6);
       -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
-      padding: 2.5rem;
+      padding: 2rem;
       border-radius: 16px;
       border: 1px solid rgba(181, 86, 32, 0.2);
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       display: flex;
       flex-direction: column;
-      height: 100%;
-      min-height: 320px;
+      min-height: 300px;
+      position: relative;
+    }
+
+    /* Industrial Double Border */
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      right: 6px;
+      bottom: 6px;
+      border: 1px solid rgba(90, 154, 184, 0.25);
+      border-radius: 12px;
+      pointer-events: none;
+      transition: border-color 0.3s ease;
+    }
+
+    /* Industrial Corner L-Brackets */
+    .feature-card::after {
+      content: '';
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      pointer-events: none;
+      background: 
+        /* Top-left L-bracket (cream) */
+        linear-gradient(to right, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        /* Top-right L-bracket (powder blue) */
+        linear-gradient(to left, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        /* Bottom-left L-bracket (powder blue) */
+        linear-gradient(to right, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        linear-gradient(to top, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        /* Bottom-right L-bracket (cream) */
+        linear-gradient(to left, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        linear-gradient(to top, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px);
+      background-position: 
+        top left, top left,
+        top right, top right,
+        bottom left, bottom left,
+        bottom right, bottom right;
+      background-size: 
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px;
+      background-repeat: no-repeat;
+    }
+
+    /* Reference Numbers - Corner */
+    .feature-card .ref-number {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 500;
+      color: rgba(90, 154, 184, 0.6);
+      letter-spacing: 0.5px;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .feature-card .ref-number.top-right {
+      top: 14px;
+      right: 18px;
+    }
+
+    /* Technical Measurement Marks along edges */
+    .feature-card .measurement-marks {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 7px;
+      color: rgba(90, 154, 184, 0.35);
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    /* Plus marks at intersections */
+    .feature-card .plus-mark {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .feature-card .plus-mark::before,
+    .feature-card .plus-mark::after {
+      content: '';
+      position: absolute;
+      background: rgba(90, 154, 184, 0.3);
+    }
+    .feature-card .plus-mark::before {
+      width: 1px;
+      height: 8px;
+      left: 3.5px;
+      top: 0;
+    }
+    .feature-card .plus-mark::after {
+      width: 8px;
+      height: 1px;
+      left: 0;
+      top: 3.5px;
     }
 
     .feature-card:hover {
@@ -498,6 +623,10 @@
       border-color: var(--brand-primary);
       box-shadow: 0 12px 40px rgba(181, 86, 32, 0.2);
       background: rgba(250, 248, 245, 0.7);
+    }
+
+    .feature-card:hover::before {
+      border-color: rgba(181, 86, 32, 0.4);
     }
 
     .feature-icon {
@@ -508,7 +637,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1rem;
       font-size: 1.5rem;
       color: var(--brand-primary);
     }
@@ -517,13 +646,14 @@
       font-family: var(--font-display);
       font-size: 1.5rem;
       color: var(--text-light);
-      margin-bottom: 1rem;
+      margin-bottom: 0.75rem;
     }
 
     .feature-card p {
       color: var(--text-muted);
       line-height: 1.7;
       flex: 1;
+      margin: 0;
     }
 
     /* Why This Matters Section */
@@ -534,26 +664,117 @@
 
     .matters-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
       gap: 2rem;
-      grid-auto-rows: 1fr;
-      align-items: stretch;
-      justify-content: center;
+      justify-content: stretch;
+      grid-auto-flow: dense;
     }
 
     .matters-card {
       background: rgba(250, 248, 245, 0.65);
       -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
-      padding: 2.5rem;
+      padding: 2rem;
       border-radius: 16px;
       border-left: 4px solid var(--brand-accent);
       border: 1px solid rgba(90, 154, 184, 0.2);
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       display: flex;
       flex-direction: column;
-      height: 100%;
-      min-height: 400px;
+      min-height: 380px;
+      position: relative;
+    }
+
+    /* Industrial Double Border */
+    .matters-card::before {
+      content: '';
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      right: 6px;
+      bottom: 6px;
+      border: 1px solid rgba(181, 86, 32, 0.2);
+      border-radius: 12px;
+      pointer-events: none;
+      transition: border-color 0.3s ease;
+    }
+
+    /* Industrial Corner L-Brackets */
+    .matters-card::after {
+      content: '';
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      pointer-events: none;
+      background: 
+        /* Top-left L-bracket (powder blue) */
+        linear-gradient(to right, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        /* Top-right L-bracket (cream) */
+        linear-gradient(to left, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        /* Bottom-left L-bracket (cream) */
+        linear-gradient(to right, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        linear-gradient(to top, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        /* Bottom-right L-bracket (powder blue) */
+        linear-gradient(to left, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        linear-gradient(to top, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px);
+      background-position: 
+        top left, top left,
+        top right, top right,
+        bottom left, bottom left,
+        bottom right, bottom right;
+      background-size: 
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px;
+      background-repeat: no-repeat;
+    }
+
+    /* Reference Numbers - Corner */
+    .matters-card .ref-number {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 500;
+      color: rgba(181, 86, 32, 0.5);
+      letter-spacing: 0.5px;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .matters-card .ref-number.top-right {
+      top: 14px;
+      right: 18px;
+    }
+
+    /* Plus marks */
+    .matters-card .plus-mark {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .matters-card .plus-mark::before,
+    .matters-card .plus-mark::after {
+      content: '';
+      position: absolute;
+      background: rgba(181, 86, 32, 0.25);
+    }
+    .matters-card .plus-mark::before {
+      width: 1px;
+      height: 8px;
+      left: 3.5px;
+      top: 0;
+    }
+    .matters-card .plus-mark::after {
+      width: 8px;
+      height: 1px;
+      left: 0;
+      top: 3.5px;
     }
 
     .matters-card:hover {
@@ -563,22 +784,27 @@
       background: rgba(250, 248, 245, 0.8);
     }
 
+    .matters-card:hover::before {
+      border-color: rgba(90, 154, 184, 0.4);
+    }
+
     .matters-card h3 {
       font-family: var(--font-display);
       font-size: 1.5rem;
       color: var(--brand-primary-dark);
-      margin-bottom: 1rem;
+      margin-bottom: 0.75rem;
     }
 
     .matters-card p {
       color: var(--text-muted);
       line-height: 1.7;
       flex: 1;
+      margin: 0;
     }
 
     .matters-card ul {
       list-style: none;
-      margin-top: 1rem;
+      margin-top: 0.75rem;
       padding-left: 0;
     }
 
@@ -604,10 +830,11 @@
 
     .products-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
       gap: 2rem;
       grid-auto-rows: 1fr;
       align-items: stretch;
+      width: 100%;
     }
 
     .product-card {
@@ -620,9 +847,102 @@
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       display: flex;
       flex-direction: column;
-      height: 100%;
       min-height: 450px;
-      width: 100%;
+      position: relative;
+    }
+
+    /* Industrial Double Border */
+    .product-card::before {
+      content: '';
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      right: 6px;
+      bottom: 6px;
+      border: 1px solid rgba(90, 154, 184, 0.25);
+      border-radius: 12px;
+      pointer-events: none;
+      transition: border-color 0.3s ease;
+      z-index: 5;
+    }
+
+    /* Industrial Corner L-Brackets */
+    .product-card::after {
+      content: '';
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      pointer-events: none;
+      z-index: 5;
+      background: 
+        /* Top-left L-bracket (burnt orange) */
+        linear-gradient(to right, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px),
+        /* Top-right L-bracket (powder blue) */
+        linear-gradient(to left, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        /* Bottom-left L-bracket (powder blue) */
+        linear-gradient(to right, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        linear-gradient(to top, var(--brand-accent) 0, var(--brand-accent) 20px, transparent 20px),
+        /* Bottom-right L-bracket (burnt orange) */
+        linear-gradient(to left, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px),
+        linear-gradient(to top, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px);
+      background-position: 
+        top left, top left,
+        top right, top right,
+        bottom left, bottom left,
+        bottom right, bottom right;
+      background-size: 
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px;
+      background-repeat: no-repeat;
+    }
+
+    /* Reference Numbers */
+    .product-card .ref-number {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.7);
+      letter-spacing: 0.5px;
+      z-index: 15;
+      pointer-events: none;
+    }
+    .product-card .ref-number.top-right {
+      top: 16px;
+      right: 20px;
+    }
+
+    /* Plus marks */
+    .product-card .plus-mark {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .product-card .plus-mark::before,
+    .product-card .plus-mark::after {
+      content: '';
+      position: absolute;
+      background: rgba(90, 154, 184, 0.3);
+    }
+    .product-card .plus-mark::before {
+      width: 1px;
+      height: 8px;
+      left: 3.5px;
+      top: 0;
+    }
+    .product-card .plus-mark::after {
+      width: 8px;
+      height: 1px;
+      left: 0;
+      top: 3.5px;
     }
 
     .product-card:hover {
@@ -630,6 +950,10 @@
       border-color: var(--brand-primary);
       box-shadow: 0 12px 40px rgba(181, 86, 32, 0.2);
       background: rgba(250, 248, 245, 0.8);
+    }
+
+    .product-card:hover::before {
+      border-color: rgba(181, 86, 32, 0.4);
     }
 
     .product-header {
@@ -689,11 +1013,11 @@
 
     .steps-container {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
       gap: 2rem;
       margin: 3rem 0;
-      grid-auto-rows: 1fr;
-      align-items: stretch;
+      justify-content: stretch;
+    grid-auto-flow: dense;
     }
 
     .step {
@@ -704,9 +1028,110 @@
       border: 1px solid rgba(181, 86, 32, 0.2);
       display: flex;
       flex-direction: column;
-      height: 100%;
-      min-height: 380px;
-      width: 100%;
+      min-height: 400px;
+      position: relative;
+    }
+
+    /* Industrial Double Border */
+    .step::before {
+      content: '';
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      right: 6px;
+      bottom: 6px;
+      border: 1px solid rgba(90, 154, 184, 0.25);
+      border-radius: 8px;
+      pointer-events: none;
+      transition: border-color 0.3s ease;
+    }
+
+    /* Industrial Corner L-Brackets */
+    .step::after {
+      content: '';
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      pointer-events: none;
+      background: 
+        /* Top-left L-bracket (cream) */
+        linear-gradient(to right, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        /* Top-right L-bracket (burnt orange) */
+        linear-gradient(to left, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px),
+        linear-gradient(to bottom, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px),
+        /* Bottom-left L-bracket (burnt orange) */
+        linear-gradient(to right, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px),
+        linear-gradient(to top, var(--brand-primary) 0, var(--brand-primary) 20px, transparent 20px),
+        /* Bottom-right L-bracket (cream) */
+        linear-gradient(to left, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px),
+        linear-gradient(to top, var(--earth-mid) 0, var(--earth-mid) 20px, transparent 20px);
+      background-position: 
+        top left, top left,
+        top right, top right,
+        bottom left, bottom left,
+        bottom right, bottom right;
+      background-size: 
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px,
+        25px 3px, 3px 25px;
+      background-repeat: no-repeat;
+    }
+
+    /* Reference Numbers */
+    .step .ref-number {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 500;
+      color: rgba(90, 154, 184, 0.6);
+      letter-spacing: 0.5px;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .step .ref-number.top-right {
+      top: 16px;
+      right: 20px;
+    }
+
+    /* Plus marks */
+    .step .plus-mark {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .step .plus-mark::before,
+    .step .plus-mark::after {
+      content: '';
+      position: absolute;
+      background: rgba(90, 154, 184, 0.3);
+    }
+    .step .plus-mark::before {
+      width: 1px;
+      height: 8px;
+      left: 3.5px;
+      top: 0;
+    }
+    .step .plus-mark::after {
+      width: 8px;
+      height: 1px;
+      left: 0;
+      top: 3.5px;
+    }
+
+    .step:hover {
+      transform: translateY(-4px);
+      border-color: var(--brand-primary);
+      box-shadow: 0 8px 30px rgba(181, 86, 32, 0.15);
+    }
+
+    .step:hover::before {
+      border-color: rgba(181, 86, 32, 0.35);
     }
 
     .step-number {
@@ -721,6 +1146,250 @@
       margin-bottom: 1rem;
       margin-left: auto;
       margin-right: auto;
+    }
+
+    /* ================================
+       INDUSTRIAL NOTCHED DIVIDERS
+       ================================ */
+    
+    .industrial-divider {
+      position: relative;
+      height: 30px;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+    }
+
+    .industrial-divider::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: calc(100% - 120px);
+      height: 1px;
+      background: linear-gradient(
+        to right,
+        transparent 0%,
+        rgba(90, 154, 184, 0.3) 15%,
+        rgba(90, 154, 184, 0.3) 45%,
+        transparent 50%,
+        rgba(90, 154, 184, 0.3) 55%,
+        rgba(90, 154, 184, 0.3) 85%,
+        transparent 100%
+      );
+    }
+
+    /* Notch in the middle */
+    .industrial-divider::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 60px;
+      height: 12px;
+      background: var(--earth-dark);
+      border-left: 1px solid rgba(90, 154, 184, 0.3);
+      border-right: 1px solid rgba(90, 154, 184, 0.3);
+    }
+
+    /* Tick marks on divider */
+    .industrial-divider .tick-left,
+    .industrial-divider .tick-right {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 1px;
+      height: 8px;
+      background: rgba(90, 154, 184, 0.4);
+    }
+    .industrial-divider .tick-left { left: calc(50% - 40px); }
+    .industrial-divider .tick-right { left: calc(50% + 40px); }
+
+    /* ================================
+       TECHNICAL MEASUREMENT MARKS
+       ================================ */
+    
+    .measurement-ticks {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .measurement-ticks .tick-h {
+      position: absolute;
+      width: 1px;
+      height: 4px;
+      background: rgba(90, 154, 184, 0.25);
+    }
+
+    .measurement-ticks .tick-v {
+      position: absolute;
+      width: 4px;
+      height: 1px;
+      background: rgba(90, 154, 184, 0.25);
+    }
+
+    /* Bottom edge ticks */
+    .measurement-ticks .tick-bottom {
+      bottom: 0;
+    }
+
+    /* Right edge ticks */
+    .measurement-ticks .tick-right {
+      right: 0;
+    }
+
+    /* ================================
+       PLUS MARKS AT INTERSECTIONS
+       ================================ */
+    
+    .intersection-plus {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .intersection-plus::before,
+    .intersection-plus::after {
+      content: '';
+      position: absolute;
+      background: rgba(90, 154, 184, 0.2);
+    }
+
+    .intersection-plus::before {
+      width: 1px;
+      height: 10px;
+      left: 4.5px;
+      top: 0;
+    }
+
+    .intersection-plus::after {
+      width: 10px;
+      height: 1px;
+      left: 0;
+      top: 4.5px;
+    }
+
+    /* ================================
+       EDGE MEASUREMENT TICKS
+       ================================ */
+    
+    /* Horizontal measurement marks on cards */
+    .feature-card .edge-ticks,
+    .matters-card .edge-ticks,
+    .product-card .edge-ticks,
+    .step .edge-ticks {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .edge-ticks .h-tick {
+      position: absolute;
+      width: 1px;
+      height: 6px;
+      background: rgba(90, 154, 184, 0.2);
+    }
+
+    .edge-ticks .h-tick.bottom {
+      bottom: 8px;
+    }
+
+    .edge-ticks .h-tick.top {
+      top: 8px;
+    }
+
+    .edge-ticks .v-tick {
+      position: absolute;
+      width: 6px;
+      height: 1px;
+      background: rgba(90, 154, 184, 0.2);
+    }
+
+    .edge-ticks .v-tick.left {
+      left: 8px;
+    }
+
+    .edge-ticks .v-tick.right {
+      right: 8px;
+    }
+
+    /* ================================
+       SECTION HEADER INDUSTRIAL STYLE
+       ================================ */
+
+    .section-header {
+      position: relative;
+      border: 1px solid rgba(181, 86, 32, 0.2);
+    }
+
+    .section-header::before {
+      content: '';
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      right: 4px;
+      bottom: 4px;
+      border: 1px solid rgba(90, 154, 184, 0.15);
+      border-radius: 14px;
+      pointer-events: none;
+    }
+
+    /* Corner brackets on section headers */
+    .section-header::after {
+      content: '';
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      pointer-events: none;
+      background: 
+        linear-gradient(to right, var(--brand-accent) 0, var(--brand-accent) 15px, transparent 15px),
+        linear-gradient(to bottom, var(--brand-accent) 0, var(--brand-accent) 15px, transparent 15px),
+        linear-gradient(to left, var(--brand-primary) 0, var(--brand-primary) 15px, transparent 15px),
+        linear-gradient(to bottom, var(--brand-primary) 0, var(--brand-primary) 15px, transparent 15px),
+        linear-gradient(to right, var(--brand-primary) 0, var(--brand-primary) 15px, transparent 15px),
+        linear-gradient(to top, var(--brand-primary) 0, var(--brand-primary) 15px, transparent 15px),
+        linear-gradient(to left, var(--brand-accent) 0, var(--brand-accent) 15px, transparent 15px),
+        linear-gradient(to top, var(--brand-accent) 0, var(--brand-accent) 15px, transparent 15px);
+      background-position: 
+        top left, top left,
+        top right, top right,
+        bottom left, bottom left,
+        bottom right, bottom right;
+      background-size: 
+        20px 2px, 2px 20px,
+        20px 2px, 2px 20px,
+        20px 2px, 2px 20px,
+        20px 2px, 2px 20px;
+      background-repeat: no-repeat;
+    }
+
+    .section-header .ref-number {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 8px;
+      font-weight: 500;
+      color: rgba(90, 154, 184, 0.5);
+      letter-spacing: 0.5px;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .section-header .ref-number.top-right {
+      top: 14px;
+      right: 18px;
     }
 
     .step h3 {
@@ -846,16 +1515,69 @@
       transform: scale(1.02);
     }
 
-    /* Responsive Design */
-    @media (max-width: 1400px) {
-      section {
-        max-width: 1200px;
-      }
+    /* ========================================
+       RESPONSIVE GRID BREAKPOINTS
+       ======================================== */
 
+    /* Extra Large Screens (1200px+) */
+    @media (min-width: 1200px) {
       .features-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .matters-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .products-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .steps-container {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    /* Large Screens (992px - 1199px) */
+    @media (min-width: 992px) and (max-width: 1199px) {
+      .features-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .matters-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .products-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .steps-container {
         grid-template-columns: repeat(2, 1fr);
       }
     }
+
+    /* Medium Screens (768px - 991px) */
+    @media (min-width: 768px) and (max-width: 991px) {
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .matters-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .products-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .steps-container {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    /* Small Screens (less than 768px) */
+    @media (max-width: 767px) {
+      .features-grid,
+      .matters-grid,
+      .products-grid,
+      .steps-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Responsive Design */
 
     /* Fix header text collision on medium screens */
     @media (max-width: 1200px) {
@@ -889,12 +1611,6 @@
     }
 
     @media (max-width: 992px) {
-      .steps-container {
-        grid-template-columns: 1fr;
-        max-width: 500px;
-        margin: 3rem auto;
-      }
-
       /* Fix header text collision on tablets/small desktops */
       .nav-links {
         gap: 1.25rem;
@@ -1315,12 +2031,30 @@
     <!-- What is FFT Nano Section -->
     <section id="what-is">
       <div class="section-header">
+        <span class="ref-number top-right">SEC-01</span>
         <h2>What is FFT Nano?</h2>
         <p>Single FFT Nano Instance. Infinite Possibilities.</p>
       </div>
       
       <div class="features-grid">
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">01</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="feature-icon">
             <i class="fas fa-code"></i>
           </div>
@@ -1328,7 +2062,24 @@
           <p>You speak plain English, FFT Nano writes working code. Python, Bash, Node.js, C, Rust — whatever the task needs. No coding required. No software engineers needed. Just describe what you want, and FFT Nano creates it.</p>
         </div>
         
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">02</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="feature-icon">
             <i class="fas fa-exchange-alt"></i>
           </div>
@@ -1336,7 +2087,24 @@
           <p>Your 1998 grain elevator (RS232) needs to talk to your 2026 cloud fleet system (REST API)? FFT Nano generates protocol bridges instantly. CAN bus ↔ Modbus ↔ MQTT ↔ REST APIs ↔ RS232. Legacy equipment ↔ Modern systems. One platform, unlimited translation.</p>
         </div>
         
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">03</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="feature-icon">
             <i class="fas fa-tools"></i>
           </div>
@@ -1344,7 +2112,24 @@
           <p>Need a fertilizer optimizer? Describe it. Need an equipment monitor? Describe it. Need a safety system? Describe it. FFT Nano creates, deploys, and runs it. In minutes, not months. No expensive software packages. No vendor contracts.</p>
         </div>
         
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">04</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="feature-icon">
             <i class="fas fa-chart-line"></i>
           </div>
@@ -1352,17 +2137,41 @@
           <p>FFT Nano doesn't just run scripts. It learns from them. Soil patterns, crop needs, equipment health, herd behavior. Optimizes workflows over time. Gets smarter every day. Self-improving automation.</p>
         </div>
       </div>
+      
+      <!-- Industrial Divider -->
+      <div class="industrial-divider">
+        <span class="tick-left"></span>
+        <span class="tick-right"></span>
+      </div>
     </section>
 
     <!-- Why This Matters Section -->
     <section id="why-matters" class="why-matters">
       <div class="section-header">
+        <span class="ref-number top-right">SEC-02</span>
         <h2>Why This Matters</h2>
         <p>Democratizing Agricultural Intelligence</p>
       </div>
       
       <div class="matters-grid">
-        <div class="matters-card">
+        <div class="matters-card" tabindex="0">
+          <span class="ref-number top-right">M1</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <h3>Democratizing Agriculture</h3>
           <p>Today's agricultural technology is controlled by a handful of corporations. John Deere, Bayer, Corteva, Climate Corp — they decide what features farmers get, what data farmers can see, and how much farmers pay. Farmers are renters of their own technology, not owners.</p>
           <p style="margin-top: 1rem;"><strong>FFT Nano is different:</strong></p>
@@ -1375,7 +2184,24 @@
           </ul>
         </div>
         
-        <div class="matters-card">
+        <div class="matters-card" tabindex="0">
+          <span class="ref-number top-right">M2</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <h3>Food & Medicine in Local Hands</h3>
           <p>When farmers control their own AI and data, communities decide what to grow. Local knowledge is preserved. Traditional varieties are saved. Food systems stay local. Medicine & nutrition knowledge stays in community hands.</p>
           <ul>
@@ -1388,7 +2214,24 @@
           </ul>
         </div>
         
-        <div class="matters-card">
+        <div class="matters-card" tabindex="0">
+          <span class="ref-number top-right">M3</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <h3>Don't Fear AI — Own It</h3>
           <p>FFT Nano AUGMENTS you, doesn't replace you. It's YOUR tool, not YOUR boss. You are in the driver's seat. FFT Nano is your intelligent assistant.</p>
           <p style="margin-top: 1rem;"><strong>What FFT Nano Does:</strong></p>
@@ -1405,18 +2248,72 @@
             <li>Own the farm (land, equipment, livestock)</li>
           </ul>
         </div>
+        
+        <div class="matters-card" tabindex="0">
+          <span class="ref-number top-right">M4</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
+          <h3>Sustainable & Regenerative</h3>
+          <p>FFT Nano enables precision agriculture without expensive proprietary systems. Optimize resource use, reduce waste, and improve soil health through data-driven decisions.</p>
+          <ul>
+            <li>Precision irrigation (water only where needed)</li>
+            <li>Targeted fertilization (reduce runoff)</li>
+            <li>Integrated pest management (monitor patterns)</li>
+            <li>Crop rotation planning (soil health data)</li>
+            <li>Yield optimization (historical analysis)</li>
+            <li>Resource efficiency (fuel, seeds, chemicals)</li>
+          </ul>
+        </div>
+      </div>
+      
+      <!-- Industrial Divider -->
+      <div class="industrial-divider">
+        <span class="tick-left"></span>
+        <span class="tick-right"></span>
       </div>
     </section>
 
     <!-- Real Products Section -->
     <section id="products" class="products-section">
       <div class="section-header">
+        <span class="ref-number top-right">SEC-03</span>
         <h2>Real Products</h2>
         <p>Honest Offerings. No Fake Products. Just What You Need.</p>
       </div>
       
       <div class="products-grid">
-        <div class="product-card">
+        <div class="product-card" tabindex="0">
+          <span class="ref-number top-right">P1</span>
+          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="product-header free">
             <div class="product-price">FREE</div>
             <div class="product-name">FFT Nano Software</div>
@@ -1433,7 +2330,24 @@
           </div>
         </div>
         
-        <div class="product-card">
+        <div class="product-card" tabindex="0">
+          <span class="ref-number top-right">P2</span>
+          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="product-header">
             <div class="product-price">$299</div>
             <div class="product-name">Protocol Bridge Generator</div>
@@ -1450,7 +2364,24 @@
           </div>
         </div>
         
-        <div class="product-card">
+        <div class="product-card" tabindex="0">
+          <span class="ref-number top-right">P3</span>
+          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="product-header">
             <div class="product-price">$199</div>
             <div class="product-name">Custom Tool Generator</div>
@@ -1467,7 +2398,24 @@
           </div>
         </div>
         
-        <div class="product-card">
+        <div class="product-card" tabindex="0">
+          <span class="ref-number top-right">P4</span>
+          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="edge-ticks">
+            <div class="h-tick bottom" style="left: 15%;"></div>
+            <div class="h-tick bottom" style="left: 30%;"></div>
+            <div class="h-tick bottom" style="left: 45%;"></div>
+            <div class="h-tick bottom" style="left: 60%;"></div>
+            <div class="h-tick bottom" style="left: 75%;"></div>
+            <div class="v-tick right" style="top: 15%;"></div>
+            <div class="v-tick right" style="top: 30%;"></div>
+            <div class="v-tick right" style="top: 45%;"></div>
+            <div class="v-tick right" style="top: 60%;"></div>
+            <div class="v-tick right" style="top: 75%;"></div>
+          </div>
           <div class="product-header">
             <div class="product-price">$599</div>
             <div class="product-name">Swarm Starter Kit</div>
@@ -1484,34 +2432,68 @@
           </div>
         </div>
       </div>
+      
+      <!-- Industrial Divider -->
+      <div class="industrial-divider">
+        <span class="tick-left"></span>
+        <span class="tick-right"></span>
+      </div>
     </section>
 
     <!-- Get Started Section -->
     <section id="get-started" class="get-started">
       <div class="section-header">
+        <span class="ref-number top-right">SEC-04</span>
         <h2>Get Started</h2>
         <p>Three Simple Steps to Own Your Farm's Intelligence</p>
       </div>
       
       <div class="steps-container">
-        <div class="step">
+        <div class="step" tabindex="0">
+          <span class="ref-number top-right">S1</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="step-number">1</div>
           <h3>Download</h3>
           <code>git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git</code>
           <code>cd FFT_nano</code>
         </div>
         
-        <div class="step">
+        <div class="step" tabindex="0">
+          <span class="ref-number top-right">S2</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="step-number">2</div>
           <h3>Install</h3>
           <code>npm install</code>
           <code>npm run build</code>
         </div>
         
-        <div class="step">
+        <div class="step" tabindex="0">
+          <span class="ref-number top-right">S3</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="step-number">3</div>
           <h3>Command</h3>
           <code>"Create a moisture monitoring agent for my north field."</code>
+        </div>
+        
+        <div class="step" tabindex="0">
+          <span class="ref-number top-right">S4</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
+          <div class="step-number">4</div>
+          <h3>Deploy</h3>
+          <code>npm run dev</code>
+          <p style="color: var(--text-muted); margin-top: 0.5rem;">Your agent is now monitoring your field 24/7.</p>
         </div>
       </div>
       
@@ -1530,11 +2512,18 @@
           <i class="fas fa-book"></i> View Documentation
         </a>
       </div>
+      
+      <!-- Industrial Divider -->
+      <div class="industrial-divider">
+        <span class="tick-left"></span>
+        <span class="tick-right"></span>
+      </div>
     </section>
 
     <!-- Technical Presentation Section -->
     <section class="presentation-section" id="technical-presentation">
       <div class="section-header">
+        <span class="ref-number top-right">SEC-05</span>
         <h2>Technical Presentation</h2>
         <p>Complete 17-slide presentation explaining FFT Nano architecture, skills system, and orchestration layer. Navigate through slides using controls below or use arrow keys.</p>
       </div>
@@ -1579,11 +2568,18 @@
           Schedule Technical Walkthrough
         </a>
       </div>
+      
+      <!-- Industrial Divider -->
+      <div class="industrial-divider">
+        <span class="tick-left"></span>
+        <span class="tick-right"></span>
+      </div>
     </section>
 
     <!-- Support Section -->
     <section id="support" class="support-section">
       <div class="section-header">
+        <span class="ref-number top-right">SEC-06</span>
         <h2>Support FFT Nano</h2>
         <p>Help democratize agricultural intelligence. FFT Nano is open source, free to use, and owned by the farming community. Your sponsorship helps us develop new features, improve documentation, and keep the project sustainable.</p>
         <p style="color: var(--brand-accent); font-weight: 600; margin-top: 1rem;"><i class="fas fa-heart"></i> Every contribution matters</p>
@@ -1625,17 +2621,29 @@
           </iframe>
         </div>
       </div>
+      
+      <!-- Industrial Divider -->
+      <div class="industrial-divider">
+        <span class="tick-left"></span>
+        <span class="tick-right"></span>
+      </div>
     </section>
 
     <!-- Skills Ecosystem Section -->
     <section id="skills-ecosystem" style="background: rgba(240, 235, 224, 0.6); backdrop-filter: blur(10px); padding: 5rem 2rem;">
       <div class="section-header" style="margin-bottom: 3rem;">
+        <span class="ref-number top-right">SEC-07</span>
         <h2>Skills Ecosystem</h2>
         <p style="color: var(--text-muted);">Extend FFT Nano with open-source skills designed specifically for farmers</p>
       </div>
 
       <div class="features-grid">
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">SK1</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="feature-icon">
             <i class="fas fa-microchip"></i>
           </div>
@@ -1643,7 +2651,12 @@
           <p>Mix John Deere, Case IH, and AGCO equipment. Universal protocol translator enables cross-brand fleet coordination without expensive dealer subscriptions.</p>
         </div>
 
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">SK2</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="feature-icon">
             <i class="fas fa-stethoscope"></i>
           </div>
@@ -1651,7 +2664,12 @@
           <p>Instant error code interpretation and repair guidance when equipment fails during critical operations. No dealer tools required.</p>
         </div>
 
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">SK3</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="feature-icon">
             <i class="fas fa-chart-line"></i>
           </div>
@@ -1659,7 +2677,12 @@
           <p>Eliminate $2,000-5,000/year in dealer subscriptions. Audit dependencies and migrate to open-source alternatives.</p>
         </div>
 
-        <div class="feature-card">
+        <div class="feature-card" tabindex="0">
+          <span class="ref-number top-right">SK4</span>
+          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
+          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
           <div class="feature-icon">
             <i class="fas fa-seedling"></i>
           </div>
