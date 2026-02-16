@@ -16,7 +16,6 @@ Primary entry points:
 ## Quick Navigation
 
 Core guides:
-- [Gap Analysis: src vs old docs-site](developer/00-gap-analysis.md)
 - [Architecture](developer/01-architecture.md)
 - [Runtime Message Flow](developer/02-runtime-message-processing.md)
 - [Container Runtime](developer/03-container-runtime.md)
