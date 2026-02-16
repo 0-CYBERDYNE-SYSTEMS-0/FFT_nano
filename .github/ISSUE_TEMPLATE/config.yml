@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security reports
+    url: https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/security/advisories/new
+    about: Report security vulnerabilities privately.
+  - name: Support questions
+    url: https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/blob/main/SUPPORT.md
+    about: Usage questions and support guidance.
