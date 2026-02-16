@@ -261,6 +261,16 @@
             background: rgba(255, 170, 0, 0.1);
         }
         
+        .info-box.security {
+            border-color: #e8785a;
+            background: rgba(232, 120, 90, 0.08);
+        }
+        
+        .info-box.important {
+            border-color: #7eb8da;
+            background: rgba(126, 184, 218, 0.08);
+        }
+        
         .info-box.success {
             border-color: var(--success);
             background: rgba(0, 255, 136, 0.1);
@@ -488,6 +498,17 @@
                     <strong>The FFT_nano Philosophy:</strong><br>
                     Most things you'll want to do—set up new integrations, research providers, configure skills, debug issues—your agent can handle. You give it a goal, it figures out the how. That's by design.
                 </div>
+                
+                <div class="info-box important">
+                    <strong>⚠️ A Note for Farmers (and Agents Reading This)</strong><br>
+                    FFT_nano is powerful AI technology. A few things to keep in mind:
+                    <ul style="margin-top: 0.5rem; margin-bottom: 0;">
+                        <li><strong>Your agent is helpful, not infallible</strong> — always review major decisions</li>
+                        <li><strong>API keys cost money</strong> — keep an eye on usage, especially with paid providers</li>
+                        <li><strong>The agent can only work with what it can see</strong> — if something's not working, check what folders it has access to</li>
+                        <li><strong>Scheduled tasks run automatically</strong> — make sure you know what's scheduled</li>
+                    </ul>
+                </div>
             </section>
             
             <section class="section" id="quickstart">
@@ -519,6 +540,11 @@ cd FFT_nano
                 <div class="info-box">
                     <strong>Your Agent Can Help:</strong><br>
                     Stuck on setup? Just message your agent: "Help me set up WhatsApp" or "I need to add my OpenAI key." It knows the process.
+                </div>
+                
+                <div class="info-box security">
+                    <strong>🔐 Protect Your Keys</strong><br>
+                    Never share your API keys in public. If your agent helps configure things, stay in the conversation. Your keys live in <code>.env</code>—keep that file private.
                 </div>
             </section>
             
@@ -621,6 +647,11 @@ TELEGRAM_ADMIN_SECRET=your_secure_secret</code></pre>
             
             <section class="section" id="llm-providers">
                 <h2>LLM Providers</h2>
+                
+                <div class="info-box important">
+                    <strong>💰 About Provider Costs</strong><br>
+                    Most LLM providers charge by usage (per-token). Check your provider's pricing page. Local options like Ollama and LM Studio run on your machine but need a capable computer. Your agent can help you understand and monitor usage.
+                </div>
                 
                 <h3>OpenAI</h3>
                 <div class="code-block">
@@ -749,6 +780,11 @@ OLLAMA_VISION_MODEL=llama3.2-vision</code></pre>
                     <li><strong>Global:</strong> <code>groups/global/SOUL.md</code> (read by all, write from main only)</li>
                     <li><strong>Session:</strong> Each group maintains a conversation session persisted by Pi</li>
                 </ul>
+                
+                <div class="info-box important">
+                    <strong>📝 What Goes in Memory</strong><br>
+                    Your agent remembers conversations, preferences, and context. If you discuss sensitive information (finances, personal details), that stays in your local <code>groups/</code> folders. Nothing goes to external servers except via your LLM provider. Your agent can help you manage or clear memory if needed.
+                </div>
             </section>
             
             <section class="section" id="scheduling">
@@ -762,14 +798,25 @@ OLLAMA_VISION_MODEL=llama3.2-vision</code></pre>
                 </ul>
                 
                 <p>Task runs are logged to SQLite with duration and result.</p>
+                
+                <div class="info-box important">
+                    <strong>⏰ Scheduling Awareness</strong><br>
+                    Each scheduled task runs your agent and uses API calls (which may cost money). If you schedule tasks every 5 minutes, that adds up. Start with less frequent schedules and adjust based on your needs.
+                </div>
             </section>
             
             <section class="section" id="container">
                 <h2>Container Isolation</h2>
                 <p>Agents run inside Apple Container (macOS) or Docker (Linux). Each invocation spawns a container with mounted directories.</p>
                 
-                <div class="info-box">
-                    <strong>Security:</strong> Bash access is safe because commands run inside the container, not on your host. Agents can only see what's explicitly mounted.
+                <div class="info-box security">
+                    <strong>🛡️ What This Means for You</strong><br>
+                    Your agent runs in an <em>isolated sandbox</em>. It can only see files you explicitly give it access to. Even if something goes wrong, your main computer stays protected. The agent is the farmhand—but it's in a separate building, not in your house.
+                </div>
+                
+                <div class="info-box important">
+                    <strong>👨‍🌾 Farmer Note:</strong><br>
+                    This is designed so you can let your agent work autonomously without worrying it'll accidentally delete your photos or mess up your system. It can only touch what you tell it to.
                 </div>
             </section>
             
