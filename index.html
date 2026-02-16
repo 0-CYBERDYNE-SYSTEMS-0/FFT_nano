@@ -428,6 +428,18 @@
       position: relative;
     }
 
+    section.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Fix: Prevent section-header flash during scroll reveal */
+    section > .section-header {
+      opacity: 1 !important;
+      transform: none !important;
+      transition: none !important;
+    }
+
     /* Industrial Grid Overlay - Very subtle */
     section::before {
       content: '';
