@@ -37,7 +37,7 @@
 
     body {
       font-family: var(--font-body);
-      background: var(--earth-dark) url('assets/backgrounds/bg-image6.jpg') center/cover no-repeat fixed;
+      background: var(--earth-dark) url('assets/backgrounds/bg-user-new.jpg') center/cover no-repeat fixed;
       color: var(--text-light);
       min-height: 100vh;
       overflow-x: hidden;
@@ -419,8 +419,8 @@
 
     /* Section Styles */
     section {
-      padding: 6rem 2rem;
-      max-width: 1400px;
+      width: min(100%, 1600px);
+      padding: clamp(3rem, 5vw, 6rem) clamp(1rem, 3vw, 2rem);
       margin: 0 auto;
       opacity: 0;
       transform: translateY(30px);
@@ -496,10 +496,10 @@
     /* What is FFT Nano Section */
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: 2rem;
-      justify-content: stretch;
-      grid-auto-flow: dense;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+      gap: clamp(1rem, 2vw, 2rem);
+      align-items: stretch;
+      width: 100%;
     }
 
     .feature-card {
@@ -514,6 +514,9 @@
       flex-direction: column;
       min-height: 300px;
       position: relative;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
     }
 
     /* Industrial Double Border */
@@ -664,10 +667,10 @@
 
     .matters-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-      gap: 2rem;
-      justify-content: stretch;
-      grid-auto-flow: dense;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+      gap: clamp(1rem, 2vw, 2rem);
+      align-items: stretch;
+      width: 100%;
     }
 
     .matters-card {
@@ -683,6 +686,9 @@
       flex-direction: column;
       min-height: 380px;
       position: relative;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
     }
 
     /* Industrial Double Border */
@@ -830,8 +836,8 @@
 
     .products-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-      gap: 2rem;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+      gap: clamp(1rem, 2vw, 2rem);
       grid-auto-rows: 1fr;
       align-items: stretch;
       width: 100%;
@@ -849,6 +855,9 @@
       flex-direction: column;
       min-height: 450px;
       position: relative;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
     }
 
     /* Industrial Double Border */
@@ -1013,11 +1022,11 @@
 
     .steps-container {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: 2rem;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+      gap: clamp(1rem, 2vw, 2rem);
       margin: 3rem 0;
-      justify-content: stretch;
-    grid-auto-flow: dense;
+      align-items: stretch;
+      width: 100%;
     }
 
     .step {
@@ -1030,6 +1039,9 @@
       flex-direction: column;
       min-height: 400px;
       position: relative;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
     }
 
     /* Industrial Double Border */
@@ -1464,8 +1476,8 @@
     /* Support Section */
     .support-section {
       background: linear-gradient(135deg, var(--earth-mid) 0%, var(--earth-dark) 100%);
-      padding: 6rem 2rem;
-      max-width: 1400px;
+      width: min(100%, 1600px);
+      padding: clamp(3rem, 5vw, 6rem) clamp(1rem, 3vw, 2rem);
       margin: 0 auto;
       opacity: 0;
       transform: translateY(30px);
@@ -1482,12 +1494,14 @@
       flex-direction: column;
       align-items: center;
       gap: 3rem;
-      max-width: 600px;
+      width: min(100%, 900px);
       margin: 0 auto;
     }
 
     .sponsors-button-wrapper,
     .sponsors-card-wrapper {
+      width: 100%;
+      max-width: 100%;
       text-align: center;
       padding: 2rem;
       background: rgba(255, 255, 255, 0.05);
@@ -1513,68 +1527,6 @@
 
     .sponsors-iframe:hover {
       transform: scale(1.02);
-    }
-
-    /* ========================================
-       RESPONSIVE GRID BREAKPOINTS
-       ======================================== */
-
-    /* Extra Large Screens (1200px+) */
-    @media (min-width: 1200px) {
-      .features-grid {
-        grid-template-columns: repeat(4, 1fr);
-      }
-      .matters-grid {
-        grid-template-columns: repeat(3, 1fr);
-      }
-      .products-grid {
-        grid-template-columns: repeat(3, 1fr);
-      }
-      .steps-container {
-        grid-template-columns: repeat(3, 1fr);
-      }
-    }
-
-    /* Large Screens (992px - 1199px) */
-    @media (min-width: 992px) and (max-width: 1199px) {
-      .features-grid {
-        grid-template-columns: repeat(3, 1fr);
-      }
-      .matters-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .products-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .steps-container {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    /* Medium Screens (768px - 991px) */
-    @media (min-width: 768px) and (max-width: 991px) {
-      .features-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .matters-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .products-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .steps-container {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    /* Small Screens (less than 768px) */
-    @media (max-width: 767px) {
-      .features-grid,
-      .matters-grid,
-      .products-grid,
-      .steps-container {
-        grid-template-columns: 1fr;
-      }
     }
 
     /* Responsive Design */
