@@ -399,29 +399,152 @@
             color: var(--accent);
         }
         
-        @media (max-width: 768px) {
+        /* Hamburger Menu */
+        .hamburger {
+            display: none;
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+            width: 40px;
+            height: 40px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .hamburger span {
+            display: block;
+            width: 20px;
+            height: 2px;
+            background: var(--text);
+            transition: all 0.3s;
+        }
+        
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 6px);
+        }
+        
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+        
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -6px);
+        }
+        
+        /* Responsive */
+        @media (max-width: 900px) {
             .docs-container {
                 grid-template-columns: 1fr;
             }
             
             .sidebar {
-                position: relative;
-                width: 100%;
-                height: auto;
+                position: fixed;
+                left: -100%;
+                width: 280px;
+                height: 100vh;
+                z-index: 999;
+                transition: left 0.3s ease;
+                padding-top: 5rem;
+            }
+            
+            .sidebar.open {
+                left: 0;
+            }
+            
+            .hamburger {
+                display: flex;
             }
             
             .main-content {
                 margin-left: 0;
                 padding: 2rem 1.5rem;
+                max-width: 100%;
             }
             
             .hero h1 {
+                font-size: 2.5rem;
+            }
+            
+            .hero p {
+                font-size: 1.1rem;
+            }
+            
+            .hero-tags {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .quick-nav {
+                flex-direction: column;
+            }
+            
+            .credentials-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            pre {
+                font-size: 0.8rem;
+                padding: 1rem;
+                overflow-x: scroll;
+                word-wrap: normal;
+                white-space: pre;
+            }
+            
+            code {
+                word-wrap: normal;
+                white-space: pre;
+            }
+            
+            table {
+                display: block;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            .section h2 {
+                font-size: 1.5rem;
+            }
+            
+            .section h3 {
+                font-size: 1.1rem;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .hero h1 {
                 font-size: 2rem;
+            }
+            
+            .main-content {
+                padding: 1.5rem 1rem;
+            }
+            
+            .hero {
+                padding: 2rem 0;
+            }
+            
+            .info-box {
+                padding: 1rem;
+            }
+            
+            .credential-card {
+                padding: 1rem;
             }
         }
     </style>
 </head>
 <body>
+    <button class="hamburger" onclick="toggleSidebar()">
+        <span></span>
+        <span></span>
+        <span></span>
+    </button>
     <div class="docs-container">
         <nav class="sidebar">
             <div class="logo">FFT_nano</div>
@@ -432,7 +555,7 @@
                 <a href="#introduction" class="nav-link">Introduction</a>
                 <a href="#quickstart" class="nav-link">Quickstart</a>
                 <a href="#architecture" class="nav-link">Architecture</a>
-                <a href="#agent-power" class="nav-link">🤖 The Agent Advantage</a>
+                <a href="#agent-power" class="nav-link"> The Agent Advantage</a>
             </div>
             
             <div class="nav-section">
@@ -485,7 +608,7 @@
             </section>
             
             <section class="section" id="agent-power">
-                <h2>🤖 Your Agent Does the Work</h2>
+                <h2> Your Agent Does the Work</h2>
                 <p>FFT_nano isn't just a tool—it's a <strong>living instruction manual</strong>. Once your agent has:</p>
                 
                 <ul>
@@ -501,7 +624,7 @@
                 </div>
                 
                 <div class="info-box important">
-                    <strong>⚠️ A Note for Farmers (and Agents Reading This)</strong><br>
+                    <strong> A Note for Farmers (and Agents Reading This)</strong><br>
                     FFT_nano is powerful AI technology. A few things to keep in mind:
                     <ul style="margin-top: 0.5rem; margin-bottom: 0;">
                         <li><strong>Your agent is helpful, not infallible</strong> — always review major decisions</li>
@@ -544,7 +667,7 @@ cd FFT_nano
                 </div>
                 
                 <div class="info-box security">
-                    <strong>🔐 Protect Your Keys</strong><br>
+                    <strong> Protect Your Keys</strong><br>
                     Never share your API keys in public. If your agent helps configure things, stay in the conversation. Your keys live in <code>.env</code>—keep that file private.
                 </div>
             </section>
@@ -566,16 +689,16 @@ cd FFT_nano
                 </div>
                 
                 <div class="agent-note">
-                    <div class="agent-note-header">🤖 For AI Agents</div>
+                    <div class="agent-note-header"> For AI Agents</div>
                     <p>The codebase is ~22K lines—small enough to read. Your agent can traverse the source, understand the architecture, and make informed changes.</p>
                 </div>
             </section>
             
             <section class="section" id="credentials">
-                <h2>🔑 Credentials & API Keys</h2>
+                <h2> Credentials & API Keys</h2>
                 
                 <div class="agent-note">
-                    <div class="agent-note-header">🤖 Let Your Agent Help</div>
+                    <div class="agent-note-header"> Let Your Agent Help</div>
                     <p>Once your agent has web access, say "Set up my OpenAI provider" or "Help me get an Anthropic key." It knows the signup flows.</p>
                 </div>
                 
@@ -650,7 +773,7 @@ TELEGRAM_ADMIN_SECRET=your_secure_secret</code></pre>
                 <h2>LLM Providers</h2>
                 
                 <div class="info-box important">
-                    <strong>💰 About Provider Costs</strong><br>
+                    <strong> About Provider Costs</strong><br>
                     Most LLM providers charge by usage (per-token). Check your provider's pricing page. Local options like Ollama and LM Studio run on your machine but need a capable computer. Your agent can help you understand and monitor usage.
                 </div>
                 
@@ -696,7 +819,7 @@ LMSTUDIO_MODEL=llama3.2-vision</code></pre>
                 <p>Install: <a href="https://lmstudio.ai">lmstudio.ai</a></p>
                 
                 <div class="info-box success">
-                    <strong>🤖 Your Agent Can Set This Up:</strong><br>
+                    <strong> Your Agent Can Set This Up:</strong><br>
                     Once your agent has web access, tell it "I want to use Claude" — it knows signup URLs, can help create accounts, and configure .env.
                 </div>
             </section>
@@ -748,7 +871,7 @@ OLLAMA_VISION_MODEL=llama3.2-vision</code></pre>
                 </div>
                 
                 <div class="agent-note">
-                    <div class="agent-note-header">🤖 Research Agent</div>
+                    <div class="agent-note-header"> Research Agent</div>
                     <p>Once you have search tools, your agent can autonomously research topics. "Find the best price on tractor parts" → your agent shops around.</p>
                 </div>
             </section>
@@ -783,7 +906,7 @@ OLLAMA_VISION_MODEL=llama3.2-vision</code></pre>
                 </ul>
                 
                 <div class="info-box important">
-                    <strong>📝 What Goes in Memory</strong><br>
+                    <strong> What Goes in Memory</strong><br>
                     Your agent remembers conversations, preferences, and context. If you discuss sensitive information (finances, personal details), that stays in your local <code>groups/</code> folders. Nothing goes to external servers except via your LLM provider. Your agent can help you manage or clear memory if needed.
                 </div>
             </section>
@@ -801,7 +924,7 @@ OLLAMA_VISION_MODEL=llama3.2-vision</code></pre>
                 <p>Task runs are logged to SQLite with duration and result.</p>
                 
                 <div class="info-box important">
-                    <strong>⏰ Scheduling Awareness</strong><br>
+                    <strong> Scheduling Awareness</strong><br>
                     Each scheduled task runs your agent and uses API calls (which may cost money). If you schedule tasks every 5 minutes, that adds up. Start with less frequent schedules and adjust based on your needs.
                 </div>
             </section>
@@ -811,12 +934,12 @@ OLLAMA_VISION_MODEL=llama3.2-vision</code></pre>
                 <p>Agents run inside Apple Container (macOS) or Docker (Linux). Each invocation spawns a container with mounted directories.</p>
                 
                 <div class="info-box security">
-                    <strong>🛡️ What This Means for You</strong><br>
+                    <strong> What This Means for You</strong><br>
                     Your agent runs in an <em>isolated sandbox</em>. It can only see files you explicitly give it access to. Even if something goes wrong, your main computer stays protected. The agent is the farmhand—but it's in a separate building, not in your house.
                 </div>
                 
                 <div class="info-box important">
-                    <strong>👨‍🌾 Farmer Note:</strong><br>
+                    <strong> Farmer Note:</strong><br>
                     This is designed so you can let your agent work autonomously without worrying it'll accidentally delete your photos or mess up your system. It can only touch what you tell it to.
                 </div>
             </section>
@@ -866,10 +989,37 @@ npm run release-check</code></pre>
             
             <section class="section">
                 <div class="info-box">
-                    <strong>🤖 Remember:</strong> Your agent is your co-pilot. Give it goals, let it figure out the how. That's the FFT_nano way.
+                    <strong> Remember:</strong> Your agent is your co-pilot. Give it goals, let it figure out the how. That's the FFT_nano way.
                 </div>
             </section>
         </main>
     </div>
+    <script>
+        function toggleSidebar() {
+            document.querySelector('.sidebar').classList.toggle('open');
+            document.querySelector('.hamburger').classList.toggle('active');
+        }
+        
+        // Close sidebar when clicking a link on mobile
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 900) {
+                    toggleSidebar();
+                }
+            });
+        });
+        
+        // Close sidebar when clicking outside on mobile
+        document.addEventListener('click', (e) => {
+            if (window.innerWidth <= 900) {
+                const sidebar = document.querySelector('.sidebar');
+                const hamburger = document.querySelector('.hamburger');
+                if (!sidebar.contains(e.target) && !hamburger.contains(e.target)) {
+                    sidebar.classList.remove('open');
+                    hamburger.classList.remove('active');
+                }
+            }
+        });
+    </script>
 </body>
 </html>

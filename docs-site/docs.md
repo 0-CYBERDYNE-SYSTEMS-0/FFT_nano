@@ -13,7 +13,7 @@
 
 ---
 
-## 🤖 The Agent Advantage
+##  The Agent Advantage
 
 FFT_nano is a **living instruction manual**. Once your agent has:
 
@@ -47,7 +47,7 @@ npm run auth
 
 ---
 
-## ⚠️ Important Things to Know
+##  Important Things to Know
 
 FFT_nano is powerful AI technology. A few things to keep in mind:
 
@@ -58,9 +58,9 @@ FFT_nano is powerful AI technology. A few things to keep in mind:
 
 ---
 
-## 🔑 Credentials & API Keys
+##  Credentials & API Keys
 
-> **🔐 Security:** Never share your API keys in public. Your keys live in `.env`—keep that file private. If your agent helps configure things, stay in the conversation.
+> ** Security:** Never share your API keys in public. Your keys live in `.env`—keep that file private. If your agent helps configure things, stay in the conversation.
 
 ### Required
 
@@ -104,7 +104,7 @@ FFT_nano is powerful AI technology. A few things to keep in mind:
 
 ## LLM Providers
 
-> **💰 About Provider Costs:** Most LLM providers charge by usage (per-token). Check your provider's pricing. Local options like Ollama and LM Studio run on your machine but need a capable computer.
+> ** About Provider Costs:** Most LLM providers charge by usage (per-token). Check your provider's pricing. Local options like Ollama and LM Studio run on your machine but need a capable computer.
 
 ### OpenAI
 
@@ -228,7 +228,7 @@ npm run validate:skills
 - **Global:** `groups/global/SOUL.md` (read by all, write from main only)
 - **Session:** Each group maintains a conversation session persisted by Pi
 
-> **📝 Privacy Note:** Your agent remembers conversations. If you discuss sensitive info, it stays in your local `groups/` folders. Nothing goes to external servers except via your LLM provider.
+> ** Privacy Note:** Your agent remembers conversations. If you discuss sensitive info, it stays in your local `groups/` folders. Nothing goes to external servers except via your LLM provider.
 
 ---
 
@@ -242,7 +242,7 @@ Users can schedule recurring or one-time tasks. Tasks run as full agents in thei
 
 Task runs logged to SQLite with duration and result.
 
-> **⏰ Scheduling Awareness:** Each scheduled task uses API calls (may cost money). If you schedule every 5 minutes, that adds up. Start with less frequent schedules.
+> ** Scheduling Awareness:** Each scheduled task uses API calls (may cost money). If you schedule every 5 minutes, that adds up. Start with less frequent schedules.
 
 ---
 
@@ -254,9 +254,9 @@ Agents run inside:
 
 Each invocation spawns a container with mounted directories. Bash access is safe—commands run inside the container, not on your host.
 
-> **🛡️ What This Means for You:** Your agent runs in an isolated sandbox. It can only see files you explicitly give it access to. Even if something goes wrong, your main computer stays protected.
+> ** What This Means for You:** Your agent runs in an isolated sandbox. It can only see files you explicitly give it access to. Even if something goes wrong, your main computer stays protected.
 > 
-> **👨‍🌾 Farmer Note:** This is designed so you can let your agent work autonomously without worrying it'll accidentally delete your photos or mess up your system.
+> ** Farmer Note:** This is designed so you can let your agent work autonomously without worrying it'll accidentally delete your photos or mess up your system.
 
 ---
 
