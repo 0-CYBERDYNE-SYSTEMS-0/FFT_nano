@@ -47,7 +47,20 @@ npm run auth
 
 ---
 
+## ⚠️ Important Things to Know
+
+FFT_nano is powerful AI technology. A few things to keep in mind:
+
+- **Your agent is helpful, not infallible** — always review major decisions
+- **API keys cost money** — keep an eye on usage, especially with paid providers
+- **The agent can only work with what it can see** — if something's not working, check what folders it has access to
+- **Scheduled tasks run automatically** — make sure you know what's scheduled
+
+---
+
 ## 🔑 Credentials & API Keys
+
+> **🔐 Security:** Never share your API keys in public. Your keys live in `.env`—keep that file private. If your agent helps configure things, stay in the conversation.
 
 ### Required
 
@@ -90,6 +103,8 @@ npm run auth
 ---
 
 ## LLM Providers
+
+> **💰 About Provider Costs:** Most LLM providers charge by usage (per-token). Check your provider's pricing. Local options like Ollama and LM Studio run on your machine but need a capable computer.
 
 ### OpenAI
 
@@ -213,6 +228,8 @@ npm run validate:skills
 - **Global:** `groups/global/SOUL.md` (read by all, write from main only)
 - **Session:** Each group maintains a conversation session persisted by Pi
 
+> **📝 Privacy Note:** Your agent remembers conversations. If you discuss sensitive info, it stays in your local `groups/` folders. Nothing goes to external servers except via your LLM provider.
+
 ---
 
 ## Scheduling
@@ -225,6 +242,8 @@ Users can schedule recurring or one-time tasks. Tasks run as full agents in thei
 
 Task runs logged to SQLite with duration and result.
 
+> **⏰ Scheduling Awareness:** Each scheduled task uses API calls (may cost money). If you schedule every 5 minutes, that adds up. Start with less frequent schedules.
+
 ---
 
 ## Container Isolation
@@ -234,6 +253,10 @@ Agents run inside:
 - **Linux:** Docker
 
 Each invocation spawns a container with mounted directories. Bash access is safe—commands run inside the container, not on your host.
+
+> **🛡️ What This Means for You:** Your agent runs in an isolated sandbox. It can only see files you explicitly give it access to. Even if something goes wrong, your main computer stays protected.
+> 
+> **👨‍🌾 Farmer Note:** This is designed so you can let your agent work autonomously without worrying it'll accidentally delete your photos or mess up your system.
 
 ---
 
