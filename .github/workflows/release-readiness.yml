@@ -21,7 +21,7 @@ jobs:
 
       - name: Scan working tree with gitleaks (no git history)
         run: |
-          "${{ steps.gitleaks.outputs.gitleaks-bin }}" dir --source . --no-git --redact --exit-code 1
+          "${{ steps.gitleaks.outputs.gitleaks-bin }}" dir . --redact --exit-code 1
 
       - name: Enforce repo secret policy scan
         run: ./scripts/secret-scan.sh

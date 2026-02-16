@@ -16,4 +16,7 @@ npm test
 echo "Release check: secret scan"
 npm run secret-scan
 
+echo "Release check: npm pack content policy"
+npm run pack-check
+
 echo "Release check passed."

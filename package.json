@@ -2,16 +2,27 @@
   "name": "fft_nano",
   "version": "1.0.1",
   "description": "FarmFriendTerminal_nano (FFT_nano) — secure, containerized AI farm assistant.",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/issues"
+  },
+  "homepage": "https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#readme",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
     "auth": "tsx src/whatsapp-auth.ts",
     "validate:skills": "tsx scripts/validate-pi-skills.ts",
     "secret-scan": "bash scripts/secret-scan.sh",
+    "pack-check": "bash scripts/check-pack-contents.sh",
     "release-check": "bash scripts/release-check.sh",
     "release:sha256": "bash scripts/release/generate-sha256s.sh",
     "typecheck": "tsc --noEmit",

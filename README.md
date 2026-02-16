@@ -2,6 +2,10 @@
 
 # FFT_nano
 
+[![Release](https://img.shields.io/github/v/release/0-CYBERDYNE-SYSTEMS-0/FFT_nano)](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/releases)
+[![Release Readiness](https://img.shields.io/github/actions/workflow/status/0-CYBERDYNE-SYSTEMS-0/FFT_nano/release-readiness.yml?branch=main&label=release%20readiness)](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/actions/workflows/release-readiness.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 FarmFriend Terminal nano (`FFT_nano`) is a single-process Node.js host that runs an LLM agent inside a Linux container and routes chat I/O through Telegram and/or WhatsApp.
 
 ## What It Does
@@ -12,6 +16,20 @@ FarmFriend Terminal nano (`FFT_nano`) is a single-process Node.js host that runs
 - Uses `~/nano` as the main/admin workspace (configurable via `FFT_NANO_MAIN_WORKSPACE_DIR`)
 - Persists non-main memory per group in `groups/<group>/MEMORY.md` (plus `groups/<group>/memory/*.md`)
 - Sends agent output back to the originating chat
+
+## Project Status
+
+- Official distribution channel: **GitHub Releases**
+- `npm install` is intentionally **not** the primary install path yet
+- Current release process and checks: `docs/RELEASE.md`
+
+Project links:
+
+- Releases: https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/releases
+- Security policy: `.github/SECURITY.md`
+- Contributing: `CONTRIBUTING.md`
+- Support: `SUPPORT.md`
+- Changelog: `CHANGELOG.md`
 
 ## Quickstart (Single-Repo Install)
 
