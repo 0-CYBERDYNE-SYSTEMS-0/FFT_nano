@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FFT_nano Developer Documentation | FFT_nano Docs</title>
+  <meta name="description" content="FFT_nano documentation page: FFT_nano Developer Documentation">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --text: #ffffff;
+      --text-muted: #a0a0a0;
+      --text-dim: #666666;
+      --accent: #b8ff4a;
+      --accent-subtle: rgba(184, 255, 74, 0.08);
+      --border: #2a2a2a;
+      --code-bg: #161616;
+      --success: #3eb86b;
+      --font-main: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { font-family: var(--font-main); background: var(--bg); color: var(--text); line-height: 1.7; font-size: 17px; -webkit-font-smoothing: antialiased; }
+    a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.2s; }
+    a:hover { border-bottom-color: var(--accent); opacity: 0.85; }
+    .docs-container { display: flex; min-height: 100vh; }
+    .sidebar { width: 260px; min-width: 260px; background: var(--bg-secondary); border-right: 1px solid var(--border); padding: 1.5rem; height: 100vh; position: fixed; overflow-y: auto; z-index: 100; }
+    .logo { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 600; color: var(--accent); margin-bottom: 0.25rem; }
+    .logo-sub { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 2rem; font-family: var(--font-mono); }
+    .nav-section { margin-bottom: 1.5rem; }
+    .nav-section-title { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin-bottom: 0.6rem; font-weight: 600; }
+    .nav-link { display: block; padding: 0.4rem 0; color: var(--text-muted); font-size: 0.9rem; transition: color 0.2s; }
+    .nav-link:hover { color: var(--accent); }
+    .main-wrapper { flex: 1; margin-left: 260px; min-width: 0; }
+    .main-content { padding: 3rem 4rem; max-width: 100%; }
+    .hero { padding: 1rem 0 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 2rem; }
+    .hero h1 { font-size: 2rem; margin-bottom: 0.6rem; }
+    .hero p { color: var(--text-muted); }
+    .article h1, .article h2, .article h3, .article h4 { color: var(--text); font-weight: 600; line-height: 1.3; }
+    .article h1 { font-size: 2rem; margin: 2rem 0 1rem; }
+    .article h2 { font-size: 1.5rem; margin: 2rem 0 0.75rem; }
+    .article h3 { font-size: 1.1rem; margin: 1.5rem 0 0.6rem; }
+    .article p { margin-bottom: 1rem; color: #c0c0c0; max-width: 76ch; }
+    .article ul, .article ol { margin: 0.75rem 0 1rem 1.4rem; color: #c0c0c0; }
+    .article li { margin-bottom: 0.4rem; }
+    .article blockquote { border-left: 3px solid var(--accent); padding: 0.75rem 1rem; background: var(--accent-subtle); color: #d7e3c2; margin: 1rem 0; }
+    .article table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.25rem; font-size: 0.9rem; border: 1px solid var(--border); }
+    .article th, .article td { text-align: left; padding: 0.65rem 0.8rem; border-bottom: 1px solid var(--border); }
+    .article th { background: var(--bg-tertiary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .article tr:last-child td { border-bottom: none; }
+    .article code { font-family: var(--font-mono); background: var(--code-bg); border: 1px solid var(--border); padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.85em; }
+    .article pre { position: relative; background: var(--code-bg) !important; border: 1px solid var(--border); border-radius: 6px; padding: 1rem 1.1rem !important; overflow-x: auto; font-size: 0.84rem; line-height: 1.55; margin: 1rem 0 1.2rem !important; }
+    .article pre code { border: none; background: transparent; padding: 0; font-size: inherit; }
+    .copy-btn { position: absolute; top: 0.45rem; right: 0.45rem; background: #1f252d; border: 1px solid var(--border); color: var(--text-muted); font-family: var(--font-mono); font-size: 0.68rem; padding: 0.25rem 0.5rem; border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.2s, background 0.2s, color 0.2s; }
+    pre:hover .copy-btn { opacity: 1; }
+    .copy-btn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+    .copy-btn.copied { opacity: 1; background: var(--success); color: #000; border-color: var(--success); }
+    .toc-box { border: 1px solid var(--border); background: var(--bg-secondary); padding: 1rem; margin-bottom: 1.2rem; }
+    .toc-box h3 { margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--accent); font-family: var(--font-mono); }
+    .toc-box a { display: block; border: none; padding: 0.12rem 0; color: var(--text-muted); font-size: 0.9rem; }
+    .toc-box a:hover { color: var(--accent); }
+    .toc-box a.l3 { padding-left: 0.8rem; font-size: 0.85rem; }
+    .hamburger { display: none; position: fixed; top: 0.75rem; right: 0.75rem; z-index: 1000; width: 44px; height: 44px; background: var(--bg-secondary); border: 1px solid var(--border); cursor: pointer; flex-direction: column; justify-content: center; align-items: center; gap: 5px; }
+    .hamburger span { display: block; width: 18px; height: 2px; background: var(--text); transition: all 0.3s; }
+    .hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(4px, 5px); }
+    .hamburger.active span:nth-child(2) { opacity: 0; }
+    .hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(4px, -5px); }
+    @media (max-width: 900px) {
+      .hamburger { display: flex; }
+      .sidebar { position: fixed; left: -280px; width: 280px; height: 100vh; z-index: 999; transition: left 0.3s ease; padding-top: 4rem; }
+      .sidebar.open { left: 0; }
+      .main-wrapper { margin-left: 0; }
+      .main-content { padding: 1.5rem; }
+      .hero h1 { font-size: 1.6rem; }
+      .article h1 { font-size: 1.7rem; }
+      .article h2 { font-size: 1.3rem; }
+    }
+  </style>
+</head>
+<body>
+  <button class="hamburger" onclick="toggleSidebar()"><span></span><span></span><span></span></button>
+  <div class="docs-container">
+    <nav class="sidebar">
+      <div class="logo">FFT_nano</div>
+      <div class="logo-sub">Developer Documentation</div>
+      <div class="nav-section">
+        <div class="nav-section-title">Navigation</div>
+        <a href="index.html" class="nav-link">Styled Index</a>
+        <a href="docs.html" class="nav-link">Docs Home</a>
+        <a href="developer/module-index.html" class="nav-link">Module Index</a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Current Page</div>
+        <a href="#top" class="nav-link">Top</a>
+      </div>
+    </nav>
+    <div class="main-wrapper">
+      <main class="main-content" id="top">
+        <section class="hero">
+          <h1>FFT_nano Developer Documentation</h1>
+          <p>Rendered from Markdown into styled HTML. Code blocks, tables, and links stay readable and theme-consistent.</p>
+        </section>
+        <section class="toc-box"><h3>On This Page</h3><a class="" href="#quick-navigation">Quick Navigation</a><a class="" href="#source-of-truth-principle">Source-of-Truth Principle</a><a class="" href="#snapshot">Snapshot</a><a class="" href="#notes">Notes</a></section>
+        <article class="article">
+          <h1 id="fftnano-developer-documentation">FFT_nano Developer Documentation</h1>
+<p>This docs set is implementation-anchored to <code>src/</code> and <code>container/agent-runner/src/</code>.</p>
+<p>Scope:</p>
+<ul>
+<li>Host runtime internals (<code>src/*.ts</code>)</li>
+<li>Container runtime internals (<code>container/agent-runner/src/*.ts</code>)</li>
+<li>Operational scripts (<code>scripts/*.sh</code>)</li>
+<li>Storage contracts (SQLite + IPC + memory files)</li>
+</ul>
+<p>Primary entry points:</p>
+<ul>
+<li><code>src/index.ts</code> (host process orchestrator)</li>
+<li><code>src/container-runner.ts</code> (container spawn + mount policy + env passthrough)</li>
+<li><code>container/agent-runner/src/index.ts</code> (in-container pi runtime bridge)</li>
+</ul>
+<h2 id="quick-navigation">Quick Navigation</h2>
+<p>Core guides:</p>
+<ul>
+<li><a href="developer/00-gap-analysis.html">Gap Analysis: src vs old docs-site</a></li>
+<li><a href="developer/01-architecture.html">Architecture</a></li>
+<li><a href="developer/02-runtime-message-processing.html">Runtime Message Flow</a></li>
+<li><a href="developer/03-container-runtime.html">Container Runtime</a></li>
+<li><a href="developer/04-config-env.html">Configuration and Env Vars</a></li>
+<li><a href="developer/05-telegram.html">Telegram Integration</a></li>
+<li><a href="developer/06-whatsapp.html">WhatsApp Integration</a></li>
+<li><a href="developer/07-scheduler-and-tasks.html">Scheduler and Tasks</a></li>
+<li><a href="developer/08-ipc-contracts.html">IPC Contracts</a></li>
+<li><a href="developer/09-memory-system.html">Memory System</a></li>
+<li><a href="developer/10-farm-mode.html">Farm Mode and Home Assistant</a></li>
+<li><a href="developer/11-security-model.html">Security Model</a></li>
+<li><a href="developer/12-coding-delegation.html">Coding Delegation</a></li>
+<li><a href="developer/13-data-models.html">Data Models</a></li>
+<li><a href="developer/14-testing-release.html">Testing and Release</a></li>
+<li><a href="developer/15-agent-runner.html">Container Agent Runner</a></li>
+<li><a href="developer/16-scripts-reference.html">Scripts Reference</a></li>
+</ul>
+<p>Module reference pages (one page per source module):</p>
+<ul>
+<li><a href="developer/module-index.html">Module Index</a></li>
+</ul>
+<h2 id="source-of-truth-principle">Source-of-Truth Principle</h2>
+<p>If any statement in docs conflicts with code, code wins.</p>
+<p>Validation strategy used in this docs rebuild:</p>
+<ol>
+<li>Enumerate all modules under <code>src/</code>.</li>
+<li>Enumerate exported APIs per module.</li>
+<li>Enumerate runtime env variables referenced in code.</li>
+<li>Map runtime command surfaces (<code>/help</code> command set, IPC JSON, scheduler types, farm actions).</li>
+<li>Document behavior with direct file references.</li>
+</ol>
+<h2 id="snapshot">Snapshot</h2>
+<p>Repository baseline in this pass:</p>
+<ul>
+<li>Package: <code>fft_nano@1.0.1</code></li>
+<li>Runtime: <code>node &gt;=20</code></li>
+<li>Host TypeScript LOC (<code>src/*.ts</code>): 9,858</li>
+<li>Primary host process: single Node process with Telegram and/or WhatsApp ingress, SQLite persistence, and containerized agent execution.</li>
+</ul>
+<h2 id="notes">Notes</h2>
+<ul>
+<li><code>docs-site/index.html</code> is now a navigation shell for this docs set.</li>
+<li>Old docs content was broad but mixed in non-implemented or stale details; see gap analysis for exact deltas.</li>
+</ul>
+
+
+        </article>
+      </main>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-typescript.min.js"></script>
+  <script>
+    function toggleSidebar() {
+      document.querySelector('.sidebar').classList.toggle('open');
+      document.querySelector('.hamburger').classList.toggle('active');
+    }
+    document.querySelectorAll('.nav-link').forEach(link => {
+      link.addEventListener('click', () => {
+        if (window.innerWidth <= 900) toggleSidebar();
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (window.innerWidth <= 900) {
+        const sidebar = document.querySelector('.sidebar');
+        const hamburger = document.querySelector('.hamburger');
+        if (!sidebar.contains(e.target) && !hamburger.contains(e.target)) {
+          sidebar.classList.remove('open');
+          hamburger.classList.remove('active');
+        }
+      }
+    });
+
+    document.querySelectorAll('pre').forEach(pre => {
+      const btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = 'Copy';
+      btn.addEventListener('click', () => {
+        const code = pre.querySelector('code');
+        const txt = code ? code.textContent : pre.textContent;
+        navigator.clipboard.writeText(txt || '').then(() => {
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+          }, 1800);
+        });
+      });
+      pre.appendChild(btn);
+    });
+  </script>
+</body>
+</html>

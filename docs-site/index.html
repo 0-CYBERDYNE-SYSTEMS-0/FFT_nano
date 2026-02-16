@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FFT_nano | FarmFriend Terminal</title>
-    <meta name="description" content="FFT_nano - Secure, containerized AI farm assistant.">
+    <title>FFT_nano | Developer Documentation</title>
+    <meta name="description" content="FFT_nano implementation-anchored developer documentation.">
     <meta name="theme-color" content="#0a0a0a">
     <meta name="ai:doc_type" content="software_documentation">
     <meta name="ai:project" content="fft_nano">
@@ -130,215 +130,231 @@
     <div class="docs-container">
         <nav class="sidebar">
             <div class="logo">FFT_nano</div>
-            <div class="logo-sub">FarmFriend Terminal</div>
+            <div class="logo-sub">Developer Documentation</div>
             <div class="nav-section">
-                <div class="nav-section-title">Getting Started</div>
+                <div class="nav-section-title">Overview</div>
                 <a href="#introduction" class="nav-link">Introduction</a>
                 <a href="#quickstart" class="nav-link">Quickstart</a>
+                <a href="#coverage" class="nav-link">Coverage</a>
                 <a href="#architecture" class="nav-link">Architecture</a>
-                <a href="#agent-power" class="nav-link">The Agent Advantage</a>
             </div>
             <div class="nav-section">
-                <div class="nav-section-title">Credentials and Setup</div>
-                <a href="#credentials" class="nav-link">Credentials Overview</a>
-                <a href="#telegram-setup" class="nav-link">Telegram</a>
-                <a href="#whatsapp-setup" class="nav-link">WhatsApp</a>
-                <a href="#llm-providers" class="nav-link">LLM Providers</a>
-                <a href="#vision-setup" class="nav-link">Vision Models</a>
-                <a href="#search-tools" class="nav-link">Search Tools</a>
+                <div class="nav-section-title">Core Guides</div>
+                <a href="#runtime" class="nav-link">Runtime Flow</a>
+                <a href="#config" class="nav-link">Config and Env</a>
+                <a href="#ipc" class="nav-link">IPC Contracts</a>
+                <a href="#memory" class="nav-link">Memory System</a>
+                <a href="#farm" class="nav-link">Farm and HA</a>
+                <a href="#security" class="nav-link">Security</a>
             </div>
             <div class="nav-section">
-                <div class="nav-section-title">Core Features</div>
-                <a href="#skills" class="nav-link">Skills System</a>
-                <a href="#memory" class="nav-link">Memory</a>
-                <a href="#scheduling" class="nav-link">Scheduling</a>
-                <a href="#container" class="nav-link">Container Isolation</a>
+                <div class="nav-section-title">Reference</div>
+                <a href="#guide-index" class="nav-link">Guide Index</a>
+                <a href="#modules" class="nav-link">All Modules</a>
+                <a href="#scripts" class="nav-link">Scripts</a>
             </div>
             <div class="nav-section">
-                <div class="nav-section-title">Development</div>
-                <a href="#contributing" class="nav-link">Contributing</a>
-                <a href="#release" class="nav-link">Release Process</a>
-            </div>
-            <div class="nav-section">
-                <div class="nav-section-title">Resources</div>
-                <a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/releases" class="nav-link" target="_blank">Releases</a>
+                <div class="nav-section-title">Files</div>
+                <a href="docs.html" class="nav-link">docs.html</a>
+                <a href="developer/module-index.html" class="nav-link">module-index.html</a>
             </div>
         </nav>
         <div class="main-wrapper">
             <main class="main-content">
                 <section class="hero" id="introduction">
-                    <h1>FarmFriend<br><span>Terminal</span></h1>
-                    <p>FFT_nano is a secure, containerized AI farm assistant that lives in your chat. Once configured, your agent handles the heavy lifting.</p>
+                    <h1>FFT_nano<br><span>Developer Docs</span></h1>
+                    <p>Comprehensive, implementation-anchored documentation rebuilt from <code>src/</code>, <code>container/agent-runner/src/</code>, and runtime scripts.</p>
                     <div class="hero-tags">
-                        <span class="tag">Node.js</span>
-                        <span class="tag">Containerized</span>
-                        <span class="tag">Telegram + WhatsApp</span>
-                        <span class="tag accent">Living Manual</span>
+                        <span class="tag">Node.js &gt;= 20</span>
+                        <span class="tag">TypeScript Host LOC: 9,858</span>
+                        <span class="tag">25 Module References</span>
+                        <span class="tag accent">Code-Accurate</span>
                     </div>
                     <div class="quick-nav">
-                        <a href="#quickstart">Quickstart</a>
-                        <a href="#credentials">Credentials</a>
-                        <a href="#agent-power">The Agent Advantage</a>
+                        <a href="#guide-index">Guide Index</a>
+                        <a href="#modules">Module Reference</a>
+                        <a href="developer/00-gap-analysis.html">Gap Analysis</a>
                     </div>
                 </section>
-                <section class="section" id="agent-power">
-                    <h2>The Agent Advantage</h2>
-                    <p>FFT_nano is a <strong>living instruction manual</strong>. Once your agent has:</p>
-                    <ul>
-                        <li><strong>A primary LLM provider</strong> (OpenAI, Anthropic, Ollama, etc.)</li>
-                        <li><strong>Web access</strong> (via curl, browser automation)</li>
-                    </ul>
-                    <p>It can sign up for services, configure integrations, and build on top of FFT_nano by itself. You're the farmer. Your agent is the farmhand.</p>
-                    <div class="info-box"><strong>The FFT_nano Philosophy</strong><br>Most setup tasks your agent can handle. You give it a goal, it figures out the how.</div>
-                    <div class="info-box important"><strong>Important Things to Know</strong><ul><li>Your agent is helpful, not infallible</li><li>API keys cost money</li><li>The agent can only work with what it can see</li><li>Scheduled tasks run automatically</li></ul></div>
-                </section>
+
                 <section class="section" id="quickstart">
                     <h2>Quickstart</h2>
-                    <h3>1. Clone and Bootstrap</h3>
-                    <div class="code-block"><div class="label">Terminal</div><pre><code>git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
-cd FFT_nano
-./scripts/setup.sh</code></pre></div>
-                    <h3>2. Configure Credentials</h3>
-                    <p>Edit <code>.env</code> with your provider API keys. See <a href="#credentials">Credentials</a>.</p>
-                    <h3>3. Authenticate</h3>
-                    <div class="code-block"><div class="label">WhatsApp (if using)</div><pre><code>npm run auth</code></pre></div>
-                    <h3>4. Start</h3>
-                    <div class="code-block"><div class="label">Development</div><pre><code>./scripts/start.sh dev</code></pre></div>
+                    <h3>Read In This Order</h3>
+                    <ol>
+                        <li><a href="developer/00-gap-analysis.html">Gap Analysis</a></li>
+                        <li><a href="developer/01-architecture.html">Architecture</a></li>
+                        <li><a href="developer/02-runtime-message-processing.html">Runtime Message Flow</a></li>
+                        <li><a href="developer/03-container-runtime.html">Container Runtime</a></li>
+                        <li><a href="developer/module-index.html">Module Index</a></li>
+                    </ol>
+                    <div class="code-block"><div class="label">Validate Runtime</div><pre><code>npm run typecheck
+npm test
+npm run validate:skills</code></pre></div>
                 </section>
+
+                <section class="section" id="coverage">
+                    <h2>Documentation Coverage</h2>
+                    <div class="table-wrapper">
+                        <table>
+                            <tr><th>Area</th><th>Coverage</th></tr>
+                            <tr><td>Host Runtime</td><td>All modules under <code>src/*.ts</code> documented</td></tr>
+                            <tr><td>Container Runtime</td><td><code>container/agent-runner/src/*.ts</code> deep-dive included</td></tr>
+                            <tr><td>Commands and IPC</td><td>Telegram command surface, task/action IPC payloads documented</td></tr>
+                            <tr><td>Storage Contracts</td><td>SQLite tables, FTS index, JSON snapshots, farm-state files documented</td></tr>
+                            <tr><td>Security Boundaries</td><td>Main/non-main gates, mount allowlist, path traversal guards documented</td></tr>
+                            <tr><td>Operational Scripts</td><td>Setup/start/farm/release script behavior documented</td></tr>
+                        </table>
+                    </div>
+                    <div class="info-box important"><strong>Source-of-Truth Rule</strong><br>If docs and code diverge, code wins. This docs set is built to minimize that divergence by referencing concrete modules and contracts.</div>
+                </section>
+
                 <section class="section" id="architecture">
-                    <h2>Architecture</h2>
-                    <p>FFT_nano is a single Node.js process that receives messages from Telegram/WhatsApp, stores data in SQLite, runs the agent in a container, and sends responses back.</p>
+                    <h2>Architecture Snapshot</h2>
+                    <p>Single host process orchestrates message ingress, persistence, containerized agent execution, scheduler loops, and IPC action/task handling.</p>
                     <div class="table-wrapper">
                         <table>
-                            <tr><th>Component</th><th>Purpose</th></tr>
-                            <tr><td><code>src/index.ts</code></td><td>Main router, message handling</td></tr>
-                            <tr><td><code>src/whatsapp/</code></td><td>WhatsApp Baileys integration</td></tr>
-                            <tr><td><code>src/telegram/</code></td><td>Telegram Bot API</td></tr>
-                            <tr><td><code>src/scheduler/</code></td><td>Cron-style task scheduling</td></tr>
-                            <tr><td><code>container/</code></td><td>Container build definitions</td></tr>
-                            <tr><td><code>skills/</code></td><td>Agent skill definitions</td></tr>
+                            <tr><th>File</th><th>Role</th></tr>
+                            <tr><td><code>src/index.ts</code></td><td>Main orchestrator (message loops, commands, routing, lifecycle)</td></tr>
+                            <tr><td><code>src/container-runner.ts</code></td><td>Mount/env policy + container execution + result parsing</td></tr>
+                            <tr><td><code>src/db.ts</code></td><td>SQLite schema + message/task persistence + FTS transcript search</td></tr>
+                            <tr><td><code>src/task-scheduler.ts</code></td><td>Due-task polling and scheduled task execution</td></tr>
+                            <tr><td><code>src/telegram.ts</code></td><td>Telegram poll/send/download abstraction</td></tr>
+                            <tr><td><code>container/agent-runner/src/index.ts</code></td><td>In-container pi runtime bridge</td></tr>
                         </table>
                     </div>
-                    <div class="agent-note"><div class="agent-note-header">For AI Agents</div><p>The codebase is ~22K lines. Your agent can traverse the source, understand the architecture, and make informed changes.</p></div>
                 </section>
-                <section class="section" id="credentials">
-                    <h2>Credentials and API Keys</h2>
-                    <div class="info-box security"><strong>Protect Your Keys</strong><br>Never share your API keys in public. Your keys live in <code>.env</code>—keep that file private.</div>
-                    <div class="credentials-grid">
-                        <div class="credential-card"><h4>Telegram Bot</h4><p>Create via @BotFather.</p><span class="status required">Required</span></div>
-                        <div class="credential-card"><h4>WhatsApp</h4><p>QR code auth via npm run auth.</p><span class="status optional">Optional</span></div>
-                        <div class="credential-card"><h4>LLM Provider</h4><p>OpenAI, Anthropic, Ollama, LM Studio.</p><span class="status required">Required</span></div>
-                        <div class="credential-card"><h4>Vision Model</h4><p>For image analysis.</p><span class="status optional">Optional</span></div>
-                        <div class="credential-card"><h4>Search Tools</h4><p>Brave, Tavily, Perplexity.</p><span class="status optional">Optional</span></div>
-                    </div>
+
+                <section class="section" id="runtime">
+                    <h2>Runtime Flow</h2>
+                    <ul>
+                        <li>Ingress via Telegram and/or WhatsApp</li>
+                        <li>Per-chat queue policy applied (<code>collect|interrupt|followup|steer|steer-backlog</code>)</li>
+                        <li>Prompt built from missed messages since last agent interaction</li>
+                        <li>Container run launched with per-chat overrides (model/provider/think/reasoning)</li>
+                        <li>Result streamed or sent final, then timestamps and usage counters updated</li>
+                    </ul>
+                    <p>Full details: <a href="developer/02-runtime-message-processing.html">Runtime Message Flow</a></p>
                 </section>
-                <section class="section" id="telegram-setup">
-                    <h2>Telegram Setup</h2>
-                    <ol><li>Message <strong>@BotFather</strong></li><li>Send <code>/newbot</code> and follow prompts</li><li>Copy the bot token</li></ol>
-                    <div class="code-block"><div class="label">.env</div><pre><code>TELEGRAM_BOT_TOKEN=your_bot_token_here
-TELEGRAM_ADMIN_SECRET=your_secure_secret</code></pre></div>
-                    <p>To claim main: DM bot and send <code>/main your_secure_secret</code></p>
+
+                <section class="section" id="config">
+                    <h2>Config and Environment</h2>
+                    <div class="code-block"><div class="label">High-Impact Env Vars</div><pre><code>TELEGRAM_BOT_TOKEN=
+WHATSAPP_ENABLED=0|1
+CONTAINER_RUNTIME=auto|apple|docker
+FFT_NANO_MAIN_WORKSPACE_DIR=~/nano
+MEMORY_RETRIEVAL_GATE_ENABLED=1
+MEMORY_TOP_K=8
+FARM_STATE_ENABLED=true|false
+FARM_MODE=demo|production
+HA_URL=http://localhost:8123
+HA_TOKEN=...</code></pre></div>
+                    <p>Full reference: <a href="developer/04-config-env.html">Configuration and Environment Variables</a></p>
                 </section>
-                <section class="section" id="whatsapp-setup">
-                    <h2>WhatsApp Setup</h2>
-                    <div class="code-block"><div class="label">Terminal</div><pre><code>npm run auth</code></pre></div>
-                    <p>Scan QR: WhatsApp Settings > Linked Devices</p>
-                    <div class="code-block"><div class="label">.env</div><pre><code>WHATSAPP_ENABLED=true</code></pre></div>
+
+                <section class="section" id="ipc">
+                    <h2>IPC Contracts</h2>
+                    <p>Per-group IPC namespace at <code>data/ipc/&lt;group&gt;/</code> mounted to <code>/workspace/ipc</code>.</p>
+                    <div class="code-block"><div class="label">Message IPC</div><pre><code>{
+  "type": "message",
+  "chatJid": "telegram:123456",
+  "text": "status update"
+}</code></pre></div>
+                    <div class="code-block"><div class="label">Task IPC</div><pre><code>{
+  "type": "schedule_task",
+  "prompt": "Check greenhouse readings",
+  "schedule_type": "cron",
+  "schedule_value": "0 * * * *",
+  "context_mode": "isolated",
+  "groupFolder": "main"
+}</code></pre></div>
+                    <p>Full payload contracts: <a href="developer/08-ipc-contracts.html">IPC Contracts</a></p>
                 </section>
-                <section class="section" id="llm-providers">
-                    <h2>LLM Providers</h2>
-                    <div class="info-box"><strong>Provider Costs</strong><br>Most LLM providers charge by usage. Local options run on your machine.</div>
-                    <h3>OpenAI</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>OPENAI_API_KEY=sk-...
-PRIMARY_PROVIDER=openai
-OPENAI_MODEL=gpt-4o</code></pre></div>
-                    <p>Sign up: <a href="https://platform.openai.com/signup" target="_blank">platform.openai.com</a></p>
-                    <h3>Anthropic</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>ANTHROPIC_API_KEY=sk-ant-...
-PRIMARY_PROVIDER=anthropic</code></pre></div>
-                    <p>Sign up: <a href="https://www.anthropic.com/api" target="_blank">anthropic.com/api</a></p>
-                    <h3>OpenRouter</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>OPENROUTER_API_KEY=sk-or-...
-PRIMARY_PROVIDER=openrouter</code></pre></div>
-                    <p>Sign up: <a href="https://openrouter.ai" target="_blank">openrouter.ai</a></p>
-                    <h3>Ollama (Local)</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>PRIMARY_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3</code></pre></div>
-                    <p>Install: <a href="https://ollama.com" target="_blank">ollama.com</a></p>
-                    <h3>LM Studio</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>PRIMARY_PROVIDER=lmstudio
-LMSTUDIO_BASE_URL=http://localhost:1234/v1
-LMSTUDIO_MODEL=llama3.2-vision</code></pre></div>
-                    <p>Install: <a href="https://lmstudio.ai" target="_blank">lmstudio.ai</a></p>
-                </section>
-                <section class="section" id="vision-setup">
-                    <h2>Vision Models</h2>
-                    <div class="code-block"><div class="label">LM Studio</div><pre><code>VISION_PROVIDER=lmstudio
-LMSTUDIO_VISION_MODEL=llama3.2-vision</code></pre></div>
-                    <div class="code-block"><div class="label">Ollama</div><pre><code>VISION_PROVIDER=ollama
-OLLAMA_VISION_MODEL=llama3.2-vision</code></pre></div>
-                </section>
-                <section class="section" id="search-tools">
-                    <h2>Search Tools</h2>
-                    <h3>Brave Search</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>BRAVE_API_KEY=your_brave_api_key</code></pre></div>
-                    <p>Get key: <a href="https://brave.com/search/api/" target="_blank">brave.com/search/api</a></p>
-                    <h3>Tavily</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>TAVILY_API_KEY=your_tavily_key</code></pre></div>
-                    <h3>Perplexity</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>PERPLEXITY_API_KEY=your_perplexity_key</code></pre></div>
-                    <h3>xAI (Grok)</h3>
-                    <div class="code-block"><div class="label">.env</div><pre><code>XAI_API_KEY=your_xai_key</code></pre></div>
-                </section>
-                <section class="section" id="skills">
-                    <h2>Skills System</h2>
-                    <div class="table-wrapper">
-                        <table>
-                            <tr><th>Type</th><th>Location</th><th>Description</th></tr>
-                            <tr><td>Setup</td><td><code>skills/setup/</code></td><td>Bootstrap</td></tr>
-                            <tr><td>Runtime</td><td><code>skills/runtime/</code></td><td>Mirrored into container</td></tr>
-                            <tr><td>User</td><td><code>~/nano/skills/</code></td><td>Main workspace</td></tr>
-                        </table>
-                    </div>
-                    <h3>Built-in Skills</h3>
-                    <ul><li><code>fft-setup</code></li><li><code>fft-debug</code></li><li><code>fft-farm-bootstrap</code></li><li><code>fft-farm-onboarding</code></li><li><code>fft-farm-validate</code></li></ul>
-                    <div class="code-block"><div class="label">Validate</div><pre><code>npm run validate:skills</code></pre></div>
-                </section>
+
                 <section class="section" id="memory">
                     <h2>Memory System</h2>
-                    <ul><li><strong>Per-group:</strong> <code>groups/&lt;group&gt;/SOUL.md</code></li><li><strong>Global:</strong> <code>groups/global/SOUL.md</code></li><li><strong>Session:</strong> Conversation persisted per group</li></ul>
-                    <div class="info-box important"><strong>Privacy Note</strong><br>Conversations stay local. Nothing goes to external servers except via your LLM provider.</div>
+                    <ul>
+                        <li>Canonical memory file is <code>MEMORY.md</code> per group</li>
+                        <li><code>SOUL.md</code> is identity/policy context, not compaction log store</li>
+                        <li>Retrieval-gated memory context is built lexically from group + global memory</li>
+                        <li>Transcript episodic memory is powered by SQLite FTS5</li>
+                    </ul>
+                    <p>Full behavior: <a href="developer/09-memory-system.html">Memory System</a></p>
                 </section>
-                <section class="section" id="scheduling">
-                    <h2>Scheduling</h2>
-                    <p>Schedule recurring or one-time tasks.</p>
-                    <ul><li><strong>Cron:</strong> <code>0 6 * * *</code> (daily at 6am)</li><li><strong>Intervals:</strong> every 30 minutes</li><li><strong>One-time:</strong> ISO timestamp</li></ul>
-                    <div class="info-box warning"><strong>Scheduling Awareness</strong><br>Each task uses API calls. Start with less frequent schedules.</div>
+
+                <section class="section" id="farm">
+                    <h2>Farm Mode and Home Assistant</h2>
+                    <ul>
+                        <li>Fast/medium/slow collector loops write farm-state ledgers</li>
+                        <li>Farm actions are allowlisted and main-chat-only</li>
+                        <li>Production mode blocks control actions until profile validation passes</li>
+                    </ul>
+                    <p>Full behavior: <a href="developer/10-farm-mode.html">Farm Mode and Home Assistant</a></p>
                 </section>
-                <section class="section" id="container">
-                    <h2>Container Isolation</h2>
-                    <p>Agents run inside Apple Container (macOS) or Docker (Linux). Each invocation spawns a container with mounted directories.</p>
-                    <div class="info-box security"><strong>What This Means</strong><br>Your agent runs in an isolated sandbox. It can only see files you explicitly give it access to.</div>
-                    <div class="info-box important"><strong>Farmer Note</strong><br>Let your agent work autonomously without worrying it will mess up your system.</div>
+
+                <section class="section" id="security">
+                    <h2>Security Model</h2>
+                    <ul>
+                        <li>Container isolation for all agent execution</li>
+                        <li>External mount allowlist at <code>~/.config/fft_nano/mount-allowlist.json</code></li>
+                        <li>Main vs non-main authorization gates on commands and IPC</li>
+                        <li>Path traversal protection for memory actions</li>
+                    </ul>
+                    <p>Full controls: <a href="developer/11-security-model.html">Security Model</a></p>
                 </section>
-                <section class="section" id="contributing">
-                    <h2>Contributing</h2>
-                    <p>FFT_nano is product-focused. Contributions should preserve security model and stay understandable.</p>
-                    <div class="code-block"><div class="label">Local Checks</div><pre><code>npm run validate:skills
-npm run typecheck
-npm test</code></pre></div>
+
+                <section class="section" id="guide-index">
+                    <h2>Full Guide Index</h2>
+                    <div class="table-wrapper">
+                        <table>
+                            <tr><th>Guide</th><th>Scope</th></tr>
+                            <tr><td><a href="developer/00-gap-analysis.html">00-gap-analysis</a></td><td>Implementation-vs-doc mismatch audit</td></tr>
+                            <tr><td><a href="developer/01-architecture.html">01-architecture</a></td><td>System architecture and startup topology</td></tr>
+                            <tr><td><a href="developer/02-runtime-message-processing.html">02-runtime-message-processing</a></td><td>Message-to-run flow with queue and delegation logic</td></tr>
+                            <tr><td><a href="developer/03-container-runtime.html">03-container-runtime</a></td><td>Runtime selection, mounts, env passthrough, container execution</td></tr>
+                            <tr><td><a href="developer/04-config-env.html">04-config-env</a></td><td>Code-backed env/config reference</td></tr>
+                            <tr><td><a href="developer/05-telegram.html">05-telegram</a></td><td>Telegram API integration, commands, media handling</td></tr>
+                            <tr><td><a href="developer/06-whatsapp.html">06-whatsapp</a></td><td>Baileys connection/auth/runtime behavior</td></tr>
+                            <tr><td><a href="developer/07-scheduler-and-tasks.html">07-scheduler-and-tasks</a></td><td>Scheduler loop, task schema, control commands</td></tr>
+                            <tr><td><a href="developer/08-ipc-contracts.html">08-ipc-contracts</a></td><td>Message/task/action IPC payload contracts</td></tr>
+                            <tr><td><a href="developer/09-memory-system.html">09-memory-system</a></td><td>Memory retrieval/search/compaction model</td></tr>
+                            <tr><td><a href="developer/10-farm-mode.html">10-farm-mode</a></td><td>Collector loops, farm actions, production gate</td></tr>
+                            <tr><td><a href="developer/11-security-model.html">11-security-model</a></td><td>Isolation and authorization controls</td></tr>
+                            <tr><td><a href="developer/12-coding-delegation.html">12-coding-delegation</a></td><td>Delegation triggers, constraints, subagent commands</td></tr>
+                            <tr><td><a href="developer/13-data-models.html">13-data-models</a></td><td>Type contracts and persistence structures</td></tr>
+                            <tr><td><a href="developer/14-testing-release.html">14-testing-release</a></td><td>Validation and release checks</td></tr>
+                            <tr><td><a href="developer/15-agent-runner.html">15-agent-runner</a></td><td>In-container runtime internals</td></tr>
+                            <tr><td><a href="developer/16-scripts-reference.html">16-scripts-reference</a></td><td>Operational script reference</td></tr>
+                        </table>
+                    </div>
                 </section>
-                <section class="section" id="release">
-                    <h2>Release Process</h2>
-                    <h3>Pre-Release</h3>
-                    <div class="code-block"><div class="label">Terminal</div><pre><code>npm ci
+
+                <section class="section" id="modules">
+                    <h2>All Source Module References</h2>
+                    <p>One page per host module under <code>src/*.ts</code> with exported API signatures and env references.</p>
+                    <div class="credentials-grid">
+                        <div class="credential-card"><h4>Core</h4><p><a href="developer/modules/index.html">index.ts</a><br><a href="developer/modules/config.html">config.ts</a><br><a href="developer/modules/types.html">types.ts</a><br><a href="developer/modules/logger.html">logger.ts</a><br><a href="developer/modules/utils.html">utils.ts</a></p></div>
+                        <div class="credential-card"><h4>Container</h4><p><a href="developer/modules/container-runner.html">container-runner.ts</a><br><a href="developer/modules/container-runtime.html">container-runtime.ts</a><br><a href="developer/modules/apple-container.html">apple-container.ts</a><br><a href="developer/modules/mount-security.html">mount-security.ts</a></p></div>
+                        <div class="credential-card"><h4>Chat</h4><p><a href="developer/modules/telegram.html">telegram.ts</a><br><a href="developer/modules/telegram-format.html">telegram-format.ts</a><br><a href="developer/modules/whatsapp-auth.html">whatsapp-auth.ts</a><br><a href="developer/modules/coding-delegation.html">coding-delegation.ts</a></p></div>
+                        <div class="credential-card"><h4>Data</h4><p><a href="developer/modules/db.html">db.ts</a><br><a href="developer/modules/task-scheduler.html">task-scheduler.ts</a><br><a href="developer/modules/singleton-lock.html">singleton-lock.ts</a></p></div>
+                        <div class="credential-card"><h4>Memory</h4><p><a href="developer/modules/memory-paths.html">memory-paths.ts</a><br><a href="developer/modules/memory-maintenance.html">memory-maintenance.ts</a><br><a href="developer/modules/memory-retrieval.html">memory-retrieval.ts</a><br><a href="developer/modules/memory-search.html">memory-search.ts</a><br><a href="developer/modules/memory-action-gateway.html">memory-action-gateway.ts</a></p></div>
+                        <div class="credential-card"><h4>Farm and Skills</h4><p><a href="developer/modules/home-assistant.html">home-assistant.ts</a><br><a href="developer/modules/farm-state-collector.html">farm-state-collector.ts</a><br><a href="developer/modules/farm-action-gateway.html">farm-action-gateway.ts</a><br><a href="developer/modules/pi-skills.html">pi-skills.ts</a></p></div>
+                    </div>
+                    <p>Master list: <a href="developer/module-index.html">module-index.html</a></p>
+                </section>
+
+                <section class="section" id="scripts">
+                    <h2>Scripts and Release</h2>
+                    <div class="code-block"><div class="label">Primary Script Commands</div><pre><code>./scripts/setup.sh
+./scripts/start.sh start
+./scripts/start.sh dev telegram-only
+./scripts/farm-bootstrap.sh --mode demo
+./scripts/farm-bootstrap.sh --mode production
 npm run release-check</code></pre></div>
-                    <h3>Cut a Release</h3>
-                    <ol><li>Bump version in <code>package.json</code></li><li>Commit</li><li>Tag: <code>git tag -a vX.Y.Z -m "Release vX.Y.Z"</code></li><li>Push</li><li>Create GitHub Release</li></ol>
+                    <p>Details: <a href="developer/16-scripts-reference.html">Scripts Reference</a> and <a href="developer/14-testing-release.html">Testing and Release</a></p>
                 </section>
+
                 <section class="section">
-                    <div class="info-box"><strong>Remember:</strong> Your agent is your co-pilot. Give it goals, let it figure out the how. That's the FFT_nano way.</div>
+                    <div class="info-box"><strong>Status:</strong> Old visual style restored. New comprehensive content and references are now wired into this styled docs hub.</div>
                 </section>
             </main>
         </div>
@@ -367,7 +383,6 @@ npm run release-check</code></pre></div>
                 }
             }
         });
-        // Copy button functionality
         document.querySelectorAll('.code-block').forEach(block => {
             const btn = document.createElement('button');
             btn.className = 'copy-btn';
