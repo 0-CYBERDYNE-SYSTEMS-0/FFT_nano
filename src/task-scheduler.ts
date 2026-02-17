@@ -1,13 +1,10 @@
-import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
 
 import {
-  DATA_DIR,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
   SCHEDULER_POLL_INTERVAL,
-  TIMEZONE,
 } from './config.js';
 import { runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import {
@@ -15,14 +12,19 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  updateTask,
   updateTaskAfterRun,
 } from './db.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+import { computeRecurringTaskNextRun } from './task-schedule.js';
 
 export interface SchedulerDependencies {
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  isChatRunActive?: (jid: string) => boolean;
+  runTaskAgent?: typeof runContainerAgent;
+  scheduleNextTick?: (fn: () => void, delayMs: number) => unknown;
 }
 
 async function runTask(
@@ -44,6 +46,8 @@ async function runTask(
   );
 
   if (!group) {
+    const nextRun = computeRecurringTaskNextRun(task);
+    const missingGroupError = `Group not found: ${task.group_folder}`;
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder },
       'Group not found for task',
@@ -54,8 +58,9 @@ async function runTask(
       duration_ms: Date.now() - startTime,
       status: 'error',
       result: null,
-      error: `Group not found: ${task.group_folder}`,
+      error: missingGroupError,
     });
+    updateTaskAfterRun(task.id, nextRun, `Error: ${missingGroupError}`);
     return;
   }
 
@@ -79,8 +84,19 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
+  if (deps.isChatRunActive?.(task.chat_jid)) {
+    const deferUntil = new Date(Date.now() + SCHEDULER_POLL_INTERVAL).toISOString();
+    updateTask(task.id, { next_run: deferUntil });
+    logger.info(
+      { taskId: task.id, chatJid: task.chat_jid, deferUntil },
+      'Skipping scheduled task: active chat run',
+    );
+    return;
+  }
+
   try {
-    const output = await runContainerAgent(group, {
+    const taskRunner = deps.runTaskAgent || runContainerAgent;
+    const output = await taskRunner(group, {
       prompt: task.prompt,
       groupFolder: task.group_folder,
       chatJid: task.chat_jid,
@@ -114,17 +130,7 @@ async function runTask(
     error,
   });
 
-  let nextRun: string | null = null;
-  if (task.schedule_type === 'cron') {
-    const interval = CronExpressionParser.parse(task.schedule_value, {
-      tz: TIMEZONE,
-    });
-    nextRun = interval.next().toISOString();
-  } else if (task.schedule_type === 'interval') {
-    const ms = parseInt(task.schedule_value, 10);
-    nextRun = new Date(Date.now() + ms).toISOString();
-  }
-  // 'once' tasks have no next run
+  const nextRun = computeRecurringTaskNextRun(task);
 
   const resultSummary = error
     ? `Error: ${error}`
@@ -136,6 +142,32 @@ async function runTask(
 
 let schedulerRunning = false;
 
+export async function processDueTasksOnce(
+  deps: SchedulerDependencies,
+): Promise<void> {
+  try {
+    const dueTasks = getDueTasks();
+    if (dueTasks.length > 0) {
+      logger.info({ count: dueTasks.length }, 'Found due tasks');
+    }
+
+    for (const task of dueTasks) {
+      const currentTask = getTaskById(task.id);
+      if (!currentTask || currentTask.status !== 'active') {
+        continue;
+      }
+
+      await runTask(currentTask, deps);
+    }
+  } catch (err) {
+    logger.error({ err }, 'Error in scheduler loop');
+  }
+}
+
+export function resetSchedulerLoopForTest(): void {
+  schedulerRunning = false;
+}
+
 export function startSchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
     logger.debug('Scheduler loop already running, skipping duplicate start');
@@ -145,27 +177,10 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   logger.info('Scheduler loop started');
 
   const loop = async () => {
-    try {
-      const dueTasks = getDueTasks();
-      if (dueTasks.length > 0) {
-        logger.info({ count: dueTasks.length }, 'Found due tasks');
-      }
-
-      for (const task of dueTasks) {
-        // Re-check task status in case it was paused/cancelled
-        const currentTask = getTaskById(task.id);
-        if (!currentTask || currentTask.status !== 'active') {
-          continue;
-        }
-
-        await runTask(currentTask, deps);
-      }
-    } catch (err) {
-      logger.error({ err }, 'Error in scheduler loop');
-    }
-
-    setTimeout(loop, SCHEDULER_POLL_INTERVAL);
+    await processDueTasksOnce(deps);
+    const scheduleNextTick = deps.scheduleNextTick || setTimeout;
+    scheduleNextTick(loop, SCHEDULER_POLL_INTERVAL);
   };
 
-  loop();
+  void loop();
 }

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>farmfriend</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #050505;
+            --fg: #f0f0f0;
+            --mid: #666;
+            --accent: #4ecdc4;
+        }
+        body {
+            background: 
+                linear-gradient(rgba(5,5,5,0.85), rgba(5,5,5,0.85)),
+                url(/assets/bg.jpg);
+            background-size: cover;
+            background-position: center;
+            color: var(--fg);
+            font-family: 'Avenir Next', 'Avenir', sans-serif;
+            height: 100vh;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            padding: 3rem;
+        }
+        .top {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.65rem;
+            letter-spacing: 0.3em;
+            color: var(--mid);
+        }
+        .center {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        .logo {
+            font-size: clamp(2rem, 8vw, 6rem);
+            font-weight: 600;
+            letter-spacing: -0.04em;
+            line-height: 1;
+        }
+        .logo span {
+            color: var(--mid);
+            font-weight: 400;
+        }
+        .tagline {
+            margin-top: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--fg);
+            font-weight: 400;
+            max-width: 420px;
+            line-height: 1.6;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.08);
+            padding: 1rem 1.25rem;
+            border-radius: 4px;
+        }
+        .cta {
+            margin-top: 3rem;
+            display: flex;
+            gap: 2rem;
+        }
+        .cta a {
+            color: var(--fg);
+            text-decoration: none;
+            font-size: 0.75rem;
+            letter-spacing: 0.15em;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #333;
+            transition: border-color 0.3s;
+        }
+        .cta a { color: var(--accent); border-color: var(--accent); }
+        .cta a:hover { background: var(--accent); color: var(--bg); }
+        .bottom {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.6rem;
+            color: #333;
+            letter-spacing: 0.1em;
+        }
+    </style>
+</head>
+<body>
+    <div class="top">
+        <span>FARMFRIEND</span>
+        <span>EST. 2023</span>
+    </div>
+    <div class="center">
+        <div class="logo"><span style="color: var(--accent)">farm</span><span style="color: var(--accent)">friend</span><span style="color: var(--mid)">_</span></div>
+        <p class="tagline">Secure, containerized AI farm assistant. Your agent does the work.</p>
+        <div class="cta">
+            <a href="/fft-nano/">FFT_NANO</a>
+            <a href="https://github.com/farmfriend-labs">LABS</a>
+            <a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano">GITHUB</a>
+        </div>
+    </div>
+    <div class="bottom">
+        <span>© farmfriend</span>
+        <span>desmond digital</span>
+    </div>
+</body>
+</html>

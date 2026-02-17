@@ -18,7 +18,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test tests/**/*.test.ts container/agent-runner/src/**/*.test.ts",
     "auth": "tsx src/whatsapp-auth.ts",
     "validate:skills": "tsx scripts/validate-pi-skills.ts",
     "secret-scan": "bash scripts/secret-scan.sh",

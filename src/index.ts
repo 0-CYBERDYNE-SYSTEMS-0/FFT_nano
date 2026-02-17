@@ -18,7 +18,6 @@ import {
   POLL_INTERVAL,
   STORE_DIR,
   TELEGRAM_MEDIA_MAX_MB,
-  TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import {
@@ -78,6 +77,16 @@ import {
   migrateCompactionsForGroup,
 } from './memory-maintenance.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
+import { isHeartbeatAckOnly } from './heartbeat-output.js';
+import {
+  computeTaskNextRun,
+  normalizeTaskScheduleType,
+  resolveTaskResumeNextRun,
+} from './task-schedule.js';
+import {
+  applyNonHeartbeatEmptyOutputPolicy,
+  hasUserVisibleText,
+} from './agent-empty-output.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -95,8 +104,10 @@ const APPLE_CONTAINER_SELF_HEAL = !['0', 'false', 'no'].includes(
 const HEARTBEAT_PROMPT =
   process.env.FFT_NANO_HEARTBEAT_PROMPT ||
   'Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.';
-const HEARTBEAT_INTERVAL_MS =
-  parseDurationMs(process.env.FFT_NANO_HEARTBEAT_EVERY || '30m') || 30 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = (() => {
+  const parsed = parseDurationMs(process.env.FFT_NANO_HEARTBEAT_EVERY || '30m');
+  return parsed === undefined ? 30 * 60 * 1000 : parsed;
+})();
 const HEARTBEAT_ENABLED = HEARTBEAT_INTERVAL_MS > 0;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -1975,7 +1986,8 @@ async function handleTelegramCommand(m: {
       return true;
     }
     if (cmd === '/task_resume') {
-      updateTask(taskId, { status: 'active' });
+      const resumedNextRun = resolveTaskResumeNextRun(task);
+      updateTask(taskId, { status: 'active', next_run: resumedNextRun });
       logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       await sendMessage(m.chatJid, `Resumed task: ${taskId}`);
       return true;
@@ -2413,6 +2425,7 @@ async function runAgent(
   requestId?: string,
   runtimePrefs: ChatRunPreferences = {},
   abortSignal?: AbortSignal,
+  isHeartbeatRun = false,
 ): Promise<{
   result: string | null;
   streamed: boolean;
@@ -2454,67 +2467,89 @@ async function runAgent(
 
   try {
     const runtime = getContainerRuntime();
-    const input = {
-      prompt,
-      groupFolder: group.folder,
-      chatJid,
-      isMain,
-      codingHint,
-      requestId,
-      provider: runtimePrefs.provider,
-      model: runtimePrefs.model,
-      thinkLevel: runtimePrefs.thinkLevel,
-      reasoningLevel: runtimePrefs.reasoningLevel,
-      noContinue: runtimePrefs.nextRunNoContinue === true,
-    };
+    const runContainerAttempt = async (forceNoContinue: boolean) => {
+      const input = {
+        prompt,
+        groupFolder: group.folder,
+        chatJid,
+        isMain,
+        codingHint,
+        requestId,
+        provider: runtimePrefs.provider,
+        model: runtimePrefs.model,
+        thinkLevel: runtimePrefs.thinkLevel,
+        reasoningLevel: runtimePrefs.reasoningLevel,
+        noContinue: forceNoContinue,
+      };
 
-    let output = await runContainerAgent(group, input, abortSignal);
-    if (
-      output.status === 'error' &&
-      runtime === 'apple' &&
-      APPLE_CONTAINER_SELF_HEAL &&
-      typeof output.error === 'string' &&
-      output.error &&
-      shouldSelfHealAppleContainer(output.error)
-    ) {
-      const restarted = await restartAppleContainerSystemSingleFlight(
-        output.error,
-      );
-      if (restarted) {
-        logger.warn(
-          { group: group.name, error: output.error },
-          'Retrying container agent after Apple Container self-heal',
+      let output = await runContainerAgent(group, input, abortSignal);
+      if (
+        output.status === 'error' &&
+        runtime === 'apple' &&
+        APPLE_CONTAINER_SELF_HEAL &&
+        typeof output.error === 'string' &&
+        output.error &&
+        shouldSelfHealAppleContainer(output.error)
+      ) {
+        const restarted = await restartAppleContainerSystemSingleFlight(
+          output.error,
         );
-        output = await runContainerAgent(group, input, abortSignal);
+        if (restarted) {
+          logger.warn(
+            { group: group.name, error: output.error },
+            'Retrying container agent after Apple Container self-heal',
+          );
+          output = await runContainerAgent(group, input, abortSignal);
+        }
       }
-    }
 
-    if (output.status === 'error') {
-      if (typeof output.error === 'string' && /aborted by user/i.test(output.error)) {
-        return { result: null, streamed: false, ok: true };
+      if (output.status === 'error') {
+        if (typeof output.error === 'string' && /aborted by user/i.test(output.error)) {
+          return { result: null, streamed: true, ok: true };
+        }
+        logger.error(
+          { group: group.name, error: output.error },
+          'Container agent error',
+        );
+        const msg = output.error
+          ? `LLM error: ${output.error}${
+              runtime === 'apple'
+                ? '\n\nIf this persists on macOS Apple Container, run:\ncontainer system stop && container system start'
+                : ''
+            }`
+          : 'LLM error: agent runner failed (no details).';
+        return { result: msg, streamed: false, ok: true };
       }
-      logger.error(
-        { group: group.name, error: output.error },
-        'Container agent error',
-      );
-      // Reply with a short error rather than silently dropping the message.
-      // Also mark ok=true so we don't keep re-sending the same failing prompt.
-      const msg = output.error
-        ? `LLM error: ${output.error}${
-            runtime === 'apple'
-              ? '\n\nIf this persists on macOS Apple Container, run:\ncontainer system stop && container system start'
-              : ''
-          }`
-        : 'LLM error: agent runner failed (no details).';
-      return { result: msg, streamed: false, ok: true };
-    }
 
-    return {
-      result: output.result,
-      streamed: !!output.streamed,
-      ok: true,
-      usage: output.usage,
+      return {
+        result: output.result,
+        streamed: !!output.streamed,
+        ok: true,
+        usage: output.usage,
+      };
     };
+
+    const firstRun = await runContainerAttempt(
+      runtimePrefs.nextRunNoContinue === true,
+    );
+    const policyApplied = await applyNonHeartbeatEmptyOutputPolicy({
+      isHeartbeatRun,
+      firstRun,
+      retryRun: async () => runContainerAttempt(true),
+    });
+
+    if (policyApplied.retried) {
+      logger.warn(
+        {
+          group: group.name,
+          chatJid,
+          requestId,
+          firstResultHadText: hasUserVisibleText(firstRun.result),
+        },
+        'Retried run due to empty non-heartbeat model output',
+      );
+    }
+    return policyApplied.finalRun;
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return { result: null, streamed: false, ok: false };
@@ -2766,7 +2801,6 @@ async function processTaskIpc(
     deleteTask,
     getTaskById: getTask,
   } = await import('./db.js');
-  const { CronExpressionParser } = await import('cron-parser');
 
   switch (data.type) {
     case 'schedule_task':
@@ -2799,42 +2833,22 @@ async function processTaskIpc(
           break;
         }
 
-        const scheduleType = data.schedule_type as 'cron' | 'interval' | 'once';
+        const scheduleType = normalizeTaskScheduleType(data.schedule_type);
+        if (!scheduleType) {
+          logger.warn(
+            { scheduleType: data.schedule_type },
+            'Invalid schedule_type; expected cron|interval|once',
+          );
+          break;
+        }
 
-        let nextRun: string | null = null;
-        if (scheduleType === 'cron') {
-          try {
-            const interval = CronExpressionParser.parse(data.schedule_value, {
-              tz: TIMEZONE,
-            });
-            nextRun = interval.next().toISOString();
-          } catch {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid cron expression',
-            );
-            break;
-          }
-        } else if (scheduleType === 'interval') {
-          const ms = parseInt(data.schedule_value, 10);
-          if (isNaN(ms) || ms <= 0) {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid interval',
-            );
-            break;
-          }
-          nextRun = new Date(Date.now() + ms).toISOString();
-        } else if (scheduleType === 'once') {
-          const scheduled = new Date(data.schedule_value);
-          if (isNaN(scheduled.getTime())) {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid timestamp',
-            );
-            break;
-          }
-          nextRun = scheduled.toISOString();
+        const nextRun = computeTaskNextRun(scheduleType, data.schedule_value);
+        if (!nextRun) {
+          logger.warn(
+            { scheduleType, scheduleValue: data.schedule_value },
+            'Invalid schedule value',
+          );
+          break;
         }
 
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2883,7 +2897,8 @@ async function processTaskIpc(
       if (data.taskId) {
         const task = getTask(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
-          updateTask(data.taskId, { status: 'active' });
+          const resumedNextRun = resolveTaskResumeNextRun(task);
+          updateTask(data.taskId, { status: 'active', next_run: resumedNextRun });
           logger.info(
             { taskId: data.taskId, sourceGroup },
             'Task resumed via IPC',
@@ -3045,6 +3060,7 @@ async function connectWhatsApp(): Promise<void> {
       startSchedulerLoop({
         sendMessage,
         registeredGroups: () => registeredGroups,
+        isChatRunActive: (chatJid: string) => activeChatRuns.has(chatJid),
       });
       startIpcWatcher();
       startMessageLoop();
@@ -3126,14 +3142,6 @@ async function startMessageLoop(): Promise<void> {
   }
 }
 
-function isHeartbeatAckOnly(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return true;
-  if (trimmed === 'HEARTBEAT_OK') return true;
-  const withoutPrefix = trimmed.replace(/^HEARTBEAT_OK\s*/i, '').trim();
-  return withoutPrefix.length === 0;
-}
-
 async function runHeartbeatTurn(): Promise<void> {
   if (!HEARTBEAT_ENABLED) return;
   const mainChatJid = findMainChatJid();
@@ -3165,6 +3173,7 @@ async function runHeartbeatTurn(): Promise<void> {
       requestId,
       chatRunPreferences[mainChatJid] || {},
       abortController.signal,
+      true,
     );
     updateChatUsage(mainChatJid, run.usage);
     if (run.ok && !run.streamed && run.result && !isHeartbeatAckOnly(run.result)) {
@@ -3324,6 +3333,7 @@ async function main(): Promise<void> {
     startSchedulerLoop({
       sendMessage,
       registeredGroups: () => registeredGroups,
+      isChatRunActive: (chatJid: string) => activeChatRuns.has(chatJid),
     });
     startIpcWatcher();
     startHeartbeatLoop();
