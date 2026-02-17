@@ -7,6 +7,18 @@ description: Operate FFT_nano Telegram workflows including main chat claiming, c
 
 Use this skill for Telegram onboarding, operations, and safe admin command handling.
 
+## When to use this skill
+
+- Use when setting up or repairing Telegram bot routing in FFT_nano.
+- Use when claiming/maintaining main chat and admin command boundaries.
+- Use when verifying Telegram media intake and command policy behavior.
+
+## When not to use this skill
+
+- Do not use for WhatsApp-only flows.
+- Do not use for non-chat backend setup tasks unrelated to Telegram routing.
+- Do not use to bypass main/admin restrictions for privileged commands.
+
 ## Guardrails
 
 - Never run destructive git commands unless explicitly requested.
