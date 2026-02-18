@@ -114,3 +114,26 @@ test('buildSystemPrompt loads non-main SOUL and MEMORY fallbacks when retrieval 
   assert.match(text, /## \/workspace\/global\/MEMORY\.md/);
   assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
 });
+
+test('buildSystemPrompt supports legacy non-main memory.md fallback', () => {
+  const files = new Map<string, string>([
+    ['/workspace/global/SOUL.md', 'global soul'],
+    ['/workspace/group/SOUL.md', 'group soul'],
+    ['/workspace/global/memory.md', 'global legacy memory'],
+    ['/workspace/group/memory.md', 'group legacy memory'],
+  ]);
+
+  const { text } = buildSystemPrompt(
+    makeInput({
+      isMain: false,
+      groupFolder: 'telegram-123',
+      codingHint: 'none',
+    }),
+    {
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+
+  assert.match(text, /## \/workspace\/global\/memory\.md/);
+  assert.match(text, /## \/workspace\/group\/memory\.md/);
+});

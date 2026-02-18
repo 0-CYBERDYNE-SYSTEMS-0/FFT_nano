@@ -124,9 +124,11 @@ function addContextEntry(params: {
   path: string;
   fileMaxChars: number;
   remainingTotalChars: number;
+  includeMissing?: boolean;
 }): number {
   const content = params.readFileIfExists(params.path);
   if (!content) {
+    if (params.includeMissing === false) return params.remainingTotalChars;
     if (params.remainingTotalChars <= 0) return params.remainingTotalChars;
     const missingText = `[MISSING] Expected at: ${params.path}`;
     const capped = missingText.slice(0, params.remainingTotalChars);
@@ -240,22 +242,38 @@ function buildNonMainContextEntries(params: {
   }
 
   if (params.includeMemoryFallback && remaining > 0) {
+    const globalMemoryPath =
+      params.readFileIfExists('/workspace/global/MEMORY.md') !== null
+        ? '/workspace/global/MEMORY.md'
+        : '/workspace/global/memory.md';
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
-      label: 'global/MEMORY.md',
-      path: '/workspace/global/MEMORY.md',
+      label:
+        globalMemoryPath === '/workspace/global/MEMORY.md'
+          ? 'global/MEMORY.md'
+          : 'global/memory.md',
+      path: globalMemoryPath,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+      includeMissing: false,
     });
     if (remaining > 0) {
+      const groupMemoryPath =
+        params.readFileIfExists('/workspace/group/MEMORY.md') !== null
+          ? '/workspace/group/MEMORY.md'
+          : '/workspace/group/memory.md';
       remaining = addContextEntry({
         entries,
         readFileIfExists: params.readFileIfExists,
-        label: 'group/MEMORY.md',
-        path: '/workspace/group/MEMORY.md',
+        label:
+          groupMemoryPath === '/workspace/group/MEMORY.md'
+            ? 'group/MEMORY.md'
+            : 'group/memory.md',
+        path: groupMemoryPath,
         fileMaxChars: params.fileMaxChars,
         remainingTotalChars: remaining,
+        includeMissing: false,
       });
     }
   }
