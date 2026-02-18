@@ -9,6 +9,10 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 
 import { runDelegatedCodingWorker } from './coder-worker.js';
+import {
+  buildSystemPrompt as buildSystemPromptArchitecture,
+  type SystemPromptReport,
+} from './system-prompt.js';
 
 interface ContainerInput {
   prompt: string;
@@ -22,6 +26,7 @@ interface ContainerInput {
   reasoningLevel?: 'off' | 'on' | 'stream';
   noContinue?: boolean;
   memoryContext?: string;
+  extraSystemPrompt?: string;
   codingHint?:
     | 'none'
     | 'force_delegate_execute'
@@ -161,273 +166,12 @@ function writeIpcMessage(chatJid: string, text: string): boolean {
   }
 }
 
-function readFileIfExists(filePath: string): string | null {
-  try {
-    if (!fs.existsSync(filePath)) return null;
-    return fs.readFileSync(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
-function formatWorkspaceFileSection(
-  fileName: string,
-  raw: string,
-  maxChars = 12000,
-): string {
-  const normalized = raw.replace(/\r\n?/g, '\n').trim();
-  if (!normalized) return `Workspace file ${fileName}: [empty]`;
-  if (normalized.length <= maxChars) {
-    return `Workspace file ${fileName}:\n${normalized}`;
-  }
-  return (
-    `Workspace file ${fileName}:\n` +
-    `${normalized.slice(0, maxChars)}\n\n[NOTE: ${fileName} truncated to ${maxChars} chars]`
-  );
-}
-
-function getWorkspaceContextSections(isMain: boolean): string[] {
-  if (!isMain) return [];
-
-  const fileOrder = [
-    'AGENTS.md',
-    'SOUL.md',
-    'USER.md',
-    'IDENTITY.md',
-    'PRINCIPLES.md',
-    'TOOLS.md',
-    'HEARTBEAT.md',
-    'MEMORY.md',
-  ];
-  const sections: string[] = [];
-  for (const fileName of fileOrder) {
-    const content = readFileIfExists(`/workspace/group/${fileName}`);
-    if (!content) continue;
-    sections.push(formatWorkspaceFileSection(fileName, content));
-  }
-
-  const now = new Date();
-  const day = (offsetDays: number): string => {
-    const d = new Date(now.getTime() + offsetDays * 24 * 60 * 60 * 1000);
-    const yyyy = d.getUTCFullYear();
-    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(d.getUTCDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  };
-  for (const dateStr of [day(0), day(-1)]) {
-    const content = readFileIfExists(`/workspace/group/memory/${dateStr}.md`);
-    if (!content) continue;
-    sections.push(formatWorkspaceFileSection(`memory/${dateStr}.md`, content, 8000));
-  }
-
-  return sections;
-}
-
-function buildSystemPrompt(input: NormalizedContainerInput): string {
-  const providedMemoryContext = (input.memoryContext || '').trim();
-
-  const delegationExtensionAvailable = fs.existsSync(PI_ON_PI_EXTENSION_PATH);
-  const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
-  const autoDelegationEnabled =
-    input.codingHint === 'auto' &&
-    input.isMain &&
-    !input.isScheduledTask &&
-    delegationExtensionAvailable;
-  const canDelegateToCoder =
-    !!forcedDelegateMode &&
-    input.isMain &&
-    !input.isScheduledTask &&
-    delegationExtensionAvailable;
-
-  const lines: string[] = [];
-  lines.push('You are FarmFriend, a practical assistant with optional delegated coding capabilities.');
-  lines.push('Be direct, safe, and deterministic.');
-  lines.push('');
-  lines.push('Capabilities:');
-  lines.push('- You run inside pi coding runtime with filesystem and shell tools.');
-  lines.push('- Available tools include read, bash, edit, write (and often grep/find/ls).');
-  lines.push(
-    '- Do not claim you are text-only or that you cannot access local files/commands before trying tools.',
-  );
-  lines.push(
-    '- When asked to verify files, status, or environment state, run tools and report concrete results.',
-  );
-  lines.push('');
-  lines.push('Workspace:');
-  lines.push('- /workspace/group is your writable workspace (main maps to ~/nano on host).');
-  lines.push('- /workspace/ipc is the bridge to the host process (messages + scheduling).');
-  lines.push('- Store durable memory in /workspace/group/MEMORY.md and /workspace/group/memory/*.md.');
-  lines.push('- Keep SOUL.md focused on stable behavior and identity, not compaction logs.');
-  lines.push(
-    '- Use explicit memory tools via bash when needed: `node /app/dist/memory-tool.js search --query "..." --sources all --top-k 8` and `node /app/dist/memory-tool.js get --path MEMORY.md`.',
-  );
-  lines.push('');
-  lines.push('Runtime hints:');
-  lines.push(`- coding_hint: ${input.codingHint}`);
-  if (input.provider) {
-    lines.push(`- provider_override: ${input.provider}`);
-  }
-  if (input.model) {
-    lines.push(`- model_override: ${input.model}`);
-  }
-  if (input.thinkLevel) {
-    lines.push(`- think_level: ${input.thinkLevel}`);
-  }
-  if (input.reasoningLevel) {
-    lines.push(`- reasoning_level: ${input.reasoningLevel}`);
-  }
-  lines.push(`- continue_session: ${input.noContinue ? 'false' : 'true'}`);
-  if (input.requestId) {
-    lines.push(`- request_id: ${input.requestId}`);
-  }
-  lines.push('');
-
-  if (input.reasoningLevel === 'on' || input.reasoningLevel === 'stream') {
-    lines.push('Reasoning visibility policy:');
-    lines.push(
-      '- Do not reveal private chain-of-thought. Instead provide a brief high-level rationale summary when useful.',
-    );
-    if (input.reasoningLevel === 'stream') {
-      lines.push(
-        '- For longer tasks, send 1-2 concise progress updates to chat via /workspace/ipc/messages.',
-      );
-    }
-    lines.push('');
-  }
-
-  if (canDelegateToCoder) {
-    lines.push('Coding delegation rules:');
-    lines.push(
-      `- This turn is explicit delegation: call delegate_to_coding_agent exactly once with mode="${forcedDelegateMode}".`,
-    );
-    if (forcedDelegateMode === 'plan') {
-      lines.push('- Return a concrete implementation plan only; do not directly apply file edits in this outer session.');
-    } else {
-      lines.push('- Execute via delegated coder and return the delegated outcome.');
-    }
-    lines.push('');
-  } else if (isForceDelegateHint(input.codingHint)) {
-    // Avoid instructing tool use when the extension is not actually loaded.
-    lines.push(
-      'Coding delegation status: unavailable for this run (not main, scheduled task, or delegate extension not loaded).',
-    );
-    lines.push('- Handle this request directly in this session and explain that delegation is unavailable.');
-    lines.push('');
-  } else if (autoDelegationEnabled) {
-    lines.push('Coding delegation policy (main chat, automatic):');
-    lines.push(
-      '- You MAY call delegate_to_coding_agent when the task is substantial software engineering (multi-file changes, deep debugging, significant refactors, broad tests).',
-    );
-    lines.push(
-      '- If intent is ambiguous, ask one concise clarification before delegating.',
-    );
-    lines.push(
-      '- For lightweight coding asks, use local tools directly in this outer session.',
-    );
-    lines.push(
-      '- If the user explicitly requests deep coding mode or coder delegation, delegate without extra confirmation.',
-    );
-    lines.push('');
-  } else if (input.isMain && !input.isScheduledTask) {
-    lines.push('Coding delegation status: unavailable in this run (delegate extension missing).');
-    lines.push('- Complete tasks directly with available tools.');
-    lines.push('');
-  }
-
-  lines.push('Messaging (no MCP):');
-  lines.push(
-    'To proactively message the current chat, write a JSON file into /workspace/ipc/messages/*.json with:',
-  );
-  lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
-  lines.push('Write atomically (temp file then rename) to avoid partial reads.');
-  lines.push('');
-
-  lines.push('Scheduling:');
-  lines.push(
-    'To schedule tasks, write JSON into /workspace/ipc/tasks/*.json with one of:',
-  );
-  lines.push(
-    '- schedule: {"type":"schedule_task","prompt":"...","schedule_type":"cron|interval|once","schedule_value":"...","context_mode":"group|isolated","groupFolder":"<folder>"}',
-  );
-  lines.push('- pause:    {"type":"pause_task","taskId":"..."}');
-  lines.push('- resume:   {"type":"resume_task","taskId":"..."}');
-  lines.push('- cancel:   {"type":"cancel_task","taskId":"..."}');
-  lines.push('- refresh groups (main only): {"type":"refresh_groups"}');
-  lines.push(
-    '- register group (main only): {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@FarmFriend"}',
-  );
-  lines.push('You can read current tasks at /workspace/ipc/current_tasks.json.');
-  lines.push('Main can read groups at /workspace/ipc/available_groups.json.');
-  lines.push('');
-
-  lines.push('Formatting constraints (WhatsApp-friendly):');
-  lines.push('- Avoid markdown headings (##).');
-  lines.push('- Prefer short paragraphs and bullet points.');
-  lines.push('');
-
-  const workspaceSections = getWorkspaceContextSections(input.isMain);
-  if (workspaceSections.length > 0) {
-    lines.push('Workspace context files:');
-    lines.push(...workspaceSections);
-    lines.push('');
-  }
-
-  // SOUL.md is behavior/policy context and should be provided independently
-  // from memory retrieval payloads.
-  const globalSoul =
-    readFileIfExists('/workspace/global/SOUL.md') ||
-    readFileIfExists('/workspace/project/groups/global/SOUL.md');
-  const groupSoul = readFileIfExists('/workspace/group/SOUL.md');
-
-  if (!input.isMain && globalSoul) {
-    lines.push('Global behavior context (SOUL.md):');
-    lines.push(globalSoul);
-    lines.push('');
-  }
-
-  if (!input.isMain && groupSoul) {
-    lines.push('Group behavior context (SOUL.md):');
-    lines.push(groupSoul);
-    lines.push('');
-  }
-
-  if (providedMemoryContext) {
-    lines.push('Retrieved memory context:');
-    lines.push(providedMemoryContext);
-    lines.push('');
-  } else {
-    // Memory fallback: prefer dedicated memory docs.
-    const globalMemory =
-      readFileIfExists('/workspace/global/MEMORY.md') ||
-      readFileIfExists('/workspace/project/groups/global/MEMORY.md') ||
-      readFileIfExists('/workspace/global/memory.md') ||
-      readFileIfExists('/workspace/project/groups/global/memory.md');
-
-    const groupMemory =
-      readFileIfExists('/workspace/group/MEMORY.md') ||
-      readFileIfExists('/workspace/group/memory.md');
-
-    if (globalMemory) {
-      lines.push('Global memory:');
-      lines.push(globalMemory);
-      lines.push('');
-    }
-
-    if (groupMemory) {
-      // Cap group memory to reduce prompt blowups.
-      const maxChars = 50_000;
-      const trimmed =
-        groupMemory.length > maxChars
-          ? groupMemory.slice(0, maxChars) +
-            `\n\n[NOTE: group memory truncated to ${maxChars} chars]\n`
-          : groupMemory;
-      lines.push('Group memory:');
-      lines.push(trimmed);
-      lines.push('');
-    }
-  }
-
-  return lines.join('\n');
+function buildSystemPrompt(
+  input: NormalizedContainerInput,
+): { text: string; report: SystemPromptReport } {
+  return buildSystemPromptArchitecture(input, {
+    delegationExtensionAvailable: fs.existsSync(PI_ON_PI_EXTENSION_PATH),
+  });
 }
 
 function getPiArgs(
@@ -667,7 +411,11 @@ async function main(): Promise<void> {
 
   const input = normalizeInput(rawInput);
 
-  const systemPrompt = buildSystemPrompt(input);
+  const systemPromptBuild = buildSystemPrompt(input);
+  const systemPrompt = systemPromptBuild.text;
+  log(
+    `System prompt built: mode=${systemPromptBuild.report.mode} chars=${systemPromptBuild.report.totalChars} context_entries=${systemPromptBuild.report.contextEntries.length} context_chars=${systemPromptBuild.report.contextBudget.injectedTotalChars}`,
+  );
   const prompt = input.isScheduledTask
     ? `[SCHEDULED TASK]\n${input.prompt}`
     : input.prompt;

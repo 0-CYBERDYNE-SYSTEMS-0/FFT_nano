@@ -89,7 +89,7 @@ Notes:
 - Main/admin container working directory maps to `~/nano` by default.
 - Override workspace path with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
 - Main workspace bootstrap/context files are auto-seeded if missing:
-  - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md` + `memory/`
+  - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/`
 - Heartbeat is enabled by default and reads `HEARTBEAT.md` periodically.
 - Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `30m`).
 
