@@ -127,7 +127,7 @@ function addContextEntry(params: {
   includeMissing?: boolean;
 }): number {
   const content = params.readFileIfExists(params.path);
-  if (!content) {
+  if (content === null) {
     if (params.includeMissing === false) return params.remainingTotalChars;
     if (params.remainingTotalChars <= 0) return params.remainingTotalChars;
     const missingText = `[MISSING] Expected at: ${params.path}`;

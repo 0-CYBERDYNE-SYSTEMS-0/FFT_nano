@@ -137,3 +137,29 @@ test('buildSystemPrompt supports legacy non-main memory.md fallback', () => {
   assert.match(text, /## \/workspace\/global\/memory\.md/);
   assert.match(text, /## \/workspace\/group\/memory\.md/);
 });
+
+test('buildSystemPrompt treats empty files as present context, not missing', () => {
+  const files = new Map<string, string>([
+    ['/workspace/global/SOUL.md', 'global soul'],
+    ['/workspace/group/SOUL.md', ''],
+  ]);
+
+  const { text, report } = buildSystemPrompt(
+    makeInput({
+      isMain: false,
+      groupFolder: 'telegram-123',
+      codingHint: 'none',
+    }),
+    {
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+
+  const groupSoul = report.contextEntries.find(
+    (entry) => entry.path === '/workspace/group/SOUL.md',
+  );
+  assert.ok(groupSoul);
+  assert.equal(groupSoul.missing, false);
+  assert.match(text, /## \/workspace\/group\/SOUL\.md/);
+  assert.match(text, /\[empty\]/);
+});
