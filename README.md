@@ -275,6 +275,8 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 
 - Main/admin chat container CWD maps to `~/nano` by default.
 - Override with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
+- Default main memory and context files live outside this git repo (`~/nano`), which helps keep personal notes out of commits.
+- `groups/main/` is intentionally kept as an empty placeholder in-repo; if you point main workspace into the repo, treat it as local-only and never commit personal memory/state files.
 - Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/` + `skills/`.
 - Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
 - Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
