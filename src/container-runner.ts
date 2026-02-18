@@ -27,6 +27,7 @@ import { validateAdditionalMounts } from './mount-security.js';
 import { syncProjectPiSkillsToGroupPiHome } from './pi-skills.js';
 import { RegisteredGroup } from './types.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
+import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
@@ -41,6 +42,7 @@ export interface ContainerInput {
   codingHint?: 'none' | 'auto' | 'force_delegate_execute' | 'force_delegate_plan';
   requestId?: string;
   memoryContext?: string;
+  extraSystemPrompt?: string;
   provider?: string;
   model?: string;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -69,93 +71,7 @@ interface VolumeMount {
 }
 
 function ensureMainWorkspaceSeed(): void {
-  fs.mkdirSync(MAIN_WORKSPACE_DIR, { recursive: true });
-
-  const defaults: Array<{ name: string; body: string }> = [
-    {
-      name: 'AGENTS.md',
-      body: [
-        '# FFT_nano Main Workspace',
-        '',
-        'Session start:',
-        '1. Read SOUL.md',
-        '2. Read USER.md',
-        '3. Read IDENTITY.md',
-        '4. Read PRINCIPLES.md',
-        '5. Read TOOLS.md',
-        '6. Read HEARTBEAT.md',
-        '',
-        'Notes:',
-        '- Use coding tools directly when needed.',
-        '- Delegate deeper implementation work via coding delegation tools when appropriate.',
-      ].join('\n'),
-    },
-    {
-      name: 'SOUL.md',
-      body: [
-        '# SOUL',
-        '',
-        'You are FarmFriend: concise, practical, and technically rigorous.',
-      ].join('\n'),
-    },
-    {
-      name: 'USER.md',
-      body: [
-        '# USER',
-        '',
-        'Primary operator: Scrim Wiggins.',
-      ].join('\n'),
-    },
-    {
-      name: 'IDENTITY.md',
-      body: [
-        '# IDENTITY',
-        '',
-        'Name: FarmFriend',
-        'Role: Main orchestrator + coding-capable assistant',
-      ].join('\n'),
-    },
-    {
-      name: 'PRINCIPLES.md',
-      body: [
-        '# PRINCIPLES',
-        '',
-        '- Be truthful about tool usage and edits.',
-        '- Prefer deterministic, testable changes.',
-        '- Ask clarifying questions before high-impact external actions.',
-      ].join('\n'),
-    },
-    {
-      name: 'TOOLS.md',
-      body: [
-        '# TOOLS',
-        '',
-        'Local operator notes for tool conventions go here.',
-      ].join('\n'),
-    },
-    {
-      name: 'HEARTBEAT.md',
-      body: [
-        '# HEARTBEAT',
-        '',
-        '# Keep minimal. Add only periodic checks you actually want.',
-      ].join('\n'),
-    },
-    {
-      name: 'MEMORY.md',
-      body: [
-        '# MEMORY',
-        '',
-        'Durable facts, decisions, and compaction summaries belong here.',
-      ].join('\n'),
-    },
-  ];
-
-  for (const file of defaults) {
-    const filePath = path.join(MAIN_WORKSPACE_DIR, file.name);
-    if (fs.existsSync(filePath)) continue;
-    fs.writeFileSync(filePath, `${file.body}\n`);
-  }
+  ensureMainWorkspaceBootstrap({ workspaceDir: MAIN_WORKSPACE_DIR });
 
   fs.mkdirSync(path.join(MAIN_WORKSPACE_DIR, 'memory'), { recursive: true });
   fs.mkdirSync(path.join(MAIN_WORKSPACE_DIR, 'skills'), { recursive: true });
