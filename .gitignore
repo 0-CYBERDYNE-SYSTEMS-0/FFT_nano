@@ -13,6 +13,8 @@ tmp-ipc/
 # Runtime-generated group folders (keep template groups in repo)
 groups/telegram-*/
 groups/**/logs/
+groups/main/*
+!groups/main/.gitkeep
 
 # Secrets
 *.keys.json

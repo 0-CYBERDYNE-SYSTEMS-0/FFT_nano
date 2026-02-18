@@ -24,4 +24,22 @@ if [[ -n "$MATCHES" ]]; then
   exit 1
 fi
 
+# Block user-specific absolute home paths in tracked files.
+PATH_MATCHES="$(git grep -nE '/Users/[A-Za-z0-9._-]+' -- . ':(exclude)package-lock.json' || true)"
+PATH_MATCHES="$(echo "$PATH_MATCHES" | grep -Fv '/Users/user' | grep -Fv '/Users/username' | grep -Fv '/Users/yourname' || true)"
+if [[ -n "$PATH_MATCHES" ]]; then
+  echo "ERROR: Potential personal absolute paths detected:"
+  echo "$PATH_MATCHES"
+  exit 1
+fi
+
+# Block non-placeholder WhatsApp-style chat identifiers in tracked files.
+CHAT_ID_MATCHES="$(git grep -nE '[0-9]{10,}(-[0-9]{10,})?@(g\.us|s\.whatsapp\.net)' -- . || true)"
+CHAT_ID_MATCHES="$(echo "$CHAT_ID_MATCHES" | grep -Ev '12345@s\.whatsapp\.net|1234567890@s\.whatsapp\.net|1234567890@g\.us|1234567890-1234567890@g\.us' || true)"
+if [[ -n "$CHAT_ID_MATCHES" ]]; then
+  echo "ERROR: Potential non-placeholder chat identifiers detected:"
+  echo "$CHAT_ID_MATCHES"
+  exit 1
+fi
+
 echo "Secret scan passed."

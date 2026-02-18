@@ -95,4 +95,4 @@ Read actions remain allowed, including:
 ## Launch Status Reference
 
 Canonical public launch truth report:
-- `/Users/scrimwiggins/fft-nano-work/LAUNCH_TRUTH_REPORT.md`
+- `/absolute/path/to/LAUNCH_TRUTH_REPORT.md`
