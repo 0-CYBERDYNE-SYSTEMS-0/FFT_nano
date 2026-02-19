@@ -58,6 +58,17 @@ export interface ScheduledTask {
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
   context_mode: 'group' | 'isolated';
+  schedule_json?: string | null;
+  session_target?: 'main' | 'isolated' | null;
+  wake_mode?: 'next-heartbeat' | 'now' | null;
+  delivery_mode?: 'none' | 'announce' | 'webhook' | null;
+  delivery_channel?: 'chat' | null;
+  delivery_to?: string | null;
+  delivery_webhook_url?: string | null;
+  timeout_seconds?: number | null;
+  stagger_ms?: number | null;
+  delete_after_run?: number | null;
+  consecutive_errors?: number | null;
   next_run: string | null;
   last_run: string | null;
   last_result: string | null;

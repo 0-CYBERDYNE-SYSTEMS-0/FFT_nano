@@ -15,6 +15,7 @@ This repo is a single Node.js host process that:
 ## Scripts
 
 - One-time setup: `./scripts/setup.sh`
+- Onboarding (workspace identity/bootstrap completion): `./scripts/onboard.sh [--workspace /abs/path] [--operator "Name"] [--assistant-name FarmFriend] [--non-interactive] [--force]`
 - Start (normal): `./scripts/start.sh [start] [telegram-only]`
 - Start (debug-only): `./scripts/start.sh dev [telegram-only]`
 - Farm bootstrap (demo): `./scripts/farm-bootstrap.sh --mode demo`
@@ -92,6 +93,7 @@ Notes:
   - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/`
 - Heartbeat is enabled by default and reads `HEARTBEAT.md` periodically.
 - Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `30m`).
+- Optional heartbeat tuning: `FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, `FFT_NANO_HEARTBEAT_ACTIVE_HOURS`.
 
 ## Pi-Native Project Skills
 

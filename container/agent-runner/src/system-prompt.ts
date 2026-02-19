@@ -442,8 +442,12 @@ export function buildSystemPrompt(
   lines.push('## Scheduler IPC');
   lines.push('To manage tasks, write JSON into /workspace/ipc/tasks/*.json with one of:');
   lines.push(
+    '- v2: {"type":"schedule_task","prompt":"...","schedule":{"kind":"cron|every|at",...},"session_target":"main|isolated","wake_mode":"next-heartbeat|now","delivery":{"mode":"none|announce|webhook","to":"<jid?>","webhookUrl":"https://..."},"timeout_seconds":120,"stagger_ms":2500,"delete_after_run":false,"context_mode":"group|isolated","groupFolder":"<folder>"}',
+  );
+  lines.push(
     '- {"type":"schedule_task","prompt":"...","schedule_type":"cron|interval|once","schedule_value":"...","context_mode":"group|isolated","groupFolder":"<folder>"}',
   );
+  lines.push('- legacy payloads remain supported for backward compatibility.');
   lines.push('- {"type":"pause_task","taskId":"..."}');
   lines.push('- {"type":"resume_task","taskId":"..."}');
   lines.push('- {"type":"cancel_task","taskId":"..."}');

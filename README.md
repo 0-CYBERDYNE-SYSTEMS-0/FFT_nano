@@ -97,6 +97,14 @@ If WhatsApp is enabled, authenticate once before first full run:
 npm run auth
 ```
 
+### 4. Complete Main Workspace Onboarding
+
+```bash
+./scripts/onboard.sh --operator "Your Name" --assistant-name FarmFriend --non-interactive
+```
+
+This writes onboarding values into `USER.md` and `IDENTITY.md`, removes `BOOTSTRAP.md`, and marks onboarding complete in `.fft_nano/workspace-state.json`.
+
 ## Platform Notes
 
 ### macOS
@@ -280,6 +288,15 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 - Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/` + `skills/`.
 - Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
 - Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
+- If `HEARTBEAT.md` exists but is effectively empty (headers/comments only), heartbeat runs are skipped.
+- Heartbeat acknowledgements are normalized with token stripping and max-ack gating (`FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, default `300`).
+- Optional active-hours gate: `FFT_NANO_HEARTBEAT_ACTIVE_HOURS` (format: `HH:MM-HH:MM` or `Mon-Fri@HH:MM-HH:MM`).
+
+Onboarding command options:
+
+- `npm run onboard -- --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
+- `./scripts/onboard.sh --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
+- `--force` rewrites `USER.md` and `IDENTITY.md` even when already customized.
 
 ## Pi-Native Project Skills
 
@@ -369,7 +386,8 @@ Core files:
 - `src/index.ts` - channel ingestion, routing, admin command policy
 - `src/container-runner.ts` - container spawn and mount wiring
 - `container/agent-runner/src/index.ts` - in-container Pi execution
-- `src/task-scheduler.ts` - scheduled task execution loop
+- `src/task-scheduler.ts` - scheduler mode switch (`v2` default, `legacy` fallback)
+- `src/cron/` - cron v2 adapters and timer-based scheduler service
 - `src/db.ts` - persistence
 
 ## Q&A
