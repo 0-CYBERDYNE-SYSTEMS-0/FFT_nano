@@ -18,6 +18,8 @@ This repo is a single Node.js host process that:
 - Onboarding (workspace identity/bootstrap completion): `./scripts/onboard.sh [--workspace /abs/path] [--operator "Name"] [--assistant-name FarmFriend] [--non-interactive] [--force]`
 - Start (normal): `./scripts/start.sh [start] [telegram-only]`
 - Start (debug-only): `./scripts/start.sh dev [telegram-only]`
+- Attach TUI client: `./scripts/start.sh tui` (host must already be running)
+- Preferred CLI aliases (after `npm link`): `fft start`, `fft dev`, `fft tui`
 - Farm bootstrap (demo): `./scripts/farm-bootstrap.sh --mode demo`
 - Farm bootstrap (production): `./scripts/farm-bootstrap.sh --mode production`
 

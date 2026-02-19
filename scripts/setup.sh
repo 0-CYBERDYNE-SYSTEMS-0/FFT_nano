@@ -135,9 +135,10 @@ scaffold_mount_allowlist
 
 say ""
 say "Next:"
-say "  ./scripts/start.sh telegram-only"
-say "  ./scripts/start.sh start"
-say "  ./scripts/start.sh dev   # optional debugging mode"
+say "  npm link                 # optional: install fft/fft-nano commands"
+say "  fft start telegram-only  # or: ./scripts/start.sh telegram-only"
+say "  fft dev telegram-only    # optional debugging mode"
+say "  fft tui                  # attach TUI to running host"
 say ""
 say "If using WhatsApp, authenticate once:"
 say "  npm run auth"

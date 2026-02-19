@@ -73,29 +73,85 @@ Recommended provider paths (top 4):
 
 ### 3. Start
 
-Normal runtime (recommended):
+Install command aliases (optional):
 
 ```bash
-./scripts/start.sh telegram-only
+npm link
 ```
 
-Explicit production-style start:
+Start host runtime (recommended):
 
 ```bash
-./scripts/start.sh start
+fft start telegram-only
+# or: ./scripts/start.sh telegram-only
 ```
 
 Debug mode (optional, not required for coding delegation):
 
 ```bash
-./scripts/start.sh dev telegram-only
+fft dev telegram-only
+# or: ./scripts/start.sh dev telegram-only
 ```
+
+Attach terminal UI (OpenClaw-style attached client):
+
+```bash
+fft tui
+# or: ./scripts/start.sh tui
+```
+
+Important: `fft tui` is an attach client. The main host process owns the gateway and must already be running.
+The TUI renderer uses `@mariozechner/pi-tui` and matches the OpenClaw attach-client styling model.
+`fft` auto-detects the repo from your current directory; use `--repo` to target another checkout:
+
+```bash
+fft --repo /absolute/path/to/FFT_nano tui
+```
+
+Optional TUI flags:
+
+```bash
+fft tui --session main
+fft tui --deliver
+fft tui --url ws://127.0.0.1:28989
+```
+
+TUI gateway env:
+
+- `FFT_NANO_TUI_PORT` (default `28989`)
+- `FFT_NANO_TUI_ENABLED` (`1` default, set `0` to disable)
 
 If WhatsApp is enabled, authenticate once before first full run:
 
 ```bash
 npm run auth
 ```
+
+TUI command quick reference:
+
+- `/help`
+- `/status`
+- `/session <key>`
+- `/history [limit]`
+- `/model <provider/model|model>`
+- `/think <off|minimal|low|medium|high|xhigh>`
+- `/reasoning <off|on|stream>`
+- `/new` (or `/reset`)
+- `/abort`
+- `/exit`
+
+TUI keybinds:
+
+- `Esc`: abort active run
+- `Ctrl+C`: clear input (press twice quickly to exit)
+- `Ctrl+D`: exit
+- `Ctrl+T`: quick status
+
+TUI troubleshooting:
+
+- `connect ECONNREFUSED 127.0.0.1:28989`: host is not running, wrong `FFT_NANO_TUI_PORT`, or gateway disabled.
+- `EADDRINUSE` in host logs: selected TUI port is already in use; change `FFT_NANO_TUI_PORT`.
+- `unknown session: main`: no main chat is registered yet; use `/sessions` and switch to an available session.
 
 ### 4. Complete Main Workspace Onboarding
 
@@ -245,6 +301,8 @@ Details: `docs/FARM_ONBOARDING.md`
 ## Telegram Operations
 
 Telegram is enabled when `TELEGRAM_BOT_TOKEN` is set.
+
+Attached TUI still requires the host process to be running (for example `fft start`), even when Telegram is not configured.
 
 Recommended Telegram-only local/dev mode:
 
