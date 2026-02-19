@@ -694,6 +694,11 @@ export function writeTasksSnapshot(
     schedule_value: string;
     status: string;
     next_run: string | null;
+    context_mode?: string;
+    session_target?: string | null;
+    wake_mode?: string | null;
+    delivery_mode?: string | null;
+    timeout_seconds?: number | null;
   }>,
 ): void {
   // Write filtered tasks to the group's IPC directory

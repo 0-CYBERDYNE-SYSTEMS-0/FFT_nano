@@ -3,6 +3,10 @@ import path from 'path';
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'FarmFriend';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
+export const SCHEDULER_MODE =
+  (process.env.FFT_NANO_SCHEDULER_MODE || 'v2').trim().toLowerCase() === 'legacy'
+    ? 'legacy'
+    : 'v2';
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
