@@ -14,11 +14,11 @@ import {
   DATA_DIR,
   FARM_STATE_ENABLED,
   IPC_POLL_INTERVAL,
+  MAIN_WORKSPACE_DIR,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   STORE_DIR,
   TELEGRAM_MEDIA_MAX_MB,
-  TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import {
@@ -78,6 +78,15 @@ import {
   migrateCompactionsForGroup,
 } from './memory-maintenance.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
+import { resolveCronExecutionPlan, resolveCronPolicy } from './cron/adapters.js';
+import type { CronV2Schedule } from './cron/types.js';
+import {
+  isHeartbeatFileEffectivelyEmpty,
+  isWithinHeartbeatActiveHours,
+  parseHeartbeatActiveHours,
+  shouldSuppressDuplicateHeartbeat,
+  stripHeartbeatToken,
+} from './heartbeat-policy.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -98,6 +107,12 @@ const HEARTBEAT_PROMPT =
 const HEARTBEAT_INTERVAL_MS =
   parseDurationMs(process.env.FFT_NANO_HEARTBEAT_EVERY || '30m') || 30 * 60 * 1000;
 const HEARTBEAT_ENABLED = HEARTBEAT_INTERVAL_MS > 0;
+const HEARTBEAT_ACTIVE_HOURS_RAW = process.env.FFT_NANO_HEARTBEAT_ACTIVE_HOURS;
+const HEARTBEAT_ACK_MAX_CHARS = Math.max(
+  0,
+  Number.parseInt(process.env.FFT_NANO_HEARTBEAT_ACK_MAX_CHARS || '300', 10) || 300,
+);
+const HEARTBEAT_ACTIVE_HOURS = parseHeartbeatActiveHours(HEARTBEAT_ACTIVE_HOURS_RAW);
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
@@ -222,6 +237,7 @@ let chatRunPreferences: Record<string, ChatRunPreferences> = {};
 let chatUsageStats: Record<string, ChatUsageStats> = {};
 const activeCoderRuns = new Map<string, ActiveCoderRun>();
 const activeChatRuns = new Map<string, ActiveChatRun>();
+const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
 let lastTelegramMenuMainChatId: string | null = null;
 // LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
 let lidToPhoneMap: Record<string, string> = {};
@@ -1173,6 +1189,7 @@ async function runCompactionForChat(
       'none',
       compactRequestId,
       prefs,
+      {},
       abortController.signal,
     );
 
@@ -2106,6 +2123,7 @@ async function handleTelegramCommand(m: {
           'force_delegate_execute',
           requestId,
           chatRunPreferences[m.chatJid] || {},
+          {},
           abortController.signal,
         );
         updateChatUsage(m.chatJid, run.usage);
@@ -2374,6 +2392,7 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
       codingHint,
       requestId,
       runPreferences,
+      {},
       abortController.signal,
     );
     result = run.result;
@@ -2412,6 +2431,7 @@ async function runAgent(
   codingHint: CodingHint = 'none',
   requestId?: string,
   runtimePrefs: ChatRunPreferences = {},
+  options: { suppressErrorReply?: boolean } = {},
   abortSignal?: AbortSignal,
 ): Promise<{
   result: string | null;
@@ -2440,6 +2460,11 @@ async function runAgent(
       schedule_value: t.schedule_value,
       status: t.status,
       next_run: t.next_run,
+      context_mode: t.context_mode,
+      session_target: t.session_target,
+      wake_mode: t.wake_mode,
+      delivery_mode: t.delivery_mode,
+      timeout_seconds: t.timeout_seconds,
     })),
   );
 
@@ -2525,6 +2550,13 @@ async function runAgent(
     if (output.status === 'error') {
       if (typeof output.error === 'string' && /aborted by user/i.test(output.error)) {
         return { result: null, streamed: false, ok: true };
+      }
+      if (options.suppressErrorReply) {
+        logger.warn(
+          { group: group.name, error: output.error },
+          'Container agent error (suppressed user reply)',
+        );
+        return { result: null, streamed: false, ok: false };
       }
       logger.error(
         { group: group.name, error: output.error },
@@ -2779,7 +2811,23 @@ async function processTaskIpc(
     prompt?: string;
     schedule_type?: string;
     schedule_value?: string;
+    schedule?: CronV2Schedule | string;
     context_mode?: string;
+    session_target?: string;
+    wake_mode?: string;
+    delivery_mode?: string;
+    delivery_channel?: string;
+    delivery_to?: string;
+    delivery_webhook_url?: string;
+    delivery?: {
+      mode?: string;
+      channel?: string;
+      to?: string;
+      webhookUrl?: string;
+    };
+    timeout_seconds?: number | string;
+    stagger_ms?: number | string;
+    delete_after_run?: boolean | number | string;
     groupFolder?: string;
     chatJid?: string;
     // For register_group
@@ -2799,14 +2847,12 @@ async function processTaskIpc(
     deleteTask,
     getTaskById: getTask,
   } = await import('./db.js');
-  const { CronExpressionParser } = await import('cron-parser');
 
   switch (data.type) {
     case 'schedule_task':
       if (
         data.prompt &&
-        data.schedule_type &&
-        data.schedule_value &&
+        (data.schedule || (data.schedule_type && data.schedule_value)) &&
         data.groupFolder
       ) {
         // Authorization: non-main groups can only schedule for themselves
@@ -2832,43 +2878,22 @@ async function processTaskIpc(
           break;
         }
 
-        const scheduleType = data.schedule_type as 'cron' | 'interval' | 'once';
-
-        let nextRun: string | null = null;
-        if (scheduleType === 'cron') {
-          try {
-            const interval = CronExpressionParser.parse(data.schedule_value, {
-              tz: TIMEZONE,
-            });
-            nextRun = interval.next().toISOString();
-          } catch {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid cron expression',
-            );
-            break;
-          }
-        } else if (scheduleType === 'interval') {
-          const ms = parseInt(data.schedule_value, 10);
-          if (isNaN(ms) || ms <= 0) {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid interval',
-            );
-            break;
-          }
-          nextRun = new Date(Date.now() + ms).toISOString();
-        } else if (scheduleType === 'once') {
-          const scheduled = new Date(data.schedule_value);
-          if (isNaN(scheduled.getTime())) {
-            logger.warn(
-              { scheduleValue: data.schedule_value },
-              'Invalid timestamp',
-            );
-            break;
-          }
-          nextRun = scheduled.toISOString();
+        let executionPlan;
+        try {
+          executionPlan = resolveCronExecutionPlan(data);
+        } catch (err) {
+          logger.warn(
+            {
+              scheduleType: data.schedule_type,
+              scheduleValue: data.schedule_value,
+              schedule: data.schedule,
+              err,
+            },
+            'Invalid schedule in schedule_task',
+          );
+          break;
         }
+        const policy = resolveCronPolicy(data);
 
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const contextMode =
@@ -2880,15 +2905,34 @@ async function processTaskIpc(
           group_folder: targetGroup,
           chat_jid: targetJid,
           prompt: data.prompt,
-          schedule_type: scheduleType,
-          schedule_value: data.schedule_value,
+          schedule_type: executionPlan.scheduleType,
+          schedule_value: executionPlan.scheduleValue,
           context_mode: contextMode,
-          next_run: nextRun,
+          schedule_json: executionPlan.scheduleJson || null,
+          session_target: policy.sessionTarget,
+          wake_mode: policy.wakeMode,
+          delivery_mode: policy.delivery.mode,
+          delivery_channel: policy.delivery.channel || null,
+          delivery_to: policy.delivery.to || null,
+          delivery_webhook_url: policy.delivery.webhookUrl || null,
+          timeout_seconds: policy.timeoutSeconds || null,
+          stagger_ms: policy.staggerMs || null,
+          delete_after_run: policy.deleteAfterRun ? 1 : 0,
+          consecutive_errors: 0,
+          next_run: executionPlan.nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
         });
         logger.info(
-          { taskId, sourceGroup, targetGroup, contextMode },
+          {
+            taskId,
+            sourceGroup,
+            targetGroup,
+            contextMode,
+            sessionTarget: policy.sessionTarget,
+            wakeMode: policy.wakeMode,
+            deliveryMode: policy.delivery.mode,
+          },
           'Task created via IPC',
         );
       }
@@ -3078,6 +3122,7 @@ async function connectWhatsApp(): Promise<void> {
       startSchedulerLoop({
         sendMessage,
         registeredGroups: () => registeredGroups,
+        requestHeartbeatNow,
       });
       startIpcWatcher();
       startMessageLoop();
@@ -3159,25 +3204,53 @@ async function startMessageLoop(): Promise<void> {
   }
 }
 
-function isHeartbeatAckOnly(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return true;
-  if (trimmed === 'HEARTBEAT_OK') return true;
-  const withoutPrefix = trimmed.replace(/^HEARTBEAT_OK\s*/i, '').trim();
-  return withoutPrefix.length === 0;
+function logHeartbeatSkip(
+  reason: string,
+  extra: Record<string, string | number | boolean | null> = {},
+): void {
+  logger.debug({ reason, ...extra }, 'Skipping heartbeat');
 }
 
-async function runHeartbeatTurn(): Promise<void> {
+function shouldBypassEmptyHeartbeatSkip(reason: string): boolean {
+  return (
+    reason === 'wake' ||
+    reason === 'exec-event' ||
+    reason.startsWith('cron:') ||
+    reason.startsWith('hook:')
+  );
+}
+
+async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
   if (!HEARTBEAT_ENABLED) return;
   const mainChatJid = findMainChatJid();
-  if (!mainChatJid) return;
+  if (!mainChatJid) {
+    logHeartbeatSkip('no-main-chat');
+    return;
+  }
+  if (!isWithinHeartbeatActiveHours(HEARTBEAT_ACTIVE_HOURS)) {
+    logHeartbeatSkip('quiet-hours', {
+      activeHours: HEARTBEAT_ACTIVE_HOURS?.raw || null,
+      reason,
+    });
+    return;
+  }
   if (activeChatRuns.has(mainChatJid)) {
-    logger.debug({ chatJid: mainChatJid }, 'Skipping heartbeat: active run in main chat');
+    logHeartbeatSkip('active-run', { chatJid: mainChatJid, reason });
     return;
   }
 
   const group = registeredGroups[mainChatJid];
-  if (!group || group.folder !== MAIN_GROUP_FOLDER) return;
+  if (!group || group.folder !== MAIN_GROUP_FOLDER) {
+    logHeartbeatSkip('main-group-not-registered', { chatJid: mainChatJid, reason });
+    return;
+  }
+  if (
+    !shouldBypassEmptyHeartbeatSkip(reason) &&
+    isHeartbeatFileEffectivelyEmpty(path.join(MAIN_WORKSPACE_DIR, 'HEARTBEAT.md'))
+  ) {
+    logHeartbeatSkip('empty-heartbeat-file', { chatJid: mainChatJid, reason });
+    return;
+  }
 
   const requestId = `heartbeat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const abortController = new AbortController();
@@ -3197,12 +3270,45 @@ async function runHeartbeatTurn(): Promise<void> {
       'auto',
       requestId,
       chatRunPreferences[mainChatJid] || {},
+      { suppressErrorReply: true },
       abortController.signal,
     );
-    updateChatUsage(mainChatJid, run.usage);
-    if (run.ok && !run.streamed && run.result && !isHeartbeatAckOnly(run.result)) {
-      await sendMessage(mainChatJid, run.result);
+    if (!run.ok) {
+      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
+      return;
     }
+    updateChatUsage(mainChatJid, run.usage);
+    if (run.streamed || !run.result) return;
+
+    const normalized = stripHeartbeatToken(run.result, {
+      mode: 'heartbeat',
+      maxAckChars: HEARTBEAT_ACK_MAX_CHARS,
+    });
+    if (normalized.shouldSkip || !normalized.text.trim()) {
+      logHeartbeatSkip('ack-token', {
+        chatJid: mainChatJid,
+        didStrip: normalized.didStrip,
+        reason,
+      });
+      return;
+    }
+
+    const nowMs = Date.now();
+    const previous = heartbeatLastSent.get(mainChatJid);
+    if (
+      shouldSuppressDuplicateHeartbeat({
+        text: normalized.text,
+        nowMs,
+        previousText: previous?.text,
+        previousSentAt: previous?.sentAt,
+      })
+    ) {
+      logHeartbeatSkip('duplicate', { chatJid: mainChatJid, reason });
+      return;
+    }
+
+    await sendMessage(mainChatJid, normalized.text);
+    heartbeatLastSent.set(mainChatJid, { text: normalized.text, sentAt: nowMs });
   } catch (err) {
     logger.warn({ err, chatJid: mainChatJid }, 'Heartbeat run failed');
   } finally {
@@ -3218,9 +3324,14 @@ function startHeartbeatLoop(): void {
   heartbeatLoopStarted = true;
   setInterval(() => {
     if (shuttingDown) return;
-    void runHeartbeatTurn();
+    void runHeartbeatTurn('interval');
   }, HEARTBEAT_INTERVAL_MS);
   logger.info({ everyMs: HEARTBEAT_INTERVAL_MS }, 'Heartbeat loop started');
+}
+
+function requestHeartbeatNow(reason = 'manual'): void {
+  if (shuttingDown) return;
+  void runHeartbeatTurn(reason);
 }
 
 function ensureContainerSystemRunning(): void {
@@ -3324,6 +3435,12 @@ function registerShutdownHandlers(): void {
 
 async function main(): Promise<void> {
   registerShutdownHandlers();
+  if (HEARTBEAT_ACTIVE_HOURS_RAW?.trim() && !HEARTBEAT_ACTIVE_HOURS) {
+    logger.warn(
+      { value: HEARTBEAT_ACTIVE_HOURS_RAW },
+      'Ignoring invalid FFT_NANO_HEARTBEAT_ACTIVE_HOURS; expected HH:MM-HH:MM or Mon-Fri@HH:MM-HH:MM',
+    );
+  }
   acquireSingletonLock(path.join(DATA_DIR, 'fft_nano.lock'));
   ensureContainerSystemRunning();
   initDatabase();
@@ -3357,6 +3474,7 @@ async function main(): Promise<void> {
     startSchedulerLoop({
       sendMessage,
       registeredGroups: () => registeredGroups,
+      requestHeartbeatNow,
     });
     startIpcWatcher();
     startHeartbeatLoop();

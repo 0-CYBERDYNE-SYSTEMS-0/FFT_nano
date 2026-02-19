@@ -3,9 +3,9 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  DATA_DIR,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
+  SCHEDULER_MODE,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
@@ -19,13 +19,16 @@ import {
 } from './db.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+import { startCronV2Service } from './cron/service.js';
+import { resolveNoContinueForTask } from './cron/adapters.js';
 
 export interface SchedulerDependencies {
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  requestHeartbeatNow?: (reason?: string) => void;
 }
 
-async function runTask(
+async function runLegacyTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
 ): Promise<void> {
@@ -59,7 +62,6 @@ async function runTask(
     return;
   }
 
-  // Update tasks snapshot for container to read (filtered by group)
   const isMain = task.group_folder === MAIN_GROUP_FOLDER;
   const tasks = getAllTasks();
   writeTasksSnapshot(
@@ -73,6 +75,11 @@ async function runTask(
       schedule_value: t.schedule_value,
       status: t.status,
       next_run: t.next_run,
+      context_mode: t.context_mode,
+      session_target: t.session_target,
+      wake_mode: t.wake_mode,
+      delivery_mode: t.delivery_mode,
+      timeout_seconds: t.timeout_seconds,
     })),
   );
 
@@ -86,6 +93,7 @@ async function runTask(
       chatJid: task.chat_jid,
       isMain,
       isScheduledTask: true,
+      noContinue: resolveNoContinueForTask(task),
     });
 
     if (output.status === 'error') {
@@ -124,7 +132,6 @@ async function runTask(
     const ms = parseInt(task.schedule_value, 10);
     nextRun = new Date(Date.now() + ms).toISOString();
   }
-  // 'once' tasks have no next run
 
   const resultSummary = error
     ? `Error: ${error}`
@@ -136,13 +143,13 @@ async function runTask(
 
 let schedulerRunning = false;
 
-export function startSchedulerLoop(deps: SchedulerDependencies): void {
+function startLegacySchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
     logger.debug('Scheduler loop already running, skipping duplicate start');
     return;
   }
   schedulerRunning = true;
-  logger.info('Scheduler loop started');
+  logger.info('Scheduler loop started (legacy)');
 
   const loop = async () => {
     try {
@@ -152,13 +159,11 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       }
 
       for (const task of dueTasks) {
-        // Re-check task status in case it was paused/cancelled
         const currentTask = getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
         }
-
-        await runTask(currentTask, deps);
+        await runLegacyTask(currentTask, deps);
       }
     } catch (err) {
       logger.error({ err }, 'Error in scheduler loop');
@@ -169,3 +174,16 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 
   loop();
 }
+
+export function startSchedulerLoop(deps: SchedulerDependencies): void {
+  if (SCHEDULER_MODE === 'legacy') {
+    startLegacySchedulerLoop(deps);
+    return;
+  }
+  startCronV2Service({
+    sendMessage: deps.sendMessage,
+    registeredGroups: deps.registeredGroups,
+    requestHeartbeatNow: deps.requestHeartbeatNow,
+  });
+}
+

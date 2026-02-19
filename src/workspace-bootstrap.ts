@@ -231,3 +231,40 @@ export function ensureMainWorkspaceBootstrap(params: {
 
   return state;
 }
+
+export interface CompleteMainWorkspaceOnboardingParams {
+  workspaceDir: string;
+  now?: () => Date;
+  removeBootstrapFile?: boolean;
+}
+
+export function completeMainWorkspaceOnboarding(
+  params: CompleteMainWorkspaceOnboardingParams,
+): WorkspaceOnboardingState {
+  const workspaceDir = params.workspaceDir;
+  const nowIso = () => (params.now ? params.now() : new Date()).toISOString();
+  fs.mkdirSync(workspaceDir, { recursive: true });
+
+  const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
+  const state = readWorkspaceState(workspaceDir);
+  const next: WorkspaceOnboardingState = { ...state, version: WORKSPACE_STATE_VERSION };
+  const bootstrapExists = fs.existsSync(bootstrapPath);
+
+  if (params.removeBootstrapFile !== false && bootstrapExists) {
+    try {
+      fs.unlinkSync(bootstrapPath);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!next.bootstrapSeededAt && bootstrapExists) {
+    next.bootstrapSeededAt = nowIso();
+  }
+  if (!next.onboardingCompletedAt) {
+    next.onboardingCompletedAt = nowIso();
+  }
+
+  writeWorkspaceState(workspaceDir, next);
+  return next;
+}

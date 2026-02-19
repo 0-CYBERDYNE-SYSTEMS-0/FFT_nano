@@ -52,6 +52,17 @@ export function initDatabaseAtPath(dbPath: string): void {
       prompt TEXT NOT NULL,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
+      schedule_json TEXT,
+      session_target TEXT,
+      wake_mode TEXT,
+      delivery_mode TEXT,
+      delivery_channel TEXT,
+      delivery_to TEXT,
+      delivery_webhook_url TEXT,
+      timeout_seconds INTEGER,
+      stagger_ms INTEGER,
+      delete_after_run INTEGER DEFAULT 0,
+      consecutive_errors INTEGER DEFAULT 0,
       next_run TEXT,
       last_run TEXT,
       last_result TEXT,
@@ -79,6 +90,27 @@ export function initDatabaseAtPath(dbPath: string): void {
     db.exec(`ALTER TABLE messages ADD COLUMN sender_name TEXT`);
   } catch {
     /* column already exists */
+  }
+
+  const scheduledTaskMigrations = [
+    `ALTER TABLE scheduled_tasks ADD COLUMN schedule_json TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN session_target TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN wake_mode TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN delivery_mode TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN delivery_channel TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN delivery_to TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN delivery_webhook_url TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN timeout_seconds INTEGER`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN stagger_ms INTEGER`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN delete_after_run INTEGER DEFAULT 0`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN consecutive_errors INTEGER DEFAULT 0`,
+  ];
+  for (const migration of scheduledTaskMigrations) {
+    try {
+      db.exec(migration);
+    } catch {
+      /* column already exists */
+    }
   }
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -331,8 +363,13 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (
+      id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode,
+      schedule_json, session_target, wake_mode, delivery_mode, delivery_channel, delivery_to,
+      delivery_webhook_url, timeout_seconds, stagger_ms, delete_after_run, consecutive_errors,
+      next_run, status, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -342,6 +379,17 @@ export function createTask(
     task.schedule_type,
     task.schedule_value,
     task.context_mode || 'isolated',
+    task.schedule_json ?? null,
+    task.session_target ?? null,
+    task.wake_mode ?? null,
+    task.delivery_mode ?? null,
+    task.delivery_channel ?? null,
+    task.delivery_to ?? null,
+    task.delivery_webhook_url ?? null,
+    task.timeout_seconds ?? null,
+    task.stagger_ms ?? null,
+    task.delete_after_run ?? 0,
+    task.consecutive_errors ?? 0,
     task.next_run,
     task.status,
     task.created_at,
@@ -428,6 +476,21 @@ export function getDueTasks(): ScheduledTask[] {
     .all(now) as ScheduledTask[];
 }
 
+export function getNextDueTaskTime(): string | null {
+  const row = db
+    .prepare(
+      `
+    SELECT next_run
+    FROM scheduled_tasks
+    WHERE status = 'active' AND next_run IS NOT NULL
+    ORDER BY next_run ASC
+    LIMIT 1
+  `,
+    )
+    .get() as { next_run?: string | null } | undefined;
+  return row?.next_run || null;
+}
+
 export function updateTaskAfterRun(
   id: string,
   nextRun: string | null,
@@ -441,6 +504,34 @@ export function updateTaskAfterRun(
     WHERE id = ?
   `,
   ).run(nextRun, now, lastResult, nextRun, id);
+}
+
+export function updateTaskAfterRunV2(input: {
+  id: string;
+  nextRun: string | null;
+  lastResult: string;
+  status: ScheduledTask['status'];
+  consecutiveErrors: number;
+}): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `
+    UPDATE scheduled_tasks
+    SET next_run = ?,
+        last_run = ?,
+        last_result = ?,
+        status = ?,
+        consecutive_errors = ?
+    WHERE id = ?
+  `,
+  ).run(
+    input.nextRun,
+    now,
+    input.lastResult,
+    input.status,
+    input.consecutiveErrors,
+    input.id,
+  );
 }
 
 export function logTaskRun(log: TaskRunLog): void {
