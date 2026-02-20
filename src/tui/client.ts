@@ -49,6 +49,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'think', description: 'Set thinking level' },
   { name: 'reasoning', description: 'Set reasoning level' },
   { name: 'deliver', description: 'Set delivery mode (on/off)' },
+  { name: 'gateway', description: 'Gateway service action (status|restart)' },
   { name: 'new', description: 'Reset session before next run' },
   { name: 'reset', description: 'Alias for /new' },
   { name: 'abort', description: 'Abort active run' },
@@ -122,6 +123,7 @@ function helpText(): string {
     '/think <off|minimal|low|medium|high|xhigh>',
     '/reasoning <off|on|stream>',
     '/deliver <on|off>',
+    '/gateway <status|restart>',
     '/new or /reset',
     '/abort',
     '/exit',
@@ -484,6 +486,33 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         deliver = value === 'on';
         updateFooter();
         chatLog.addSystem(`delivery set to ${deliver ? 'on' : 'off'}`);
+        break;
+      }
+
+      case 'gateway': {
+        const actionRaw = (args || 'status').trim().toLowerCase();
+        const action =
+          actionRaw === 'restart'
+            ? 'restart'
+            : actionRaw === 'status'
+              ? 'status'
+              : null;
+        if (!action) {
+          chatLog.addSystem('usage: /gateway <status|restart>');
+          break;
+        }
+
+        if (action === 'restart') {
+          chatLog.addSystem('Restarting gateway service. Expect disconnect while host restarts.');
+        }
+        const result = await client.request<{ ok: boolean; text: string }>('gateway.service', {
+          action,
+        });
+        if (result.ok) {
+          chatLog.addSystem(`gateway ${action}:\n${result.text}`);
+        } else {
+          chatLog.addSystem(`gateway ${action} failed:\n${result.text}`);
+        }
         break;
       }
 

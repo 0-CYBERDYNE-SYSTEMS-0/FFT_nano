@@ -31,7 +31,9 @@ Project links:
 - Support: `SUPPORT.md`
 - Changelog: `CHANGELOG.md`
 
-## Quickstart (Single-Repo Install)
+## Quickstart (Primary UX Path)
+
+This is the canonical install-and-run flow.
 
 ### 1. Clone and bootstrap
 
@@ -49,19 +51,22 @@ cd FFT_nano
 - agent image build (Apple Container or Docker, auto-detected)
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
+- host service install/start by default (`FFT_NANO_AUTO_SERVICE=1`)
 
 Users only need this repo. Farm dashboard templates are auto-fetched by `farm-bootstrap.sh` from the FFT companion dashboard repository and pinned by commit for reproducible setup.
 
-### 2. Configure `.env`
+### 2. Configure `.env` (minimum required)
 
-At minimum set your provider values for Pi runtime in the container.
+At minimum set provider runtime values plus Telegram credentials.
 
-Example (OpenAI):
+Example (OpenAI + Telegram):
 
 ```dotenv
 PI_API=openai
 PI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=replace-me
+TELEGRAM_BOT_TOKEN=replace-me
+TELEGRAM_ADMIN_SECRET=replace-me
 ```
 
 Recommended provider paths (top 4):
@@ -71,74 +76,113 @@ Recommended provider paths (top 4):
 - Gemini: `PI_API=gemini`, `PI_MODEL=...`, `GEMINI_API_KEY=...`
 - OpenRouter: `PI_API=openrouter`, `PI_MODEL=...`, `OPENROUTER_API_KEY=...`
 
-### 3. Start
+After editing `.env`, apply it by restarting the host:
 
-Install command aliases (optional):
+```bash
+./scripts/service.sh restart
+# or, after `npm link`: fft service restart
+```
+
+### 3. Verify service health
+
+```bash
+./scripts/service.sh status
+./scripts/service.sh logs
+# or, after `npm link`: fft service status && fft service logs
+```
+
+If you disabled auto-service during setup (`FFT_NANO_AUTO_SERVICE=0`), install/start it manually:
+
+```bash
+./scripts/service.sh install
+# or, after `npm link`: fft service install
+```
+
+### 4. Attach the TUI and begin onboarding
+
+Install CLI aliases (optional):
 
 ```bash
 npm link
 ```
 
-Start host runtime (recommended):
-
-```bash
-fft start telegram-only
-# or: ./scripts/start.sh telegram-only
-```
-
-Debug mode (optional, not required for coding delegation):
-
-```bash
-fft dev telegram-only
-# or: ./scripts/start.sh dev telegram-only
-```
-
-Attach terminal UI (OpenClaw-style attached client):
+Attach the terminal UI:
 
 ```bash
 fft tui
 # or: ./scripts/start.sh tui
 ```
 
-Important: `fft tui` is an attach client. The main host process owns the gateway and must already be running.
-The TUI renderer uses `@mariozechner/pi-tui` and matches the OpenClaw attach-client styling model.
+Important: `fft tui` is an attach client. The host process must already be running.
 `fft` auto-detects the repo from your current directory; use `--repo` to target another checkout:
 
 ```bash
 fft --repo /absolute/path/to/FFT_nano tui
 ```
 
-Optional TUI flags:
+Complete workspace identity bootstrap once:
 
 ```bash
-fft tui --session main
-fft tui --deliver
-fft tui --url ws://127.0.0.1:28989
+./scripts/onboard.sh --operator "Your Name" --assistant-name FarmFriend --non-interactive
 ```
 
-TUI gateway env:
+This writes onboarding values into `USER.md` and `IDENTITY.md`, removes `BOOTSTRAP.md`, and marks onboarding complete in `.fft_nano/workspace-state.json`.
 
-- `FFT_NANO_TUI_PORT` (default `28989`)
-- `FFT_NANO_TUI_ENABLED` (`1` default, set `0` to disable)
+### 5. Claim Telegram as main/admin
 
-If WhatsApp is enabled, authenticate once before first full run:
+In the bot DM:
 
-```bash
-npm run auth
-```
+1. Run `/id` to confirm chat id.
+2. Run `/main <secret>` using `TELEGRAM_ADMIN_SECRET`.
 
-TUI command quick reference:
+Once claimed:
+
+- main chat responds to all messages
+- non-main chats require trigger `@<ASSISTANT_NAME>`
+- admin controls (`/gateway`, `/tasks`, `/coder`, `/freechat`) are main-only
+
+### Unified Command Reference
+
+If you have not run `npm link`, use `./scripts/start.sh ...` and `./scripts/service.sh ...` equivalents.
+
+Host CLI:
+
+- `fft start [telegram-only]`
+- `fft dev [telegram-only]`
+- `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
+- `fft service <install|uninstall|start|stop|restart|status|logs>`
+
+TUI slash commands:
 
 - `/help`
 - `/status`
+- `/sessions`
 - `/session <key>`
 - `/history [limit]`
 - `/model <provider/model|model>`
 - `/think <off|minimal|low|medium|high|xhigh>`
 - `/reasoning <off|on|stream>`
+- `/deliver <on|off>`
+- `/gateway <status|restart>`
 - `/new` (or `/reset`)
 - `/abort`
 - `/exit`
+
+Telegram commands (main/admin subset):
+
+- `/help`
+- `/status`
+- `/id`
+- `/main <secret>`
+- `/gateway <status|restart>`
+- `/coder <task>`
+- `/coder-plan <task>`
+- `/tasks`
+
+Service-control note:
+
+- Linux may require elevated privileges for some service actions.
+- Runtime `/gateway` commands are non-interactive; if privilege escalation is required and not configured, run `./scripts/service.sh ...` (or `fft service ...`) directly in a shell with sufficient permissions.
 
 TUI keybinds:
 
@@ -146,6 +190,12 @@ TUI keybinds:
 - `Ctrl+C`: clear input (press twice quickly to exit)
 - `Ctrl+D`: exit
 - `Ctrl+T`: quick status
+- `Ctrl+P`: quick sessions
+
+TUI gateway env:
+
+- `FFT_NANO_TUI_PORT` (default `28989`)
+- `FFT_NANO_TUI_ENABLED` (`1` default, set `0` to disable)
 
 TUI troubleshooting:
 
@@ -153,13 +203,11 @@ TUI troubleshooting:
 - `EADDRINUSE` in host logs: selected TUI port is already in use; change `FFT_NANO_TUI_PORT`.
 - `unknown session: main`: no main chat is registered yet; use `/sessions` and switch to an available session.
 
-### 4. Complete Main Workspace Onboarding
+If WhatsApp is enabled, authenticate once before first full run:
 
 ```bash
-./scripts/onboard.sh --operator "Your Name" --assistant-name FarmFriend --non-interactive
+npm run auth
 ```
-
-This writes onboarding values into `USER.md` and `IDENTITY.md`, removes `BOOTSTRAP.md`, and marks onboarding complete in `.fft_nano/workspace-state.json`.
 
 ## Platform Notes
 
@@ -187,85 +235,30 @@ docker info
 
 FFT_nano runs on Pi as a Linux Docker deployment (not Apple Container).
 
-Canonical Pi guide:
+Canonical Pi guide (full runbook):
 - `docs/RASPBERRY_PI.md`
 
-### 1. Host prerequisites
+Pi summary (aligned with the primary flow):
 
 ```bash
 sudo apt update
 sudo apt install -y git curl ca-certificates
-```
-
-Install Node.js 20+:
-
-```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 node -v
-```
-
-Install Docker + enable at boot:
-
-```bash
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker "$USER"
-newgrp docker
+# log out/in (or reboot), then:
 sudo systemctl enable --now docker
 docker info
-```
-
-### 2. Install FFT_nano
-
-```bash
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
 cd FFT_nano
 ./scripts/setup.sh
-cp .env.example .env
+./scripts/service.sh status
+./scripts/service.sh logs
 ```
 
-Fill `.env` with your provider and channel keys, then start:
-
-```bash
-./scripts/start.sh telegram-only
-```
-
-### 3. Optional: auto-start on reboot (systemd)
-
-Create `/etc/systemd/system/fft-nano.service`:
-
-```ini
-[Unit]
-Description=FFT_nano
-After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/FFT_nano
-ExecStart=/usr/bin/env bash -lc './scripts/start.sh start telegram-only'
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Replace `User=pi` and `WorkingDirectory=/home/pi/FFT_nano` if your username/path differ.
-
-Enable/start:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now fft-nano
-sudo systemctl status fft-nano
-```
-
-For full reboot validation, update procedure, and troubleshooting, use:
-- `docs/RASPBERRY_PI.md`
+`setup.sh` installs the service by default unless `FFT_NANO_AUTO_SERVICE=0`.
 
 ## Farm Onboarding (Demo vs Production)
 
@@ -325,6 +318,7 @@ Behavior:
 - main chat responds to all messages
 - non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@FarmFriend`)
 - admin and coder delegation commands are main-chat only
+- main/admin can query or restart host service with `/gateway status` and `/gateway restart`
 
 ## Coding Delegation (`/coder`)
 

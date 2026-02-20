@@ -59,6 +59,9 @@ export interface TuiGatewayAdapters {
     deliver: boolean;
   }) => Promise<{ runId: string; status: 'started' | 'already_running' }>;
   abortChat: (params: { chatJid: string; runId: string }) => Promise<{ aborted: boolean }>;
+  serviceGateway: (params: {
+    action: 'status' | 'restart';
+  }) => Promise<{ ok: boolean; text: string }> | { ok: boolean; text: string };
 }
 
 const DEFAULT_PORT = Number(process.env.FFT_NANO_TUI_PORT || 28989);
@@ -361,6 +364,32 @@ export async function startTuiGatewayServer(
           break;
         }
 
+        case 'gateway.service': {
+          const actionRaw = asText(params.action).trim().toLowerCase();
+          const action =
+            actionRaw === 'restart'
+              ? 'restart'
+              : actionRaw === 'status'
+                ? 'status'
+                : null;
+          if (!action) {
+            sendFrame(ws, failure(frame.id, 'action must be "status" or "restart"'));
+            break;
+          }
+
+          void Promise.resolve(adapters.serviceGateway({ action }))
+            .then((result) => {
+              sendFrame(ws, response(frame.id, result));
+            })
+            .catch((err) => {
+              sendFrame(
+                ws,
+                failure(frame.id, err instanceof Error ? err.message : String(err)),
+              );
+            });
+          break;
+        }
+
         default:
           sendFrame(ws, failure(frame.id, `Unknown method: ${frame.method}`));
       }
@@ -386,4 +415,3 @@ export async function startTuiGatewayServer(
     close,
   };
 }
-

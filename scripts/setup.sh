@@ -13,6 +13,12 @@ cd "$ROOT_DIR"
 say() { printf "%s\n" "$*"; }
 fail() { printf "\nERROR: %s\n" "$*" >&2; exit 1; }
 
+is_truthy() {
+  local raw="${1:-}"
+  raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
+  [[ "$raw" == "1" || "$raw" == "true" || "$raw" == "yes" || "$raw" == "on" ]]
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
@@ -133,12 +139,23 @@ fi
 scaffold_env
 scaffold_mount_allowlist
 
+if is_truthy "${FFT_NANO_AUTO_SERVICE:-1}"; then
+  say "Installing and starting host service..."
+  ./scripts/service.sh install
+  say "Host service is active and will auto-start after reboot."
+else
+  say "Skipping host service install (FFT_NANO_AUTO_SERVICE disabled)."
+fi
+
 say ""
 say "Next:"
-say "  npm link                 # optional: install fft/fft-nano commands"
-say "  fft start telegram-only  # or: ./scripts/start.sh telegram-only"
-say "  fft dev telegram-only    # optional debugging mode"
-say "  fft tui                  # attach TUI to running host"
+say "  edit .env                # set provider key + TELEGRAM_BOT_TOKEN (+ TELEGRAM_ADMIN_SECRET)"
+say "  ./scripts/service.sh restart  # apply .env changes"
+say "  ./scripts/service.sh status   # check daemon/service health"
+say "  ./scripts/service.sh logs     # view recent service logs"
+say "  ./scripts/start.sh tui        # attach TUI to running host"
+say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name FarmFriend --non-interactive"
+say "  Telegram DM: /id then /main <secret>"
 say ""
 say "If using WhatsApp, authenticate once:"
 say "  npm run auth"

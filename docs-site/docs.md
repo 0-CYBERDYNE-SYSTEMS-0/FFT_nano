@@ -36,14 +36,23 @@ cd FFT_nano
 # 2. Bootstrap
 ./scripts/setup.sh
 
-# 3. Configure .env (see Credentials section)
+# 3. Configure .env
+# PI_API=...
+# PI_MODEL=...
+# <PROVIDER_API_KEY>=...
+# TELEGRAM_BOT_TOKEN=...
+# TELEGRAM_ADMIN_SECRET=...
 
-# 4. Auth WhatsApp (if using)
-npm run auth
+# 4. Verify service
+./scripts/service.sh status
+./scripts/service.sh logs
 
-# 5. Start
-./scripts/start.sh dev
+# 5. Enter TUI
+./scripts/start.sh tui
 ```
+
+Canonical operator flow and command reference:
+- `README.md` -> "Quickstart (Primary UX Path)"
 
 ---
 

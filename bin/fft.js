@@ -9,6 +9,7 @@ function printUsage() {
   fft start [telegram-only]
   fft dev [telegram-only]
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
+  fft service <install|uninstall|start|stop|restart|status|logs>
 
 Options:
   --repo <path>   Run against a specific FFT_nano repo path.
@@ -56,8 +57,8 @@ function parseCli(argv) {
   return { repoOverride, args };
 }
 
-function runInRepo(repoRoot, args) {
-  const result = spawnSync('bash', ['scripts/start.sh', ...args], {
+function runInRepo(repoRoot, script, args) {
+  const result = spawnSync('bash', [script, ...args], {
     cwd: repoRoot,
     env: process.env,
     stdio: 'inherit',
@@ -85,7 +86,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['start', 'dev', 'tui'].includes(command)) {
+  if (!['start', 'dev', 'tui', 'service'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -102,7 +103,12 @@ function main() {
     process.exit(2);
   }
 
-  runInRepo(repoRoot, [command, ...commandArgs]);
+  if (command === 'service') {
+    runInRepo(repoRoot, 'scripts/service.sh', commandArgs);
+    return;
+  }
+
+  runInRepo(repoRoot, 'scripts/start.sh', [command, ...commandArgs]);
 }
 
 main();

@@ -147,6 +147,7 @@ const TELEGRAM_COMMON_COMMANDS = [
 const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'main', description: 'Claim this chat as main/admin' },
   { command: 'freechat', description: 'Manage non-main free-chat allowlist' },
+  { command: 'gateway', description: 'Gateway service ops: /gateway status|restart' },
   { command: 'coder', description: 'Delegate coding execution' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
@@ -178,6 +179,7 @@ type TelegramCommandName =
   | '/compact'
   | '/subagents'
   | '/main'
+  | '/gateway'
   | '/tasks'
   | '/task_pause'
   | '/task_resume'
@@ -1163,6 +1165,58 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
   };
 }
 
+function runGatewayServiceCommand(
+  action: 'status' | 'restart',
+): { ok: boolean; text: string } {
+  const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      ok: false,
+      text: `Gateway service script not found: ${scriptPath}`,
+    };
+  }
+
+  const result = spawnSync('bash', [scriptPath, action], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      FFT_NANO_GATEWAY_CALL: '1',
+      FFT_NANO_NONINTERACTIVE: '1',
+    },
+    maxBuffer: 8 * 1024 * 1024,
+  });
+
+  if (result.error) {
+    return {
+      ok: false,
+      text: `Failed running gateway service command: ${result.error.message}`,
+    };
+  }
+
+  const combined = [result.stdout || '', result.stderr || '']
+    .filter((part) => part.trim().length > 0)
+    .join('\n')
+    .trim();
+  const bounded =
+    combined.length > 12000
+      ? `${combined.slice(0, 12000)}\n\n...output truncated...`
+      : combined;
+
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      text:
+        bounded ||
+        `Gateway service command failed with exit code ${result.status ?? 'unknown'}.`,
+    };
+  }
+
+  return {
+    ok: true,
+    text: bounded || `Gateway service command completed: ${action}`,
+  };
+}
+
 function normalizeTelegramCommandToken(token: string): TelegramCommandName | null {
   if (!token.startsWith('/')) return null;
   const normalized = token.split('@')[0]?.toLowerCase();
@@ -1188,6 +1242,7 @@ function normalizeTelegramCommandToken(token: string): TelegramCommandName | nul
     '/compact',
     '/subagents',
     '/main',
+    '/gateway',
     '/tasks',
     '/task_pause',
     '/task_resume',
@@ -1232,6 +1287,7 @@ function formatHelpText(isMainGroup: boolean): string {
     'Telegram commands (main/admin):',
     ...common,
     '/main <secret> - claim chat as main/admin',
+    '/gateway status|restart - host service controls',
     '/tasks - list scheduled tasks',
     '/task_pause <id> - pause task',
     '/task_resume <id> - resume task',
@@ -2082,6 +2138,47 @@ async function handleTelegramCommand(m: {
     await sendMessage(
       m.chatJid,
       `${ASSISTANT_NAME}: this command is only available in the main/admin chat.`,
+    );
+    return true;
+  }
+
+  if (cmd === '/gateway') {
+    const actionRaw = (rest[0] || 'status').trim().toLowerCase();
+    const action =
+      actionRaw === 'restart'
+        ? 'restart'
+        : actionRaw === 'status'
+          ? 'status'
+          : null;
+    if (!action) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
+      await sendMessage(m.chatJid, 'Usage: /gateway <status|restart>');
+      return true;
+    }
+
+    if (action === 'restart') {
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested');
+      await sendMessage(
+        m.chatJid,
+        'Restarting gateway service. Expect a brief disconnect while the host restarts.',
+      );
+      const result = runGatewayServiceCommand(action);
+      if (!result.ok) {
+        await sendMessage(m.chatJid, `Gateway restart failed:\n${result.text}`);
+      }
+      return true;
+    }
+
+    const result = runGatewayServiceCommand(action);
+    logTelegramCommandAudit(
+      m.chatJid,
+      cmd,
+      result.ok,
+      result.ok ? action : `${action} failed`,
+    );
+    await sendMessage(
+      m.chatJid,
+      result.ok ? `Gateway ${action}:\n${result.text}` : `Gateway ${action} failed:\n${result.text}`,
     );
     return true;
   }
@@ -3093,6 +3190,7 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
       active.abortController.abort(new Error('Aborted via TUI gateway'));
       return { aborted: true };
     },
+    serviceGateway: async ({ action }) => runGatewayServiceCommand(action),
   };
 }
 
