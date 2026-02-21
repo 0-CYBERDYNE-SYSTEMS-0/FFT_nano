@@ -5,7 +5,7 @@ Professional and creative writing assistant powered by Moonshot AI's Kimi-K2.5 m
 ## Quick Start
 
 ```bash
-cd /Users/scrimwiggins/clawdbot/skills/kimi-writing
+cd /Users/username/clawdbot/skills/kimi-writing
 
 # Install dependencies
 uv pip install -e .
@@ -31,7 +31,7 @@ uv run scripts/write.py "Write a landing page for farm tech SaaS" \
 ## Installation
 
 ```bash
-cd /Users/scrimwiggins/clawdbot/skills/kimi-writing
+cd /Users/username/clawdbot/skills/kimi-writing
 uv pip install -e .
 ```
 

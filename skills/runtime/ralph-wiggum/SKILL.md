@@ -231,7 +231,7 @@ Keep a running log of Ralph's work:
 ```bash
 # Create daily log file
 DATE=$(date +%Y-%m-%d)
-LOG_FILE="/Users/scrimwiggins/clawd/memory/${DATE}-ralph.md"
+LOG_FILE="/Users/username/clawd/memory/${DATE}-ralph.md"
 
 # Start log
 echo "# Ralph Wiggum - ${DATE}" > "$LOG_FILE"
@@ -492,7 +492,7 @@ sleep 3600  # Wait for completion
 
 # Aggregate results
 DATE=$(date +%Y-%m-%d)
-LOG_FILE="/Users/scrimwiggins/clawd/memory/${DATE}-ralph.md"
+LOG_FILE="/Users/username/clawd/memory/${DATE}-ralph.md"
 
 echo "# Ralph Wiggum Night Shift - ${DATE}" > "$LOG_FILE"
 echo "" >> "$LOG_FILE"

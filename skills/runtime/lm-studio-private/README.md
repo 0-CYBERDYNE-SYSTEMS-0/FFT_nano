@@ -35,16 +35,16 @@ result = lm_studio_vision("/path/to/image.jpg", "Extract text")
 **Via Command Line:**
 ```bash
 # Health check
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/health.py
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/health.py
 
 # Chat
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/chat.py "Your prompt"
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/chat.py "Your prompt"
 
 # Vision
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/vision.py /path/to/image.jpg "Your prompt"
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/vision.py /path/to/image.jpg "Your prompt"
 
 # List models
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/models.py
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/models.py
 ```
 
 **Via CB (Clawdbot):**
@@ -88,7 +88,7 @@ Your Computer (CB Instance)
 
 ## Configuration
 
-Edit `/Users/scrimwiggins/clawd/TOOLS.md` to update:
+Edit `/Users/username/clawd/TOOLS.md` to update:
 - Tailscale IP address
 - API port
 - Default model settings
@@ -176,7 +176,7 @@ python3 /path/to/skill/tools/models.py
 ## File Structure
 
 ```
-/Users/scrimwiggins/clawdbot/skills/lm-studio-private/
+/Users/username/clawdbot/skills/lm-studio-private/
 ├── SKILL.md                 # Full documentation
 ├── README.md               # This file
 ├── TEST_RESULTS.md         # Test verification

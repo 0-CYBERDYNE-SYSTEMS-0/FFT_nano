@@ -65,7 +65,7 @@ Can parallelize long-form writing:
 ## Installation
 
 ```bash
-cd /Users/scrimwiggins/clawdbot/skills/kimi-writing
+cd /Users/username/clawdbot/skills/kimi-writing
 uv pip install openai pydantic python-dotenv
 ```
 

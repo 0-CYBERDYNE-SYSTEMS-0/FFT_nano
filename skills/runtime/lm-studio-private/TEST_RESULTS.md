@@ -130,16 +130,16 @@ lm_studio_models()
 ### From command line:
 ```bash
 # Health
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/health.py
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/health.py
 
 # Chat
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/chat.py "Your prompt"
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/chat.py "Your prompt"
 
 # Vision
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/vision.py /path/to/image.jpg "Your prompt"
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/vision.py /path/to/image.jpg "Your prompt"
 
 # Models
-python3 /Users/scrimwiggins/clawdbot/skills/lm-studio-private/tools/models.py
+python3 /Users/username/clawdbot/skills/lm-studio-private/tools/models.py
 ```
 
 ---
