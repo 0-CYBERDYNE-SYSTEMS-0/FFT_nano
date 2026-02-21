@@ -11,6 +11,10 @@ import {
   validateProjectPiSkills,
 } from '../src/pi-skills.js';
 
+function requiredSkillMarkdown(skillName: string, marker: string = ''): string {
+  return `---\nname: ${skillName}\ndescription: test\n---\n\n# ${skillName}\n\n## When to use this skill\n\n- Use for test coverage.\n\n## When not to use this skill\n\n- Do not use outside test coverage.\n\n## Guardrails\n\n- Never run destructive git commands unless explicitly requested.\n- Preserve unrelated worktree changes.\n- Main/admin chat only for privileged actions.\n\n${marker}\n`;
+}
+
 test('project Pi skills validate required frontmatter and guardrails', () => {
   const result = validateProjectPiSkills(process.cwd());
   assert.equal(result.ok, true, result.issues.map((i) => `${i.file}: ${i.message}`).join('\n'));
@@ -49,10 +53,7 @@ test('syncProjectPiSkillsToGroupPiHome mirrors runtime skills and prunes stale m
     for (const skillName of REQUIRED_PROJECT_PI_SKILLS) {
       const dir = path.join(srcSkillsRoot, skillName);
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, 'SKILL.md'),
-        `---\nname: ${skillName}\ndescription: test\n---\n\n# ${skillName}\n`,
-      );
+      fs.writeFileSync(path.join(dir, 'SKILL.md'), requiredSkillMarkdown(skillName));
     }
 
     // Additional runtime skills should be mirrored even without fft-* prefix.
@@ -116,14 +117,14 @@ test('main workspace skill source can override project runtime skill', () => {
     fs.mkdirSync(projectSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(projectSkillDir, 'SKILL.md'),
-      '---\nname: fft-debug\ndescription: project\n---\n\nproject version\n',
+      requiredSkillMarkdown('fft-debug', 'project version'),
     );
 
     const userOverrideSkillDir = path.join(userSkillsRoot, 'fft-debug');
     fs.mkdirSync(userOverrideSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(userOverrideSkillDir, 'SKILL.md'),
-      '---\nname: fft-debug\ndescription: user\n---\n\nuser override version\n',
+      requiredSkillMarkdown('fft-debug', 'user override version'),
     );
 
     const userSkillDir = path.join(userSkillsRoot, 'field-inspector');
@@ -143,6 +144,90 @@ test('main workspace skill source can override project runtime skill', () => {
     assert.equal(
       fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
         'user override version',
+      ),
+      true,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('invalid external override falls back to valid project required skill', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const projectSkillsRoot = path.join(projectRoot, 'skills', 'runtime');
+    const userSkillsRoot = path.join(tempRoot, 'user', 'skills');
+    const dstSkillsRoot = path.join(groupPiHome, 'skills');
+
+    fs.mkdirSync(projectSkillsRoot, { recursive: true });
+    fs.mkdirSync(userSkillsRoot, { recursive: true });
+    fs.mkdirSync(dstSkillsRoot, { recursive: true });
+
+    const projectSkillDir = path.join(projectSkillsRoot, 'fft-debug');
+    fs.mkdirSync(projectSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectSkillDir, 'SKILL.md'),
+      requiredSkillMarkdown('fft-debug', 'project version'),
+    );
+
+    const invalidOverrideSkillDir = path.join(userSkillsRoot, 'fft-debug');
+    fs.mkdirSync(invalidOverrideSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(invalidOverrideSkillDir, 'SKILL.md'),
+      '---\nname: fft-debug\ndescription: user override\n---\n\n# fft-debug\n',
+    );
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome, {
+      additionalSkillSourceDirs: [userSkillsRoot],
+    });
+
+    assert.equal(res.sourceDirExists, true);
+    assert.ok(res.copied.includes('fft-debug'));
+    assert.equal(res.skippedInvalid.includes('fft-debug'), false);
+    assert.equal(
+      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
+        'project version',
+      ),
+      true,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('non-required project custom skill without sections syncs with warning only', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const srcSkillsRoot = path.join(projectRoot, 'skills', 'runtime');
+    const dstSkillsRoot = path.join(groupPiHome, 'skills');
+
+    fs.mkdirSync(srcSkillsRoot, { recursive: true });
+    fs.mkdirSync(dstSkillsRoot, { recursive: true });
+
+    const customSkillDir = path.join(srcSkillsRoot, 'custom-skill');
+    fs.mkdirSync(customSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(customSkillDir, 'SKILL.md'),
+      '---\nname: custom-skill\ndescription: test\n---\n\n# custom\n',
+    );
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome);
+
+    assert.equal(res.sourceDirExists, true);
+    assert.ok(res.copied.includes('custom-skill'));
+    assert.equal(res.skippedInvalid.includes('custom-skill'), false);
+    assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'custom-skill', 'SKILL.md')), true);
+    assert.equal(
+      res.warnings.some(
+        (warning) =>
+          warning.file.endsWith(path.join('custom-skill', 'SKILL.md')) &&
+          warning.message.includes('When to use'),
       ),
       true,
     );
