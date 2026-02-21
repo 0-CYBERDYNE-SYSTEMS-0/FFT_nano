@@ -141,8 +141,32 @@ function buildVolumeMounts(
         managedSkills: skillSync.managed,
         copiedSkills: skillSync.copied,
         removedSkills: skillSync.removed,
+        skippedInvalidSkills: skillSync.skippedInvalid,
+        invalidSkillIssueCount: skillSync.invalid.length,
+        warnedSkills: skillSync.warnedSkills,
+        warningSkillIssueCount: skillSync.warnings.length,
       },
       'Synced project Pi skills into group Pi home',
+    );
+  }
+  if (skillSync.skippedInvalid.length > 0) {
+    logger.warn(
+      {
+        group: group.name,
+        skippedInvalidSkills: skillSync.skippedInvalid,
+        invalidSkillIssues: skillSync.invalid,
+      },
+      'Skipped invalid Pi skills during sync',
+    );
+  }
+  if (skillSync.warnedSkills.length > 0) {
+    logger.warn(
+      {
+        group: group.name,
+        warnedSkills: skillSync.warnedSkills,
+        warningSkillIssues: skillSync.warnings,
+      },
+      'Pi skills synced with non-blocking policy warnings',
     );
   }
   mounts.push({

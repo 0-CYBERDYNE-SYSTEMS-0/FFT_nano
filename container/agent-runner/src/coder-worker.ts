@@ -274,7 +274,14 @@ export async function runDelegatedCodingWorker(
     const now = Date.now();
     if (now - lastProgressSend < telegramMinIntervalMs) return;
 
-    const chunk = pendingDiff.slice(0, telegramMaxChunk);
+    // Chunk at word boundary to avoid cutting words mid-word
+    // Find the last space within ~850-900 characters to prevent word truncation
+    const searchRange = pendingDiff.slice(0, telegramMaxChunk);
+    const lastSpaceIndex = searchRange.lastIndexOf(' ');
+    // Only use word boundary if space exists and is reasonably close to max chunk
+    // This avoids tiny chunks while still preventing word breaks
+    const chunkSize = (lastSpaceIndex > telegramMaxChunk * 0.9) ? lastSpaceIndex + 1 : telegramMaxChunk;
+    const chunk = pendingDiff.slice(0, chunkSize);
     pendingDiff = pendingDiff.slice(chunk.length);
 
     const ok = writeIpcMessage(chatJid, `${prefix}${chunk}`);

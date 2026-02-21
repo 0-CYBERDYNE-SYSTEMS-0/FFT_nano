@@ -28,3 +28,7 @@ groups/main/*
 .vscode/
 
 agents-sdk-docs
+
+# Python runtime/build artifacts
+**/__pycache__/
+*.pyc

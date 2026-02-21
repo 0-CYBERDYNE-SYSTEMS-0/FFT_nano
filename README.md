@@ -289,6 +289,14 @@ Behavior:
 - Companion dashboard repo is auto-cloned/pulled if missing/clean.
 - Production control actions are blocked until validation status is `pass`.
 
+Pre-demo health check (PASS/FAIL):
+
+```bash
+npm run farm:doctor
+```
+
+Checks include Docker daemon, HA reachability/auth, `com.fft_nano` runtime status, and fresh `data/farm-state/current.json` with `haConnected=true`.
+
 Details: `docs/FARM_ONBOARDING.md`
 
 ## Telegram Operations

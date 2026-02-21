@@ -59,6 +59,10 @@ export const FARM_STATE_SLOW_MS = envInt(
   3600000,
 );
 export const HA_URL = process.env.HA_URL || 'http://localhost:8123';
+export const HA_URL_CANDIDATES = parseHaUrlCandidates(
+  HA_URL,
+  process.env.HA_URL_CANDIDATES,
+);
 export const HA_TOKEN = process.env.HA_TOKEN || '';
 export const FFT_DASHBOARD_REPO_PATH = process.env.FFT_DASHBOARD_REPO_PATH || '';
 
@@ -94,6 +98,25 @@ function envInt(
   const parsed = Number.parseInt(value || '', 10);
   if (!Number.isFinite(parsed)) return defaultValue;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeUrlCandidate(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\/$/, '');
+}
+
+function parseHaUrlCandidates(primaryUrl: string, rawList?: string): string[] {
+  const fallbacks = ['http://localhost:8123', 'http://192.168.64.1:8123'];
+  const explicit =
+    rawList
+      ?.split(',')
+      .map((entry) => normalizeUrlCandidate(entry))
+      .filter((entry): entry is string => Boolean(entry)) || [];
+  const ordered = [primaryUrl, ...explicit, ...fallbacks]
+    .map((entry) => normalizeUrlCandidate(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  return Array.from(new Set(ordered));
 }
 
 export const MEMORY_RETRIEVAL_GATE_ENABLED = envFlag(

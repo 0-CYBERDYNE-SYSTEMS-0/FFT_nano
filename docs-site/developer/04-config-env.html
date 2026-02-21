@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration and Environment Variables | FFT_nano Docs</title>
+  <meta name="description" content="FFT_nano documentation page: Configuration and Environment Variables">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --text: #ffffff;
+      --text-muted: #a0a0a0;
+      --text-dim: #666666;
+      --accent: #b8ff4a;
+      --accent-subtle: rgba(184, 255, 74, 0.08);
+      --border: #2a2a2a;
+      --code-bg: #161616;
+      --success: #3eb86b;
+      --font-main: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { font-family: var(--font-main); background: var(--bg); color: var(--text); line-height: 1.7; font-size: 17px; -webkit-font-smoothing: antialiased; }
+    a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.2s; }
+    a:hover { border-bottom-color: var(--accent); opacity: 0.85; }
+    .docs-container { display: flex; min-height: 100vh; }
+    .sidebar { width: 260px; min-width: 260px; background: var(--bg-secondary); border-right: 1px solid var(--border); padding: 1.5rem; height: 100vh; position: fixed; overflow-y: auto; z-index: 100; }
+    .logo { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 600; color: var(--accent); margin-bottom: 0.25rem; }
+    .logo-sub { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 2rem; font-family: var(--font-mono); }
+    .nav-section { margin-bottom: 1.5rem; }
+    .nav-section-title { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin-bottom: 0.6rem; font-weight: 600; }
+    .nav-link { display: block; padding: 0.4rem 0; color: var(--text-muted); font-size: 0.9rem; transition: color 0.2s; }
+    .nav-link:hover { color: var(--accent); }
+    .main-wrapper { flex: 1; margin-left: 260px; min-width: 0; }
+    .main-content { padding: 3rem 4rem; max-width: 100%; }
+    .hero { padding: 1rem 0 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 2rem; }
+    .hero h1 { font-size: 2rem; margin-bottom: 0.6rem; }
+    .hero p { color: var(--text-muted); }
+    .article h1, .article h2, .article h3, .article h4 { color: var(--text); font-weight: 600; line-height: 1.3; }
+    .article h1 { font-size: 2rem; margin: 2rem 0 1rem; }
+    .article h2 { font-size: 1.5rem; margin: 2rem 0 0.75rem; }
+    .article h3 { font-size: 1.1rem; margin: 1.5rem 0 0.6rem; }
+    .article p { margin-bottom: 1rem; color: #c0c0c0; max-width: 76ch; }
+    .article ul, .article ol { margin: 0.75rem 0 1rem 1.4rem; color: #c0c0c0; }
+    .article li { margin-bottom: 0.4rem; }
+    .article blockquote { border-left: 3px solid var(--accent); padding: 0.75rem 1rem; background: var(--accent-subtle); color: #d7e3c2; margin: 1rem 0; }
+    .article table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.25rem; font-size: 0.9rem; border: 1px solid var(--border); }
+    .article th, .article td { text-align: left; padding: 0.65rem 0.8rem; border-bottom: 1px solid var(--border); }
+    .article th { background: var(--bg-tertiary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .article tr:last-child td { border-bottom: none; }
+    .article code { font-family: var(--font-mono); background: var(--code-bg); border: 1px solid var(--border); padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.85em; }
+    .article pre { position: relative; background: var(--code-bg) !important; border: 1px solid var(--border); border-radius: 6px; padding: 1rem 1.1rem !important; overflow-x: auto; font-size: 0.84rem; line-height: 1.55; margin: 1rem 0 1.2rem !important; }
+    .article pre code { border: none; background: transparent; padding: 0; font-size: inherit; }
+    .copy-btn { position: absolute; top: 0.45rem; right: 0.45rem; background: #1f252d; border: 1px solid var(--border); color: var(--text-muted); font-family: var(--font-mono); font-size: 0.68rem; padding: 0.25rem 0.5rem; border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.2s, background 0.2s, color 0.2s; }
+    pre:hover .copy-btn { opacity: 1; }
+    .copy-btn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+    .copy-btn.copied { opacity: 1; background: var(--success); color: #000; border-color: var(--success); }
+    .toc-box { border: 1px solid var(--border); background: var(--bg-secondary); padding: 1rem; margin-bottom: 1.2rem; }
+    .toc-box h3 { margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--accent); font-family: var(--font-mono); }
+    .toc-box a { display: block; border: none; padding: 0.12rem 0; color: var(--text-muted); font-size: 0.9rem; }
+    .toc-box a:hover { color: var(--accent); }
+    .toc-box a.l3 { padding-left: 0.8rem; font-size: 0.85rem; }
+    .hamburger { display: none; position: fixed; top: 0.75rem; right: 0.75rem; z-index: 1000; width: 44px; height: 44px; background: var(--bg-secondary); border: 1px solid var(--border); cursor: pointer; flex-direction: column; justify-content: center; align-items: center; gap: 5px; }
+    .hamburger span { display: block; width: 18px; height: 2px; background: var(--text); transition: all 0.3s; }
+    .hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(4px, 5px); }
+    .hamburger.active span:nth-child(2) { opacity: 0; }
+    .hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(4px, -5px); }
+    @media (max-width: 900px) {
+      .hamburger { display: flex; }
+      .sidebar { position: fixed; left: -280px; width: 280px; height: 100vh; z-index: 999; transition: left 0.3s ease; padding-top: 4rem; }
+      .sidebar.open { left: 0; }
+      .main-wrapper { margin-left: 0; }
+      .main-content { padding: 1.5rem; }
+      .hero h1 { font-size: 1.6rem; }
+      .article h1 { font-size: 1.7rem; }
+      .article h2 { font-size: 1.3rem; }
+    }
+  </style>
+</head>
+<body>
+  <button class="hamburger" onclick="toggleSidebar()"><span></span><span></span><span></span></button>
+  <div class="docs-container">
+    <nav class="sidebar">
+      <div class="logo">FFT_nano</div>
+      <div class="logo-sub">Developer Documentation</div>
+      <div class="nav-section">
+        <div class="nav-section-title">Navigation</div>
+        <a href="../index.html" class="nav-link">Styled Index</a>
+        <a href="../docs.html" class="nav-link">Docs Home</a>
+        <a href="module-index.html" class="nav-link">Module Index</a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Current Page</div>
+        <a href="#top" class="nav-link">Top</a>
+      </div>
+    </nav>
+    <div class="main-wrapper">
+      <main class="main-content" id="top">
+        <section class="hero">
+          <h1>Configuration and Environment Variables</h1>
+          <p>Rendered from Markdown into styled HTML. Code blocks, tables, and links stay readable and theme-consistent.</p>
+        </section>
+        <section class="toc-box"><h3>On This Page</h3><a class="" href="#core-runtime-defaults-srcconfigts">Core Runtime Defaults (src/config.ts)</a><a class="" href="#host-runtime-env-vars">Host Runtime Env Vars</a><a class="l3" href="#messaging-and-identity">Messaging and identity</a><a class="l3" href="#runtime-and-paths">Runtime and paths</a><a class="l3" href="#reliabilitydebug">Reliability/debug</a><a class="l3" href="#memory-retrieval">Memory retrieval</a><a class="l3" href="#farm-integration">Farm integration</a><a class="l3" href="#pi-provider-hints-used-for-per-chat-defaults">Pi provider hints used for per-chat defaults</a><a class="" href="#telegram-transport-tuning-env-vars-srctelegramts">Telegram Transport Tuning Env Vars (src/telegram.ts)</a><a class="" href="#container-env-allowlist-host-gt-container">Container Env Allowlist (Host -&amp;gt; Container)</a><a class="" href="#trigger-pattern-construction">Trigger Pattern Construction</a><a class="" href="#script-level-variables">Script-Level Variables</a></section>
+        <article class="article">
+          <h1 id="configuration-and-environment-variables">Configuration and Environment Variables</h1>
+<p>Primary source: <code>src/config.ts</code> plus direct env reads in <code>src/index.ts</code>, <code>src/telegram.ts</code>, and scripts.</p>
+<h2 id="core-runtime-defaults-srcconfigts">Core Runtime Defaults (<code>src/config.ts</code>)</h2>
+<ul>
+<li><code>ASSISTANT_NAME</code> default: <code>FarmFriend</code></li>
+<li><code>POLL_INTERVAL</code>: <code>2000</code> ms</li>
+<li><code>SCHEDULER_POLL_INTERVAL</code>: <code>60000</code> ms</li>
+<li><code>MAIN_GROUP_FOLDER</code>: <code>main</code></li>
+<li><code>MAIN_WORKSPACE_DIR</code>: <code>~/nano</code> (expanded)</li>
+<li><code>FARM_MODE</code>: <code>demo</code></li>
+<li><code>HA_URL</code>: <code>http://localhost:8123</code></li>
+<li><code>CONTAINER_IMAGE</code>: <code>fft-nano-agent:latest</code></li>
+<li><code>CONTAINER_TIMEOUT</code>: <code>300000</code> ms</li>
+<li><code>CONTAINER_MAX_OUTPUT_SIZE</code>: <code>10485760</code> bytes</li>
+<li><code>IPC_POLL_INTERVAL</code>: <code>1000</code> ms</li>
+<li><code>MEMORY_RETRIEVAL_GATE_ENABLED</code>: true</li>
+<li><code>MEMORY_TOP_K</code>: <code>8</code> (bounded 1..32)</li>
+<li><code>MEMORY_CONTEXT_CHAR_BUDGET</code>: <code>6000</code> (bounded 1000..50000)</li>
+</ul>
+<h2 id="host-runtime-env-vars">Host Runtime Env Vars</h2>
+<h3 id="messaging-and-identity">Messaging and identity</h3>
+<ul>
+<li><code>ASSISTANT_NAME</code></li>
+<li><code>ASSISTANT_ALIASES</code></li>
+<li><code>WHATSAPP_ENABLED</code></li>
+<li><code>TELEGRAM_BOT_TOKEN</code></li>
+<li><code>TELEGRAM_API_BASE_URL</code></li>
+<li><code>TELEGRAM_MAIN_CHAT_ID</code></li>
+<li><code>TELEGRAM_ADMIN_SECRET</code></li>
+<li><code>TELEGRAM_AUTO_REGISTER</code></li>
+<li><code>TELEGRAM_MEDIA_MAX_MB</code></li>
+</ul>
+<h3 id="runtime-and-paths">Runtime and paths</h3>
+<ul>
+<li><code>CONTAINER_RUNTIME</code> (<code>auto|apple|docker</code>)</li>
+<li><code>CONTAINER_IMAGE</code></li>
+<li><code>CONTAINER_TIMEOUT</code></li>
+<li><code>CONTAINER_MAX_OUTPUT_SIZE</code></li>
+<li><code>FFT_NANO_MAIN_WORKSPACE_DIR</code></li>
+<li><code>TZ</code></li>
+<li><code>HOME</code></li>
+</ul>
+<h3 id="reliabilitydebug">Reliability/debug</h3>
+<ul>
+<li><code>LOG_LEVEL</code></li>
+<li><code>FFT_NANO_APPLE_CONTAINER_SELF_HEAL</code></li>
+<li><code>FFT_NANO_HEARTBEAT_EVERY</code></li>
+<li><code>FFT_NANO_HEARTBEAT_PROMPT</code></li>
+</ul>
+<h3 id="memory-retrieval">Memory retrieval</h3>
+<ul>
+<li><code>MEMORY_RETRIEVAL_GATE_ENABLED</code></li>
+<li><code>MEMORY_TOP_K</code></li>
+<li><code>MEMORY_CONTEXT_CHAR_BUDGET</code></li>
+</ul>
+<h3 id="farm-integration">Farm integration</h3>
+<ul>
+<li><code>FARM_STATE_ENABLED</code></li>
+<li><code>FARM_MODE</code></li>
+<li><code>FARM_PROFILE_PATH</code></li>
+<li><code>FARM_STATE_FAST_MS</code></li>
+<li><code>FARM_STATE_MEDIUM_MS</code></li>
+<li><code>FARM_STATE_SLOW_MS</code></li>
+<li><code>HA_URL</code></li>
+<li><code>HA_TOKEN</code></li>
+<li><code>FFT_DASHBOARD_REPO_PATH</code></li>
+</ul>
+<h3 id="pi-provider-hints-used-for-per-chat-defaults">Pi provider hints used for per-chat defaults</h3>
+<ul>
+<li><code>PI_API</code></li>
+<li><code>PI_MODEL</code></li>
+</ul>
+<h2 id="telegram-transport-tuning-env-vars-srctelegramts">Telegram Transport Tuning Env Vars (<code>src/telegram.ts</code>)</h2>
+<ul>
+<li><code>FFT_NANO_TELEGRAM_RETRY_ATTEMPTS</code> (default 4, bounded 1..10)</li>
+<li><code>FFT_NANO_TELEGRAM_RETRY_MIN_MS</code> (default 300)</li>
+<li><code>FFT_NANO_TELEGRAM_RETRY_MAX_MS</code> (default 2500)</li>
+<li><code>FFT_NANO_TELEGRAM_TYPING_REFRESH_MS</code> (default 4000)</li>
+</ul>
+<h2 id="container-env-allowlist-host-gt-container">Container Env Allowlist (Host -&gt; Container)</h2>
+<p>Built in <code>src/container-runner.ts</code>:</p>
+<ul>
+<li><code>PI_BASE_URL</code>, <code>PI_API_KEY</code>, <code>PI_MODEL</code>, <code>PI_API</code></li>
+<li><code>OPENAI_API_KEY</code>, <code>OPENAI_BASE_URL</code></li>
+<li><code>ANTHROPIC_API_KEY</code></li>
+<li><code>GEMINI_API_KEY</code></li>
+<li><code>OPENROUTER_API_KEY</code></li>
+<li><code>GROQ_API_KEY</code></li>
+<li><code>ZAI_API_KEY</code></li>
+<li><code>FFT_NANO_DRY_RUN</code></li>
+<li><code>HA_URL</code>, <code>HA_TOKEN</code></li>
+</ul>
+<p>Also forced in container env file:</p>
+<ul>
+<li><code>HOME=/home/node</code></li>
+<li><code>PI_CODING_AGENT_DIR=/home/node/.pi/agent</code></li>
+</ul>
+<h2 id="trigger-pattern-construction">Trigger Pattern Construction</h2>
+<p><code>TRIGGER_PATTERN</code> is built from:</p>
+<ul>
+<li><code>ASSISTANT_NAME</code></li>
+<li>hardcoded alias <code>F-15</code></li>
+<li>optional comma-separated <code>ASSISTANT_ALIASES</code></li>
+</ul>
+<p>Regex form: <code>^(?:@Alias1\b|@Alias2\b|...)</code> (case-insensitive).</p>
+<h2 id="script-level-variables">Script-Level Variables</h2>
+<p>Operational scripts additionally consume variables such as:</p>
+<ul>
+<li><code>FFT_DASHBOARD_REPO_URL</code></li>
+<li><code>FFT_DASHBOARD_REPO_REF</code></li>
+</ul>
+<p>These are primarily used by <code>scripts/farm-bootstrap.sh</code> and persisted into <code>.env</code>.</p>
+
+
+        </article>
+      </main>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-typescript.min.js"></script>
+  <script>
+    function toggleSidebar() {
+      document.querySelector('.sidebar').classList.toggle('open');
+      document.querySelector('.hamburger').classList.toggle('active');
+    }
+    document.querySelectorAll('.nav-link').forEach(link => {
+      link.addEventListener('click', () => {
+        if (window.innerWidth <= 900) toggleSidebar();
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (window.innerWidth <= 900) {
+        const sidebar = document.querySelector('.sidebar');
+        const hamburger = document.querySelector('.hamburger');
+        if (!sidebar.contains(e.target) && !hamburger.contains(e.target)) {
+          sidebar.classList.remove('open');
+          hamburger.classList.remove('active');
+        }
+      }
+    });
+
+    document.querySelectorAll('pre').forEach(pre => {
+      const btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = 'Copy';
+      btn.addEventListener('click', () => {
+        const code = pre.querySelector('code');
+        const txt = code ? code.textContent : pre.textContent;
+        navigator.clipboard.writeText(txt || '').then(() => {
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(() => {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+          }, 1800);
+        });
+      });
+      pre.appendChild(btn);
+    });
+  </script>
+</body>
+</html>

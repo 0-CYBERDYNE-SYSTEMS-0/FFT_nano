@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import YAML from 'yaml';
 
 export const PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES = [
   path.join('skills', 'runtime'),
@@ -24,6 +25,7 @@ export interface SkillValidationIssue {
 export interface SkillValidationResult {
   ok: boolean;
   issues: SkillValidationIssue[];
+  warnings: SkillValidationIssue[];
 }
 
 export interface SkillSyncResult {
@@ -32,6 +34,10 @@ export interface SkillSyncResult {
   copied: string[];
   removed: string[];
   managed: string[];
+  invalid: SkillValidationIssue[];
+  skippedInvalid: string[];
+  warnings: SkillValidationIssue[];
+  warnedSkills: string[];
 }
 
 export interface SkillSyncOptions {
@@ -39,94 +45,302 @@ export interface SkillSyncOptions {
   additionalSkillSourceDirs?: string[];
 }
 
-function stripQuotes(value: string): string {
-  const trimmed = value.trim();
-  if (
-    trimmed.length >= 2 &&
-    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'")))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
+const FRONTMATTER_REQUIRED_FIELDS = ['name', 'description'] as const;
+const FRONTMATTER_OPTIONAL_FIELDS = [
+  'license',
+  'compatibility',
+  'metadata',
+  'allowed-tools',
+] as const;
+const FRONTMATTER_ALLOWED_FIELDS = new Set<string>([
+  ...FRONTMATTER_REQUIRED_FIELDS,
+  ...FRONTMATTER_OPTIONAL_FIELDS,
+]);
+const SKILL_NAME_PATTERN = /^[\p{Ll}\p{Nd}-]+$/u;
+const REQUIRED_PROJECT_PI_SKILL_SET = new Set<string>(REQUIRED_PROJECT_PI_SKILLS);
+const HIGH_RISK_SKILL_NAME_PATTERN =
+  /(?:^|-)(?:ops|install|setup|bootstrap|onboarding|validate|debug|migrate|deploy|provision|flash)(?:-|$)/;
+const WHEN_TO_USE_SECTION_PATTERN = /^##\s+when to use(?:\s+this\s+skill)?\b/im;
+const WHEN_NOT_TO_USE_SECTION_PATTERN =
+  /^##\s+when not to use(?:\s+this\s+skill)?\b/im;
+const LIMITATIONS_SECTION_PATTERN =
+  /^##\s+(?:limitations|what this skill does not do)\b/im;
+
+interface ParsedSkillMarkdown {
+  frontmatter: Record<string, unknown>;
+  content: string;
+  body: string;
 }
 
-function parseFrontmatter(content: string): Record<string, string> | null {
+type SkillSectionPolicy = 'required' | 'recommended' | 'none';
+
+interface SkillValidationOptions {
+  enforceFftPolicy: boolean;
+  whenToUsePolicy: SkillSectionPolicy;
+  whenNotToUsePolicy: SkillSectionPolicy;
+}
+
+interface SkillMarkdownValidation {
+  issues: SkillValidationIssue[];
+  warnings: SkillValidationIssue[];
+}
+
+function parseSkillMarkdown(skillMarkdownPath: string): ParsedSkillMarkdown | null {
+  if (!fs.existsSync(skillMarkdownPath)) return null;
+  const content = fs.readFileSync(skillMarkdownPath, 'utf-8').replace(/\r\n/g, '\n');
   if (!content.startsWith('---\n')) return null;
   const end = content.indexOf('\n---\n', 4);
   if (end === -1) return null;
 
-  const yaml = content.slice(4, end);
-  const out: Record<string, string> = {};
-
-  for (const rawLine of yaml.split('\n')) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const sep = line.indexOf(':');
-    if (sep === -1) continue;
-    const key = line.slice(0, sep).trim();
-    const value = stripQuotes(line.slice(sep + 1));
-    if (!key) continue;
-    out[key] = value;
+  const yamlFrontmatter = content.slice(4, end);
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(yamlFrontmatter);
+  } catch {
+    return null;
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return {
+    frontmatter: parsed as Record<string, unknown>,
+    content,
+    body: content.slice(end + '\n---\n'.length),
+  };
+}
 
-  return out;
+function toTrimmedString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  return value.trim();
+}
+
+function validateMetadataMap(
+  value: unknown,
+  skillMarkdownPath: string,
+  issues: SkillValidationIssue[],
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    issues.push({
+      file: skillMarkdownPath,
+      message: 'Frontmatter field "metadata" must be a key/value map',
+    });
+    return;
+  }
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof key !== 'string' || key.trim().length === 0) {
+      issues.push({
+        file: skillMarkdownPath,
+        message: 'Frontmatter field "metadata" contains an invalid key',
+      });
+      continue;
+    }
+    if (typeof item !== 'string') {
+      issues.push({
+        file: skillMarkdownPath,
+        message: `Frontmatter field "metadata.${key}" must be a string`,
+      });
+    }
+  }
+}
+
+function hasWhenToUseSection(body: string): boolean {
+  return WHEN_TO_USE_SECTION_PATTERN.test(body);
+}
+
+function hasWhenNotToUseSection(body: string): boolean {
+  return (
+    WHEN_NOT_TO_USE_SECTION_PATTERN.test(body) ||
+    LIMITATIONS_SECTION_PATTERN.test(body)
+  );
+}
+
+function addSectionPolicyIssue(
+  policy: SkillSectionPolicy,
+  issue: SkillValidationIssue,
+  issues: SkillValidationIssue[],
+  warnings: SkillValidationIssue[],
+): void {
+  if (policy === 'none') return;
+  if (policy === 'required') {
+    issues.push(issue);
+    return;
+  }
+  warnings.push(issue);
+}
+
+function isHighRiskSkillName(skillName: string): boolean {
+  return HIGH_RISK_SKILL_NAME_PATTERN.test(skillName);
+}
+
+function requiredSkillSectionPolicy(skillName: string): {
+  whenToUsePolicy: SkillSectionPolicy;
+  whenNotToUsePolicy: SkillSectionPolicy;
+} {
+  return {
+    whenToUsePolicy: 'required',
+    whenNotToUsePolicy: isHighRiskSkillName(skillName)
+      ? 'required'
+      : 'recommended',
+  };
+}
+
+function nonRequiredSkillSectionPolicy(skillName: string): {
+  whenToUsePolicy: SkillSectionPolicy;
+  whenNotToUsePolicy: SkillSectionPolicy;
+} {
+  return {
+    whenToUsePolicy: 'recommended',
+    whenNotToUsePolicy: isHighRiskSkillName(skillName)
+      ? 'recommended'
+      : 'none',
+  };
 }
 
 function validateSkillMarkdown(
   expectedSkillName: string,
   skillMarkdownPath: string,
-): SkillValidationIssue[] {
+  options: SkillValidationOptions,
+): SkillMarkdownValidation {
   const issues: SkillValidationIssue[] = [];
-
+  const warnings: SkillValidationIssue[] = [];
   if (!fs.existsSync(skillMarkdownPath)) {
     issues.push({ file: skillMarkdownPath, message: 'Missing SKILL.md' });
-    return issues;
+    return { issues, warnings };
   }
-
-  const content = fs.readFileSync(skillMarkdownPath, 'utf-8');
-  const frontmatter = parseFrontmatter(content);
-
-  if (!frontmatter) {
+  const parsed = parseSkillMarkdown(skillMarkdownPath);
+  if (!parsed) {
     issues.push({
       file: skillMarkdownPath,
       message: 'SKILL.md must begin with valid YAML frontmatter delimited by ---',
     });
-    return issues;
+    return { issues, warnings };
   }
 
-  if (!frontmatter.name) {
+  const { frontmatter, content, body } = parsed;
+  for (const key of Object.keys(frontmatter)) {
+    if (FRONTMATTER_ALLOWED_FIELDS.has(key)) continue;
+    issues.push({
+      file: skillMarkdownPath,
+      message: `Frontmatter contains unsupported field: ${key}`,
+    });
+  }
+
+  const rawName = toTrimmedString(frontmatter.name);
+  if (!rawName) {
     issues.push({
       file: skillMarkdownPath,
       message: 'Frontmatter missing required field: name',
     });
-  } else if (frontmatter.name !== expectedSkillName) {
-    issues.push({
-      file: skillMarkdownPath,
-      message: `Frontmatter name (${frontmatter.name}) does not match folder (${expectedSkillName})`,
-    });
+  } else {
+    if (rawName.length > 64) {
+      issues.push({
+        file: skillMarkdownPath,
+        message: 'Frontmatter field "name" must be 1-64 characters',
+      });
+    }
+    if (!SKILL_NAME_PATTERN.test(rawName)) {
+      issues.push({
+        file: skillMarkdownPath,
+        message:
+          'Frontmatter field "name" must use lowercase alphanumeric characters and hyphens only',
+      });
+    }
+    if (rawName.startsWith('-') || rawName.endsWith('-') || rawName.includes('--')) {
+      issues.push({
+        file: skillMarkdownPath,
+        message:
+          'Frontmatter field "name" must not start/end with "-" or contain consecutive hyphens',
+      });
+    }
+    if (rawName !== expectedSkillName) {
+      issues.push({
+        file: skillMarkdownPath,
+        message: `Frontmatter name (${rawName}) does not match folder (${expectedSkillName})`,
+      });
+    }
   }
 
-  if (!frontmatter.description) {
+  const rawDescription = toTrimmedString(frontmatter.description);
+  if (!rawDescription) {
     issues.push({
       file: skillMarkdownPath,
       message: 'Frontmatter missing required field: description',
     });
+  } else if (rawDescription.length > 1024) {
+    issues.push({
+      file: skillMarkdownPath,
+      message: 'Frontmatter field "description" must be 1-1024 characters',
+    });
   }
+
+  if (frontmatter.license !== undefined && !toTrimmedString(frontmatter.license)) {
+    issues.push({
+      file: skillMarkdownPath,
+      message: 'Frontmatter field "license" must be a non-empty string if provided',
+    });
+  }
+
+  if (frontmatter.compatibility !== undefined) {
+    const compatibility = toTrimmedString(frontmatter.compatibility);
+    if (!compatibility) {
+      issues.push({
+        file: skillMarkdownPath,
+        message: 'Frontmatter field "compatibility" must be a non-empty string if provided',
+      });
+    } else if (compatibility.length > 500) {
+      issues.push({
+        file: skillMarkdownPath,
+        message: 'Frontmatter field "compatibility" must be 1-500 characters if provided',
+      });
+    }
+  }
+
+  if (frontmatter['allowed-tools'] !== undefined && !toTrimmedString(frontmatter['allowed-tools'])) {
+    issues.push({
+      file: skillMarkdownPath,
+      message: 'Frontmatter field "allowed-tools" must be a non-empty string if provided',
+    });
+  }
+
+  validateMetadataMap(frontmatter.metadata, skillMarkdownPath, issues);
+
+  if (!hasWhenToUseSection(body)) {
+    addSectionPolicyIssue(
+      options.whenToUsePolicy,
+      {
+        file: skillMarkdownPath,
+        message: 'Missing section: "## When to use this skill"',
+      },
+      issues,
+      warnings,
+    );
+  }
+
+  if (!hasWhenNotToUseSection(body)) {
+    addSectionPolicyIssue(
+      options.whenNotToUsePolicy,
+      {
+        file: skillMarkdownPath,
+        message:
+          'Missing section: "## When not to use this skill" (or "## Limitations")',
+      },
+      issues,
+      warnings,
+    );
+  }
+
+  if (!options.enforceFftPolicy) return { issues, warnings };
 
   if (!/never (?:run|use) destructive git commands/i.test(content)) {
     issues.push({
       file: skillMarkdownPath,
-      message:
-        'Skill guardrail missing: "never run destructive git commands"',
+      message: 'Skill guardrail missing: "never run destructive git commands"',
     });
   }
 
   if (!/preserve unrelated worktree changes/i.test(content)) {
     issues.push({
       file: skillMarkdownPath,
-      message:
-        'Skill guardrail missing: "preserve unrelated worktree changes"',
+      message: 'Skill guardrail missing: "preserve unrelated worktree changes"',
     });
   }
 
@@ -142,7 +356,7 @@ function validateSkillMarkdown(
     });
   }
 
-  return issues;
+  return { issues, warnings };
 }
 
 function isDirectory(dirPath: string): boolean {
@@ -229,7 +443,9 @@ export function validateProjectPiSkills(
   projectRoot: string = process.cwd(),
 ): SkillValidationResult {
   const issues: SkillValidationIssue[] = [];
+  const warnings: SkillValidationIssue[] = [];
   const skillsRoot = resolveProjectRuntimeSkillsDir(projectRoot);
+  const validatedSkills = new Set<string>();
 
   for (const skillName of REQUIRED_PROJECT_PI_SKILLS) {
     const skillPath = path.join(skillsRoot, skillName);
@@ -242,12 +458,30 @@ export function validateProjectPiSkills(
     }
 
     const skillMarkdownPath = path.join(skillPath, 'SKILL.md');
-    issues.push(...validateSkillMarkdown(skillName, skillMarkdownPath));
+    const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
+      enforceFftPolicy: true,
+      ...requiredSkillSectionPolicy(skillName),
+    });
+    issues.push(...validation.issues);
+    warnings.push(...validation.warnings);
+    validatedSkills.add(skillName);
+  }
+
+  for (const skillName of listSkillDirectories(skillsRoot)) {
+    if (validatedSkills.has(skillName)) continue;
+    const skillMarkdownPath = path.join(skillsRoot, skillName, 'SKILL.md');
+    const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
+      enforceFftPolicy: false,
+      ...nonRequiredSkillSectionPolicy(skillName),
+    });
+    issues.push(...validation.issues);
+    warnings.push(...validation.warnings);
   }
 
   return {
     ok: issues.length === 0,
     issues,
+    warnings,
   };
 }
 
@@ -262,6 +496,10 @@ export function syncProjectPiSkillsToGroupPiHome(
     copied: [],
     removed: [],
     managed: [],
+    invalid: [],
+    skippedInvalid: [],
+    warnings: [],
+    warnedSkills: [],
   };
   const sourceDirs: string[] = [];
   const sourceDirSet = new Set<string>();
@@ -291,12 +529,19 @@ export function syncProjectPiSkillsToGroupPiHome(
   const destRoot = path.join(groupPiHomeDir, 'skills');
   const manifestPath = path.join(destRoot, '.fft_nano_managed_skills.json');
   const previousManaged = new Set(readManagedSkillNames(manifestPath));
-  const mergedSkills = new Map<string, string>();
+  const mergedSkills = new Map<
+    string,
+    Array<{ skillPath: string; source: 'project' | 'external' }>
+  >();
 
   for (const sourceDir of projectSourceDirs) {
     for (const skillName of listSkillDirectories(sourceDir)) {
-      if (mergedSkills.has(skillName)) continue;
-      mergedSkills.set(skillName, path.join(sourceDir, skillName));
+      const existing = mergedSkills.get(skillName) ?? [];
+      existing.push({
+        skillPath: path.join(sourceDir, skillName),
+        source: 'project',
+      });
+      mergedSkills.set(skillName, existing);
     }
   }
 
@@ -306,11 +551,54 @@ export function syncProjectPiSkillsToGroupPiHome(
       : path.resolve(projectRoot, sourceDir);
     if (!isDirectory(normalized)) continue;
     for (const skillName of listSkillDirectories(normalized)) {
-      mergedSkills.set(skillName, path.join(normalized, skillName));
+      const existing = mergedSkills.get(skillName) ?? [];
+      existing.push({
+        skillPath: path.join(normalized, skillName),
+        source: 'external',
+      });
+      mergedSkills.set(skillName, existing);
     }
   }
 
-  const nextManaged = new Set(mergedSkills.keys());
+  const validatedSkills = new Map<string, string>();
+  for (const [skillName, entries] of mergedSkills.entries()) {
+    const invalidCandidates: SkillValidationIssue[] = [];
+    const isRequiredSkill = REQUIRED_PROJECT_PI_SKILL_SET.has(skillName);
+    const sectionPolicy = isRequiredSkill
+      ? requiredSkillSectionPolicy(skillName)
+      : nonRequiredSkillSectionPolicy(skillName);
+    let selectedSkillPath: string | null = null;
+
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      const skillMarkdownPath = path.join(entry.skillPath, 'SKILL.md');
+      const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
+        enforceFftPolicy: isRequiredSkill,
+        ...sectionPolicy,
+      });
+      if (validation.issues.length > 0) {
+        invalidCandidates.push(...validation.issues);
+        continue;
+      }
+      if (validation.warnings.length > 0) {
+        result.warnings.push(...validation.warnings);
+        result.warnedSkills.push(skillName);
+      }
+      selectedSkillPath = entry.skillPath;
+      break;
+    }
+
+    if (!selectedSkillPath) {
+      result.invalid.push(...invalidCandidates);
+      result.skippedInvalid.push(skillName);
+      continue;
+    }
+    validatedSkills.set(skillName, selectedSkillPath);
+  }
+  result.skippedInvalid = Array.from(new Set(result.skippedInvalid)).sort();
+  result.warnedSkills = Array.from(new Set(result.warnedSkills)).sort();
+
+  const nextManaged = new Set(validatedSkills.keys());
   result.managed = Array.from(nextManaged).sort();
 
   if (previousManaged.size === 0 && nextManaged.size === 0) {
@@ -328,7 +616,7 @@ export function syncProjectPiSkillsToGroupPiHome(
   }
 
   for (const skillName of Array.from(nextManaged).sort()) {
-    const source = mergedSkills.get(skillName);
+    const source = validatedSkills.get(skillName);
     if (!source) continue;
     const dest = path.join(destRoot, skillName);
 

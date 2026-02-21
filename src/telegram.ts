@@ -503,6 +503,11 @@ export interface TelegramBot {
     text: string,
     keyboard: TelegramInlineKeyboard,
   ) => Promise<void>;
+  sendPhoto: (
+    chatJid: string,
+    photo: string | Buffer,
+    caption?: string,
+  ) => Promise<void>;
   setTyping: (chatJid: string, isTyping: boolean) => Promise<void>;
   setCommands: (
     commands: TelegramCommand[],
@@ -1031,6 +1036,40 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     };
   }
 
+  async function sendPhoto(
+    chatId: string,
+    photo: string | Buffer,
+    caption?: string,
+  ): Promise<void> {
+    const chatIdParsed = parseTelegramChatId(chatId);
+    if (!chatIdParsed) {
+      throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+    }
+
+    const formData = new FormData();
+    formData.append('chat_id', chatIdParsed);
+    if (typeof photo === 'string') {
+      formData.append('photo', photo);
+    } else {
+      formData.append('photo', new Blob([photo]));
+    }
+    if (caption) {
+      formData.append('caption', caption);
+    }
+
+    const url = new URL(`${base}/sendPhoto`);
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      body: formData as any,
+    });
+
+    if (!res.ok) {
+      const body = (await res.json()) as TelegramApiResponse<never>;
+      const description = body?.description || `Telegram API error (status ${res.status})`;
+      throw new Error(description);
+    }
+  }
+
   return {
     startPolling: (onEvent) => {
       startPolling(onEvent).catch((err) =>
@@ -1039,6 +1078,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     },
     sendMessage,
     sendMessageWithKeyboard,
+    sendPhoto,
     setTyping,
     setCommands,
     deleteCommands,
