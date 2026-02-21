@@ -44,7 +44,7 @@ fi
 pass "Home Assistant HTTP endpoint reachable ($HA_URL_INPUT)"
 
 if [[ -z "${HA_TOKEN:-}" ]]; then
-  fail "HA_TOKEN missing" "Set HA_TOKEN in /Users/scrimwiggins/fft_nano/.env."
+  fail "HA_TOKEN missing" "Set HA_TOKEN in $ROOT_DIR/.env."
 fi
 
 ha_api_code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $HA_TOKEN" "$HA_URL_INPUT/api/" || true)"
