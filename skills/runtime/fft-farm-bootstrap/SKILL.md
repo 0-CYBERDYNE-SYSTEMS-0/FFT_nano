@@ -7,6 +7,18 @@ description: Bootstrap farm mode in demo or production, including Home Assistant
 
 Use this skill when a user wants first-time farm setup to be frictionless.
 
+## When to use this skill
+
+- Use for first-time farm environment bootstrap in demo or production mode.
+- Use when `.env` farm variables and Home Assistant startup need guided setup.
+- Use before onboarding and validation are run for the first time.
+
+## When not to use this skill
+
+- Do not use for day-2 operations after bootstrap is already complete.
+- Do not use for production control actions; use farm ops/validation skills instead.
+- Do not use when required secrets/tokens are unavailable.
+
 ## Guardrails
 
 - Never run destructive git commands unless explicitly requested.

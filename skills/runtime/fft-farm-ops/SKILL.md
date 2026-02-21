@@ -85,7 +85,42 @@ Only use allowlisted actions:
 - `ha_restart`
 - `ha_apply_dashboard`
 - `ha_capture_screenshot`
+- `ha_dashboard_get`
+- `ha_dashboard_patch`
+- `ha_dashboard_validate`
+- `ha_canvas_get_spec`
+- `ha_canvas_set_spec`
+- `ha_canvas_patch_spec`
 - `farm_state_refresh`
+
+## Minimal Examples
+
+```json
+{
+  "type": "farm_action",
+  "action": "ha_dashboard_patch",
+  "params": {
+    "dashboardFile": "/workspace/dashboard/ui-lovelace-staging.yaml",
+    "operations": [
+      { "op": "set_theme", "theme": "storm" }
+    ]
+  },
+  "requestId": "act_1707830400_dash"
+}
+```
+
+```json
+{
+  "type": "farm_action",
+  "action": "ha_canvas_patch_spec",
+  "params": {
+    "operations": [
+      { "op": "set_title", "title": "Agent Canvas" }
+    ]
+  },
+  "requestId": "act_1707830400_canvas"
+}
+```
 
 ## Alert Interpretation
 
