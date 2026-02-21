@@ -102,3 +102,16 @@ test('runOnboarding non-interactive does not overwrite customized files without 
   );
   assert.equal(fs.readFileSync(identityPath, 'utf-8'), '# IDENTITY\n\nName: CustomBot\n');
 });
+
+test('runOnboarding applies explicit assistant name to default scaffold without force', async () => {
+  const workspace = makeTmpWorkspace();
+  await runOnboarding({
+    workspace,
+    operator: 'Alex',
+    assistantName: 'AgriBot',
+    nonInteractive: true,
+    force: false,
+  });
+
+  assert.match(fs.readFileSync(path.join(workspace, 'IDENTITY.md'), 'utf-8'), /Name: AgriBot/);
+});
