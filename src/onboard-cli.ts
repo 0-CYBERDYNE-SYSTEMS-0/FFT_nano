@@ -120,6 +120,15 @@ function shouldRewriteFile(existingBody: string, force: boolean): boolean {
   return /\[set during onboarding\]/i.test(existingBody);
 }
 
+function normalizeBody(body: string): string {
+  return body.replace(/\r\n/g, '\n').trim();
+}
+
+function shouldRewriteIdentityFile(existingBody: string, force: boolean): boolean {
+  if (shouldRewriteFile(existingBody, force)) return true;
+  return normalizeBody(existingBody) === normalizeBody(renderIdentity(ASSISTANT_NAME));
+}
+
 async function resolvePromptValues(params: {
   operatorSeed: string;
   assistantSeed: string;
@@ -198,7 +207,7 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<{
   if (shouldRewriteFile(userCurrent, opts.force)) {
     fs.writeFileSync(userPath, `${renderUser(resolved.operator)}\n`, 'utf-8');
   }
-  if (shouldRewriteFile(identityCurrent, opts.force)) {
+  if (shouldRewriteIdentityFile(identityCurrent, opts.force)) {
     fs.writeFileSync(identityPath, `${renderIdentity(resolved.assistantName)}\n`, 'utf-8');
   }
 
