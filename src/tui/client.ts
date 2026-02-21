@@ -17,6 +17,7 @@ import type {
 import { GatewayClient } from './gateway-client.js';
 import { ChatLog } from './components/chat-log.js';
 import { CustomEditor } from './components/custom-editor.js';
+import { resolveStartupSession } from './startup-session.js';
 import { editorTheme, theme } from './theme/theme.js';
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -34,6 +35,8 @@ interface SessionPrefs {
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
 }
+
+type SendMessageStatus = 'sent' | 'busy';
 
 const DEFAULT_PROVIDER = process.env.PI_API || '(provider)';
 const DEFAULT_MODEL = process.env.PI_MODEL || '(model)';
@@ -109,6 +112,27 @@ function parseChatMessage(message: unknown): { role: string; text: string } | nu
   const content = typeof rec.content === 'string' ? rec.content : '';
   if (!role) return null;
   return { role, text: content || '(no output)' };
+}
+
+function normalizeThinkLevel(raw: string): ThinkLevel | null {
+  const key = raw.trim().toLowerCase();
+  if (!key) return null;
+  if (key === 'off') return 'off';
+  if (['minimal', 'min'].includes(key)) return 'minimal';
+  if (key === 'low') return 'low';
+  if (['med', 'mid', 'medium'].includes(key)) return 'medium';
+  if (['high', 'max'].includes(key)) return 'high';
+  if (['xhigh', 'x-high', 'x_high'].includes(key)) return 'xhigh';
+  return null;
+}
+
+function normalizeReasoningLevel(raw: string): ReasoningLevel | null {
+  const key = raw.trim().toLowerCase();
+  if (!key) return null;
+  if (['off', 'false', '0', 'no'].includes(key)) return 'off';
+  if (['on', 'true', '1', 'yes'].includes(key)) return 'on';
+  if (['stream', 'streaming', 'live'].includes(key)) return 'stream';
+  return null;
 }
 
 function helpText(): string {
@@ -214,6 +238,9 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         }
 
         if (evt.data?.phase === 'end') {
+          if (activeRunId === evt.runId) {
+            activeRunId = null;
+          }
           setActivityStatus('idle');
           tui.requestRender();
         }
@@ -344,16 +371,33 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
     }
   };
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string): Promise<SendMessageStatus> => {
+    if (activeRunId) {
+      chatLog.addSystem('run already in progress; wait for completion or /abort before sending.');
+      setActivityStatus('running');
+      return 'busy';
+    }
+
     setActivityStatus('sending');
     const res = await client.request<{ runId: string; status: string }>('chat.send', {
       sessionKey,
       message: text,
       deliver,
     });
-    activeRunId = asString(res.runId) || null;
+    const runId = asString(res.runId) || null;
+    const status = asString(res.status) || 'started';
+
+    if (status === 'already_running') {
+      if (runId) activeRunId = runId;
+      chatLog.addSystem('run already in progress; message was not sent. Press Esc or /abort, then resend.');
+      setActivityStatus('running');
+      return 'busy';
+    }
+
+    activeRunId = runId;
     if (activeRunId) chatLog.updateAssistant('…', activeRunId);
     setActivityStatus('running');
+    return 'sent';
   };
 
   const renderSessions = () => {
@@ -456,8 +500,13 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           chatLog.addSystem('usage: /think <off|minimal|low|medium|high|xhigh>');
           break;
         }
-        await client.request('sessions.patch', { sessionKey, thinkLevel: args });
-        sessionPrefs.thinkLevel = args as ThinkLevel;
+        const normalized = normalizeThinkLevel(args);
+        if (!normalized) {
+          chatLog.addSystem('usage: /think <off|minimal|low|medium|high|xhigh>');
+          break;
+        }
+        await client.request('sessions.patch', { sessionKey, thinkLevel: normalized });
+        sessionPrefs.thinkLevel = normalized === 'off' ? undefined : normalized;
         updateFooter();
         break;
       }
@@ -467,8 +516,16 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           chatLog.addSystem('usage: /reasoning <off|on|stream>');
           break;
         }
-        await client.request('sessions.patch', { sessionKey, reasoningLevel: args });
-        sessionPrefs.reasoningLevel = args as ReasoningLevel;
+        const normalized = normalizeReasoningLevel(args);
+        if (!normalized) {
+          chatLog.addSystem('usage: /reasoning <off|on|stream>');
+          break;
+        }
+        await client.request('sessions.patch', {
+          sessionKey,
+          reasoningLevel: normalized,
+        });
+        sessionPrefs.reasoningLevel = normalized === 'off' ? undefined : normalized;
         updateFooter();
         break;
       }
@@ -546,10 +603,10 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
 
   editor.onSubmit = (text: string) => {
     const value = text.trim();
-    editor.setText('');
     if (!value) return;
 
     if (value.startsWith('/')) {
+      editor.setText('');
       void handleCommand(value)
         .catch((err) => {
           chatLog.addSystem(`error: ${err instanceof Error ? err.message : String(err)}`);
@@ -562,6 +619,13 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
     }
 
     void sendMessage(value)
+      .then((status) => {
+        if (status === 'sent') {
+          editor.setText('');
+          return;
+        }
+        editor.setText(value);
+      })
       .catch((err) => {
         chatLog.addSystem(`error: ${err instanceof Error ? err.message : String(err)}`);
         setActivityStatus('error');
@@ -618,16 +682,20 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   connectionStatus = 'connected';
 
   await loadSessions();
-  if (!findSession(sessionKey) && availableSessions.length > 0) {
-    sessionKey = availableSessions[0]?.sessionKey || 'main';
-  }
+  const startupSession = resolveStartupSession(sessionKey, availableSessions);
+  sessionKey = startupSession.sessionKey;
 
   updateHeader();
   updateFooter();
   renderStatus();
-  await loadHistory(120);
+  if (startupSession.shouldLoadHistory) {
+    await loadHistory(120);
+  }
 
   chatLog.addSystem('Connected to FFT_nano gateway. Type /help for commands.');
+  if (startupSession.infoMessage) {
+    chatLog.addSystem(startupSession.infoMessage);
+  }
   tui.start();
   tui.requestRender();
 

@@ -2966,33 +2966,27 @@ async function runDirectSessionTurn(params: {
     return { runId, status: 'started' };
   }
 
-  if (!streamed && result) {
+  if (result) {
     persistAssistantHistory(chatJid, result, runId);
-    if (deliver) {
+    if (deliver && !streamed) {
       const finalMessage = isTelegramJid(chatJid) ? result : `${ASSISTANT_NAME}: ${result}`;
       await sendMessage(chatJid, finalMessage);
     }
-    emitTuiChatEvent({
-      runId,
-      sessionKey,
-      state: 'final',
-      message: { role: 'assistant', content: result },
-      usage,
-    });
-    emitTuiAgentEvent({
-      runId,
-      sessionKey,
-      phase: 'end',
-      detail: 'complete',
-    });
-  } else {
-    emitTuiAgentEvent({
-      runId,
-      sessionKey,
-      phase: 'end',
-      detail: streamed ? 'streamed' : 'complete',
-    });
   }
+
+  emitTuiChatEvent({
+    runId,
+    sessionKey,
+    state: 'final',
+    ...(result ? { message: { role: 'assistant' as const, content: result } } : {}),
+    usage,
+  });
+  emitTuiAgentEvent({
+    runId,
+    sessionKey,
+    phase: 'end',
+    detail: streamed ? 'streamed' : 'complete',
+  });
 
   return { runId, status: 'started' };
 }

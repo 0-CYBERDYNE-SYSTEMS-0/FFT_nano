@@ -57,9 +57,13 @@ function parseScheduleObject(raw: unknown): CronV2Schedule | null {
     return { kind: 'at', at: schedule.at };
   }
   if (schedule.kind === 'every' && typeof schedule.everyMs === 'number') {
+    const everyMs = Math.floor(schedule.everyMs);
+    if (!Number.isFinite(everyMs) || everyMs <= 0) {
+      return null;
+    }
     return {
       kind: 'every',
-      everyMs: Math.max(1, Math.floor(schedule.everyMs)),
+      everyMs,
       anchorMs: typeof schedule.anchorMs === 'number' ? Math.floor(schedule.anchorMs) : undefined,
     };
   }
@@ -93,7 +97,11 @@ export function resolveCronExecutionPlan(
   payload: ScheduleTaskIpcPayload,
   nowMs = Date.now(),
 ): CronV2ExecutionPlan {
+  const hasSchedule = payload.schedule !== undefined;
   const scheduleObj = parseScheduleObject(payload.schedule);
+  if (hasSchedule && !scheduleObj) {
+    throw new Error('Invalid schedule payload');
+  }
   if (scheduleObj) {
     if (scheduleObj.kind === 'at') {
       const when = new Date(scheduleObj.at);
@@ -108,7 +116,7 @@ export function resolveCronExecutionPlan(
       };
     }
     if (scheduleObj.kind === 'every') {
-      const nextRun = new Date(nowMs + Math.max(1, scheduleObj.everyMs)).toISOString();
+      const nextRun = new Date(nowMs + scheduleObj.everyMs).toISOString();
       return {
         scheduleType: 'interval',
         scheduleValue: String(scheduleObj.everyMs),
@@ -189,4 +197,3 @@ export function resolveNoContinueForTask(task: ScheduledTask): boolean {
   const contextMode = task.context_mode === 'group' ? 'group' : 'isolated';
   return contextMode === 'isolated';
 }
-
