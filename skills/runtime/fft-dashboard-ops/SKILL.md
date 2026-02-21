@@ -7,6 +7,19 @@ description: Build and apply Home Assistant Lovelace dashboards from templates u
 
 Use this skill for generating, staging, applying, and validating farm dashboards.
 
+## When to use this skill
+
+- Use when creating or revising Home Assistant Lovelace dashboards.
+- Use when applying dashboard changes through staged files and screenshot checks.
+- Use when adapting dashboard layout to live farm-state context.
+
+## When not to use this skill
+
+- Do not use for direct live YAML edits in Home Assistant config.
+- Do not use for non-dashboard automation or device control requests.
+- Do not use outside main/admin chat for dashboard apply operations.
+- Do not use for runtime multi-card canvas composition; hand off to `fft-canvas-dynamic-ops`.
+
 ## Guardrails
 
 - Never run destructive git commands unless explicitly requested.
@@ -34,9 +47,15 @@ Use templates as a baseline, then adapt entity references using live discovery f
 
 1. Read `/workspace/farm-state/current.json` and `/workspace/farm-state/calendar.json` for context.
 2. Draft dashboard YAML to `/workspace/dashboard/ui-lovelace-staging.yaml`.
-3. Request apply via `ha_apply_dashboard` with `stagingFile` set to the staging path.
-4. Request screenshot via `ha_capture_screenshot` for the relevant view.
-5. Verify screenshot and iterate until readable and operational.
+3. Use `ha_dashboard_validate` before apply.
+4. Request apply via `ha_apply_dashboard` with `stagingFile` set to the staging path.
+5. Request screenshot via `ha_capture_screenshot` for the relevant view.
+6. Verify screenshot and iterate until readable and operational.
+
+## Skill Routing
+
+- If the user asks for runtime canvas cards, card-level canvas edits, or spec-driven layout updates, use `fft-canvas-dynamic-ops`.
+- If the user asks for full view composition, theme/view structure changes, or staged apply lifecycle management, stay in `fft-dashboard-ops`.
 
 ## Context-Reactive Theming
 

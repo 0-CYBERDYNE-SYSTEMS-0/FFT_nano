@@ -7,6 +7,18 @@ description: Operate the farm bridge through ledger reads and IPC action request
 
 Use this skill for farm state awareness and operational actions routed through the FFT_nano farm bridge.
 
+## When to use this skill
+
+- Use for reading farm ledger state and alerts.
+- Use for submitting allowlisted farm control actions through IPC.
+- Use when main/admin chat requests operational farm actions.
+
+## When not to use this skill
+
+- Do not use for onboarding/bootstrap tasks.
+- Do not use outside main/admin chat for write/control actions.
+- Do not use for actions outside the defined farm action allowlist.
+
 ## Guardrails
 
 - Never run destructive git commands unless explicitly requested.
@@ -73,7 +85,42 @@ Only use allowlisted actions:
 - `ha_restart`
 - `ha_apply_dashboard`
 - `ha_capture_screenshot`
+- `ha_dashboard_get`
+- `ha_dashboard_patch`
+- `ha_dashboard_validate`
+- `ha_canvas_get_spec`
+- `ha_canvas_set_spec`
+- `ha_canvas_patch_spec`
 - `farm_state_refresh`
+
+## Minimal Examples
+
+```json
+{
+  "type": "farm_action",
+  "action": "ha_dashboard_patch",
+  "params": {
+    "dashboardFile": "/workspace/dashboard/ui-lovelace-staging.yaml",
+    "operations": [
+      { "op": "set_theme", "theme": "storm" }
+    ]
+  },
+  "requestId": "act_1707830400_dash"
+}
+```
+
+```json
+{
+  "type": "farm_action",
+  "action": "ha_canvas_patch_spec",
+  "params": {
+    "operations": [
+      { "op": "set_title", "title": "Agent Canvas" }
+    ]
+  },
+  "requestId": "act_1707830400_canvas"
+}
+```
 
 ## Alert Interpretation
 

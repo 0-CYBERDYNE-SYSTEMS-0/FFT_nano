@@ -6,6 +6,18 @@ allowed-tools: Bash(agent-browser:*)
 
 # Browser Automation with agent-browser
 
+## When to use this skill
+
+- Use when tasks require browser navigation, form filling, page interaction, or screenshots.
+- Use when validating web app behavior via structured snapshots and element refs.
+- Use when extracting page text/attributes from interactive sites.
+
+## When not to use this skill
+
+- Do not use for API-only tasks that do not require a browser.
+- Do not use for large-scale scraping beyond site policy/compliance boundaries.
+- Do not use when simpler CLI/network tools can complete the request.
+
 ## Quick start
 
 ```bash

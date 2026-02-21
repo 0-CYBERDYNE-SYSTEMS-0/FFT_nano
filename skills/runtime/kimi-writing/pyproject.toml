@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kimi-writing"
+version = "0.1.0"
+description = "Professional writing assistant powered by Kimi-K2.5 via OpenRouter"
+authors = [{ name = "FarmFriend Terminal", email = "support@farmfriend.technology" }]
+requires-python = ">=3.10"
+dependencies = ["openai>=1.0.0", "pydantic>=2.0.0", "python-dotenv>=1.0.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts", "tools", "prompts"]
