@@ -23,6 +23,10 @@
         <string>{{HOME}}</string>
         <key>ASSISTANT_NAME</key>
         <string>FarmFriend</string>
+        <key>FFT_NANO_TUI_ENABLED</key>
+        <string>1</string>
+        <key>FFT_NANO_TUI_PORT</key>
+        <string>28989</string>
     </dict>
     <key>StandardOutPath</key>
     <string>{{PROJECT_ROOT}}/logs/fft_nano.log</string>

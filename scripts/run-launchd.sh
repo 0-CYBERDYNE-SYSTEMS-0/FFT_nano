@@ -34,4 +34,8 @@ fi
 export WHATSAPP_ENABLED="${WHATSAPP_ENABLED:-0}"
 export TELEGRAM_AUTO_REGISTER="${TELEGRAM_AUTO_REGISTER:-0}"
 
+# Attached TUI gateway defaults (overridable via launchd/env).
+export FFT_NANO_TUI_ENABLED="${FFT_NANO_TUI_ENABLED:-1}"
+export FFT_NANO_TUI_PORT="${FFT_NANO_TUI_PORT:-28989}"
+
 exec "$NODE_BIN" "$APP_ENTRY"

@@ -128,13 +128,14 @@ async function deliverTaskOutcome(
     : `[scheduled:${task.id}] ${result?.trim() || 'completed'}`;
 
   if (mode === 'announce') {
-    await deps.sendMessage(task.chat_jid, text.slice(0, 4000));
+    const destination = task.delivery_to?.trim() || task.chat_jid;
+    await deps.sendMessage(destination, text.slice(0, 4000));
     return;
   }
 
   if (mode === 'webhook' && task.delivery_webhook_url) {
     try {
-      await fetch(task.delivery_webhook_url, {
+      const response = await fetch(task.delivery_webhook_url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -146,6 +147,17 @@ async function deliverTaskOutcome(
           at: new Date().toISOString(),
         }),
       });
+      if (!response.ok) {
+        const bodyText = (await response.text().catch(() => ''))
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 200);
+        throw new Error(
+          `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}${
+            bodyText ? ` - ${bodyText}` : ''
+          }`,
+        );
+      }
     } catch (err) {
       logger.warn({ taskId: task.id, err }, 'Task webhook delivery failed');
     }

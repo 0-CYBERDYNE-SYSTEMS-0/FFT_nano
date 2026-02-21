@@ -58,6 +58,36 @@ test('cron adapter accepts v2 schedule payload and computes next run', () => {
   assert.ok(plan.nextRun);
 });
 
+test('cron adapter rejects non-positive everyMs (0)', () => {
+  assert.throws(
+    () =>
+      resolveCronExecutionPlan({
+        schedule: { kind: 'every', everyMs: 0 },
+      }),
+    /Invalid schedule payload/,
+  );
+});
+
+test('cron adapter rejects non-positive everyMs (-1)', () => {
+  assert.throws(
+    () =>
+      resolveCronExecutionPlan({
+        schedule: { kind: 'every', everyMs: -1 },
+      }),
+    /Invalid schedule payload/,
+  );
+});
+
+test('cron adapter rejects malformed schedule payload when schedule is present', () => {
+  assert.throws(
+    () =>
+      resolveCronExecutionPlan({
+        schedule: { kind: 'every' } as unknown as { kind: 'every'; everyMs: number },
+      }),
+    /Invalid schedule payload/,
+  );
+});
+
 test('context_mode isolated forces noContinue while group mode reuses session', () => {
   assert.equal(
     resolveNoContinueForTask(makeTask({ context_mode: 'isolated' }) as ScheduledTask),
@@ -97,11 +127,13 @@ test('runScheduledTaskV2 triggers wake_mode=now and announce delivery', async ()
     id: 'wake-now-task',
     schedule_type: 'once',
     delivery_mode: 'announce',
+    delivery_to: 'telegram:99',
     wake_mode: 'now',
   });
   createTask(task);
 
   const sentMessages: string[] = [];
+  const sentJids: string[] = [];
   const wakeReasons: string[] = [];
   const group: RegisteredGroup = {
     name: 'main',
@@ -113,7 +145,8 @@ test('runScheduledTaskV2 triggers wake_mode=now and announce delivery', async ()
   const latest = getTaskById(task.id);
   assert.ok(latest);
   await runScheduledTaskV2(latest!, {
-    sendMessage: async (_jid, text) => {
+    sendMessage: async (jid, text) => {
+      sentJids.push(jid);
       sentMessages.push(text);
     },
     registeredGroups: () => ({ 'telegram:1': group }),
@@ -131,6 +164,7 @@ test('runScheduledTaskV2 triggers wake_mode=now and announce delivery', async ()
   assert.equal(getTaskDeliveryMode(task as ScheduledTask), 'announce');
   assert.equal(shouldTriggerWakeNow(task as ScheduledTask), true);
   assert.equal(sentMessages.length, 1);
+  assert.deepEqual(sentJids, ['telegram:99']);
   assert.match(sentMessages[0], /\[scheduled:wake-now-task\]/);
   assert.deepEqual(wakeReasons, ['cron:wake-now-task']);
 

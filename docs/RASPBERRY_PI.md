@@ -1,6 +1,7 @@
 # Raspberry Pi Deployment (First-Class)
 
-This guide is the authoritative Raspberry Pi install/start runbook for `FFT_nano`.
+This guide is the Raspberry Pi-specific addendum for `FFT_nano`.
+Canonical install/run command reference lives in `README.md` ("Quickstart (Primary UX Path)").
 
 Target platform:
 - Raspberry Pi OS 64-bit (Bookworm recommended)
@@ -99,49 +100,27 @@ Debug mode:
 ./scripts/start.sh dev telegram-only
 ```
 
-## 8. Make startup persistent (systemd)
+## 8. Make startup persistent (service script)
 
-Create service:
-
-```bash
-sudo tee /etc/systemd/system/fft-nano.service >/dev/null <<'EOF'
-[Unit]
-Description=FFT_nano
-After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/FFT_nano
-ExecStart=/usr/bin/env bash -lc './scripts/start.sh start telegram-only'
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-Update these for your machine:
-- `User=pi`
-- `WorkingDirectory=/home/pi/FFT_nano`
-
-Enable and start:
+The project service helper configures systemd for you:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now fft-nano
-sudo systemctl status fft-nano --no-pager
+./scripts/service.sh install
+# or, if linked:
+fft service install
 ```
 
-Live logs:
+Check health and logs:
 
 ```bash
-journalctl -u fft-nano -f
+./scripts/service.sh status
+./scripts/service.sh logs
+# or, after `npm link`: fft service status && fft service logs
 ```
+
+Notes:
+- `setup.sh` installs/starts the service by default unless `FFT_NANO_AUTO_SERVICE=0`.
+- If status/restart needs elevated privileges on your host, run `./scripts/service.sh ...` (or `fft service ...`) from a shell with sufficient permissions.
 
 ## 9. Reboot validation (airtight check)
 
@@ -179,7 +158,8 @@ This handles companion dashboard fetch, HA startup, and onboarding flow.
 cd ~/FFT_nano
 git pull --ff-only
 ./scripts/setup.sh
-sudo systemctl restart fft-nano
+./scripts/service.sh restart
+# or, after `npm link`: fft service restart
 ```
 
 ## 12. Fast troubleshooting

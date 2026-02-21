@@ -14,10 +14,19 @@
   "homepage": "https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#readme",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "fft": "./bin/fft.js",
+    "fft-nano": "./bin/fft.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
+    "fft": "node ./bin/fft.js",
+    "tui": "node dist/tui/start.js",
+    "tui:dev": "tsx src/tui/start.ts",
+    "tui:client": "node dist/tui/client.js",
+    "tui:client:dev": "tsx src/tui/client.ts",
     "test": "node --import tsx --test tests/*.test.ts",
     "onboard": "tsx src/onboard-cli.ts",
     "auth": "tsx src/whatsapp-auth.ts",
@@ -31,12 +40,15 @@
     "format:check": "prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
+    "@mariozechner/pi-tui": "^0.53.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^11.8.1",
+    "chalk": "^5.6.2",
     "cron-parser": "^5.5.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "qrcode-terminal": "^0.12.0",
+    "ws": "^8.19.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },
@@ -44,6 +56,7 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "@types/qrcode-terminal": "^0.12.2",
+    "@types/ws": "^8.5.13",
     "prettier": "^3.8.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

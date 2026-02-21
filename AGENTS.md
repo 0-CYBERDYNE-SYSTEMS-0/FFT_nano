@@ -18,8 +18,12 @@ This repo is a single Node.js host process that:
 - Onboarding (workspace identity/bootstrap completion): `./scripts/onboard.sh [--workspace /abs/path] [--operator "Name"] [--assistant-name FarmFriend] [--non-interactive] [--force]`
 - Start (normal): `./scripts/start.sh [start] [telegram-only]`
 - Start (debug-only): `./scripts/start.sh dev [telegram-only]`
+- Attach TUI client: `./scripts/start.sh tui` (host must already be running)
+- Service lifecycle: `./scripts/service.sh <install|uninstall|start|stop|restart|status|logs>`
+- Preferred CLI aliases (after `npm link`): `fft start`, `fft dev`, `fft tui`, `fft service <...>`
 - Farm bootstrap (demo): `./scripts/farm-bootstrap.sh --mode demo`
 - Farm bootstrap (production): `./scripts/farm-bootstrap.sh --mode production`
+- Canonical operator runbook: `README.md` ("Quickstart (Primary UX Path)")
 
 ## Farm Modes (Demo vs Production)
 
@@ -61,6 +65,7 @@ Ways to make your Telegram DM the `main` channel:
 - Set `TELEGRAM_MAIN_CHAT_ID` (numeric chat id) and restart.
 - Or set `TELEGRAM_ADMIN_SECRET` on the host and run `/main <secret>` in the bot DM.
   - `/id` replies with the current chat id.
+- Main/admin service controls from chat: `/gateway status` and `/gateway restart`.
 
 ## Z.AI (GLM) Provider For Pi Runtime
 

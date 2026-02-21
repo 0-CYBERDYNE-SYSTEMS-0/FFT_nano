@@ -282,6 +282,45 @@ export function storeTextMessage(input: {
   );
 }
 
+export function storeHostMessage(input: {
+  id: string;
+  chatJid: string;
+  sender: string;
+  senderName: string;
+  content: string;
+  timestamp: string;
+  isFromMe: boolean;
+}): void {
+  storeTextMessage(input);
+}
+
+export interface ChatHistoryMessageRow {
+  sender: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  is_from_me: number;
+}
+
+export function getChatHistory(chatJid: string, limit = 120): ChatHistoryMessageRow[] {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(400, Math.floor(limit)))
+    : 120;
+  const rows = db
+    .prepare(
+      `
+      SELECT sender, sender_name, content, timestamp, is_from_me
+      FROM messages
+      WHERE chat_jid = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `,
+    )
+    .all(chatJid, safeLimit) as ChatHistoryMessageRow[];
+  rows.reverse();
+  return rows;
+}
+
 export function storeMessage(
   msg: proto.IWebMessageInfo,
   chatJid: string,
@@ -325,13 +364,13 @@ export function getNewMessages(
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
-    WHERE timestamp > ? AND chat_jid IN (${placeholders}) AND content NOT LIKE ?
+    WHERE timestamp > ? AND chat_jid IN (${placeholders}) AND content NOT LIKE ? AND sender != ?
     ORDER BY timestamp
   `;
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`) as NewMessage[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, '__fft_tui__') as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -350,12 +389,12 @@ export function getMessagesSince(
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
-    WHERE chat_jid = ? AND timestamp > ? AND content NOT LIKE ?
+    WHERE chat_jid = ? AND timestamp > ? AND content NOT LIKE ? AND sender != ?
     ORDER BY timestamp
   `;
   return db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, '__fft_tui__') as NewMessage[];
 }
 
 export function createTask(

@@ -31,6 +31,7 @@ import {
   getAllChats,
   getAllTasks,
   deleteTask,
+  getChatHistory,
   getLastGroupSync,
   getMessagesSince,
   getNewMessages,
@@ -38,6 +39,7 @@ import {
   initDatabase,
   setLastGroupSync,
   storeChatMetadata,
+  storeHostMessage,
   storeMessage,
   storeTextMessage,
   updateTask,
@@ -87,6 +89,15 @@ import {
   shouldSuppressDuplicateHeartbeat,
   stripHeartbeatToken,
 } from './heartbeat-policy.js';
+import {
+  startTuiGatewayServer,
+  type SessionHistoryMessage,
+  type SessionPrefs as TuiSessionPrefs,
+  type TuiGatewayAdapters,
+  type TuiGatewayServer,
+} from './tui/gateway-server.js';
+import { TuiRuntimeEventHub } from './tui/runtime-events.js';
+import type { TuiSessionSummary } from './tui/protocol.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -136,6 +147,7 @@ const TELEGRAM_COMMON_COMMANDS = [
 const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'main', description: 'Claim this chat as main/admin' },
   { command: 'freechat', description: 'Manage non-main free-chat allowlist' },
+  { command: 'gateway', description: 'Gateway service ops: /gateway status|restart' },
   { command: 'coder', description: 'Delegate coding execution' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
@@ -167,6 +179,7 @@ type TelegramCommandName =
   | '/compact'
   | '/subagents'
   | '/main'
+  | '/gateway'
   | '/tasks'
   | '/task_pause'
   | '/task_resume'
@@ -224,7 +237,7 @@ interface ChatUsageStats {
 interface ActiveChatRun {
   chatJid: string;
   startedAt: number;
-  requestId?: string;
+  requestId: string;
   abortController: AbortController;
 }
 
@@ -237,6 +250,7 @@ let chatRunPreferences: Record<string, ChatRunPreferences> = {};
 let chatUsageStats: Record<string, ChatUsageStats> = {};
 const activeCoderRuns = new Map<string, ActiveCoderRun>();
 const activeChatRuns = new Map<string, ActiveChatRun>();
+const activeChatRunsById = new Map<string, ActiveChatRun>();
 const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
 let lastTelegramMenuMainChatId: string | null = null;
 // LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
@@ -247,6 +261,11 @@ let ipcWatcherRunning = false;
 let groupSyncTimerStarted = false;
 let heartbeatLoopStarted = false;
 let shuttingDown = false;
+const tuiRuntimeEvents = new TuiRuntimeEventHub();
+let tuiGatewayServer: TuiGatewayServer | null = null;
+
+const TUI_SENDER_ID = '__fft_tui__';
+const TUI_SENDER_NAME = 'FFT_nano TUI';
 
 /**
  * Translate a JID from LID format to phone format if we have a mapping.
@@ -608,6 +627,146 @@ function findMainChatJid(): string | null {
   return null;
 }
 
+function getSessionKeyForChat(chatJid: string): string {
+  return isMainChat(chatJid) ? 'main' : chatJid;
+}
+
+function resolveChatJidForSessionKey(sessionKey: string): string | null {
+  const trimmed = sessionKey.trim();
+  if (!trimmed) return null;
+  if (trimmed === 'main') return findMainChatJid();
+  return registeredGroups[trimmed] ? trimmed : null;
+}
+
+function buildTuiSessionList(): TuiSessionSummary[] {
+  const chatByJid = new Map(getAllChats().map((chat) => [chat.jid, chat] as const));
+  const sessions: TuiSessionSummary[] = [];
+
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    const chat = chatByJid.get(jid);
+    sessions.push({
+      sessionKey: getSessionKeyForChat(jid),
+      chatJid: jid,
+      name: chat?.name || group.name || jid,
+      isMain: group.folder === MAIN_GROUP_FOLDER,
+      lastActivity: chat?.last_message_time,
+    });
+  }
+
+  sessions.sort((a, b) => {
+    const aMain = a.isMain ? 1 : 0;
+    const bMain = b.isMain ? 1 : 0;
+    if (aMain !== bMain) return bMain - aMain;
+    return (b.lastActivity || '').localeCompare(a.lastActivity || '');
+  });
+  return sessions;
+}
+
+function normalizeAssistantHistoryContent(content: string): string {
+  const prefix = `${ASSISTANT_NAME}:`;
+  if (content.startsWith(prefix)) {
+    return content.slice(prefix.length).trimStart();
+  }
+  return content;
+}
+
+function getTuiSessionHistory(chatJid: string, limit: number): SessionHistoryMessage[] {
+  const rows = getChatHistory(chatJid, limit);
+  return rows.map((row) => {
+    const role = row.is_from_me ? 'assistant' : 'user';
+    return {
+      role,
+      text:
+        role === 'assistant'
+          ? normalizeAssistantHistoryContent(row.content)
+          : row.content,
+      timestamp: row.timestamp,
+    };
+  });
+}
+
+function emitTuiChatEvent(payload: {
+  runId: string;
+  sessionKey: string;
+  state: 'message' | 'final' | 'aborted' | 'error';
+  message?: { role: 'user' | 'assistant' | 'system'; content: string };
+  errorMessage?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    provider?: string;
+    model?: string;
+  };
+}): void {
+  tuiRuntimeEvents.emit({
+    kind: 'chat',
+    payload: {
+      ...payload,
+      timestamp: new Date().toISOString(),
+    },
+  });
+}
+
+function emitTuiAgentEvent(payload: {
+  runId: string;
+  sessionKey: string;
+  phase: 'start' | 'end' | 'error';
+  detail?: string;
+}): void {
+  tuiRuntimeEvents.emit({
+    kind: 'agent',
+    payload: {
+      runId: payload.runId,
+      stream: 'lifecycle',
+      sessionKey: payload.sessionKey,
+      data: {
+        phase: payload.phase,
+        detail: payload.detail,
+      },
+    },
+  });
+}
+
+function makeRunId(prefix = 'run'): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function persistAssistantHistory(chatJid: string, text: string, runId?: string): string {
+  if (!registeredGroups[chatJid]) return '';
+  const timestamp = new Date().toISOString();
+  const content = text.startsWith(`${ASSISTANT_NAME}:`)
+    ? text
+    : `${ASSISTANT_NAME}: ${text}`;
+  const messageId = runId ? `${runId}:assistant` : `assistant-${Date.now()}`;
+  storeHostMessage({
+    id: messageId,
+    chatJid,
+    sender: ASSISTANT_NAME,
+    senderName: ASSISTANT_NAME,
+    content,
+    timestamp,
+    isFromMe: true,
+  });
+  return timestamp;
+}
+
+function persistTuiUserHistory(chatJid: string, text: string, runId: string): string {
+  const timestamp = new Date().toISOString();
+  if (registeredGroups[chatJid]) {
+    storeHostMessage({
+      id: `${runId}:user`,
+      chatJid,
+      sender: TUI_SENDER_ID,
+      senderName: TUI_SENDER_NAME,
+      content: text,
+      timestamp,
+      isFromMe: false,
+    });
+  }
+  return timestamp;
+}
+
 function normalizeThinkLevel(raw: string): ThinkLevel | undefined {
   const key = raw.trim().toLowerCase();
   if (!key) return undefined;
@@ -765,6 +924,61 @@ function updateChatRunPreferences(
   }
   saveState();
   return chatRunPreferences[chatJid] || {};
+}
+
+function getTuiSessionPrefs(chatJid: string): TuiSessionPrefs {
+  const prefs = chatRunPreferences[chatJid] || {};
+  return {
+    provider: prefs.provider,
+    model: prefs.model,
+    thinkLevel: prefs.thinkLevel,
+    reasoningLevel: prefs.reasoningLevel,
+    noContinueNext: prefs.nextRunNoContinue === true,
+  };
+}
+
+function patchTuiSessionPrefs(chatJid: string, patch: TuiSessionPrefs): TuiSessionPrefs {
+  const next = updateChatRunPreferences(chatJid, (prefs) => {
+    if (Object.prototype.hasOwnProperty.call(patch, 'provider')) {
+      if (patch.provider?.trim()) prefs.provider = patch.provider.trim();
+      else delete prefs.provider;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
+      if (patch.model?.trim()) prefs.model = patch.model.trim();
+      else delete prefs.model;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'thinkLevel')) {
+      if (patch.thinkLevel && patch.thinkLevel !== 'off') {
+        prefs.thinkLevel = patch.thinkLevel;
+      } else {
+        delete prefs.thinkLevel;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'reasoningLevel')) {
+      if (patch.reasoningLevel && patch.reasoningLevel !== 'off') {
+        prefs.reasoningLevel = patch.reasoningLevel;
+      } else {
+        delete prefs.reasoningLevel;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'noContinueNext')) {
+      if (patch.noContinueNext) prefs.nextRunNoContinue = true;
+      else delete prefs.nextRunNoContinue;
+    }
+    return prefs;
+  });
+  return {
+    provider: next.provider,
+    model: next.model,
+    thinkLevel: next.thinkLevel,
+    reasoningLevel: next.reasoningLevel,
+    noContinueNext: next.nextRunNoContinue === true,
+  };
+}
+
+function resetTuiSession(chatJid: string, reason: string): { ok: boolean; reason: string } {
+  patchTuiSessionPrefs(chatJid, { noContinueNext: true });
+  return { ok: true, reason };
 }
 
 function consumeNextRunNoContinue(chatJid: string): boolean {
@@ -951,6 +1165,58 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
   };
 }
 
+function runGatewayServiceCommand(
+  action: 'status' | 'restart',
+): { ok: boolean; text: string } {
+  const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      ok: false,
+      text: `Gateway service script not found: ${scriptPath}`,
+    };
+  }
+
+  const result = spawnSync('bash', [scriptPath, action], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      FFT_NANO_GATEWAY_CALL: '1',
+      FFT_NANO_NONINTERACTIVE: '1',
+    },
+    maxBuffer: 8 * 1024 * 1024,
+  });
+
+  if (result.error) {
+    return {
+      ok: false,
+      text: `Failed running gateway service command: ${result.error.message}`,
+    };
+  }
+
+  const combined = [result.stdout || '', result.stderr || '']
+    .filter((part) => part.trim().length > 0)
+    .join('\n')
+    .trim();
+  const bounded =
+    combined.length > 12000
+      ? `${combined.slice(0, 12000)}\n\n...output truncated...`
+      : combined;
+
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      text:
+        bounded ||
+        `Gateway service command failed with exit code ${result.status ?? 'unknown'}.`,
+    };
+  }
+
+  return {
+    ok: true,
+    text: bounded || `Gateway service command completed: ${action}`,
+  };
+}
+
 function normalizeTelegramCommandToken(token: string): TelegramCommandName | null {
   if (!token.startsWith('/')) return null;
   const normalized = token.split('@')[0]?.toLowerCase();
@@ -976,6 +1242,7 @@ function normalizeTelegramCommandToken(token: string): TelegramCommandName | nul
     '/compact',
     '/subagents',
     '/main',
+    '/gateway',
     '/tasks',
     '/task_pause',
     '/task_resume',
@@ -1020,6 +1287,7 @@ function formatHelpText(isMainGroup: boolean): string {
     'Telegram commands (main/admin):',
     ...common,
     '/main <secret> - claim chat as main/admin',
+    '/gateway status|restart - host service controls',
     '/tasks - list scheduled tasks',
     '/task_pause <id> - pause task',
     '/task_resume <id> - resume task',
@@ -1179,6 +1447,7 @@ async function runCompactionForChat(
     abortController,
   };
   activeChatRuns.set(chatJid, activeRun);
+  activeChatRunsById.set(compactRequestId, activeRun);
 
   await setTyping(chatJid, true);
   try {
@@ -1222,6 +1491,7 @@ async function runCompactionForChat(
     if (activeChatRuns.get(chatJid) === activeRun) {
       activeChatRuns.delete(chatJid);
     }
+    activeChatRunsById.delete(compactRequestId);
   }
 }
 
@@ -1872,6 +2142,47 @@ async function handleTelegramCommand(m: {
     return true;
   }
 
+  if (cmd === '/gateway') {
+    const actionRaw = (rest[0] || 'status').trim().toLowerCase();
+    const action =
+      actionRaw === 'restart'
+        ? 'restart'
+        : actionRaw === 'status'
+          ? 'status'
+          : null;
+    if (!action) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
+      await sendMessage(m.chatJid, 'Usage: /gateway <status|restart>');
+      return true;
+    }
+
+    if (action === 'restart') {
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested');
+      await sendMessage(
+        m.chatJid,
+        'Restarting gateway service. Expect a brief disconnect while the host restarts.',
+      );
+      const result = runGatewayServiceCommand(action);
+      if (!result.ok) {
+        await sendMessage(m.chatJid, `Gateway restart failed:\n${result.text}`);
+      }
+      return true;
+    }
+
+    const result = runGatewayServiceCommand(action);
+    logTelegramCommandAudit(
+      m.chatJid,
+      cmd,
+      result.ok,
+      result.ok ? action : `${action} failed`,
+    );
+    await sendMessage(
+      m.chatJid,
+      result.ok ? `Gateway ${action}:\n${result.text}` : `Gateway ${action} failed:\n${result.text}`,
+    );
+    return true;
+  }
+
   if (cmd === '/freechat') {
     const action = (rest[0] || '').toLowerCase();
     if (!action || action === 'help') {
@@ -2113,6 +2424,19 @@ async function handleTelegramCommand(m: {
         abortController,
       };
       activeChatRuns.set(m.chatJid, activeRun);
+      activeChatRunsById.set(requestId, activeRun);
+      emitTuiChatEvent({
+        runId: requestId,
+        sessionKey: getSessionKeyForChat(m.chatJid),
+        state: 'message',
+        message: { role: 'system', content: `Starting subagent run (${requestId})...` },
+      });
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey: getSessionKeyForChat(m.chatJid),
+        phase: 'start',
+        detail: 'running',
+      });
       await sendMessage(m.chatJid, `Starting subagent run (${requestId})...`);
       await setTyping(m.chatJid, true);
       try {
@@ -2127,13 +2451,50 @@ async function handleTelegramCommand(m: {
           abortController.signal,
         );
         updateChatUsage(m.chatJid, run.usage);
-        if (run.ok && !run.streamed && run.result) {
-          await sendMessage(m.chatJid, run.result);
+        if (!run.ok) {
+          emitTuiChatEvent({
+            runId: requestId,
+            sessionKey: getSessionKeyForChat(m.chatJid),
+            state: 'error',
+            errorMessage: 'Subagent run failed',
+          });
+          emitTuiAgentEvent({
+            runId: requestId,
+            sessionKey: getSessionKeyForChat(m.chatJid),
+            phase: 'error',
+            detail: 'subagent run failed',
+          });
+        } else if (run.result) {
+          persistAssistantHistory(m.chatJid, run.result, requestId);
+          if (!run.streamed) {
+            await sendMessage(m.chatJid, run.result);
+          }
+          emitTuiChatEvent({
+            runId: requestId,
+            sessionKey: getSessionKeyForChat(m.chatJid),
+            state: 'final',
+            message: { role: 'assistant', content: run.result },
+            usage: run.usage,
+          });
+          emitTuiAgentEvent({
+            runId: requestId,
+            sessionKey: getSessionKeyForChat(m.chatJid),
+            phase: 'end',
+            detail: run.streamed ? 'streamed' : 'complete',
+          });
+        } else {
+          emitTuiAgentEvent({
+            runId: requestId,
+            sessionKey: getSessionKeyForChat(m.chatJid),
+            phase: 'end',
+            detail: run.streamed ? 'streamed' : 'complete',
+          });
         }
       } finally {
         if (activeChatRuns.get(m.chatJid) === activeRun) {
           activeChatRuns.delete(m.chatJid);
         }
+        activeChatRunsById.delete(requestId);
         activeCoderRuns.delete(requestId);
         await setTyping(m.chatJid, false);
       }
@@ -2230,7 +2591,7 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   // - default: orchestrator handles message directly
   // - explicit triggers (/coder, /coder-plan, alias phrases) force delegation
   let codingHint: CodingHint = isMainGroup ? 'auto' : 'none';
-  let requestId: string | undefined;
+  let requestId = makeRunId('chat');
   let delegationInstruction: string | null = null;
   let delegationMarker: string | null = null;
 
@@ -2299,6 +2660,8 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   const prompt = lines.join('\n');
 
   if (!prompt) return true;
+  const sessionKey = getSessionKeyForChat(msg.chat_jid);
+  const latestUserText = selectedMessages[selectedMessages.length - 1]?.content || content;
 
   let finalPrompt =
     codingHint !== 'none' && delegationMarker
@@ -2383,6 +2746,19 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
     abortController,
   };
   activeChatRuns.set(msg.chat_jid, activeRun);
+  activeChatRunsById.set(requestId, activeRun);
+  emitTuiChatEvent({
+    runId: requestId,
+    sessionKey,
+    state: 'message',
+    message: { role: 'user', content: latestUserText },
+  });
+  emitTuiAgentEvent({
+    runId: requestId,
+    sessionKey,
+    phase: 'start',
+    detail: 'running',
+  });
   await setTyping(msg.chat_jid, true);
   try {
     const run = await runAgent(
@@ -2404,9 +2780,8 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
     if (activeChatRuns.get(msg.chat_jid) === activeRun) {
       activeChatRuns.delete(msg.chat_jid);
     }
-    if (requestId) {
-      activeCoderRuns.delete(requestId);
-    }
+    activeChatRunsById.delete(requestId);
+    activeCoderRuns.delete(requestId);
   }
 
   // Only advance last-agent timestamp after a successful run; otherwise the
@@ -2414,14 +2789,206 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   if (ok) {
     updateChatUsage(msg.chat_jid, usage);
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-    if (!streamed && result) {
-      const finalMessage = isTelegramJid(msg.chat_jid)
-        ? result
-        : `${ASSISTANT_NAME}: ${result}`;
-      await sendMessage(msg.chat_jid, finalMessage);
+    if (abortController.signal.aborted) {
+      emitTuiChatEvent({
+        runId: requestId,
+        sessionKey,
+        state: 'aborted',
+      });
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey,
+        phase: 'end',
+        detail: 'aborted',
+      });
+    } else if (result) {
+      persistAssistantHistory(msg.chat_jid, result, requestId);
+      if (!streamed) {
+        const finalMessage = isTelegramJid(msg.chat_jid)
+          ? result
+          : `${ASSISTANT_NAME}: ${result}`;
+        await sendMessage(msg.chat_jid, finalMessage);
+      }
+      emitTuiChatEvent({
+        runId: requestId,
+        sessionKey,
+        state: 'final',
+        message: { role: 'assistant', content: result },
+        usage,
+      });
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey,
+        phase: 'end',
+        detail: streamed ? 'streamed' : 'complete',
+      });
+    } else {
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey,
+        phase: 'end',
+        detail: streamed ? 'streamed' : 'complete',
+      });
     }
+  } else {
+    emitTuiChatEvent({
+      runId: requestId,
+      sessionKey,
+      state: 'error',
+      errorMessage: 'Run failed',
+    });
+    emitTuiAgentEvent({
+      runId: requestId,
+      sessionKey,
+      phase: 'error',
+      detail: 'run failed',
+    });
   }
   return true;
+}
+
+async function runDirectSessionTurn(params: {
+  chatJid: string;
+  text: string;
+  runId: string;
+  deliver: boolean;
+}): Promise<{ runId: string; status: 'started' | 'already_running' }> {
+  const { chatJid, text, runId, deliver } = params;
+  const group = registeredGroups[chatJid];
+  if (!group) {
+    throw new Error(`Chat is not registered: ${chatJid}`);
+  }
+  const existing = activeChatRuns.get(chatJid);
+  if (existing) {
+    return { runId: existing.requestId, status: 'already_running' };
+  }
+
+  const sessionKey = getSessionKeyForChat(chatJid);
+  persistTuiUserHistory(chatJid, text, runId);
+  emitTuiChatEvent({
+    runId,
+    sessionKey,
+    state: 'message',
+    message: { role: 'user', content: text },
+  });
+  emitTuiAgentEvent({
+    runId,
+    sessionKey,
+    phase: 'start',
+    detail: 'running',
+  });
+
+  const runPreferences: ChatRunPreferences = {
+    ...(chatRunPreferences[chatJid] || {}),
+  };
+  if (consumeNextRunNoContinue(chatJid)) {
+    runPreferences.nextRunNoContinue = true;
+  }
+
+  const prompt = `[${new Date().toISOString()}] ${TUI_SENDER_NAME}: ${text}`;
+  const abortController = new AbortController();
+  const activeRun: ActiveChatRun = {
+    chatJid,
+    startedAt: Date.now(),
+    requestId: runId,
+    abortController,
+  };
+  activeChatRuns.set(chatJid, activeRun);
+  activeChatRunsById.set(runId, activeRun);
+
+  let result: string | null = null;
+  let streamed = false;
+  let ok = false;
+  let usage:
+    | {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        provider?: string;
+        model?: string;
+      }
+    | undefined;
+
+  await setTyping(chatJid, true);
+  try {
+    const run = await runAgent(
+      group,
+      prompt,
+      chatJid,
+      'none',
+      runId,
+      runPreferences,
+      {},
+      abortController.signal,
+    );
+    result = run.result;
+    streamed = run.streamed;
+    ok = run.ok;
+    usage = run.usage;
+  } finally {
+    await setTyping(chatJid, false);
+    if (activeChatRuns.get(chatJid) === activeRun) {
+      activeChatRuns.delete(chatJid);
+    }
+    activeChatRunsById.delete(runId);
+  }
+
+  if (!ok) {
+    emitTuiChatEvent({
+      runId,
+      sessionKey,
+      state: 'error',
+      errorMessage: 'Run failed',
+    });
+    emitTuiAgentEvent({
+      runId,
+      sessionKey,
+      phase: 'error',
+      detail: 'run failed',
+    });
+    throw new Error('Run failed');
+  }
+
+  updateChatUsage(chatJid, usage);
+
+  if (abortController.signal.aborted) {
+    emitTuiChatEvent({
+      runId,
+      sessionKey,
+      state: 'aborted',
+    });
+    emitTuiAgentEvent({
+      runId,
+      sessionKey,
+      phase: 'end',
+      detail: 'aborted',
+    });
+    return { runId, status: 'started' };
+  }
+
+  if (result) {
+    persistAssistantHistory(chatJid, result, runId);
+    if (deliver && !streamed) {
+      const finalMessage = isTelegramJid(chatJid) ? result : `${ASSISTANT_NAME}: ${result}`;
+      await sendMessage(chatJid, finalMessage);
+    }
+  }
+
+  emitTuiChatEvent({
+    runId,
+    sessionKey,
+    state: 'final',
+    ...(result ? { message: { role: 'assistant' as const, content: result } } : {}),
+    usage,
+  });
+  emitTuiAgentEvent({
+    runId,
+    sessionKey,
+    phase: 'end',
+    detail: streamed ? 'streamed' : 'complete',
+  });
+
+  return { runId, status: 'started' };
 }
 
 async function runAgent(
@@ -2583,6 +3150,73 @@ async function runAgent(
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return { result: null, streamed: false, ok: false };
+  }
+}
+
+function createTuiGatewayAdapters(): TuiGatewayAdapters {
+  return {
+    getStatus: () => ({
+      runtime: getContainerRuntime(),
+      sessions: buildTuiSessionList().length,
+      activeRuns: activeChatRunsById.size,
+    }),
+    listSessions: () => buildTuiSessionList(),
+    resolveChatJid: (sessionKey: string) => resolveChatJidForSessionKey(sessionKey),
+    getSessionKeyForChat: (chatJid: string) => getSessionKeyForChat(chatJid),
+    getSessionPrefs: (chatJid: string) => getTuiSessionPrefs(chatJid),
+    patchSessionPrefs: (chatJid: string, patch: TuiSessionPrefs) =>
+      patchTuiSessionPrefs(chatJid, patch),
+    resetSession: (chatJid: string, reason: string) => resetTuiSession(chatJid, reason),
+    getHistory: async (chatJid: string, limit: number) =>
+      getTuiSessionHistory(chatJid, limit),
+    sendChat: async ({ chatJid, message, runId, deliver }) =>
+      runDirectSessionTurn({
+        chatJid,
+        text: message,
+        runId,
+        deliver,
+      }),
+    abortChat: async ({ chatJid, runId }) => {
+      const active = activeChatRunsById.get(runId);
+      if (!active || active.chatJid !== chatJid) {
+        return { aborted: false };
+      }
+      active.abortController.abort(new Error('Aborted via TUI gateway'));
+      return { aborted: true };
+    },
+    serviceGateway: async ({ action }) => runGatewayServiceCommand(action),
+  };
+}
+
+async function startTuiGatewayService(): Promise<void> {
+  if (tuiGatewayServer) return;
+  const enabled = !['0', 'false', 'no'].includes(
+    (process.env.FFT_NANO_TUI_ENABLED || '1').toLowerCase(),
+  );
+  if (!enabled) {
+    logger.info('TUI gateway disabled via FFT_NANO_TUI_ENABLED');
+    return;
+  }
+  try {
+    tuiGatewayServer = await startTuiGatewayServer(
+      createTuiGatewayAdapters(),
+      tuiRuntimeEvents,
+    );
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    logger.error({ err: error }, 'TUI gateway failed to start; continuing without TUI surface');
+  }
+}
+
+async function stopTuiGatewayService(): Promise<void> {
+  if (!tuiGatewayServer) return;
+  const server = tuiGatewayServer;
+  tuiGatewayServer = null;
+  try {
+    await server.close();
+    logger.info('TUI gateway server stopped');
+  } catch (err) {
+    logger.warn({ err }, 'Failed to stop TUI gateway server cleanly');
   }
 }
 
@@ -3261,6 +3895,7 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     abortController,
   };
   activeChatRuns.set(mainChatJid, activeRun);
+  activeChatRunsById.set(requestId, activeRun);
   await setTyping(mainChatJid, true);
   try {
     const run = await runAgent(
@@ -3315,6 +3950,7 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     if (activeChatRuns.get(mainChatJid) === activeRun) {
       activeChatRuns.delete(mainChatJid);
     }
+    activeChatRunsById.delete(requestId);
     await setTyping(mainChatJid, false);
   }
 }
@@ -3421,15 +4057,19 @@ function stopFarmServicesForShutdown(signal: string): void {
   }
 }
 
+async function shutdownAndExit(signal: string, exitCode: number): Promise<void> {
+  stopFarmServicesForShutdown(signal);
+  await stopTuiGatewayService();
+  process.exit(exitCode);
+}
+
 function registerShutdownHandlers(): void {
   process.on('SIGINT', () => {
-    stopFarmServicesForShutdown('SIGINT');
-    process.exit(0);
+    void shutdownAndExit('SIGINT', 0);
   });
 
   process.on('SIGTERM', () => {
-    stopFarmServicesForShutdown('SIGTERM');
-    process.exit(0);
+    void shutdownAndExit('SIGTERM', 0);
   });
 }
 
@@ -3449,6 +4089,7 @@ async function main(): Promise<void> {
   migrateLegacyClaudeMemoryFiles();
   migrateCompactionSummariesFromSoul();
   maybePromoteConfiguredTelegramMain();
+  await startTuiGatewayService();
 
   if (FARM_STATE_ENABLED) {
     startFarmStateCollector();
@@ -3491,8 +4132,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   stopFarmServicesForShutdown('startup_error');
+  await stopTuiGatewayService();
   logger.error({ err }, 'Failed to start FFT_nano');
   process.exit(1);
 });
