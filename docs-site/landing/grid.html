@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>farmfriend</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #0a0a0a;
+            --fg: #c0c0c0;
+            --dim: #333;
+        }
+        body {
+            background: var(--bg);
+            color: var(--fg);
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            height: 100vh;
+            display: grid;
+            place-items: center;
+        }
+        main {
+            display: grid;
+            grid-template-columns: 80px 1fr 80px;
+            gap: 2rem;
+            align-items: center;
+            max-width: 600px;
+        }
+        .line {
+            height: 1px;
+            background: var(--dim);
+        }
+        .content {
+            text-align: center;
+        }
+        .brand {
+            font-size: 0.7rem;
+            letter-spacing: 0.5em;
+            text-transform: uppercase;
+            color: var(--dim);
+            margin-bottom: 1.5rem;
+        }
+        .project {
+            font-size: 2rem;
+            font-weight: 300;
+            letter-spacing: -0.02em;
+        }
+        .project span {
+            color: #555;
+            font-weight: 100;
+        }
+        .arrow {
+            text-decoration: none;
+            color: var(--dim);
+            font-size: 1.5rem;
+            transition: transform 0.3s, color 0.3s;
+            display: inline-block;
+        }
+        .arrow:hover {
+            transform: translateX(5px);
+            color: var(--fg);
+        }
+        .labs {
+            display: block;
+            margin-top: 3rem;
+            font-size: 0.65rem;
+            color: var(--dim);
+            text-decoration: none;
+            letter-spacing: 0.2em;
+        }
+        .labs:hover { color: #666; }
+        @media (max-width: 500px) {
+            main { grid-template-columns: 1fr; gap: 1rem; }
+            .line { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="line"></div>
+        <div class="content">
+            <div class="brand">farmfriend</div>
+            <div class="project">fft<span>_</span>nano</div>
+            <a href="/fft_nano/docs/" class="arrow">&rarr;</a>
+            <a href="#" class="labs">labs &rarr;</a>
+        </div>
+        <div class="line"></div>
+    </main>
+</body>
+</html>

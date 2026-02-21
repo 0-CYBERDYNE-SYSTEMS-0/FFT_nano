@@ -14,6 +14,12 @@ if (result.ok) {
   console.log(
     `Pi skill validation passed for ${path.relative(projectRoot, skillsRoot) || '.'}`,
   );
+  if (result.warnings.length > 0) {
+    console.warn('Pi skill validation warnings:');
+    for (const warning of result.warnings) {
+      console.warn(`- ${warning.file}: ${warning.message}`);
+    }
+  }
   process.exit(0);
 }
 

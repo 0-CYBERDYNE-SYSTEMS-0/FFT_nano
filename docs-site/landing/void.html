@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>farmfriend</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a0a;
+            color: #e0e0e0;
+            font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .container {
+            text-align: center;
+        }
+        h1 {
+            font-size: 0.9rem;
+            font-weight: 400;
+            letter-spacing: 0.4em;
+            text-transform: lowercase;
+            color: #666;
+            margin-bottom: 3rem;
+        }
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 1.2em;
+            background: #e0e0e0;
+            margin-left: 2px;
+            animation: blink 1s step-end infinite;
+            vertical-align: text-bottom;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        .link {
+            display: block;
+            font-size: 0.75rem;
+            color: #444;
+            text-decoration: none;
+            letter-spacing: 0.15em;
+            margin-top: 4rem;
+            transition: color 0.3s;
+        }
+        .link:hover { color: #888; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>farmfriend<span class="cursor"></span></h1>
+        <a href="/fft_nano/docs/" class="link">enter &rarr;</a>
+    </div>
+</body>
+</html>
