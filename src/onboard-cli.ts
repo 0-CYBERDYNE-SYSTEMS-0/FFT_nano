@@ -92,7 +92,7 @@ function readLineIfExists(filePath: string): string {
 }
 
 function parseExistingOperator(userBody: string): string {
-  const match = /Primary operator:\s*(.+)\.?/i.exec(userBody);
+  const match = /Primary operator:\s*(.+?)(?:\.)?\s*$/im.exec(userBody);
   return match?.[1]?.trim() || '';
 }
 
