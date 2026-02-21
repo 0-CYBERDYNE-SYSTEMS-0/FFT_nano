@@ -7,6 +7,18 @@ description: Discover Home Assistant entities, auto-suggest farm mappings with c
 
 Use this skill for production setup after HA is running and token is available.
 
+## When to use this skill
+
+- Use after Home Assistant is up and authenticated for production setup.
+- Use when generating or refining `farm-profile.json` entity mappings.
+- Use before production validation gate checks.
+
+## When not to use this skill
+
+- Do not use before HA connectivity/token setup is complete.
+- Do not use for live farm control actions.
+- Do not use when only read-only status checks are requested.
+
 ## Workflow
 
 1. Run:

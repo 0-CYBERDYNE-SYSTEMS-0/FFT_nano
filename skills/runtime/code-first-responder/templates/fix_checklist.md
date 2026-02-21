@@ -1,0 +1,8 @@
+- [ ] Captured git status + commit hash
+- [ ] Reproduced failure locally
+- [ ] Logged raw command output
+- [ ] Identified impacted files/modules
+- [ ] Drafted fix plan with must/optional steps
+- [ ] Applied patch (if trivial) and recorded diff summary
+- [ ] Re-ran validation command
+- [ ] Added follow-up or escalation notes
