@@ -7,6 +7,18 @@ description: Diagnose and resolve FFT_nano runtime issues across container execu
 
 Use this skill for incident triage and deterministic debugging of FFT_nano host and container paths.
 
+## When to use this skill
+
+- Use when runtime behavior is failing, degraded, or inconsistent.
+- Use when investigating provider wiring, routing, logs, or IPC state.
+- Use when producing reproducible triage output before any fix attempt.
+
+## When not to use this skill
+
+- Do not use as the default path for normal feature work.
+- Do not use when the request is purely product behavior, not incident/debug.
+- Do not use to justify destructive cleanup without explicit approval.
+
 ## Guardrails
 
 - Never use destructive git commands unless explicitly requested.

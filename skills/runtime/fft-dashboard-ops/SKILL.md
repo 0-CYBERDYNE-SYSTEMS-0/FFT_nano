@@ -7,6 +7,19 @@ description: Build and apply Home Assistant Lovelace dashboards from templates u
 
 Use this skill for generating, staging, applying, and validating farm dashboards.
 
+## When to use this skill
+
+- Use when creating or revising Home Assistant Lovelace dashboards.
+- Use when applying dashboard changes through staged files and screenshot checks.
+- Use when adapting dashboard layout to live farm-state context.
+
+## When not to use this skill
+
+- Do not use for direct live YAML edits in Home Assistant config.
+- Do not use for non-dashboard automation or device control requests.
+- Do not use outside main/admin chat for dashboard apply operations.
+- Do not use for runtime multi-card canvas composition; hand off to `fft-canvas-dynamic-ops`.
+
 ## Guardrails
 
 - Never run destructive git commands unless explicitly requested.

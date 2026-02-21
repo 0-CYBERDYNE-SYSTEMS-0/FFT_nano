@@ -7,6 +7,18 @@ description: Setup and bootstrap FFT_nano on macOS or Linux, including container
 
 Use this skill when the task is to install, bootstrap, or verify FFT_nano runtime setup.
 
+## When to use this skill
+
+- Use for initial host install/bootstrap and dependency checks.
+- Use when configuring provider credentials and runtime environment wiring.
+- Use for first-run startup verification on Telegram/WhatsApp paths.
+
+## When not to use this skill
+
+- Do not use for normal day-2 operations or live farm control.
+- Do not use for pure code changes unrelated to environment setup.
+- Do not use when the user only wants runtime troubleshooting; use debug skill.
+
 ## Scope
 
 - Host prerequisites (Node 20+, npm, container runtime)

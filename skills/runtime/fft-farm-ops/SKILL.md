@@ -7,6 +7,18 @@ description: Operate the farm bridge through ledger reads and IPC action request
 
 Use this skill for farm state awareness and operational actions routed through the FFT_nano farm bridge.
 
+## When to use this skill
+
+- Use for reading farm ledger state and alerts.
+- Use for submitting allowlisted farm control actions through IPC.
+- Use when main/admin chat requests operational farm actions.
+
+## When not to use this skill
+
+- Do not use for onboarding/bootstrap tasks.
+- Do not use outside main/admin chat for write/control actions.
+- Do not use for actions outside the defined farm action allowlist.
+
 ## Guardrails
 
 - Never run destructive git commands unless explicitly requested.

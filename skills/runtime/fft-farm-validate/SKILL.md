@@ -1,6 +1,6 @@
 ---
 name: fft-farm-validate
-description: Validate production readiness for farm control: HA connectivity/auth, required mappings, service availability, and dashboard path checks.
+description: "Validate production readiness for farm control: HA connectivity/auth, required mappings, service availability, and dashboard path checks."
 ---
 
 # FFT Farm Validate
