@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>farmfriend</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            background: #0c0c0c;
+            color: #e8e8e8;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 2rem;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .mark {
+            font-size: 14px;
+            color: #333;
+            letter-spacing: 0.1em;
+        }
+        .status {
+            font-size: 10px;
+            color: #333;
+            text-align: right;
+        }
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .glyph {
+            font-size: clamp(80px, 25vw, 280px);
+            line-height: 1;
+            font-weight: 100;
+            color: #1a1a1a;
+            user-select: none;
+        }
+        .nav {
+            display: flex;
+            gap: 3rem;
+            margin-top: 2rem;
+        }
+        .nav a {
+            color: #444;
+            text-decoration: none;
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            transition: color 0.2s;
+        }
+        .nav a:hover { color: #888; }
+        footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+        .loc {
+            font-size: 9px;
+            color: #2a2a2a;
+            letter-spacing: 0.05em;
+        }
+        .ver {
+            font-size: 9px;
+            color: #2a2a2a;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <span class="mark">[ farmfriend ]</span>
+        <span class="status">connected<br>awaiting input</span>
+    </header>
+    <main>
+        <div class="glyph">&#963;</div>
+        <nav class="nav">
+            <a href="/fft_nano/docs/">&gt; fft_nano</a>
+            <a href="#">&gt; labs</a>
+            <a href="#">&gt; about</a>
+        </nav>
+    </main>
+    <footer>
+        <span class="loc">/home/farmfriend</span>
+        <span class="ver">v0.1.0</span>
+    </footer>
+</body>
+</html>

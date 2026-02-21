@@ -100,6 +100,112 @@ export interface FarmActionResult {
   executedAt: string;
 }
 
+export interface CanvasLayout {
+  columns: number;
+  gap: number;
+  rowHeight: number;
+}
+
+export type CanvasCardType =
+  | 'line'
+  | 'bar'
+  | 'radial'
+  | 'comparison'
+  | 'kpi'
+  | 'markdown'
+  | 'iframe';
+
+export interface CanvasCard {
+  id: string;
+  type: CanvasCardType;
+  title?: string;
+  entities?: string[];
+  labels?: string[];
+  span?: number;
+  options?: Record<string, unknown>;
+}
+
+export interface CanvasSpec {
+  version: '1.0';
+  title: string;
+  layout: CanvasLayout;
+  cards: CanvasCard[];
+}
+
+export type DashboardPatchOp =
+  | {
+      op: 'add_view';
+      view: Record<string, unknown>;
+      index?: number;
+    }
+  | {
+      op: 'update_view';
+      viewPath: string;
+      patch: Record<string, unknown>;
+    }
+  | {
+      op: 'remove_view';
+      viewPath: string;
+    }
+  | {
+      op: 'add_card';
+      viewPath: string;
+      card: Record<string, unknown>;
+      sectionIndex?: number;
+      index?: number;
+    }
+  | {
+      op: 'update_card';
+      viewPath: string;
+      cardId: string;
+      patch: Record<string, unknown>;
+    }
+  | {
+      op: 'remove_card';
+      viewPath: string;
+      cardId: string;
+    }
+  | {
+      op: 'move_card';
+      viewPath: string;
+      cardId: string;
+      toIndex: number;
+      toSectionIndex?: number;
+    }
+  | {
+      op: 'set_theme';
+      theme: string;
+    };
+
+export type CanvasPatchOp =
+  | {
+      op: 'add_card';
+      card: CanvasCard;
+      index?: number;
+    }
+  | {
+      op: 'update_card';
+      cardId: string;
+      patch: Partial<CanvasCard>;
+    }
+  | {
+      op: 'remove_card';
+      cardId: string;
+    }
+  | {
+      op: 'move_card';
+      cardId: string;
+      toIndex: number;
+    }
+  | {
+      op: 'set_layout';
+      layout: Partial<CanvasLayout>;
+    }
+  | {
+      op: 'set_title';
+      title: string;
+    };
+
 export interface MemoryActionRequest {
   type: 'memory_action';
   action: 'memory_search' | 'memory_get';

@@ -40,6 +40,7 @@ interface CurrentLedger {
   haConnected: boolean;
   stale: boolean;
   lastSuccessfulPoll: string | null;
+  haEndpoint?: string;
   entities: Record<string, Pick<HAEntity, 'state' | 'attributes' | 'last_changed'>>;
   alerts: Array<Pick<DerivedAlert, 'id' | 'severity' | 'since' | 'entity'>>;
   context: FarmContext;
@@ -233,6 +234,7 @@ function toCurrentLedger(
   alerts: DerivedAlert[],
   nowIso: string,
   stale: boolean,
+  haEndpoint: string,
 ): CurrentLedger {
   const serializedEntities: CurrentLedger['entities'] = {};
   for (const [entityId, entity] of Object.entries(entities)) {
@@ -248,6 +250,7 @@ function toCurrentLedger(
     haConnected: !stale,
     stale,
     lastSuccessfulPoll,
+    haEndpoint,
     entities: serializedEntities,
     alerts: alerts.map((alert) => ({
       id: alert.id,
@@ -352,7 +355,13 @@ function toClockString(value: string): string {
 
 async function writeCurrentSnapshot(stale: boolean): Promise<void> {
   const nowIso = new Date().toISOString();
-  const ledger = toCurrentLedger(latestEntities, latestAlerts, nowIso, stale);
+  const ledger = toCurrentLedger(
+    latestEntities,
+    latestAlerts,
+    nowIso,
+    stale,
+    adapter.getActiveBaseUrl(),
+  );
   atomicWriteJson(path.join(FARM_STATE_DIR, 'current.json'), ledger);
 }
 
