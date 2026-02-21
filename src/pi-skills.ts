@@ -15,7 +15,6 @@ export const REQUIRED_PROJECT_PI_SKILLS = [
   'fft-coder-ops',
   'fft-farm-ops',
   'fft-dashboard-ops',
-  'fft-canvas-dynamic-ops',
 ] as const;
 
 export interface SkillValidationIssue {
