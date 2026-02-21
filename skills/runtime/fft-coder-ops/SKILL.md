@@ -7,6 +7,18 @@ description: Operate FFT_nano coding delegation flows safely using /coder and /c
 
 Use this skill when handling coding delegation operations in FFT_nano.
 
+## When to use this skill
+
+- Use for `/coder` and `/coder-plan` delegation workflows.
+- Use when enforcing main/admin chat boundaries for coding execution.
+- Use when tracking delegated run IDs and progress-stream behavior.
+
+## When not to use this skill
+
+- Do not use for non-coding tasks or normal chat replies.
+- Do not use when no explicit delegation trigger is present.
+- Do not use in non-main chats for delegated execution.
+
 ## Guardrails
 
 - Never run destructive git commands unless explicitly requested.

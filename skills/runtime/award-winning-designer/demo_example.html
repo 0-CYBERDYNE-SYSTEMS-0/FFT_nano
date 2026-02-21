@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Awwwards Singularity - Tech Startup Experience</title>
+    <meta name="description" content="Breathtaking digital experience for cutting-edge technology startup">
+    
+    <!-- Cinematic Mode: Three.js + GSAP + Lenis -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.2/dist/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.2/dist/ScrollTrigger.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.27/dist/lenis.min.js"></script>
+    
+    <style>
+        :root {
+            /* Dark Mode Default - High Fashion Color Theory */
+            --primary: #00ffff;      /* Neon cyan */
+            --secondary: #ff00ff;   /* Neon magenta */
+            --accent: #ffff00;       /* Electric yellow */
+            --background: #050505;   /* Deep black */
+            --surface: #0a0a0a;      /* Near-black surfaces */
+            --text: #ffffff;         /* Pure white text */
+            
+            /* Glassmorphism Values */
+            --glass-bg: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --glass-blur: 10px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--background);
+            color: var(--text);
+            overflow-x: hidden;
+            cursor: none;
+        }
+
+        /* Custom Cursor - Magnetic Effect */
+        .cursor {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            position: fixed;
+            pointer-events: none;
+            z-index: 9999;
+            mix-blend-mode: difference;
+            transition: transform 0.1s ease;
+        }
+
+        .cursor-follower {
+            width: 40px;
+            height: 40px;
+            background: rgba(0, 255, 255, 0.1);
+            border-radius: 50%;
+            position: fixed;
+            pointer-events: none;
+            z-index: 9998;
+            transition: transform 0.3s ease;
+        }
+
+        .cursor.hover {
+            transform: scale(2);
+            background: var(--primary);
+        }
+
+        /* Canvas Background - WebGL Particle Network */
+        #particle-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+
+        /* Hero Section - Massive Typography */
+        .hero {
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-content {
+            text-align: center;
+            z-index: 2;
+            opacity: 0;
+        }
+
+        .hero h1 {
+            font-size: clamp(4rem, 15vw, 12rem);
+            font-weight: 900;
+            letter-spacing: -0.05em;
+            line-height: 0.9;
+            margin-bottom: 2rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-transform: uppercase;
+        }
+
+        .hero .subtitle {
+            font-size: clamp(1.2rem, 4vw, 2.5rem);
+            font-weight: 300;
+            letter-spacing: 0.2em;
+            color: var(--accent);
+            margin-bottom: 3rem;
+            opacity: 0.8;
+        }
+
+        /* Glassmorphism CTA Button */
+        .cta-button {
+            display: inline-block;
+            padding: 1.5rem 4rem;
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid var(--glass-border);
+            border-radius: 100px;
+            color: var(--text);
+            text-decoration: none;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .cta-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, var(--primary), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .cta-button:hover::before {
+            left: 100%;
+        }
+
+        /* Content Sections - Breakout Grid */
+        .content-section {
+            padding: 10vh 5vw;
+            position: relative;
+        }
+
+        .breakout-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 3fr;
+            grid-template-rows: auto 1fr auto;
+            gap: 4rem;
+            min-height: 100vh;
+            align-items: center;
+        }
+
+        .grid-item {
+            padding: 3rem;
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            opacity: 0;
+            transform: translateY(50px);
+        }
+
+        .grid-item h2 {
+            font-size: clamp(2rem, 5vw, 4rem);
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(135deg, var(--secondary), var(--accent));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Noise Overlay Texture */
+        .noise-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.03;
+            z-index: 1;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        /* Vignette Lighting */
+        .vignette {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2;
+            background: radial-gradient(ellipse at center, transparent 0%, rgba(5, 5, 5, 0.4) 100%);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .breakout-grid {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+            
+            .hero h1 {
+                font-size: clamp(3rem, 12vw, 8rem);
+            }
+            
+            .cursor, .cursor-follower {
+                display: none;
+            }
+            
+            body {
+                cursor: auto;
+            }
+        }
+
+        /* Loading State */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--background);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .loader {
+            width: 100px;
+            height: 100px;
+            border: 2px solid var(--glass-border);
+            border-top: 2px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div class="loading-screen">
+        <div class="loader"></div>
+    </div>
+
+    <!-- Custom Cursor -->
+    <div class="cursor"></div>
+    <div class="cursor-follower"></div>
+
+    <!-- WebGL Background -->
+    <canvas id="particle-canvas"></canvas>
+
+    <!-- Texture Overlays -->
+    <div class="noise-overlay"></div>
+    <div class="vignette"></div>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <h1>TechNova</h1>
+            <p class="subtitle">PIONEERING THE FUTURE OF INNOVATION</p>
+            <a href="#experience" class="cta-button">Experience the Future</a>
+        </div>
+    </section>
+
+    <!-- Content Section with Breakout Grid -->
+    <section class="content-section" id="experience">
+        <div class="breakout-grid">
+            <div class="grid-item">
+                <h2>Revolutionary</h2>
+                <p>Transforming ideas into groundbreaking digital experiences that push the boundaries of what's possible on the web.</p>
+            </div>
+            <div class="grid-item">
+                <h2>Innovative</h2>
+                <p>Cutting-edge technology meets creative excellence in every pixel we craft.</p>
+            </div>
+            <div class="grid-item">
+                <h2>Unforgettable</h2>
+                <p>Creating digital moments that captivate, inspire, and leave lasting impressions.</p>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        // Lenis Smooth Scrolling
+        const lenis = new Lenis({
+            duration: 1.2,
+            easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+            direction: 'vertical',
+            gestureDirection: 'vertical',
+            smooth: true,
+            mouseMultiplier: 1,
+            smoothTouch: false,
+            touchMultiplier: 2,
+            infinite: false,
+        });
+
+        function raf(time) {
+            lenis.raf(time);
+            requestAnimationFrame(raf);
+        }
+        requestAnimationFrame(raf);
+
+        // WebGL Particle System
+        class ParticleNetwork {
+            constructor() {
+                this.canvas = document.getElementById('particle-canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.particles = [];
+                this.mouse = { x: 0, y: 0 };
+                this.init();
+            }
+
+            init() {
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+                window.addEventListener('mousemove', (e) => {
+                    this.mouse.x = e.clientX;
+                    this.mouse.y = e.clientY;
+                });
+
+                this.createParticles();
+                this.animate();
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+
+            createParticles() {
+                const particleCount = 100;
+                for (let i = 0; i < particleCount; i++) {
+                    this.particles.push({
+                        x: Math.random() * this.canvas.width,
+                        y: Math.random() * this.canvas.height,
+                        vx: (Math.random() - 0.5) * 0.5,
+                        vy: (Math.random() - 0.5) * 0.5,
+                        radius: Math.random() * 2 + 1,
+                        opacity: Math.random() * 0.5 + 0.5
+                    });
+                }
+            }
+
+            drawParticles() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.particles.forEach((particle, i) => {
+                    // Update position
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+
+                    // Mouse interaction
+                    const dx = this.mouse.x - particle.x;
+                    const dy = this.mouse.y - particle.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < 100) {
+                        const force = (100 - distance) / 100;
+                        particle.vx -= (dx / distance) * force * 0.1;
+                        particle.vy -= (dy / distance) * force * 0.1;
+                    }
+
+                    // Boundaries
+                    if (particle.x < 0 || particle.x > this.canvas.width) particle.vx *= -1;
+                    if (particle.y < 0 || particle.y > this.canvas.height) particle.vy *= -1;
+
+                    // Draw particle
+                    this.ctx.beginPath();
+                    this.ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+                    this.ctx.fillStyle = `rgba(0, 255, 255, ${particle.opacity})`;
+                    this.ctx.fill();
+
+                    // Draw connections
+                    this.particles.slice(i + 1).forEach(otherParticle => {
+                        const dx = otherParticle.x - particle.x;
+                        const dy = otherParticle.y - particle.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+
+                        if (distance < 150) {
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(particle.x, particle.y);
+                            this.ctx.lineTo(otherParticle.x, otherParticle.y);
+                            this.ctx.strokeStyle = `rgba(0, 255, 255, ${0.2 * (1 - distance / 150)})`;
+                            this.ctx.stroke();
+                        }
+                    });
+                });
+            }
+
+            animate() {
+                this.drawParticles();
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+
+        // Custom Cursor
+        class CustomCursor {
+            constructor() {
+                this.cursor = document.querySelector('.cursor');
+                this.follower = document.querySelector('.cursor-follower');
+                this.init();
+            }
+
+            init() {
+                document.addEventListener('mousemove', (e) => {
+                    this.cursor.style.left = e.clientX - 10 + 'px';
+                    this.cursor.style.top = e.clientY - 10 + 'px';
+                    
+                    setTimeout(() => {
+                        this.follower.style.left = e.clientX - 20 + 'px';
+                        this.follower.style.top = e.clientY - 20 + 'px';
+                    }, 100);
+                });
+
+                // Magnetic effect on interactive elements
+                const interactiveElements = document.querySelectorAll('a, button, .cta-button');
+                interactiveElements.forEach(element => {
+                    element.addEventListener('mouseenter', () => {
+                        this.cursor.classList.add('hover');
+                    });
+                    element.addEventListener('mouseleave', () => {
+                        this.cursor.classList.remove('hover');
+                    });
+                });
+            }
+        }
+
+        // GSAP Animations with ScrollTrigger
+        gsap.registerPlugin(ScrollTrigger);
+
+        // Initialize animations
+        function initAnimations() {
+            // Hero content fade in
+            gsap.to('.hero-content', {
+                opacity: 1,
+                duration: 2,
+                ease: 'power2.out',
+                delay: 0.5
+            });
+
+            // Staggered grid animations
+            gsap.utils.toArray('.grid-item').forEach((item, index) => {
+                gsap.to(item, {
+                    opacity: 1,
+                    y: 0,
+                    duration: 1,
+                    ease: 'power2.out',
+                    scrollTrigger: {
+                        trigger: item,
+                        start: 'top 80%',
+                        end: 'bottom 20%',
+                        toggleActions: 'play none none reverse'
+                    },
+                    delay: index * 0.2
+                });
+            });
+
+            // Parallax effect on hero text
+            gsap.to('.hero h1', {
+                yPercent: -50,
+                ease: 'none',
+                scrollTrigger: {
+                    trigger: '.hero',
+                    start: 'top top',
+                    end: 'bottom top',
+                    scrub: true
+                }
+            });
+        }
+
+        // Hide loading screen
+        function hideLoadingScreen() {
+            setTimeout(() => {
+                gsap.to('.loading-screen', {
+                    opacity: 0,
+                    duration: 1,
+                    onComplete: () => {
+                        document.querySelector('.loading-screen').style.display = 'none';
+                    }
+                });
+            }, 1500);
+        }
+
+        // Initialize everything
+        document.addEventListener('DOMContentLoaded', () => {
+            new ParticleNetwork();
+            new CustomCursor();
+            initAnimations();
+            hideLoadingScreen();
+        });
+    </script>
+</body>
+</html>
