@@ -40,6 +40,8 @@ async function runLegacyTask(
     groupDir = resolveGroupFolderPath(task.group_folder);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    // Stop retry churn for malformed legacy rows.
+    updateTask(task.id, { status: 'paused' });
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder, error },
       'Task has invalid group folder',
@@ -225,4 +227,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     registeredGroups: deps.registeredGroups,
     requestHeartbeatNow: deps.requestHeartbeatNow,
   });
+}
+
+/** @internal - for tests only. */
+export function _resetSchedulerLoopForTests(): void {
+  schedulerRunning = false;
 }
