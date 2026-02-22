@@ -124,11 +124,15 @@ function buildVolumeMounts(
   if (isMain) {
     ensureMainWorkspaceSeed();
 
-    // Main gets the entire project root mounted
+    // Main gets the project root read-only. Writable paths the agent needs
+    // (group folder, IPC, .claude/) are mounted separately below.
+    // Read-only prevents the agent from modifying host application code
+    // (src/, dist/, package.json, etc.) which would bypass the sandbox
+    // entirely on next restart.
     mounts.push({
       hostPath: projectRoot,
       containerPath: '/workspace/project',
-      readonly: false,
+      readonly: true,
     });
 
     // Main uses dedicated workspace as the primary working directory.
@@ -235,6 +239,7 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+<<<<<<< HEAD
   // Farm state ledger (read-only for all groups)
   if (FARM_STATE_ENABLED && fs.existsSync(FARM_STATE_DIR)) {
     mounts.push({
@@ -360,6 +365,20 @@ function buildVolumeMounts(
     hostPath: envDir,
     containerPath: '/workspace/env-dir',
     readonly: true,
+  });
+
+  // Copy agent-runner source into a per-group writable location so agents
+  // can customize it (add tools, change behavior) without affecting other
+  // groups. Recompiled on container startup via entrypoint.sh.
+  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
+  const groupAgentRunnerDir = path.join(DATA_DIR, 'sessions', group.folder, 'agent-runner-src');
+  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  }
+  mounts.push({
+    hostPath: groupAgentRunnerDir,
+    containerPath: '/app/src',
+    readonly: false,
   });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
