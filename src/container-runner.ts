@@ -2,7 +2,7 @@
  * Container Runner for FFT_nano
  * Spawns agent execution in Apple Container and handles IPC
  */
-import { spawn } from 'child_process';
+import { exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -385,8 +385,9 @@ function collectRuntimeSecrets(projectRoot: string): Record<string, string> {
 function buildContainerArgs(
   runtime: ContainerRuntime,
   mounts: VolumeMount[],
+  containerName: string,
 ): string[] {
-  const args: string[] = ['run', '-i', '--rm'];
+  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   if (runtime === 'docker') {
     for (const mount of mounts) {
@@ -469,7 +470,9 @@ export async function runContainerAgent(
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const runtime = getContainerRuntime();
-  const containerArgs = buildContainerArgs(runtime, mounts);
+  const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
+  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
+  const containerArgs = buildContainerArgs(runtime, mounts, containerName);
   const runtimeCmd = getRuntimeCommand(runtime);
 
   logger.debug(
@@ -480,6 +483,7 @@ export async function runContainerAgent(
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
       containerArgs: containerArgs.join(' '),
+      containerName,
       runtime,
     },
     'Container mount configuration',
@@ -488,6 +492,7 @@ export async function runContainerAgent(
   logger.info(
     {
       group: group.name,
+      containerName,
       mountCount: mounts.length,
       isMain: input.isMain,
     },
@@ -504,6 +509,7 @@ export async function runContainerAgent(
     let settled = false;
     let onAbort: (() => void) | null = null;
     let exited = false;
+    let timedOut = false;
     let abortEscalationTimer: ReturnType<typeof setTimeout> | null = null;
 
     let stdout = '';
@@ -564,12 +570,18 @@ export async function runContainerAgent(
     });
 
     const timeout = setTimeout(() => {
-      logger.error({ group: group.name }, 'Container timeout, killing');
-      container.kill('SIGKILL');
-      finish({
-        status: 'error',
-        result: null,
-        error: `Container timed out after ${CONTAINER_TIMEOUT}ms`,
+      timedOut = true;
+      logger.error(
+        { group: group.name, containerName, runtime },
+        'Container timeout, stopping gracefully',
+      );
+      exec(`${runtimeCmd} stop ${containerName}`, { timeout: 15000 }, (err) => {
+        if (!err) return;
+        logger.warn(
+          { group: group.name, containerName, runtime, err },
+          'Graceful runtime stop failed; escalating to SIGKILL',
+        );
+        container.kill('SIGKILL');
       });
     }, group.containerConfig?.timeout || CONTAINER_TIMEOUT);
 
@@ -614,6 +626,15 @@ export async function runContainerAgent(
       if (settled) return;
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      if (timedOut) {
+        finish({
+          status: 'error',
+          result: null,
+          error: `Container timed out after ${group.containerConfig?.timeout || CONTAINER_TIMEOUT}ms`,
+        });
+        return;
+      }
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const logFile = path.join(logsDir, `container-${timestamp}.log`);
