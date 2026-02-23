@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   WASocket,
   makeCacheableSignalKeyStore,
@@ -3718,7 +3719,7 @@ async function connectWhatsApp(): Promise<void> {
     },
     printQRInTerminal: false,
     logger,
-    browser: ['FFT_nano', 'Chrome', '1.0.0'],
+    browser: Browsers.macOS('Chrome'),
   });
 
   sock.ev.on('connection.update', (update) => {
@@ -3737,7 +3738,9 @@ async function connectWhatsApp(): Promise<void> {
     }
 
     if (connection === 'close') {
-      const reason = (lastDisconnect?.error as any)?.output?.statusCode;
+      const reason = (
+        lastDisconnect?.error as { output?: { statusCode?: number } } | undefined
+      )?.output?.statusCode;
       const shouldReconnect = reason !== DisconnectReason.loggedOut;
       logger.info({ reason, shouldReconnect }, 'Connection closed');
 
@@ -3750,6 +3753,11 @@ async function connectWhatsApp(): Promise<void> {
       }
     } else if (connection === 'open') {
       logger.info('Connected to WhatsApp');
+
+      // Keep presence in an active state so per-chat typing updates remain reliable.
+      sock.sendPresenceUpdate('available').catch((err) => {
+        logger.debug({ err }, 'Failed to set initial available presence');
+      });
       
       // Build LID to phone mapping from auth state for self-chat translation
       if (sock.user) {
