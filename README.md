@@ -6,7 +6,7 @@
 [![Release Readiness](https://img.shields.io/github/actions/workflow/status/0-CYBERDYNE-SYSTEMS-0/FFT_nano/release-readiness.yml?branch=main&label=release%20readiness)](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/actions/workflows/release-readiness.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-FarmFriend Terminal nano (`FFT_nano`) is a single-process Node.js host that runs an LLM agent inside a Linux container and routes chat I/O through Telegram and/or WhatsApp.
+`FFT_nano` is a single-process Node.js host that runs an LLM agent inside a Linux container and routes chat I/O through Telegram and/or WhatsApp.
 
 ## What It Does
 
@@ -53,10 +53,12 @@ cd FFT_nano
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
 - host service install/start by default (`FFT_NANO_AUTO_SERVICE=1`)
-- workspace onboarding (`SOUL.md`, `USER.md`, `IDENTITY.md`; completes `BOOTSTRAP.md`)
+- workspace onboarding seed (`SOUL.md`, `USER.md`, `IDENTITY.md`; keeps `BOOTSTRAP.md` for first-run ritual)
 - service restart + doctor health check
 
-Users only need this repo. Farm dashboard templates are auto-fetched by `farm-bootstrap.sh` from the FFT companion dashboard repository and pinned by commit for reproducible setup.
+Profile defaults:
+- fresh installs default to `core` profile
+- existing farm-oriented installs auto-preserve to `farm` profile when farm signals/artifacts are detected
 
 If you are upgrading an existing install and want to preserve all local state (`~/nano`, `.env`, `data/`, `groups/`) before changes:
 
@@ -159,6 +161,7 @@ If you have not run `npm link`, use `./scripts/start.sh ...` and `./scripts/serv
 Host CLI:
 
 - `fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--non-interactive] [--force]`
+- `fft profile <status|set|apply> [core|farm]`
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`
 - `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
@@ -167,8 +170,9 @@ Host CLI:
 
 Maintenance:
 
-- `./scripts/onboard-all.sh [--workspace /abs/path --non-interactive --operator "Name" --assistant-name FarmFriend]`
+- `./scripts/onboard-all.sh [--workspace /abs/path --non-interactive --operator "Name" --assistant-name OpenClaw]`
 - `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
+- `npm run restore:state -- --archive /abs/path/to/backup.tar.gz [--workspace-target /abs/path]`
 
 TUI slash commands:
 
@@ -342,7 +346,7 @@ Alternative: set `TELEGRAM_MAIN_CHAT_ID` and restart.
 Behavior:
 
 - main chat responds to all messages
-- non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@FarmFriend`)
+- non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@OpenClaw` in core profile)
 - admin and coder delegation commands are main-chat only
 - main/admin can query or restart host service with `/gateway status` and `/gateway restart`
 
@@ -374,10 +378,10 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 
 Onboarding command options:
 
-- `fft onboard --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
-- `./scripts/onboard-all.sh --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
-- `npm run onboard -- --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
-- `./scripts/onboard.sh --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
+- `fft onboard --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
+- `./scripts/onboard-all.sh --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
+- `npm run onboard -- --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
+- `./scripts/onboard.sh --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
 - `--force` rewrites `SOUL.md`, `USER.md`, and `IDENTITY.md` even when already customized.
 
 ## Pi-Native Project Skills
@@ -474,7 +478,7 @@ Core files:
 
 ## Q&A
 
-### Why does non-main chat not respond unless I mention `@FarmFriend`?
+### Why does non-main chat not respond unless I mention `@<ASSISTANT_NAME>`?
 
 That is intentional. Only main responds to all messages; non-main requires trigger prefix.
 

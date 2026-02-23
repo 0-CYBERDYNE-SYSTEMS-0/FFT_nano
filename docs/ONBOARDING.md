@@ -6,12 +6,12 @@ backup -> setup -> workspace onboarding -> restart -> doctor.
 ## Commands
 
 ```bash
-fft onboard --workspace ~/nano --operator "Your Name" --assistant-name FarmFriend --non-interactive
-./scripts/onboard-all.sh --workspace ~/nano --operator "Your Name" --assistant-name FarmFriend --non-interactive
+fft onboard --workspace ~/nano --operator "Your Name" --assistant-name OpenClaw --non-interactive
+./scripts/onboard-all.sh --workspace ~/nano --operator "Your Name" --assistant-name OpenClaw --non-interactive
 
 # identity-only onboarding (without setup/restart/doctor wrapper):
-npm run onboard -- --workspace ~/nano --operator "Your Name" --assistant-name FarmFriend --non-interactive
-./scripts/onboard.sh --workspace ~/nano --operator "Your Name" --assistant-name FarmFriend --non-interactive
+npm run onboard -- --workspace ~/nano --operator "Your Name" --assistant-name OpenClaw --non-interactive
+./scripts/onboard.sh --workspace ~/nano --operator "Your Name" --assistant-name OpenClaw --non-interactive
 ```
 
 Interactive mode (no `--non-interactive`) prompts for operator and assistant name.
@@ -32,5 +32,15 @@ Interactive mode (no `--non-interactive`) prompts for operator and assistant nam
 
 1. Ensures core bootstrap files exist (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`; optional `BOOT.md` when enabled).
 2. Writes onboarding identity values to `SOUL.md`, `USER.md`, and `IDENTITY.md` when files are default/empty (or when `--force` is used).
-3. Marks onboarding complete by removing `BOOTSTRAP.md`.
-4. Updates `.fft_nano/workspace-state.json` with `onboardingCompletedAt`.
+3. Preserves `BOOTSTRAP.md` for first-run conversational bootstrap.
+4. Records bootstrap seeding in `.fft_nano/workspace-state.json`.
+
+## Profiles
+
+Use `core` (default) or `farm` profile controls:
+
+```bash
+fft profile status
+fft profile set core
+fft profile apply farm
+```

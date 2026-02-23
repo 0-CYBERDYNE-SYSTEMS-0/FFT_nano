@@ -1,8 +1,11 @@
 import os from 'os';
 import path from 'path';
 import { PARITY_CONFIG, PARITY_CONFIG_PATH } from './parity-config.js';
+import { FEATURE_FARM, FFT_PROFILE, PROFILE_DETECTION } from './profile.js';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'FarmFriend';
+const DEFAULT_ASSISTANT_NAME = FFT_PROFILE === 'farm' ? 'FarmFriend' : 'OpenClaw';
+
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || DEFAULT_ASSISTANT_NAME;
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const SCHEDULER_MODE =
@@ -36,7 +39,8 @@ export const MAIN_GROUP_FOLDER = 'main';
 export const MAIN_WORKSPACE_DIR = path.resolve(
   expandHomePath(process.env.FFT_NANO_MAIN_WORKSPACE_DIR || '~/nano'),
 );
-export const FARM_STATE_ENABLED = envFlag(process.env.FARM_STATE_ENABLED, false);
+export const FARM_STATE_ENABLED =
+  FEATURE_FARM && envFlag(process.env.FARM_STATE_ENABLED, FFT_PROFILE === 'farm');
 export const FARM_MODE = (process.env.FARM_MODE || 'demo').trim().toLowerCase();
 export const FARM_STATE_DIR = path.resolve(DATA_DIR, 'farm-state');
 export const FARM_PROFILE_PATH = path.resolve(
@@ -146,7 +150,7 @@ const parsedAliases = aliasEnv
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
-const defaultAliases = ['F-15'];
+const defaultAliases = FFT_PROFILE === 'farm' ? ['F-15'] : [];
 
 export const ASSISTANT_TRIGGER_ALIASES = Array.from(
   new Set([ASSISTANT_NAME, ...defaultAliases, ...parsedAliases]),
@@ -165,3 +169,4 @@ export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export { PARITY_CONFIG, PARITY_CONFIG_PATH };
+export { FEATURE_FARM, FFT_PROFILE, PROFILE_DETECTION };

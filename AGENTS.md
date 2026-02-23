@@ -12,7 +12,7 @@ This repo is a single Node.js host process that:
 - `SOUL.md` is identity/policy context and should stay stable (not used as compaction log storage).
 
 
-Required env for farm flows:
+Optional env for farm profile flows (`FFT_PROFILE=farm`):
 - `FARM_MODE=demo|production`
 - `FARM_PROFILE_PATH` (defaults to `data/farm-profile.json`)
 - `FARM_STATE_ENABLED=true`

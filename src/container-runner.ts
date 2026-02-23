@@ -11,6 +11,7 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
+  FEATURE_FARM,
   FARM_STATE_DIR,
   FARM_STATE_ENABLED,
   FFT_DASHBOARD_REPO_PATH,
@@ -276,8 +277,8 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Farm state ledger (read-only for all groups)
-  if (FARM_STATE_ENABLED && fs.existsSync(FARM_STATE_DIR)) {
+  // Farm profile state ledger (read-only when enabled)
+  if (FEATURE_FARM && FARM_STATE_ENABLED && fs.existsSync(FARM_STATE_DIR)) {
     mounts.push({
       hostPath: FARM_STATE_DIR,
       containerPath: '/workspace/farm-state',
@@ -285,8 +286,8 @@ function buildVolumeMounts(
     });
   }
 
-  // Dashboard workspace (read-write in main only)
-  if (FARM_STATE_ENABLED && isMain && FFT_DASHBOARD_REPO_PATH) {
+  // Dashboard workspace (read-write in main only when farm profile is enabled)
+  if (FEATURE_FARM && FARM_STATE_ENABLED && isMain && FFT_DASHBOARD_REPO_PATH) {
     const haConfigPath = path.join(FFT_DASHBOARD_REPO_PATH, 'ha_config');
     if (fs.existsSync(haConfigPath)) {
       mounts.push({

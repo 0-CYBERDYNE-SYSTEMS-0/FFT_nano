@@ -13,12 +13,15 @@ import makeWASocket, {
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  FEATURE_FARM,
   FARM_STATE_ENABLED,
+  FFT_PROFILE,
   IPC_POLL_INTERVAL,
   MAIN_WORKSPACE_DIR,
   MAIN_GROUP_FOLDER,
   PARITY_CONFIG,
   POLL_INTERVAL,
+  PROFILE_DETECTION,
   STORE_DIR,
   TELEGRAM_MEDIA_MAX_MB,
   TIMEZONE,
@@ -399,7 +402,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   if (!fs.existsSync(soulFile)) {
     fs.writeFileSync(
       soulFile,
-      `# FarmFriend\n\nThis is the memory and working directory for: ${group.name}.\n`,
+      `# ${ASSISTANT_NAME}\n\nThis is the memory and working directory for: ${group.name}.\n`,
     );
   }
 
@@ -1527,7 +1530,7 @@ function formatStatusText(chatJid?: string): string {
   const now = Date.now();
 
   const lines = [
-    'FarmFriend status:',
+    `${ASSISTANT_NAME} status:`,
     `- container_runtime: ${runtime}`,
     `- telegram_enabled: ${TELEGRAM_BOT_TOKEN ? 'yes' : 'no'}`,
     `- whatsapp_enabled: ${WHATSAPP_ENABLED ? 'yes' : 'no'}`,
@@ -3736,7 +3739,15 @@ function startIpcWatcher(): void {
               fs.mkdirSync(resultDir, { recursive: true });
 
               if (request.type === 'farm_action') {
-                const result = await executeFarmAction(request, isMain);
+                const result = FEATURE_FARM
+                  ? await executeFarmAction(request, isMain)
+                  : {
+                      requestId: request.requestId,
+                      status: 'error' as const,
+                      error:
+                        'farm_action is disabled in core profile (set FFT_PROFILE=farm or FEATURE_FARM=1)',
+                      executedAt: new Date().toISOString(),
+                    };
                 const resultPath = path.join(
                   resultDir,
                   `${request.requestId}.json`,
@@ -4473,7 +4484,7 @@ function stopFarmServicesForShutdown(signal: string): void {
   shuttingDown = true;
   logger.info({ signal }, 'Shutting down FFT_nano services');
 
-  if (FARM_STATE_ENABLED) {
+  if (FEATURE_FARM && FARM_STATE_ENABLED) {
     stopFarmStateCollector();
   }
 }
@@ -4511,15 +4522,24 @@ async function main(): Promise<void> {
   migrateCompactionSummariesFromSoul();
   maybePromoteConfiguredTelegramMain();
   await startTuiGatewayService();
+  logger.info(
+    {
+      profile: FFT_PROFILE,
+      featureFarm: FEATURE_FARM,
+      profileDetection: PROFILE_DETECTION,
+    },
+    'Runtime profile resolved',
+  );
 
-  if (FARM_STATE_ENABLED) {
+  if (FEATURE_FARM && FARM_STATE_ENABLED) {
     startFarmStateCollector();
   }
 
   const telegramEnabled = !!TELEGRAM_BOT_TOKEN;
-  const farmOnlyMode = FARM_STATE_ENABLED && !WHATSAPP_ENABLED && !telegramEnabled;
+  const farmOnlyMode =
+    FEATURE_FARM && FARM_STATE_ENABLED && !WHATSAPP_ENABLED && !telegramEnabled;
   
-  if (!WHATSAPP_ENABLED && !telegramEnabled && !FARM_STATE_ENABLED) {
+  if (!WHATSAPP_ENABLED && !telegramEnabled && !farmOnlyMode) {
     throw new Error(
       'No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.',
     );

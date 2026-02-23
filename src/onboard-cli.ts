@@ -5,7 +5,6 @@ import { stdin as input, stdout as output } from 'node:process';
 
 import { ASSISTANT_NAME, MAIN_WORKSPACE_DIR } from './config.js';
 import {
-  completeMainWorkspaceOnboarding,
   ensureMainWorkspaceBootstrap,
 } from './workspace-bootstrap.js';
 
@@ -118,7 +117,7 @@ function renderSoul(operator: string, assistantName: string): string {
   return [
     '# SOUL',
     '',
-    `You are ${assistantName}, a pragmatic farm and automation copilot for ${operator}.`,
+    `You are ${assistantName}, a pragmatic and technically rigorous copilot for ${operator}.`,
     '',
     'Operating style:',
     '- Be concise, factual, and action-oriented.',
@@ -146,7 +145,7 @@ function shouldRewriteIdentityFile(existingBody: string, force: boolean): boolea
 function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
   if (force) return true;
   if (!existingBody.trim()) return true;
-  if (/You are FarmFriend: concise, practical, and technically rigorous\./i.test(existingBody)) {
+  if (/You are (?:FarmFriend|OpenClaw): concise, practical, and technically rigorous\./i.test(existingBody)) {
     return true;
   }
   return false;
@@ -243,7 +242,6 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<{
     );
   }
 
-  completeMainWorkspaceOnboarding({ workspaceDir: workspace, removeBootstrapFile: true });
   return { workspace, operator: resolved.operator, assistantName: resolved.assistantName };
 }
 

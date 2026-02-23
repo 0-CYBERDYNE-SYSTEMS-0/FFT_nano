@@ -1,7 +1,7 @@
 {
   "name": "fft_nano",
   "version": "1.1.0",
-  "description": "FarmFriendTerminal_nano (FFT_nano) — secure, containerized AI farm assistant.",
+  "description": "FFT_nano — secure, containerized OpenClaw-style personal AI assistant host.",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -30,7 +30,9 @@
     "tui:client:dev": "tsx src/tui/client.ts",
     "onboard": "tsx src/onboard-cli.ts",
     "onboard:full": "bash scripts/onboard-all.sh",
+    "profile": "tsx src/profile-cli.ts",
     "backup:state": "bash scripts/backup-state.sh",
+    "restore:state": "bash scripts/restore-state.sh",
     "auth": "tsx src/whatsapp-auth.ts",
     "doctor": "tsx src/doctor.ts",
     "farm:doctor": "bash scripts/farm-doctor.sh",

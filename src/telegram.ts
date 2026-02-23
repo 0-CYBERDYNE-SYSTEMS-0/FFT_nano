@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import { renderTelegramHtmlText, splitTelegramText as splitTelegramMarkdownText } from './telegram-format.js';
 import { loadJson, saveJson } from './utils.js';
@@ -555,7 +555,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   const apiBaseUrl = opts.apiBaseUrl || 'https://api.telegram.org';
   const base = `${apiBaseUrl}/bot${opts.token}`;
   const fileBase = `${apiBaseUrl}/file/bot${opts.token}`;
-  const assistantName = opts.assistantName || 'FarmFriend';
+  const assistantName = opts.assistantName || ASSISTANT_NAME;
 
   const statePath = path.join(DATA_DIR, 'telegram_state.json');
   const state = loadJson<{ offset?: number }>(statePath, {});

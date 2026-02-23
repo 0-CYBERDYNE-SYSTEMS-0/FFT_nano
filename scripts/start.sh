@@ -114,8 +114,10 @@ telegram="${TELEGRAM_BOT_TOKEN:-}"
 wa="${WHATSAPP_ENABLED:-1}"
 tui_enabled="${FFT_NANO_TUI_ENABLED:-1}"
 tui_port="${FFT_NANO_TUI_PORT:-28989}"
+profile="${FFT_PROFILE:-core}"
+feature_farm="${FEATURE_FARM:-auto}"
 
-echo "FFT_nano start (mode=$mode, runtime=$runtime, whatsapp=$wa, telegram=$([[ -n "$telegram" ]] && echo enabled || echo disabled), tui_enabled=$tui_enabled, tui_port=$tui_port)"
+echo "FFT_nano start (mode=$mode, profile=$profile, feature_farm=$feature_farm, runtime=$runtime, whatsapp=$wa, telegram=$([[ -n "$telegram" ]] && echo enabled || echo disabled), tui_enabled=$tui_enabled, tui_port=$tui_port)"
 
 if [[ "$mode" == "dev" ]]; then
   echo "Note: dev mode is for debugging only; normal runtime should use start mode (or omit mode)." >&2

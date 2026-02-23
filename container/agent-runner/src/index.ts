@@ -241,7 +241,7 @@ async function runPiAgent(
       );
       const env = {
         ...process.env,
-        PI_CODING_AGENT_DIR: '/home/node/.pi/agent-farmfriend',
+        PI_CODING_AGENT_DIR: '/home/node/.pi/agent-openclaw',
         FFT_NANO_CHAT_JID: input.chatJid,
         FFT_NANO_REQUEST_ID: input.requestId || '',
         FFT_NANO_CODING_HINT: input.codingHint,

@@ -7,6 +7,7 @@ import path from 'path';
 function printUsage() {
   process.stdout.write(`Usage:
   fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--non-interactive] [--force]
+  fft profile <status|set|apply> [core|farm]
   fft start [telegram-only]
   fft dev [telegram-only]
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
@@ -88,7 +89,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['onboard', 'start', 'dev', 'tui', 'service', 'doctor'].includes(command)) {
+  if (!['onboard', 'profile', 'start', 'dev', 'tui', 'service', 'doctor'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -112,6 +113,16 @@ function main() {
 
   if (command === 'doctor') {
     const result = spawnSync('npm', ['run', 'doctor', '--', ...commandArgs], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+  }
+
+  if (command === 'profile') {
+    const result = spawnSync('npm', ['run', 'profile', '--', ...commandArgs], {
       cwd: repoRoot,
       env: process.env,
       stdio: 'inherit',

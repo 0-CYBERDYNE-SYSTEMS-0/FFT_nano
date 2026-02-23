@@ -61,14 +61,12 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '- Prefer deterministic, testable changes.',
     '- Keep user-facing updates concise and concrete.',
   ].join('\n'),
-  'SOUL.md': ['# SOUL', '', 'You are FarmFriend: concise, practical, and technically rigorous.'].join(
-    '\n',
-  ),
+  'SOUL.md': ['# SOUL', '', 'You are concise, practical, and technically rigorous.'].join('\n'),
   'USER.md': ['# USER', '', 'Primary operator: [set during onboarding].'].join('\n'),
   'IDENTITY.md': [
     '# IDENTITY',
     '',
-    'Name: FarmFriend',
+    'Name: OpenClaw',
     'Role: Main orchestrator + coding-capable assistant',
   ].join('\n'),
   'PRINCIPLES.md': [
@@ -94,12 +92,14 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
   'BOOTSTRAP.md': [
     '# BOOTSTRAP',
     '',
-    'First-run onboarding ritual:',
-    '- Ask operator identity details (name, workflow preferences).',
-    '- Confirm assistant identity and role.',
-    '- Personalize SOUL.md, USER.md, and IDENTITY.md.',
-    '- Keep answers concise and practical.',
-    '- After onboarding is complete, remove this file.',
+    'You just came online in a fresh workspace.',
+    '',
+    'First-run ritual:',
+    '- Start conversationally: "Hey, I just came online. Who am I? Who are you?"',
+    '- Learn and record assistant identity and user identity.',
+    '- Capture preferences and boundaries in SOUL.md.',
+    '- Keep the flow practical and concise.',
+    '- Delete this file after the ritual is complete.',
   ].join('\n'),
   'MEMORY.md': ['# MEMORY', '', 'Durable facts, decisions, and compaction summaries belong here.'].join(
     '\n',

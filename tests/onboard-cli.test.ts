@@ -10,29 +10,30 @@ function makeTmpWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fft-onboard-'));
 }
 
-test('runOnboarding writes USER/IDENTITY and completes BOOTSTRAP lifecycle', async () => {
+test('runOnboarding writes USER/IDENTITY and preserves BOOTSTRAP for first-run ritual', async () => {
   const workspace = makeTmpWorkspace();
   const result = await runOnboarding({
     workspace,
     operator: 'Alex',
-    assistantName: 'FarmFriend',
+    assistantName: 'OpenClaw',
     nonInteractive: true,
     force: false,
   });
 
   assert.equal(result.workspace, workspace);
   assert.match(fs.readFileSync(path.join(workspace, 'USER.md'), 'utf-8'), /Primary operator: Alex\./);
-  assert.match(fs.readFileSync(path.join(workspace, 'IDENTITY.md'), 'utf-8'), /Name: FarmFriend/);
+  assert.match(fs.readFileSync(path.join(workspace, 'IDENTITY.md'), 'utf-8'), /Name: OpenClaw/);
   assert.match(
     fs.readFileSync(path.join(workspace, 'SOUL.md'), 'utf-8'),
-    /You are FarmFriend, a pragmatic farm and automation copilot for Alex\./,
+    /You are OpenClaw, a pragmatic and technically rigorous copilot for Alex\./,
   );
-  assert.equal(fs.existsSync(path.join(workspace, 'BOOTSTRAP.md')), false);
+  assert.equal(fs.existsSync(path.join(workspace, 'BOOTSTRAP.md')), true);
 
   const state = JSON.parse(
     fs.readFileSync(path.join(workspace, '.fft_nano', 'workspace-state.json'), 'utf-8'),
-  ) as { onboardingCompletedAt?: string };
-  assert.ok(state.onboardingCompletedAt);
+  ) as { onboardingCompletedAt?: string; bootstrapSeededAt?: string };
+  assert.equal(state.onboardingCompletedAt, undefined);
+  assert.ok(state.bootstrapSeededAt);
 });
 
 test('runOnboarding with --force is deterministic for same inputs', async () => {
@@ -40,7 +41,7 @@ test('runOnboarding with --force is deterministic for same inputs', async () => 
   await runOnboarding({
     workspace,
     operator: 'Scrim',
-    assistantName: 'FarmFriend',
+    assistantName: 'OpenClaw',
     nonInteractive: true,
     force: false,
   });
@@ -52,7 +53,7 @@ test('runOnboarding with --force is deterministic for same inputs', async () => 
   await runOnboarding({
     workspace,
     operator: 'Scrim',
-    assistantName: 'FarmFriend',
+    assistantName: 'OpenClaw',
     nonInteractive: true,
     force: true,
   });
@@ -82,7 +83,7 @@ test('runOnboarding non-interactive does not overwrite customized files without 
   await runOnboarding({
     workspace,
     operator: 'Alex',
-    assistantName: 'FarmFriend',
+    assistantName: 'OpenClaw',
     nonInteractive: true,
     force: false,
   });
