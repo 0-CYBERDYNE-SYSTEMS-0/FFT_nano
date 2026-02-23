@@ -18,6 +18,7 @@ import {
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
   MEMORY_RETRIEVAL_GATE_ENABLED,
+  TIMEZONE,
 } from './config.js';
 import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
 import type { ContainerRuntime } from './container-runtime.js';
@@ -363,6 +364,7 @@ function buildVolumeMounts(
 
   // pi uses ~/.pi/agent for auth/models. Ensure HOME and the agent dir are
   // consistent inside the container even if the runtime injects a host HOME.
+  lines.push(`TZ=${quoteSh(TIMEZONE)}`);
   lines.push(`HOME=${quoteSh('/home/node')}`);
   lines.push(`PI_CODING_AGENT_DIR=${quoteSh('/home/node/.pi/agent')}`);
 

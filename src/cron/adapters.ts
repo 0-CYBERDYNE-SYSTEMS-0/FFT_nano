@@ -93,6 +93,10 @@ function normalizeDelivery(payload: ScheduleTaskIpcPayload): CronV2Delivery {
   };
 }
 
+function hasTimezoneSuffix(value: string): boolean {
+  return /[Zz]$/.test(value) || /[+-]\d{2}:\d{2}$/.test(value);
+}
+
 export function resolveCronExecutionPlan(
   payload: ScheduleTaskIpcPayload,
   nowMs = Date.now(),
@@ -104,6 +108,9 @@ export function resolveCronExecutionPlan(
   }
   if (scheduleObj) {
     if (scheduleObj.kind === 'at') {
+      if (hasTimezoneSuffix(scheduleObj.at)) {
+        throw new Error('schedule.at must be local time without timezone suffix');
+      }
       const when = new Date(scheduleObj.at);
       if (Number.isNaN(when.getTime())) {
         throw new Error('Invalid schedule.at timestamp');
@@ -162,6 +169,9 @@ export function resolveCronExecutionPlan(
     };
   }
   if (scheduleType === 'once') {
+    if (hasTimezoneSuffix(scheduleValue)) {
+      throw new Error('once schedule must be local time without timezone suffix');
+    }
     const when = new Date(scheduleValue);
     if (Number.isNaN(when.getTime())) {
       throw new Error('Invalid once timestamp');

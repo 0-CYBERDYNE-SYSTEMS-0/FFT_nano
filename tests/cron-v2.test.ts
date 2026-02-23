@@ -88,6 +88,25 @@ test('cron adapter rejects malformed schedule payload when schedule is present',
   );
 });
 
+test('cron adapter rejects timezone-suffixed once/at timestamps', () => {
+  assert.throws(
+    () =>
+      resolveCronExecutionPlan({
+        schedule: { kind: 'at', at: '2026-02-01T15:30:00Z' },
+      }),
+    /local time without timezone suffix/,
+  );
+
+  assert.throws(
+    () =>
+      resolveCronExecutionPlan({
+        schedule_type: 'once',
+        schedule_value: '2026-02-01T15:30:00+02:00',
+      }),
+    /local time without timezone suffix/,
+  );
+});
+
 test('context_mode isolated forces noContinue while group mode reuses session', () => {
   assert.equal(
     resolveNoContinueForTask(makeTask({ context_mode: 'isolated' }) as ScheduledTask),
