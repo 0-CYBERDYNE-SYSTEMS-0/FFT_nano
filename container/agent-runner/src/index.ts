@@ -22,6 +22,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  secrets?: Record<string, string>;
   provider?: string;
   model?: string;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -305,6 +306,9 @@ async function main(): Promise<void> {
   }
 
   const input = normalizeInput(rawInput);
+  for (const [key, value] of Object.entries(rawInput.secrets || {})) {
+    process.env[key] = value;
+  }
 
   const systemPromptBuild = buildSystemPrompt(input);
   const systemPrompt = systemPromptBuild.text;

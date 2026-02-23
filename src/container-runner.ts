@@ -46,6 +46,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  secrets?: Record<string, string>;
   codingHint?: 'none' | 'auto' | 'force_delegate_execute' | 'force_delegate_plan';
   requestId?: string;
   memoryContext?: string;
@@ -278,104 +279,6 @@ function buildVolumeMounts(
     }
   }
 
-  // Environment file directory (workaround for Apple Container -i env var bug)
-  // Only expose specific auth variables needed by the agent runtime, not the entire .env
-  const envDir = path.join(DATA_DIR, 'env');
-  fs.mkdirSync(envDir, { recursive: true });
-  const envFile = path.join(projectRoot, '.env');
-
-  const allowedVars = [
-    // Pi / OpenAI-compatible config
-    'PI_BASE_URL',
-    'PI_API_KEY',
-    'PI_MODEL',
-    'PI_API',
-
-    // Common provider keys
-    'OPENAI_API_KEY',
-    'OPENAI_BASE_URL',
-    'ANTHROPIC_API_KEY',
-    'GEMINI_API_KEY',
-    'OPENROUTER_API_KEY',
-    'GROQ_API_KEY',
-    'ZAI_API_KEY',
-
-    // Debugging
-    'FFT_NANO_DRY_RUN',
-
-    // Farm bridge / Home Assistant
-    'HA_URL',
-    'HA_TOKEN',
-  ];
-
-  function stripDotEnvQuotes(raw: string): string {
-    const v = raw.trim();
-    if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) {
-      return v.slice(1, -1);
-    }
-    if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
-      // Minimal unescape support for common .env patterns.
-      return v
-        .slice(1, -1)
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, '\t')
-        .replace(/\\"/g, '"')
-        .replace(/\\\\/g, '\\');
-    }
-    return v;
-  }
-
-  const fromDotEnv: Record<string, string> = {};
-  if (fs.existsSync(envFile)) {
-    const envContent = fs.readFileSync(envFile, 'utf-8');
-    for (const line of envContent.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      if (!allowedVars.includes(key)) continue;
-      const value = stripDotEnvQuotes(trimmed.slice(eq + 1));
-      fromDotEnv[key] = value;
-    }
-  }
-
-  const fromProcess: Record<string, string> = {};
-  for (const key of allowedVars) {
-    const v = process.env[key];
-    if (typeof v === 'string' && v.length > 0) fromProcess[key] = v;
-  }
-
-  const merged: Record<string, string> = { ...fromDotEnv, ...fromProcess };
-
-  // Compatibility: older configs may use PI_BASE_URL to mean "OpenAI-compatible base URL".
-  // pi (pi-coding-agent) uses provider-specific env vars like OPENAI_BASE_URL.
-  if (merged.PI_BASE_URL && !merged.OPENAI_BASE_URL) {
-    merged.OPENAI_BASE_URL = merged.PI_BASE_URL;
-  }
-
-  const quoteSh = (v: string) => `'${v.replace(/'/g, `'"'"'`)}'`;
-  const lines: string[] = [];
-  for (const key of allowedVars) {
-    const value = merged[key];
-    if (typeof value !== 'string' || value.length === 0) continue;
-    lines.push(`${key}=${quoteSh(value)}`);
-  }
-
-  // pi uses ~/.pi/agent for auth/models. Ensure HOME and the agent dir are
-  // consistent inside the container even if the runtime injects a host HOME.
-  lines.push(`TZ=${quoteSh(TIMEZONE)}`);
-  lines.push(`HOME=${quoteSh('/home/node')}`);
-  lines.push(`PI_CODING_AGENT_DIR=${quoteSh('/home/node/.pi/agent')}`);
-
-  fs.writeFileSync(path.join(envDir, 'env'), lines.join('\n') + '\n');
-  mounts.push({
-    hostPath: envDir,
-    containerPath: '/workspace/env-dir',
-    readonly: true,
-  });
-
   // Copy agent-runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other
   // groups. Recompiled on container startup via entrypoint.sh.
@@ -401,6 +304,82 @@ function buildVolumeMounts(
   }
 
   return mounts;
+}
+
+function stripDotEnvQuotes(raw: string): string {
+  const v = raw.trim();
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) {
+    return v.slice(1, -1);
+  }
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+    return v
+      .slice(1, -1)
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+  return v;
+}
+
+function collectRuntimeSecrets(projectRoot: string): Record<string, string> {
+  const envFile = path.join(projectRoot, '.env');
+  const allowedVars = [
+    // Pi / OpenAI-compatible config
+    'PI_BASE_URL',
+    'PI_API_KEY',
+    'PI_MODEL',
+    'PI_API',
+
+    // Common provider keys
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL',
+    'ANTHROPIC_API_KEY',
+    'GEMINI_API_KEY',
+    'OPENROUTER_API_KEY',
+    'GROQ_API_KEY',
+    'ZAI_API_KEY',
+
+    // Debugging
+    'FFT_NANO_DRY_RUN',
+
+    // Farm bridge / Home Assistant
+    'HA_URL',
+    'HA_TOKEN',
+  ] as const;
+
+  const fromDotEnv: Record<string, string> = {};
+  if (fs.existsSync(envFile)) {
+    const envContent = fs.readFileSync(envFile, 'utf-8');
+    for (const line of envContent.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      if (!(allowedVars as readonly string[]).includes(key)) continue;
+      const value = stripDotEnvQuotes(trimmed.slice(eq + 1));
+      fromDotEnv[key] = value;
+    }
+  }
+
+  const fromProcess: Record<string, string> = {};
+  for (const key of allowedVars) {
+    const v = process.env[key];
+    if (typeof v === 'string' && v.length > 0) fromProcess[key] = v;
+  }
+
+  const merged: Record<string, string> = { ...fromDotEnv, ...fromProcess };
+  if (merged.PI_BASE_URL && !merged.OPENAI_BASE_URL) {
+    merged.OPENAI_BASE_URL = merged.PI_BASE_URL;
+  }
+
+  // Keep container runtime env stable without mounting env files.
+  merged.TZ = TIMEZONE;
+  merged.HOME = '/home/node';
+  merged.PI_CODING_AGENT_DIR = '/home/node/.pi/agent';
+  return merged;
 }
 
 function buildContainerArgs(
@@ -440,6 +419,7 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
   let payload: ContainerInput = input;
+  const projectRoot = process.cwd();
   let groupDir: string;
   try {
     assertValidGroupFolder(group.folder);
@@ -540,7 +520,11 @@ export async function runContainerAgent(
       resolve(output);
     };
 
-    container.stdin.write(JSON.stringify(payload));
+    const payloadWithSecrets: ContainerInput = {
+      ...payload,
+      secrets: collectRuntimeSecrets(projectRoot),
+    };
+    container.stdin.write(JSON.stringify(payloadWithSecrets));
     container.stdin.end();
 
     container.stdout.on('data', (data) => {
