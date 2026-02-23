@@ -1,8 +1,6 @@
 import fs from 'fs';
-import path from 'path';
 
 import {
-  GROUPS_DIR,
   MAIN_GROUP_FOLDER,
   SCHEDULER_MODE,
   SCHEDULER_POLL_INTERVAL,
@@ -16,6 +14,7 @@ import {
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
+import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 import { startCronV2Service } from './cron/service.js';
@@ -36,7 +35,25 @@ async function runLegacyTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
-  const groupDir = path.join(GROUPS_DIR, task.group_folder);
+  let groupDir: string;
+  try {
+    groupDir = resolveGroupFolderPath(task.group_folder);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { taskId: task.id, groupFolder: task.group_folder, error },
+      'Task has invalid group folder',
+    );
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: 'error',
+      result: null,
+      error,
+    });
+    return;
+  }
   fs.mkdirSync(groupDir, { recursive: true });
 
   logger.info(

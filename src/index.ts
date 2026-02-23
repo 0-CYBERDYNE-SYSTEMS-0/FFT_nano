@@ -75,6 +75,7 @@ import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js'
 import { executeFarmAction } from './farm-action-gateway.js';
 import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
+import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import {
   appendCompactionSummaryToMemory,
   migrateCompactionsForGroup,
@@ -313,10 +314,21 @@ function loadState(): void {
   lastAgentTimestamp = state.last_agent_timestamp || {};
   chatRunPreferences = state.chat_run_preferences || {};
   chatUsageStats = state.chat_usage_stats || {};
-  registeredGroups = loadJson(
+  const rawRegisteredGroups = loadJson<Record<string, RegisteredGroup>>(
     path.join(DATA_DIR, 'registered_groups.json'),
     {},
   );
+  registeredGroups = {};
+  for (const [jid, group] of Object.entries(rawRegisteredGroups)) {
+    if (!isValidGroupFolder(group.folder)) {
+      logger.warn(
+        { jid, folder: group.folder },
+        'Skipping registered group with invalid folder from state',
+      );
+      continue;
+    }
+    registeredGroups[jid] = group;
+  }
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
     'State loaded',
@@ -333,11 +345,21 @@ function saveState(): void {
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
+  let groupDir: string;
+  try {
+    groupDir = resolveGroupFolderPath(group.folder);
+  } catch (err) {
+    logger.warn(
+      { jid, folder: group.folder, err },
+      'Rejecting group registration with invalid folder',
+    );
+    return;
+  }
+
   registeredGroups[jid] = group;
   saveJson(path.join(DATA_DIR, 'registered_groups.json'), registeredGroups);
 
   // Create group folder
-  const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
   // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for

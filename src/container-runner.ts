@@ -21,6 +21,11 @@ import {
 } from './config.js';
 import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
 import type { ContainerRuntime } from './container-runtime.js';
+import {
+  assertValidGroupFolder,
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+} from './group-folder.js';
 import { logger } from './logger.js';
 import { buildMemoryContext } from './memory-retrieval.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -120,6 +125,8 @@ function buildVolumeMounts(
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
+  assertValidGroupFolder(group.folder);
+  const groupDir = resolveGroupFolderPath(group.folder);
 
   if (isMain) {
     ensureMainWorkspaceSeed();
@@ -145,7 +152,7 @@ function buildVolumeMounts(
     ensureMemoryScaffold(group.folder);
     // Other groups only get their own folder
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: groupDir,
       containerPath: '/workspace/group',
       readonly: false,
     });
@@ -228,7 +235,7 @@ function buildVolumeMounts(
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
+  const groupIpcDir = resolveGroupIpcPath(group.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'actions'), { recursive: true });
@@ -239,7 +246,6 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-<<<<<<< HEAD
   // Farm state ledger (read-only for all groups)
   if (FARM_STATE_ENABLED && fs.existsSync(FARM_STATE_DIR)) {
     mounts.push({
@@ -431,6 +437,22 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
   let payload: ContainerInput = input;
+  let groupDir: string;
+  try {
+    assertValidGroupFolder(group.folder);
+    groupDir = resolveGroupFolderPath(group.folder);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { groupName: group.name, groupFolder: group.folder, error },
+      'Rejected run for invalid group folder',
+    );
+    return {
+      status: 'error',
+      result: null,
+      error,
+    };
+  }
 
   if (MEMORY_RETRIEVAL_GATE_ENABLED) {
     try {
@@ -460,7 +482,6 @@ export async function runContainerAgent(
     }
   }
 
-  const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
   const mounts = buildVolumeMounts(group, input.isMain);
@@ -490,7 +511,7 @@ export async function runContainerAgent(
     'Spawning container agent',
   );
 
-  const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
+  const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
@@ -792,7 +813,16 @@ export function writeTasksSnapshot(
   }>,
 ): void {
   // Write filtered tasks to the group's IPC directory
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  let groupIpcDir: string;
+  try {
+    groupIpcDir = resolveGroupIpcPath(groupFolder);
+  } catch (err) {
+    logger.warn(
+      { groupFolder, err },
+      'Skipping tasks snapshot for invalid group folder',
+    );
+    return;
+  }
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Main sees all tasks, others only see their own
@@ -822,7 +852,16 @@ export function writeGroupsSnapshot(
   groups: AvailableGroup[],
   registeredJids: Set<string>,
 ): void {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  let groupIpcDir: string;
+  try {
+    groupIpcDir = resolveGroupIpcPath(groupFolder);
+  } catch (err) {
+    logger.warn(
+      { groupFolder, err },
+      'Skipping groups snapshot for invalid group folder',
+    );
+    return;
+  }
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Main sees all groups; others see nothing (they can't activate groups)
