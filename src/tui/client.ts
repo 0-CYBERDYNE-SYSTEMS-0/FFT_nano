@@ -147,7 +147,7 @@ function helpText(): string {
     '/think <off|minimal|low|medium|high|xhigh>',
     '/reasoning <off|on|stream>',
     '/deliver <on|off>',
-    '/gateway <status|restart>',
+    '/gateway <status|restart|doctor>',
     '/new or /reset',
     '/abort',
     '/exit',
@@ -551,11 +551,13 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         const action =
           actionRaw === 'restart'
             ? 'restart'
+            : actionRaw === 'doctor'
+              ? 'doctor'
             : actionRaw === 'status'
               ? 'status'
               : null;
         if (!action) {
-          chatLog.addSystem('usage: /gateway <status|restart>');
+          chatLog.addSystem('usage: /gateway <status|restart|doctor>');
           break;
         }
 

@@ -1,6 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 
-import { TIMEZONE } from '../config.js';
+import { PARITY_CONFIG, TIMEZONE } from '../config.js';
 import { ScheduledTask } from '../types.js';
 import { CronV2Delivery, CronV2ExecutionPlan, CronV2Policy, CronV2Schedule } from './types.js';
 
@@ -91,6 +91,19 @@ function normalizeDelivery(payload: ScheduleTaskIpcPayload): CronV2Delivery {
     to: typeof to === 'string' ? to : undefined,
     webhookUrl: typeof webhookUrl === 'string' ? webhookUrl : undefined,
   };
+}
+
+function hasExplicitDelivery(payload: ScheduleTaskIpcPayload): boolean {
+  return Boolean(
+    payload.delivery_mode ||
+      payload.delivery_channel ||
+      payload.delivery_to ||
+      payload.delivery_webhook_url ||
+      payload.delivery?.mode ||
+      payload.delivery?.channel ||
+      payload.delivery?.to ||
+      payload.delivery?.webhookUrl,
+  );
 }
 
 function hasTimezoneSuffix(value: string): boolean {
@@ -192,10 +205,19 @@ export function resolveCronPolicy(payload: ScheduleTaskIpcPayload): CronV2Policy
   const timeoutSeconds = parseFiniteInt(payload.timeout_seconds);
   const staggerMs = parseFiniteInt(payload.stagger_ms);
 
+  const delivery = normalizeDelivery(payload);
+  if (
+    sessionTarget === 'isolated' &&
+    !hasExplicitDelivery(payload) &&
+    PARITY_CONFIG.cron.isolatedDefaultDelivery === 'announce'
+  ) {
+    delivery.mode = 'announce';
+  }
+
   return {
     sessionTarget,
     wakeMode,
-    delivery: normalizeDelivery(payload),
+    delivery,
     timeoutSeconds:
       timeoutSeconds && timeoutSeconds > 0 ? Math.min(timeoutSeconds, 60 * 60) : undefined,
     staggerMs: staggerMs && staggerMs > 0 ? staggerMs : undefined,

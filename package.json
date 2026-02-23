@@ -30,6 +30,7 @@
     "tui:client:dev": "tsx src/tui/client.ts",
     "onboard": "tsx src/onboard-cli.ts",
     "auth": "tsx src/whatsapp-auth.ts",
+    "doctor": "tsx src/doctor.ts",
     "farm:doctor": "bash scripts/farm-doctor.sh",
     "validate:skills": "tsx scripts/validate-pi-skills.ts",
     "secret-scan": "bash scripts/secret-scan.sh",

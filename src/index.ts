@@ -17,9 +17,11 @@ import {
   IPC_POLL_INTERVAL,
   MAIN_WORKSPACE_DIR,
   MAIN_GROUP_FOLDER,
+  PARITY_CONFIG,
   POLL_INTERVAL,
   STORE_DIR,
   TELEGRAM_MEDIA_MAX_MB,
+  TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import {
@@ -32,11 +34,13 @@ import {
   getAllChats,
   getAllTasks,
   deleteTask,
+  getDueTasks,
   getChatHistory,
   getLastGroupSync,
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  getTaskRunLogs,
   initDatabase,
   setLastGroupSync,
   storeChatMetadata,
@@ -92,6 +96,11 @@ import {
   stripHeartbeatToken,
 } from './heartbeat-policy.js';
 import {
+  computeBootFileHash,
+  markMainWorkspaceBootExecuted,
+  readMainWorkspaceState,
+} from './workspace-bootstrap.js';
+import {
   startTuiGatewayServer,
   type SessionHistoryMessage,
   type SessionPrefs as TuiSessionPrefs,
@@ -114,18 +123,19 @@ const TELEGRAM_AUTO_REGISTER = !['0', 'false', 'no'].includes(
 const APPLE_CONTAINER_SELF_HEAL = !['0', 'false', 'no'].includes(
   (process.env.FFT_NANO_APPLE_CONTAINER_SELF_HEAL || '1').toLowerCase(),
 );
-const HEARTBEAT_PROMPT =
-  process.env.FFT_NANO_HEARTBEAT_PROMPT ||
-  'Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.';
+const HEARTBEAT_PROMPT = PARITY_CONFIG.heartbeat.prompt;
 const HEARTBEAT_INTERVAL_MS =
-  parseDurationMs(process.env.FFT_NANO_HEARTBEAT_EVERY || '30m') || 30 * 60 * 1000;
-const HEARTBEAT_ENABLED = HEARTBEAT_INTERVAL_MS > 0;
-const HEARTBEAT_ACTIVE_HOURS_RAW = process.env.FFT_NANO_HEARTBEAT_ACTIVE_HOURS;
-const HEARTBEAT_ACK_MAX_CHARS = Math.max(
-  0,
-  Number.parseInt(process.env.FFT_NANO_HEARTBEAT_ACK_MAX_CHARS || '300', 10) || 300,
-);
+  parseDurationMs(PARITY_CONFIG.heartbeat.every || '30m') || 30 * 60 * 1000;
+const HEARTBEAT_ENABLED = PARITY_CONFIG.heartbeat.enabled && HEARTBEAT_INTERVAL_MS > 0;
+const HEARTBEAT_ACTIVE_HOURS_RAW = resolveHeartbeatActiveHoursRaw();
+const HEARTBEAT_ACK_MAX_CHARS = Math.max(0, PARITY_CONFIG.heartbeat.ackMaxChars || 300);
 const HEARTBEAT_ACTIVE_HOURS = parseHeartbeatActiveHours(HEARTBEAT_ACTIVE_HOURS_RAW);
+const HEARTBEAT_TARGET = PARITY_CONFIG.heartbeat.target;
+const HEARTBEAT_TARGET_TO = PARITY_CONFIG.heartbeat.to;
+const HEARTBEAT_TARGET_ACCOUNT_ID = PARITY_CONFIG.heartbeat.accountId;
+const HEARTBEAT_SHOW_OK = PARITY_CONFIG.heartbeat.visibility.showOk;
+const HEARTBEAT_SHOW_ALERTS = PARITY_CONFIG.heartbeat.visibility.showAlerts;
+const HEARTBEAT_INCLUDE_REASONING = PARITY_CONFIG.heartbeat.includeReasoning;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
@@ -149,7 +159,7 @@ const TELEGRAM_COMMON_COMMANDS = [
 const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'main', description: 'Claim this chat as main/admin' },
   { command: 'freechat', description: 'Manage non-main free-chat allowlist' },
-  { command: 'gateway', description: 'Gateway service ops: /gateway status|restart' },
+  { command: 'gateway', description: 'Gateway service ops: /gateway status|restart|doctor' },
   { command: 'coder', description: 'Delegate coding execution' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
@@ -254,6 +264,10 @@ const activeCoderRuns = new Map<string, ActiveCoderRun>();
 const activeChatRuns = new Map<string, ActiveChatRun>();
 const activeChatRunsById = new Map<string, ActiveChatRun>();
 const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
+const heartbeatLastTargetByChannel = new Map<'telegram' | 'whatsapp', string>();
+let heartbeatLastTargetAny: string | null = null;
+const compactionMemoryFlushMarkers = new Map<string, number>();
+let bootRunInFlight = false;
 let lastTelegramMenuMainChatId: string | null = null;
 // LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
 let lidToPhoneMap: Record<string, string> = {};
@@ -395,6 +409,9 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+  if (group.folder === MAIN_GROUP_FOLDER) {
+    void maybeRunBootMdOnce();
+  }
 }
 
 function migrateCompactionSummariesFromSoul(): void {
@@ -650,6 +667,118 @@ function findMainChatJid(): string | null {
   return null;
 }
 
+function getChannelForJid(jid: string): 'telegram' | 'whatsapp' {
+  return isTelegramJid(jid) ? 'telegram' : 'whatsapp';
+}
+
+function rememberHeartbeatTarget(jid: string): void {
+  const channel = getChannelForJid(jid);
+  heartbeatLastTargetByChannel.set(channel, jid);
+  heartbeatLastTargetAny = jid;
+}
+
+function resolveHeartbeatTargetJid(mainChatJid: string): string | null {
+  const explicitTarget = HEARTBEAT_TARGET;
+  if (explicitTarget === 'none') return null;
+  if (explicitTarget === 'main') {
+    if (HEARTBEAT_TARGET_TO?.trim()) {
+      if (isTelegramJid(mainChatJid)) {
+        const parsed = parseTelegramTargetJid(HEARTBEAT_TARGET_TO);
+        return parsed || mainChatJid;
+      }
+      return HEARTBEAT_TARGET_TO.includes('@')
+        ? HEARTBEAT_TARGET_TO
+        : `${HEARTBEAT_TARGET_TO}@s.whatsapp.net`;
+    }
+    return mainChatJid;
+  }
+  if (explicitTarget === 'last') {
+    return heartbeatLastTargetAny || mainChatJid;
+  }
+  if (explicitTarget === 'telegram') {
+    if (HEARTBEAT_TARGET_TO?.trim()) {
+      return parseTelegramTargetJid(HEARTBEAT_TARGET_TO) || findMainTelegramChatJid();
+    }
+    return heartbeatLastTargetByChannel.get('telegram') || findMainTelegramChatJid();
+  }
+  if (explicitTarget === 'whatsapp') {
+    if (HEARTBEAT_TARGET_TO?.trim()) {
+      return HEARTBEAT_TARGET_TO.includes('@')
+        ? HEARTBEAT_TARGET_TO
+        : `${HEARTBEAT_TARGET_TO}@s.whatsapp.net`;
+    }
+    return heartbeatLastTargetByChannel.get('whatsapp') || mainChatJid;
+  }
+  if (explicitTarget === 'chat') {
+    if (!HEARTBEAT_TARGET_TO?.trim()) return mainChatJid;
+    const raw = HEARTBEAT_TARGET_TO.trim();
+    if (raw.startsWith('telegram:')) return parseTelegramTargetJid(raw) || mainChatJid;
+    if (raw.includes('@')) return raw;
+    const asTelegram = parseTelegramTargetJid(raw);
+    if (asTelegram) return asTelegram;
+    return `${raw}@s.whatsapp.net`;
+  }
+  return mainChatJid;
+}
+
+async function maybeRunBootMdOnce(): Promise<void> {
+  if (!PARITY_CONFIG.workspace.enableBootMd || bootRunInFlight) return;
+  const bootPath = path.join(MAIN_WORKSPACE_DIR, 'BOOT.md');
+  let bootBody = '';
+  try {
+    if (!fs.existsSync(bootPath)) return;
+    bootBody = fs.readFileSync(bootPath, 'utf-8').trim();
+  } catch (err) {
+    logger.debug({ err }, 'Failed to read BOOT.md');
+    return;
+  }
+  if (!bootBody) return;
+
+  const bootHash = computeBootFileHash(bootBody);
+  const state = readMainWorkspaceState(MAIN_WORKSPACE_DIR);
+  if (state.bootHash === bootHash && state.bootExecutedAt) {
+    return;
+  }
+
+  const mainChatJid = findMainChatJid();
+  if (!mainChatJid) {
+    logger.debug('Skipping BOOT.md run: main chat not registered yet');
+    return;
+  }
+  const group = registeredGroups[mainChatJid];
+  if (!group || group.folder !== MAIN_GROUP_FOLDER) {
+    return;
+  }
+
+  bootRunInFlight = true;
+  const requestId = `boot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    const run = await runAgent(
+      group,
+      '[BOOT STARTUP RUN]\nRead BOOT.md and execute safe startup checklist items. Reply BOOT_OK if nothing needs to be reported.',
+      mainChatJid,
+      'none',
+      requestId,
+      {},
+      { suppressErrorReply: true },
+    );
+    updateChatUsage(mainChatJid, run.usage);
+    markMainWorkspaceBootExecuted({
+      workspaceDir: MAIN_WORKSPACE_DIR,
+      bootHash,
+    });
+    if (run.ok && run.result?.trim() && !/^BOOT_OK\b/i.test(run.result.trim())) {
+      await sendMessage(mainChatJid, `[BOOT]\n${run.result.trim()}`);
+      rememberHeartbeatTarget(mainChatJid);
+    }
+    logger.info({ requestId }, 'BOOT.md startup run completed');
+  } catch (err) {
+    logger.warn({ err, requestId }, 'BOOT.md startup run failed');
+  } finally {
+    bootRunInFlight = false;
+  }
+}
+
 function getSessionKeyForChat(chatJid: string): string {
   return isMainChat(chatJid) ? 'main' : chatJid;
 }
@@ -830,6 +959,31 @@ function normalizeQueueDrop(raw: string): QueueDropPolicy | undefined {
   const key = raw.trim().toLowerCase();
   if (key === 'old' || key === 'new' || key === 'summarize') return key;
   return undefined;
+}
+
+function resolveHeartbeatTimezoneLabel(raw: string | undefined): string {
+  const value = (raw || '').trim();
+  if (!value) return TIMEZONE;
+  if (value === 'user' || value === 'local') {
+    return process.env.FFT_NANO_USER_TIMEZONE || TIMEZONE;
+  }
+  return value;
+}
+
+function resolveHeartbeatActiveHoursRaw(): string | undefined {
+  const cfg = PARITY_CONFIG.heartbeat;
+  if (cfg.activeHoursRaw && cfg.activeHoursRaw.trim()) {
+    const normalized = cfg.activeHoursRaw.trim();
+    if (normalized.includes('@user') || normalized.includes('@local')) {
+      return normalized
+        .replace(/@user\b/g, `@${resolveHeartbeatTimezoneLabel('user')}`)
+        .replace(/@local\b/g, `@${resolveHeartbeatTimezoneLabel('local')}`);
+    }
+    return normalized;
+  }
+  if (!cfg.activeHours) return undefined;
+  const timezone = resolveHeartbeatTimezoneLabel(cfg.activeHours.timezone);
+  return `${cfg.activeHours.start}-${cfg.activeHours.end}@${timezone}`;
 }
 
 function parseDurationMs(raw: string): number | undefined {
@@ -1189,8 +1343,39 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
 }
 
 function runGatewayServiceCommand(
-  action: 'status' | 'restart',
+  action: 'status' | 'restart' | 'doctor',
 ): { ok: boolean; text: string } {
+  if (action === 'doctor') {
+    const result = spawnSync('npm', ['run', 'doctor'], {
+      encoding: 'utf8',
+      env: process.env,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    if (result.error) {
+      return {
+        ok: false,
+        text: `Failed running doctor command: ${result.error.message}`,
+      };
+    }
+    const output = [result.stdout || '', result.stderr || '']
+      .filter((part) => part.trim().length > 0)
+      .join('\n')
+      .trim();
+    const bounded =
+      output.length > 12000 ? `${output.slice(0, 12000)}\n\n...output truncated...` : output;
+    if (result.status !== 0 && result.status !== 1) {
+      return {
+        ok: false,
+        text: bounded || `Doctor command failed with exit code ${result.status ?? 'unknown'}.`,
+      };
+    }
+    const warn = result.status === 1;
+    return {
+      ok: true,
+      text: bounded || (warn ? 'Doctor completed with warnings.' : 'Doctor command completed.'),
+    };
+  }
+
   const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
   if (!fs.existsSync(scriptPath)) {
     return {
@@ -1310,8 +1495,8 @@ function formatHelpText(isMainGroup: boolean): string {
     'Telegram commands (main/admin):',
     ...common,
     '/main <secret> - claim chat as main/admin',
-    '/gateway status|restart - host service controls',
-    '/tasks - list scheduled tasks',
+    '/gateway status|restart|doctor - host service + diagnostics',
+    '/tasks [list|due|detail|runs] - inspect scheduled tasks',
     '/task_pause <id> - pause task',
     '/task_resume <id> - resume task',
     '/task_cancel <id> - cancel task',
@@ -1383,19 +1568,64 @@ function formatStatusText(chatJid?: string): string {
   return lines.join('\n');
 }
 
-function formatTasksText(): string {
-  const tasks = getAllTasks();
+function summarizeTask(taskId: string): string {
+  const task = getTaskById(taskId);
+  if (!task) return `Task not found: ${taskId}`;
+  const lines = [
+    `Task ${task.id}:`,
+    `- status: ${task.status}`,
+    `- group: ${task.group_folder}`,
+    `- chat: ${task.chat_jid}`,
+    `- schedule: ${task.schedule_type} ${task.schedule_value}`,
+    `- next_run: ${task.next_run || 'n/a'}`,
+    `- last_run: ${task.last_run || 'n/a'}`,
+    `- session_target: ${task.session_target || 'isolated'}`,
+    `- wake_mode: ${task.wake_mode || 'next-heartbeat'}`,
+    `- delivery: ${task.delivery_mode || 'none'}`,
+    `- delivery_to: ${task.delivery_to || 'n/a'}`,
+    `- timeout_seconds: ${task.timeout_seconds ?? 'n/a'}`,
+    `- stagger_ms: ${task.stagger_ms ?? 'n/a'}`,
+    `- consecutive_errors: ${task.consecutive_errors ?? 0}`,
+    `- delete_after_run: ${task.delete_after_run ? 'true' : 'false'}`,
+  ];
+  if (task.last_result) {
+    lines.push('', 'Last result:', task.last_result.slice(0, 600));
+  }
+  return lines.join('\n');
+}
+
+function formatTaskRunsText(taskId: string, limit = 10): string {
+  const task = getTaskById(taskId);
+  if (!task) return `Task not found: ${taskId}`;
+  const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+  const rows = getTaskRunLogs(taskId, safeLimit);
+  if (rows.length === 0) {
+    return `No run logs found for task ${taskId}.`;
+  }
+  const lines = rows.map((row) => {
+    const err = row.error ? ` err=${row.error.slice(0, 120)}` : '';
+    return `- ${row.run_at} [${row.status}] duration_ms=${row.duration_ms}${err}`;
+  });
+  return [`Task runs for ${taskId} (latest ${safeLimit}):`, ...lines].join('\n');
+}
+
+function formatTasksText(mode: 'list' | 'due' = 'list'): string {
+  const tasks = mode === 'due' ? getDueTasks() : getAllTasks();
   if (tasks.length === 0) {
-    return 'No scheduled tasks found.';
+    return mode === 'due' ? 'No due tasks right now.' : 'No scheduled tasks found.';
   }
   const lines = tasks.slice(0, 30).map((task) => {
     const nextRun = task.next_run || 'n/a';
-    return `- ${task.id} [${task.status}] group=${task.group_folder} next=${nextRun}`;
+    const delivery = task.delivery_mode || 'none';
+    const wake = task.wake_mode || 'next-heartbeat';
+    const errors = task.consecutive_errors ?? 0;
+    return `- ${task.id} [${task.status}] group=${task.group_folder} next=${nextRun} session=${task.session_target || 'isolated'} delivery=${delivery} wake=${wake} errors=${errors}`;
   });
   if (tasks.length > 30) {
     lines.push(`- ... ${tasks.length - 30} more`);
   }
-  return ['Scheduled tasks:', ...lines].join('\n');
+  const prefix = mode === 'due' ? 'Due tasks:' : 'Scheduled tasks:';
+  return [prefix, ...lines].join('\n');
 }
 
 function formatGroupsText(): string {
@@ -1436,6 +1666,65 @@ function formatActiveSubagentsText(): string {
   return ['Active subagent runs:', ...runs].join('\n');
 }
 
+async function maybeRunCompactionMemoryFlush(
+  chatJid: string,
+  group: RegisteredGroup,
+): Promise<void> {
+  const flushCfg = PARITY_CONFIG.memory.flushBeforeCompaction;
+  if (!flushCfg.enabled) return;
+
+  const usage = chatUsageStats[chatJid];
+  const currentTokens = usage?.totalTokens || 0;
+  if (currentTokens <= 0 || currentTokens < flushCfg.softThresholdTokens) {
+    logger.debug(
+      { chatJid, currentTokens, threshold: flushCfg.softThresholdTokens },
+      'Skipping compaction memory flush (below threshold)',
+    );
+    return;
+  }
+
+  const lastMarker = compactionMemoryFlushMarkers.get(chatJid) || 0;
+  if (currentTokens <= lastMarker) {
+    logger.debug(
+      { chatJid, currentTokens, lastMarker },
+      'Skipping compaction memory flush (already flushed this cycle)',
+    );
+    return;
+  }
+
+  const flushRequestId = `memory-flush-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const flushPrompt = [
+    '[MEMORY FLUSH BEFORE COMPACTION]',
+    flushCfg.systemPrompt,
+    flushCfg.prompt,
+  ].join('\n');
+  const prefs: ChatRunPreferences = { ...(chatRunPreferences[chatJid] || {}) };
+  delete prefs.nextRunNoContinue;
+
+  const run = await runAgent(
+    group,
+    flushPrompt,
+    chatJid,
+    'none',
+    flushRequestId,
+    prefs,
+    { suppressErrorReply: true },
+  );
+  if (!run.ok) {
+    logger.warn(
+      { chatJid, flushRequestId },
+      'Compaction memory flush run failed',
+    );
+    return;
+  }
+  updateChatUsage(chatJid, run.usage);
+  compactionMemoryFlushMarkers.set(chatJid, currentTokens);
+  logger.info(
+    { chatJid, flushRequestId, currentTokens },
+    'Compaction memory flush completed',
+  );
+}
+
 async function runCompactionForChat(
   chatJid: string,
   instructions: string,
@@ -1474,6 +1763,8 @@ async function runCompactionForChat(
 
   await setTyping(chatJid, true);
   try {
+    await maybeRunCompactionMemoryFlush(chatJid, group);
+
     const run = await runAgent(
       group,
       compactPrompt,
@@ -2172,10 +2463,12 @@ async function handleTelegramCommand(m: {
         ? 'restart'
         : actionRaw === 'status'
           ? 'status'
+          : actionRaw === 'doctor'
+            ? 'doctor'
           : null;
     if (!action) {
       logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
-      await sendMessage(m.chatJid, 'Usage: /gateway <status|restart>');
+      await sendMessage(m.chatJid, 'Usage: /gateway <status|restart|doctor>');
       return true;
     }
 
@@ -2300,7 +2593,39 @@ async function handleTelegramCommand(m: {
 
   if (cmd === '/tasks') {
     logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    await sendMessage(m.chatJid, formatTasksText());
+    const sub = (rest[0] || '').toLowerCase();
+    if (!sub || sub === 'list') {
+      await sendMessage(m.chatJid, formatTasksText('list'));
+      return true;
+    }
+    if (sub === 'due') {
+      await sendMessage(m.chatJid, formatTasksText('due'));
+      return true;
+    }
+    if (sub === 'detail') {
+      const taskId = rest[1];
+      if (!taskId) {
+        await sendMessage(m.chatJid, 'Usage: /tasks detail <taskId>');
+        return true;
+      }
+      await sendMessage(m.chatJid, summarizeTask(taskId));
+      return true;
+    }
+    if (sub === 'runs') {
+      const taskId = rest[1];
+      if (!taskId) {
+        await sendMessage(m.chatJid, 'Usage: /tasks runs <taskId> [limit]');
+        return true;
+      }
+      const limitRaw = Number.parseInt(rest[2] || '10', 10);
+      const limit = Number.isFinite(limitRaw) ? limitRaw : 10;
+      await sendMessage(m.chatJid, formatTaskRunsText(taskId, limit));
+      return true;
+    }
+    await sendMessage(
+      m.chatJid,
+      'Usage: /tasks [list|due|detail <taskId>|runs <taskId> [limit]]',
+    );
     return true;
   }
 
@@ -2683,6 +3008,9 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   const prompt = lines.join('\n');
 
   if (!prompt) return true;
+  if (group.folder === MAIN_GROUP_FOLDER) {
+    rememberHeartbeatTarget(msg.chat_jid);
+  }
   const sessionKey = getSessionKeyForChat(msg.chat_jid);
   const latestUserText = selectedMessages[selectedMessages.length - 1]?.content || content;
 
@@ -3953,11 +4281,24 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       maxAckChars: HEARTBEAT_ACK_MAX_CHARS,
     });
     if (normalized.shouldSkip || !normalized.text.trim()) {
+      if (HEARTBEAT_SHOW_OK && /HEARTBEAT_OK/.test(run.result)) {
+        const destination = resolveHeartbeatTargetJid(mainChatJid);
+        if (!destination) {
+          logHeartbeatSkip('no-destination', { chatJid: mainChatJid, reason });
+          return;
+        }
+        await sendMessage(destination, 'HEARTBEAT_OK');
+        rememberHeartbeatTarget(destination);
+      }
       logHeartbeatSkip('ack-token', {
         chatJid: mainChatJid,
         didStrip: normalized.didStrip,
         reason,
       });
+      return;
+    }
+    if (!HEARTBEAT_SHOW_ALERTS) {
+      logHeartbeatSkip('alerts-hidden', { chatJid: mainChatJid, reason });
       return;
     }
 
@@ -3975,7 +4316,28 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       return;
     }
 
-    await sendMessage(mainChatJid, normalized.text);
+    const destination = resolveHeartbeatTargetJid(mainChatJid);
+    if (!destination) {
+      logHeartbeatSkip('no-destination', { chatJid: mainChatJid, reason });
+      return;
+    }
+    if (HEARTBEAT_TARGET_ACCOUNT_ID?.trim()) {
+      logger.debug(
+        { accountId: HEARTBEAT_TARGET_ACCOUNT_ID, target: HEARTBEAT_TARGET },
+        'Heartbeat accountId configured but ignored (single-account channels in FFT_nano)',
+      );
+    }
+    await sendMessage(destination, normalized.text);
+    rememberHeartbeatTarget(destination);
+    if (HEARTBEAT_INCLUDE_REASONING) {
+      const match =
+        run.result.match(/<reasoning>([\s\S]*?)<\/reasoning>/i) ||
+        run.result.match(/<thinking>([\s\S]*?)<\/thinking>/i);
+      const reasoning = match?.[1]?.trim();
+      if (reasoning) {
+        await sendMessage(destination, `Reasoning:\n${reasoning}`);
+      }
+    }
     heartbeatLastSent.set(mainChatJid, { text: normalized.text, sentAt: nowMs });
   } catch (err) {
     logger.warn({ err, chatJid: mainChatJid }, 'Heartbeat run failed');
@@ -4137,7 +4499,7 @@ async function main(): Promise<void> {
   if (HEARTBEAT_ACTIVE_HOURS_RAW?.trim() && !HEARTBEAT_ACTIVE_HOURS) {
     logger.warn(
       { value: HEARTBEAT_ACTIVE_HOURS_RAW },
-      'Ignoring invalid FFT_NANO_HEARTBEAT_ACTIVE_HOURS; expected HH:MM-HH:MM or Mon-Fri@HH:MM-HH:MM',
+      'Ignoring invalid heartbeat active-hours format; expected HH:MM-HH:MM, Mon-Fri@HH:MM-HH:MM, or HH:MM-HH:MM@America/New_York',
     );
   }
   acquireSingletonLock(path.join(DATA_DIR, 'fft_nano.lock'));
@@ -4191,6 +4553,8 @@ async function main(): Promise<void> {
   } else {
     logger.info('WhatsApp disabled (WHATSAPP_ENABLED=0)');
   }
+
+  void maybeRunBootMdOnce();
 }
 
 main().catch(async (err) => {

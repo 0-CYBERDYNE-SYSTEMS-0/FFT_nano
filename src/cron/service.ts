@@ -2,7 +2,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, GROUPS_DIR, MAIN_GROUP_FOLDER, TIMEZONE } from '../config.js';
+import { DATA_DIR, GROUPS_DIR, MAIN_GROUP_FOLDER, PARITY_CONFIG, TIMEZONE } from '../config.js';
 import { runContainerAgent, writeTasksSnapshot } from '../container-runner.js';
 import {
   deleteTask,
@@ -61,6 +61,43 @@ function parseTaskScheduleJson(task: ScheduledTask): {
   }
 }
 
+function fnv1a32(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function normalizeCronExpressionParts(expr: string): string[] | null {
+  const raw = expr.trim().split(/\s+/).filter(Boolean);
+  if (raw.length === 6) return raw.slice(1);
+  if (raw.length === 5) return raw;
+  return null;
+}
+
+function isRecurringTopOfHourExpression(expr: string): boolean {
+  const parts = normalizeCronExpressionParts(expr);
+  if (!parts) return false;
+  const minute = parts[0];
+  const hour = parts[1];
+  if (minute !== '0') return false;
+  if (/^\d+$/.test(hour)) return false;
+  if (hour.includes('*')) return true;
+  if (/^\d+-\d+(\/\d+)?$/.test(hour)) return true;
+  return false;
+}
+
+function computeDeterministicCronOffsetMs(task: ScheduledTask, expr: string): number {
+  if (!PARITY_CONFIG.cron.deterministicTopOfHourStagger.enabled) return 0;
+  if (!isRecurringTopOfHourExpression(expr)) return 0;
+  const maxMs = PARITY_CONFIG.cron.deterministicTopOfHourStagger.maxMs;
+  if (!Number.isFinite(maxMs) || maxMs <= 0) return 0;
+  const seed = `${task.id}|${expr}|${task.group_folder}`;
+  return fnv1a32(seed) % (maxMs + 1);
+}
+
 export function resolveTaskNextRun(
   task: ScheduledTask,
   nowMs: number,
@@ -86,7 +123,16 @@ export function resolveTaskNextRun(
         tz: schedule.tz || TIMEZONE,
         currentDate: new Date(nowMs),
       });
-      nextRun = interval.next().toISOString();
+      const naturalNext = interval.next().toISOString();
+      if (!naturalNext) {
+        throw new Error('Cron parser did not return a next run timestamp');
+      }
+      const offsetMs = computeDeterministicCronOffsetMs(task, expr);
+      if (offsetMs > 0) {
+        nextRun = new Date(new Date(naturalNext).getTime() + offsetMs).toISOString();
+      } else {
+        nextRun = naturalNext;
+      }
     } catch (err) {
       logger.warn(
         { taskId: task.id, scheduleValue: task.schedule_value, err },
@@ -330,13 +376,22 @@ export async function runCronSchedulerTick(deps: CronServiceDependencies): Promi
   schedulerTickActive = true;
   try {
     const dueTasks = getDueTasks();
+    const touchedGroups = new Set<string>();
     if (dueTasks.length > 0) {
       logger.info({ count: dueTasks.length }, 'Found due tasks');
     }
     for (const dueTask of dueTasks) {
       const latest = getTaskById(dueTask.id);
       if (!latest || latest.status !== 'active') continue;
+      touchedGroups.add(latest.group_folder);
       await runScheduledTaskV2(latest, deps);
+    }
+    if (touchedGroups.size === 0) {
+      writeCronStoreSnapshot(MAIN_GROUP_FOLDER);
+    } else {
+      for (const folder of touchedGroups) {
+        writeCronStoreSnapshot(folder);
+      }
     }
   } catch (err) {
     logger.error({ err }, 'Error in cron v2 scheduler tick');

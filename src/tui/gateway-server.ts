@@ -60,7 +60,7 @@ export interface TuiGatewayAdapters {
   }) => Promise<{ runId: string; status: 'started' | 'already_running' }>;
   abortChat: (params: { chatJid: string; runId: string }) => Promise<{ aborted: boolean }>;
   serviceGateway: (params: {
-    action: 'status' | 'restart';
+    action: 'status' | 'restart' | 'doctor';
   }) => Promise<{ ok: boolean; text: string }> | { ok: boolean; text: string };
 }
 
@@ -369,11 +369,13 @@ export async function startTuiGatewayServer(
           const action =
             actionRaw === 'restart'
               ? 'restart'
+              : actionRaw === 'doctor'
+                ? 'doctor'
               : actionRaw === 'status'
                 ? 'status'
                 : null;
           if (!action) {
-            sendFrame(ws, failure(frame.id, 'action must be "status" or "restart"'));
+            sendFrame(ws, failure(frame.id, 'action must be "status", "restart", or "doctor"'));
             break;
           }
 

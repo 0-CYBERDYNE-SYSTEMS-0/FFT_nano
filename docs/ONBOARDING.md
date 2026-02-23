@@ -21,8 +21,7 @@ Interactive mode (no `--non-interactive`) prompts for operator and assistant nam
 
 ## Behavior
 
-1. Ensures core bootstrap files exist (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`).
+1. Ensures core bootstrap files exist (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`; optional `BOOT.md` when enabled).
 2. Writes onboarding identity values to `USER.md` and `IDENTITY.md`.
 3. Marks onboarding complete by removing `BOOTSTRAP.md`.
 4. Updates `.fft_nano/workspace-state.json` with `onboardingCompletedAt`.
-

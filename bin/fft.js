@@ -9,6 +9,7 @@ function printUsage() {
   fft start [telegram-only]
   fft dev [telegram-only]
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
+  fft doctor [--json]
   fft service <install|uninstall|start|stop|restart|status|logs>
 
 Options:
@@ -86,7 +87,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['start', 'dev', 'tui', 'service'].includes(command)) {
+  if (!['start', 'dev', 'tui', 'service', 'doctor'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -106,6 +107,16 @@ function main() {
   if (command === 'service') {
     runInRepo(repoRoot, 'scripts/service.sh', commandArgs);
     return;
+  }
+
+  if (command === 'doctor') {
+    const result = spawnSync('npm', ['run', 'doctor', '--', ...commandArgs], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
   }
 
   runInRepo(repoRoot, 'scripts/start.sh', [command, ...commandArgs]);

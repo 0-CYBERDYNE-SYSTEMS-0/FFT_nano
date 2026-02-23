@@ -19,6 +19,7 @@ import {
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
   MEMORY_RETRIEVAL_GATE_ENABLED,
+  PARITY_CONFIG,
   TIMEZONE,
 } from './config.js';
 import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
@@ -29,7 +30,7 @@ import {
   resolveGroupIpcPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
-import { buildMemoryContext } from './memory-retrieval.js';
+import { getMemoryBackend } from './memory-backend.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { syncProjectPiSkillsToGroupPiHome } from './pi-skills.js';
 import { RegisteredGroup } from './types.js';
@@ -373,6 +374,9 @@ function collectRuntimeSecrets(projectRoot: string): Record<string, string> {
     // Farm bridge / Home Assistant
     'HA_URL',
     'HA_TOKEN',
+    // Prompt bootstrap injection caps (consumed by container system prompt builder)
+    'FFT_NANO_PROMPT_FILE_MAX_CHARS',
+    'FFT_NANO_PROMPT_TOTAL_MAX_CHARS',
   ] as const;
 
   const fromDotEnv: Record<string, string> = {};
@@ -405,6 +409,10 @@ function collectRuntimeSecrets(projectRoot: string): Record<string, string> {
   merged.TZ = TIMEZONE;
   merged.HOME = '/home/node';
   merged.PI_CODING_AGENT_DIR = '/home/node/.pi/agent';
+  merged.FFT_NANO_PROMPT_FILE_MAX_CHARS = String(PARITY_CONFIG.workspace.bootstrapMaxChars);
+  merged.FFT_NANO_PROMPT_TOTAL_MAX_CHARS = String(
+    PARITY_CONFIG.workspace.bootstrapTotalMaxChars,
+  );
   return merged;
 }
 
@@ -466,7 +474,7 @@ export async function runContainerAgent(
 
   if (MEMORY_RETRIEVAL_GATE_ENABLED) {
     try {
-      const memory = buildMemoryContext({
+      const memory = getMemoryBackend().buildContext({
         groupFolder: group.folder,
         prompt: input.prompt,
       });

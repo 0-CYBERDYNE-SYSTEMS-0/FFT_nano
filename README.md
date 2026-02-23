@@ -150,6 +150,7 @@ Host CLI:
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`
 - `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
+- `fft doctor [--json]`
 - `fft service <install|uninstall|start|stop|restart|status|logs>`
 
 TUI slash commands:
@@ -163,7 +164,7 @@ TUI slash commands:
 - `/think <off|minimal|low|medium|high|xhigh>`
 - `/reasoning <off|on|stream>`
 - `/deliver <on|off>`
-- `/gateway <status|restart>`
+- `/gateway <status|restart|doctor>`
 - `/new` (or `/reset`)
 - `/abort`
 - `/exit`
@@ -174,10 +175,10 @@ Telegram commands (main/admin subset):
 - `/status`
 - `/id`
 - `/main <secret>`
-- `/gateway <status|restart>`
+- `/gateway <status|restart|doctor>`
 - `/coder <task>`
 - `/coder-plan <task>`
-- `/tasks`
+- `/tasks [list|due|detail <id>|runs <id> [limit]]`
 
 Service-control note:
 
@@ -346,11 +347,13 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 - Default main memory and context files live outside this git repo (`~/nano`), which helps keep personal notes out of commits.
 - `groups/main/` is intentionally kept as an empty placeholder in-repo; if you point main workspace into the repo, treat it as local-only and never commit personal memory/state files.
 - Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/` + `skills/`.
+- Optional startup ritual file: `BOOT.md` (enable with `FFT_NANO_WORKSPACE_ENABLE_BOOT_MD=1` or parity config).
 - Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
 - Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
 - If `HEARTBEAT.md` exists but is effectively empty (headers/comments only), heartbeat runs are skipped.
 - Heartbeat acknowledgements are normalized with token stripping and max-ack gating (`FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, default `300`).
 - Optional active-hours gate: `FFT_NANO_HEARTBEAT_ACTIVE_HOURS` (format: `HH:MM-HH:MM` or `Mon-Fri@HH:MM-HH:MM`).
+- Optional parity config file: `config/runtime.parity.json` (override path via `FFT_NANO_PARITY_CONFIG_PATH`).
 
 Onboarding command options:
 
