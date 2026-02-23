@@ -3782,7 +3782,9 @@ async function connectWhatsApp(): Promise<void> {
         requestHeartbeatNow,
       });
       startIpcWatcher();
-      startMessageLoop();
+      void startMessageLoop().catch((err) =>
+        logger.fatal({ err }, 'Message loop crashed unexpectedly'),
+      );
     }
   });
 
@@ -4142,7 +4144,9 @@ async function main(): Promise<void> {
     });
     startIpcWatcher();
     startHeartbeatLoop();
-    void startMessageLoop();
+    void startMessageLoop().catch((err) =>
+      logger.fatal({ err }, 'Message loop crashed unexpectedly'),
+    );
   }
 
   if (farmOnlyMode) {
