@@ -335,6 +335,7 @@ export function storeMessage(
     msg.message?.imageMessage?.caption ||
     msg.message?.videoMessage?.caption ||
     '';
+  if (!content) return;
 
   const timestamp = new Date(Number(msg.messageTimestamp) * 1000).toISOString();
   const sender = msg.key.participant || msg.key.remoteJid || '';
