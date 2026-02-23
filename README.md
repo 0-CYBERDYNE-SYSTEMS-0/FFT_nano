@@ -35,16 +35,17 @@ Project links:
 
 This is the canonical install-and-run flow.
 
-### 1. Clone and bootstrap
+### 1. Clone and run guided onboarding
 
 ```bash
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
 cd FFT_nano
-./scripts/setup.sh
+./scripts/onboard-all.sh
 ```
 
-`./scripts/setup.sh` performs:
+`./scripts/onboard-all.sh` performs:
 
+- safety backup (`~/nano`, `.env`, `data/`, `groups/`)
 - dependency install (`npm ci` when lockfile exists)
 - `npm run typecheck`
 - `npm run build`
@@ -52,6 +53,8 @@ cd FFT_nano
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
 - host service install/start by default (`FFT_NANO_AUTO_SERVICE=1`)
+- workspace onboarding (`SOUL.md`, `USER.md`, `IDENTITY.md`; completes `BOOTSTRAP.md`)
+- service restart + doctor health check
 
 Users only need this repo. Farm dashboard templates are auto-fetched by `farm-bootstrap.sh` from the FFT companion dashboard repository and pinned by commit for reproducible setup.
 
@@ -108,7 +111,7 @@ If you disabled auto-service during setup (`FFT_NANO_AUTO_SERVICE=0`), install/s
 # or, after `npm link`: fft service install
 ```
 
-### 4. Attach the TUI and begin onboarding
+### 4. Attach the TUI
 
 Install CLI aliases (optional):
 
@@ -130,13 +133,11 @@ Important: `fft tui` is an attach client. The host process must already be runni
 fft --repo /absolute/path/to/FFT_nano tui
 ```
 
-Complete workspace identity bootstrap once:
+If you prefer the linked CLI form, use:
 
 ```bash
-./scripts/onboard.sh --operator "Your Name" --assistant-name FarmFriend --non-interactive
+fft onboard
 ```
-
-This writes onboarding values into `USER.md` and `IDENTITY.md`, removes `BOOTSTRAP.md`, and marks onboarding complete in `.fft_nano/workspace-state.json`.
 
 ### 5. Claim Telegram as main/admin
 
@@ -157,6 +158,7 @@ If you have not run `npm link`, use `./scripts/start.sh ...` and `./scripts/serv
 
 Host CLI:
 
+- `fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--non-interactive] [--force]`
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`
 - `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
@@ -165,6 +167,7 @@ Host CLI:
 
 Maintenance:
 
+- `./scripts/onboard-all.sh [--workspace /abs/path --non-interactive --operator "Name" --assistant-name FarmFriend]`
 - `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
 
 TUI slash commands:
@@ -371,9 +374,11 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 
 Onboarding command options:
 
+- `fft onboard --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
+- `./scripts/onboard-all.sh --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
 - `npm run onboard -- --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
 - `./scripts/onboard.sh --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
-- `--force` rewrites `USER.md` and `IDENTITY.md` even when already customized.
+- `--force` rewrites `SOUL.md`, `USER.md`, and `IDENTITY.md` even when already customized.
 
 ## Pi-Native Project Skills
 

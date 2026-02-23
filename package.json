@@ -29,6 +29,7 @@
     "tui:client": "node dist/tui/client.js",
     "tui:client:dev": "tsx src/tui/client.ts",
     "onboard": "tsx src/onboard-cli.ts",
+    "onboard:full": "bash scripts/onboard-all.sh",
     "backup:state": "bash scripts/backup-state.sh",
     "auth": "tsx src/whatsapp-auth.ts",
     "doctor": "tsx src/doctor.ts",

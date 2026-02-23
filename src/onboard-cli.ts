@@ -114,6 +114,20 @@ function renderIdentity(assistantName: string): string {
   ].join('\n');
 }
 
+function renderSoul(operator: string, assistantName: string): string {
+  return [
+    '# SOUL',
+    '',
+    `You are ${assistantName}, a pragmatic farm and automation copilot for ${operator}.`,
+    '',
+    'Operating style:',
+    '- Be concise, factual, and action-oriented.',
+    '- Prefer safe, reversible changes with explicit checks.',
+    '- Keep heartbeat and cron work deterministic and visible.',
+    '- Escalate before destructive or irreversible actions.',
+  ].join('\n');
+}
+
 function shouldRewriteFile(existingBody: string, force: boolean): boolean {
   if (force) return true;
   if (!existingBody.trim()) return true;
@@ -127,6 +141,15 @@ function normalizeBody(body: string): string {
 function shouldRewriteIdentityFile(existingBody: string, force: boolean): boolean {
   if (shouldRewriteFile(existingBody, force)) return true;
   return normalizeBody(existingBody) === normalizeBody(renderIdentity(ASSISTANT_NAME));
+}
+
+function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
+  if (force) return true;
+  if (!existingBody.trim()) return true;
+  if (/You are FarmFriend: concise, practical, and technically rigorous\./i.test(existingBody)) {
+    return true;
+  }
+  return false;
 }
 
 async function resolvePromptValues(params: {
@@ -173,8 +196,10 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<{
 
   const userPath = path.join(workspace, 'USER.md');
   const identityPath = path.join(workspace, 'IDENTITY.md');
+  const soulPath = path.join(workspace, 'SOUL.md');
   const userCurrent = readLineIfExists(userPath);
   const identityCurrent = readLineIfExists(identityPath);
+  const soulCurrent = readLineIfExists(soulPath);
   const explicitOperator = opts.operator?.trim() || '';
   const explicitAssistantName = opts.assistantName?.trim() || '';
 
@@ -209,6 +234,13 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<{
   }
   if (shouldRewriteIdentityFile(identityCurrent, opts.force)) {
     fs.writeFileSync(identityPath, `${renderIdentity(resolved.assistantName)}\n`, 'utf-8');
+  }
+  if (shouldRewriteSoulFile(soulCurrent, opts.force)) {
+    fs.writeFileSync(
+      soulPath,
+      `${renderSoul(resolved.operator, resolved.assistantName)}\n`,
+      'utf-8',
+    );
   }
 
   completeMainWorkspaceOnboarding({ workspaceDir: workspace, removeBootstrapFile: true });

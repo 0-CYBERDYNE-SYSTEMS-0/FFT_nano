@@ -6,6 +6,7 @@ import path from 'path';
 
 function printUsage() {
   process.stdout.write(`Usage:
+  fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--non-interactive] [--force]
   fft start [telegram-only]
   fft dev [telegram-only]
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
@@ -87,7 +88,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['start', 'dev', 'tui', 'service', 'doctor'].includes(command)) {
+  if (!['onboard', 'start', 'dev', 'tui', 'service', 'doctor'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -117,6 +118,11 @@ function main() {
     });
     if (result.error) throw result.error;
     process.exit(result.status ?? 1);
+  }
+
+  if (command === 'onboard') {
+    runInRepo(repoRoot, 'scripts/onboard-all.sh', commandArgs);
+    return;
   }
 
   runInRepo(repoRoot, 'scripts/start.sh', [command, ...commandArgs]);

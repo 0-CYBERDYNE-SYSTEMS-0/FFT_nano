@@ -23,6 +23,10 @@ test('runOnboarding writes USER/IDENTITY and completes BOOTSTRAP lifecycle', asy
   assert.equal(result.workspace, workspace);
   assert.match(fs.readFileSync(path.join(workspace, 'USER.md'), 'utf-8'), /Primary operator: Alex\./);
   assert.match(fs.readFileSync(path.join(workspace, 'IDENTITY.md'), 'utf-8'), /Name: FarmFriend/);
+  assert.match(
+    fs.readFileSync(path.join(workspace, 'SOUL.md'), 'utf-8'),
+    /You are FarmFriend, a pragmatic farm and automation copilot for Alex\./,
+  );
   assert.equal(fs.existsSync(path.join(workspace, 'BOOTSTRAP.md')), false);
 
   const state = JSON.parse(
@@ -85,8 +89,10 @@ test('runOnboarding non-interactive does not overwrite customized files without 
 
   const userPath = path.join(workspace, 'USER.md');
   const identityPath = path.join(workspace, 'IDENTITY.md');
+  const soulPath = path.join(workspace, 'SOUL.md');
   fs.writeFileSync(userPath, '# USER\n\nPrimary operator: Custom Operator.\n', 'utf-8');
   fs.writeFileSync(identityPath, '# IDENTITY\n\nName: CustomBot\n', 'utf-8');
+  fs.writeFileSync(soulPath, '# SOUL\n\nCustom soul profile.\n', 'utf-8');
 
   await runOnboarding({
     workspace,
@@ -101,6 +107,7 @@ test('runOnboarding non-interactive does not overwrite customized files without 
     '# USER\n\nPrimary operator: Custom Operator.\n',
   );
   assert.equal(fs.readFileSync(identityPath, 'utf-8'), '# IDENTITY\n\nName: CustomBot\n');
+  assert.equal(fs.readFileSync(soulPath, 'utf-8'), '# SOUL\n\nCustom soul profile.\n');
 });
 
 test('runOnboarding applies explicit assistant name to default scaffold without force', async () => {

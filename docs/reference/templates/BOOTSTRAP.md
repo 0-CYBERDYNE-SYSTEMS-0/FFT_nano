@@ -1,4 +1,8 @@
 # BOOTSTRAP
 
-On first run, ask onboarding questions to populate USER.md and IDENTITY.md.
-After onboarding is complete, either clear this file or mark it complete.
+First-run onboarding ritual:
+- Ask operator identity details (name, workflow preferences).
+- Confirm assistant identity and role.
+- Personalize SOUL.md, USER.md, and IDENTITY.md.
+- Keep answers concise and practical.
+- After onboarding is complete, remove this file.
