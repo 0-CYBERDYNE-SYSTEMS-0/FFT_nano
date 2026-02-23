@@ -235,8 +235,3 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 export function _resetSchedulerLoopForTests(): void {
   schedulerRunning = false;
 }
-
-/** @internal - for tests only. */
-export function _resetSchedulerLoopForTests(): void {
-  schedulerRunning = false;
-}
