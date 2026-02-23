@@ -2,13 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${FFT_NANO_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-NODE_BIN="${NODE_BIN:-$(command -v node)}"
 APP_ENTRY="$PROJECT_ROOT/dist/index.js"
-
-if [[ -z "${NODE_BIN}" ]]; then
-  echo "node binary not found in PATH; set NODE_BIN explicitly" >&2
-  exit 1
-fi
 
 cd "$PROJECT_ROOT"
 
@@ -18,6 +12,32 @@ if [[ -f "$PROJECT_ROOT/.env" ]]; then
   # shellcheck disable=SC1091
   . "$PROJECT_ROOT/.env"
   set +a
+fi
+
+resolve_node_bin() {
+  if [[ -n "${NODE_BIN:-}" ]]; then
+    printf '%s\n' "$NODE_BIN"
+    return
+  fi
+
+  # launchd does not load interactive shell profiles; resolve node from login shell first.
+  local login_shell login_node
+  login_shell="${SHELL:-/bin/zsh}"
+  if [[ -x "$login_shell" ]]; then
+    login_node="$("$login_shell" -lc 'command -v node' 2>/dev/null || true)"
+    if [[ -n "$login_node" ]]; then
+      printf '%s\n' "$login_node"
+      return
+    fi
+  fi
+
+  command -v node || true
+}
+
+NODE_BIN="$(resolve_node_bin)"
+if [[ -z "${NODE_BIN}" ]]; then
+  echo "node binary not found in PATH/login shell; set NODE_BIN explicitly" >&2
+  exit 1
 fi
 
 # Prefer TELEGRAM_BOT_TOKEN from .env, else fall back to macOS Keychain.

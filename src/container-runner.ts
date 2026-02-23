@@ -78,6 +78,42 @@ function ensureMainWorkspaceSeed(): void {
   ensureMemoryScaffold(MAIN_GROUP_FOLDER);
 }
 
+function ensureCodexMultiAgentConfig(codexConfigPath: string): void {
+  const featureLine = 'multi_agent = true';
+  const featureSection = '[features]';
+  const defaultConfig = `${featureSection}\n${featureLine}\n`;
+
+  if (!fs.existsSync(codexConfigPath)) {
+    fs.writeFileSync(codexConfigPath, defaultConfig);
+    return;
+  }
+
+  const current = fs.readFileSync(codexConfigPath, 'utf-8');
+  if (/\bmulti_agent\s*=\s*true\b/m.test(current)) return;
+
+  if (/\bmulti_agent\s*=\s*false\b/m.test(current)) {
+    const updated = current.replace(
+      /\bmulti_agent\s*=\s*false\b/m,
+      featureLine,
+    );
+    fs.writeFileSync(codexConfigPath, updated);
+    return;
+  }
+
+  if (/^\s*\[features\]\s*$/m.test(current)) {
+    const updated = current.replace(
+      /^\s*\[features\]\s*$/m,
+      `${featureSection}\n${featureLine}`,
+    );
+    fs.writeFileSync(codexConfigPath, updated);
+    return;
+  }
+
+  const needsNewline = current.length > 0 && !current.endsWith('\n');
+  const suffix = `${needsNewline ? '\n' : ''}${defaultConfig}`;
+  fs.writeFileSync(codexConfigPath, `${current}${suffix}`);
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -172,6 +208,17 @@ function buildVolumeMounts(
   mounts.push({
     hostPath: groupPiHomeDir,
     containerPath: '/home/node/.pi',
+    readonly: false,
+  });
+
+  // Persist Codex config per group so nested Codex runs inside the container
+  // resolve a stable ~/.codex/config.toml with required feature flags.
+  const groupCodexHomeDir = path.join(DATA_DIR, 'codex', group.folder, '.codex');
+  fs.mkdirSync(groupCodexHomeDir, { recursive: true });
+  ensureCodexMultiAgentConfig(path.join(groupCodexHomeDir, 'config.toml'));
+  mounts.push({
+    hostPath: groupCodexHomeDir,
+    containerPath: '/home/node/.codex',
     readonly: false,
   });
 
