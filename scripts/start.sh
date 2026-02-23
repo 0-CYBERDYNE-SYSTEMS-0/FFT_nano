@@ -97,11 +97,11 @@ run_runtime_detect() {
   if [[ "$raw" == "apple" || "$raw" == "docker" ]]; then
     echo "$raw"; return
   fi
-  if [[ "$(uname -s)" == "Darwin" ]] && command -v container >/dev/null 2>&1; then
-    echo "apple"; return
-  fi
   if command -v docker >/dev/null 2>&1; then
     echo "docker"; return
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v container >/dev/null 2>&1; then
+    echo "apple"; return
   fi
   if command -v container >/dev/null 2>&1; then
     echo "apple"; return

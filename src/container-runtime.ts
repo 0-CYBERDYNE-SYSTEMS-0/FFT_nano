@@ -22,9 +22,9 @@ export function getContainerRuntime(): ContainerRuntime {
     );
   }
 
-  // Prefer Apple Container on macOS when available.
-  if (process.platform === 'darwin' && commandExists('container')) return 'apple';
+  // Auto mode prefers Docker when available for cross-platform parity.
   if (commandExists('docker')) return 'docker';
+  if (process.platform === 'darwin' && commandExists('container')) return 'apple';
   if (commandExists('container')) return 'apple';
 
   throw new Error(
@@ -35,4 +35,3 @@ export function getContainerRuntime(): ContainerRuntime {
 export function getRuntimeCommand(runtime: ContainerRuntime): string {
   return runtime === 'docker' ? 'docker' : 'container';
 }
-

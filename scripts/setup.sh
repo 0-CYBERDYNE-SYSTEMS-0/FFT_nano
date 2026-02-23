@@ -41,11 +41,11 @@ detect_runtime() {
     fail "Invalid CONTAINER_RUNTIME=$CONTAINER_RUNTIME (expected auto|apple|docker)"
   fi
 
-  if [[ "$(uname -s)" == "Darwin" ]] && command -v container >/dev/null 2>&1; then
-    echo "apple"; return
-  fi
   if command -v docker >/dev/null 2>&1; then
     echo "docker"; return
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v container >/dev/null 2>&1; then
+    echo "apple"; return
   fi
   if command -v container >/dev/null 2>&1; then
     echo "apple"; return
