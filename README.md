@@ -55,6 +55,16 @@ cd FFT_nano
 
 Users only need this repo. Farm dashboard templates are auto-fetched by `farm-bootstrap.sh` from the FFT companion dashboard repository and pinned by commit for reproducible setup.
 
+If you are upgrading an existing install and want to preserve all local state (`~/nano`, `.env`, `data/`, `groups/`) before changes:
+
+```bash
+npm run backup:state
+# dry-run preview:
+npm run backup:state -- --dry-run
+```
+
+Backups are written to `./backups/` by default.
+
 ### 2. Configure `.env` (minimum required)
 
 At minimum set provider runtime values plus Telegram credentials.
@@ -152,6 +162,10 @@ Host CLI:
 - `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
 - `fft doctor [--json]`
 - `fft service <install|uninstall|start|stop|restart|status|logs>`
+
+Maintenance:
+
+- `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
 
 TUI slash commands:
 
