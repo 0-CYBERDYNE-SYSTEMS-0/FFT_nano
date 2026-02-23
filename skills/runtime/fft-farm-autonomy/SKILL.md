@@ -11,6 +11,14 @@ Autonomous monitoring loop for the full farm and cannabis operation. Runs contin
 
 ---
 
+## When to use this skill
+
+Use this skill when the operator explicitly enables autonomous farm control and wants recurring condition checks, anomaly response, and Home Assistant commentary updates without needing a manual prompt for each cycle.
+
+Do not activate this as a default chat behavior. This skill is for deliberate autonomy sessions with clear safety boundaries and escalation rules.
+
+---
+
 ## Activation
 
 On activation, before starting the loop:
