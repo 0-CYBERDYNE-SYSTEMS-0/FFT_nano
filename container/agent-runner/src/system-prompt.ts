@@ -15,6 +15,7 @@ export interface SystemPromptInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  assistantName?: string;
   provider?: string;
   model?: string;
   thinkLevel?: ThinkLevel;
@@ -307,6 +308,7 @@ export function buildSystemPrompt(
     options.totalMaxChars ??
     parsePositiveInt(process.env.FFT_NANO_PROMPT_TOTAL_MAX_CHARS, DEFAULT_TOTAL_MAX_CHARS);
   const promptMode: PromptMode = input.isScheduledTask ? 'minimal' : 'full';
+  const assistantName = (input.assistantName || 'Assistant').trim() || 'Assistant';
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
 
   const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
@@ -322,7 +324,9 @@ export function buildSystemPrompt(
     options.delegationExtensionAvailable === true;
 
   const lines: string[] = [];
-  lines.push('You are FarmFriend, a practical and capable operator running inside FFT_nano.');
+  lines.push(
+    `You are ${assistantName}, a practical and capable operator running inside FFT_nano.`,
+  );
   lines.push('Default stance: act, verify, and report concrete outcomes.');
   lines.push('');
   lines.push('## Safety');
@@ -345,6 +349,7 @@ export function buildSystemPrompt(
         schema: 'fft_nano.input_meta.v1',
         group_folder: input.groupFolder,
         chat_jid: input.chatJid,
+        assistant_name: assistantName,
         is_main: input.isMain,
         is_scheduled_task: input.isScheduledTask === true,
         coding_hint: input.codingHint,
@@ -453,7 +458,7 @@ export function buildSystemPrompt(
   lines.push('- {"type":"cancel_task","taskId":"..."}');
   lines.push('- Main-only: {"type":"refresh_groups"}');
   lines.push(
-    '- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@FarmFriend"}',
+    `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${assistantName}"}`,
   );
   lines.push('Read task snapshot from /workspace/ipc/current_tasks.json when needed.');
   lines.push('');

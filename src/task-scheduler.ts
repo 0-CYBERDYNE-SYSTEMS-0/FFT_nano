@@ -1,6 +1,7 @@
 import fs from 'fs';
 
 import {
+  ASSISTANT_NAME,
   MAIN_GROUP_FOLDER,
   SCHEDULER_MODE,
   SCHEDULER_POLL_INTERVAL,
@@ -129,6 +130,7 @@ async function runLegacyTask(
       chatJid: task.chat_jid,
       isMain,
       isScheduledTask: true,
+      assistantName: ASSISTANT_NAME,
       noContinue: resolveNoContinueForTask(task),
     });
 

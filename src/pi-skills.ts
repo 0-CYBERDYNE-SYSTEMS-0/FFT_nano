@@ -363,6 +363,96 @@ function isDirectory(dirPath: string): boolean {
   return fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory();
 }
 
+function normalizeForPathCompare(p: string): string {
+  return process.platform === 'win32' ? p.toLowerCase() : p;
+}
+
+function isPathInsideRoot(candidatePath: string, rootPath: string): boolean {
+  const normalizedCandidate = normalizeForPathCompare(candidatePath);
+  const normalizedRoot = normalizeForPathCompare(rootPath);
+  const relative = path.relative(normalizedRoot, normalizedCandidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function validateSkillPathSafety(skillPath: string): SkillValidationIssue[] {
+  const issues: SkillValidationIssue[] = [];
+  let realSkillRoot: string;
+  try {
+    realSkillRoot = fs.realpathSync(skillPath);
+  } catch {
+    return [
+      {
+        file: skillPath,
+        message: 'Unable to resolve skill source path',
+      },
+    ];
+  }
+
+  const stack = [skillPath];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      issues.push({
+        file: current,
+        message: 'Unable to read skill directory contents',
+      });
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(current, entry.name);
+      let stats: fs.Stats;
+      try {
+        stats = fs.lstatSync(entryPath);
+      } catch {
+        issues.push({
+          file: entryPath,
+          message: 'Unable to stat skill entry',
+        });
+        continue;
+      }
+
+      if (stats.isSymbolicLink()) {
+        issues.push({
+          file: entryPath,
+          message: 'Skill source contains symbolic links, which are not allowed',
+        });
+        continue;
+      }
+
+      let realEntryPath: string;
+      try {
+        realEntryPath = fs.realpathSync(entryPath);
+      } catch {
+        issues.push({
+          file: entryPath,
+          message: 'Unable to resolve skill entry real path',
+        });
+        continue;
+      }
+
+      if (!isPathInsideRoot(realEntryPath, realSkillRoot)) {
+        issues.push({
+          file: entryPath,
+          message: 'Skill source entry resolves outside the skill root',
+        });
+        continue;
+      }
+
+      if (stats.isDirectory()) {
+        stack.push(entryPath);
+      }
+    }
+  }
+
+  return issues;
+}
+
 function resolveExistingSkillDirs(
   projectRoot: string,
   candidates: readonly string[],
@@ -578,6 +668,11 @@ export function syncProjectPiSkillsToGroupPiHome(
       });
       if (validation.issues.length > 0) {
         invalidCandidates.push(...validation.issues);
+        continue;
+      }
+      const safetyIssues = validateSkillPathSafety(entry.skillPath);
+      if (safetyIssues.length > 0) {
+        invalidCandidates.push(...safetyIssues);
         continue;
       }
       if (validation.warnings.length > 0) {

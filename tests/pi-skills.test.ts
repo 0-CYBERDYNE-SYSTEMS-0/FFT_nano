@@ -235,3 +235,111 @@ test('non-required project custom skill without sections syncs with warning only
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('sync skips skill sources that contain symlinks', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const srcSkillsRoot = path.join(projectRoot, 'skills', 'runtime');
+    const dstSkillsRoot = path.join(groupPiHome, 'skills');
+    const externalFile = path.join(tempRoot, 'outside.txt');
+
+    fs.mkdirSync(srcSkillsRoot, { recursive: true });
+    fs.mkdirSync(dstSkillsRoot, { recursive: true });
+    fs.writeFileSync(externalFile, 'outside');
+
+    const customSkillDir = path.join(srcSkillsRoot, 'custom-skill');
+    fs.mkdirSync(customSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(customSkillDir, 'SKILL.md'),
+      '---\nname: custom-skill\ndescription: test\n---\n\n# custom\n\n## When to use this skill\n\n- test\n',
+    );
+    const symlinkPath = path.join(customSkillDir, 'outside-link.txt');
+    try {
+      fs.symlinkSync(externalFile, symlinkPath);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (process.platform === 'win32') {
+        assert.match(message, /EPERM|operation not permitted|privilege/i);
+        return;
+      }
+      throw err;
+    }
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome);
+
+    assert.equal(res.copied.includes('custom-skill'), false);
+    assert.ok(res.skippedInvalid.includes('custom-skill'));
+    assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'custom-skill')), false);
+    assert.equal(
+      res.invalid.some(
+        (issue) =>
+          issue.file.endsWith(path.join('custom-skill', 'outside-link.txt')) &&
+          issue.message.includes('symbolic links'),
+      ),
+      true,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('invalid symlink override falls back to valid project required skill', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const projectSkillsRoot = path.join(projectRoot, 'skills', 'runtime');
+    const userSkillsRoot = path.join(tempRoot, 'user', 'skills');
+    const dstSkillsRoot = path.join(groupPiHome, 'skills');
+    const externalFile = path.join(tempRoot, 'outside.txt');
+
+    fs.mkdirSync(projectSkillsRoot, { recursive: true });
+    fs.mkdirSync(userSkillsRoot, { recursive: true });
+    fs.mkdirSync(dstSkillsRoot, { recursive: true });
+    fs.writeFileSync(externalFile, 'outside');
+
+    const projectSkillDir = path.join(projectSkillsRoot, 'fft-debug');
+    fs.mkdirSync(projectSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectSkillDir, 'SKILL.md'),
+      requiredSkillMarkdown('fft-debug', 'project version'),
+    );
+
+    const overrideSkillDir = path.join(userSkillsRoot, 'fft-debug');
+    fs.mkdirSync(overrideSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(overrideSkillDir, 'SKILL.md'),
+      requiredSkillMarkdown('fft-debug', 'external version'),
+    );
+    const symlinkPath = path.join(overrideSkillDir, 'outside-link.txt');
+    try {
+      fs.symlinkSync(externalFile, symlinkPath);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (process.platform === 'win32') {
+        assert.match(message, /EPERM|operation not permitted|privilege/i);
+        return;
+      }
+      throw err;
+    }
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome, {
+      additionalSkillSourceDirs: [userSkillsRoot],
+    });
+
+    assert.ok(res.copied.includes('fft-debug'));
+    assert.equal(
+      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
+        'project version',
+      ),
+      true,
+    );
+    assert.equal(res.skippedInvalid.includes('fft-debug'), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

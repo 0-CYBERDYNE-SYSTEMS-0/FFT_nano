@@ -45,6 +45,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  assistantName?: string;
   codingHint?: 'none' | 'auto' | 'force_delegate_execute' | 'force_delegate_plan';
   requestId?: string;
   memoryContext?: string;

@@ -3105,6 +3105,7 @@ async function runAgent(
       groupFolder: group.folder,
       chatJid,
       isMain,
+      assistantName: ASSISTANT_NAME,
       codingHint,
       requestId,
       extraSystemPrompt,

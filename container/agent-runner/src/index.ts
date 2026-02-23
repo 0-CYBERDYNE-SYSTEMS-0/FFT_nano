@@ -21,6 +21,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  assistantName?: string;
   provider?: string;
   model?: string;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
