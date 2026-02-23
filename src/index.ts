@@ -3997,11 +3997,36 @@ function requestHeartbeatNow(reason = 'manual'): void {
 
 function ensureContainerSystemRunning(): void {
   const runtime = getContainerRuntime();
+  const cleanupStaleContainers = () => {
+    try {
+      const listCmd =
+        runtime === 'docker'
+          ? "docker ps -a --filter status=exited --filter name=nanoclaw- --format '{{.Names}}'"
+          : 'container ls -a --format {{.Names}}';
+      const removeCmd = runtime === 'docker' ? 'docker rm' : 'container rm';
+      const output = execSync(listCmd, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+      });
+      const stale = output
+        .split('\n')
+        .map((n) => n.trim())
+        .filter((n) => n.startsWith('nanoclaw-'));
+      if (stale.length > 0) {
+        execSync(`${removeCmd} ${stale.join(' ')}`, { stdio: 'pipe' });
+        logger.info({ runtime, count: stale.length }, 'Cleaned up stale containers');
+      }
+    } catch {
+      // Ignore cleanup failures (unsupported flags/no stale containers/runtime quirks).
+    }
+  };
+
   if (runtime === 'docker') {
     try {
       // Verifies Docker is installed and the daemon is reachable.
       execSync('docker info', { stdio: 'pipe' });
       logger.debug('Docker runtime available');
+      cleanupStaleContainers();
       return;
     } catch (err) {
       logger.error({ err }, 'Docker runtime not available');
@@ -4070,6 +4095,7 @@ function ensureContainerSystemRunning(): void {
       throw new Error('Apple Container system is required but failed to start');
     }
   }
+  cleanupStaleContainers();
 }
 
 function stopFarmServicesForShutdown(signal: string): void {

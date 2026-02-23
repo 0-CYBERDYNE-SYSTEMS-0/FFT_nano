@@ -15,6 +15,7 @@ import {
   FARM_STATE_ENABLED,
   FFT_DASHBOARD_REPO_PATH,
   GROUPS_DIR,
+  IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
   MEMORY_RETRIEVAL_GATE_ENABLED,
@@ -38,6 +39,31 @@ import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---FFT_NANO_OUTPUT_END---';
+
+function tryParseContainerOutput(stdout: string): ContainerOutput | null {
+  try {
+    const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
+    const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
+
+    let jsonLine: string;
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      jsonLine = stdout
+        .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+        .trim();
+    } else {
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      if (lines.length === 0) return null;
+      jsonLine = lines[lines.length - 1];
+    }
+    if (!jsonLine) return null;
+    const parsed = JSON.parse(jsonLine) as ContainerOutput;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.status !== 'success' && parsed.status !== 'error') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 export interface ContainerInput {
   prompt: string;
@@ -569,10 +595,12 @@ export async function runContainerAgent(
       }
     });
 
+    const configuredTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    const timeoutMs = Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000);
     const timeout = setTimeout(() => {
       timedOut = true;
       logger.error(
-        { group: group.name, containerName, runtime },
+        { group: group.name, containerName, runtime, timeoutMs },
         'Container timeout, stopping gracefully',
       );
       exec(`${runtimeCmd} stop ${containerName}`, { timeout: 15000 }, (err) => {
@@ -583,7 +611,7 @@ export async function runContainerAgent(
         );
         container.kill('SIGKILL');
       });
-    }, group.containerConfig?.timeout || CONTAINER_TIMEOUT);
+    }, timeoutMs);
 
     container.once('exit', () => {
       exited = true;
@@ -628,10 +656,19 @@ export async function runContainerAgent(
       const duration = Date.now() - startTime;
 
       if (timedOut) {
+        const parsedAfterTimeout = tryParseContainerOutput(stdout);
+        if (parsedAfterTimeout?.status === 'success') {
+          logger.info(
+            { group: group.name, containerName, runtime, duration },
+            'Container timed out after output was emitted; treating as success',
+          );
+          finish(parsedAfterTimeout);
+          return;
+        }
         finish({
           status: 'error',
           result: null,
-          error: `Container timed out after ${group.containerConfig?.timeout || CONTAINER_TIMEOUT}ms`,
+          error: `Container timed out after ${configuredTimeout}ms`,
         });
         return;
       }
@@ -699,20 +736,9 @@ export async function runContainerAgent(
         // agent-runner may have written a structured JSON error to stdout even
         // when exiting non-zero. Try to parse it for a more useful message.
         let parsedError: string | null = null;
-        try {
-          const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
-          const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-          if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-            const jsonLine = stdout
-              .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-              .trim();
-            const output: ContainerOutput = JSON.parse(jsonLine);
-            if (output.status === 'error' && output.error) {
-              parsedError = output.error;
-            }
-          }
-        } catch {
-          /* ignore parse failures */
+        const parsed = tryParseContainerOutput(stdout);
+        if (parsed?.status === 'error' && parsed.error) {
+          parsedError = parsed.error;
         }
 
         logger.error(
@@ -738,22 +764,8 @@ export async function runContainerAgent(
       }
 
       try {
-        // Extract JSON between sentinel markers for robust parsing
-        const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
-        const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-
-        let jsonLine: string;
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          jsonLine = stdout
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
-        } else {
-          // Fallback: last non-empty line (backwards compatibility)
-          const lines = stdout.trim().split('\n');
-          jsonLine = lines[lines.length - 1];
-        }
-
-        const output: ContainerOutput = JSON.parse(jsonLine);
+        const output = tryParseContainerOutput(stdout);
+        if (!output) throw new Error('No structured output found');
 
         logger.info(
           {
