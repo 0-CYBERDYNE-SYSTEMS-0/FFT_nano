@@ -1414,11 +1414,18 @@ function runGatewayServiceCommand(
       : combined;
 
   if (result.status !== 0) {
+    const needsPrivileges = /root privileges|sudo|permission denied|operation not permitted|bootstrap failed|input\/output error/i.test(
+      bounded,
+    );
+    const guidance = needsPrivileges
+      ? '\n\nThis action likely needs interactive host privileges. Run ./scripts/service.sh <action> (or fft service <action>) directly in a shell with required permissions.'
+      : '';
     return {
       ok: false,
       text:
-        bounded ||
-        `Gateway service command failed with exit code ${result.status ?? 'unknown'}.`,
+        (bounded
+          ? `${bounded}${guidance}`
+          : `Gateway service command failed with exit code ${result.status ?? 'unknown'}.${guidance}`),
     };
   }
 

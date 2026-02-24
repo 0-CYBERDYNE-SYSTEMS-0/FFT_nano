@@ -10,14 +10,28 @@ function makeTmpWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fft-onboard-'));
 }
 
+function nonInteractiveBase(workspace: string) {
+  return {
+    workspace,
+    envPath: path.join(workspace, '.env'),
+    nonInteractive: true as const,
+    acceptRisk: true,
+    authChoice: 'skip' as const,
+    skipChannels: true,
+    skipSkills: true,
+    skipHealth: true,
+    skipUi: true,
+    force: false,
+    json: false,
+  };
+}
+
 test('runOnboarding writes USER/IDENTITY and preserves BOOTSTRAP for first-run ritual', async () => {
   const workspace = makeTmpWorkspace();
   const result = await runOnboarding({
-    workspace,
+    ...nonInteractiveBase(workspace),
     operator: 'Alex',
     assistantName: 'OpenClaw',
-    nonInteractive: true,
-    force: false,
   });
 
   assert.equal(result.workspace, workspace);
@@ -39,11 +53,9 @@ test('runOnboarding writes USER/IDENTITY and preserves BOOTSTRAP for first-run r
 test('runOnboarding with --force is deterministic for same inputs', async () => {
   const workspace = makeTmpWorkspace();
   await runOnboarding({
-    workspace,
+    ...nonInteractiveBase(workspace),
     operator: 'Scrim',
     assistantName: 'OpenClaw',
-    nonInteractive: true,
-    force: false,
   });
 
   const firstState = fs.readFileSync(
@@ -51,10 +63,9 @@ test('runOnboarding with --force is deterministic for same inputs', async () => 
     'utf-8',
   );
   await runOnboarding({
-    workspace,
+    ...nonInteractiveBase(workspace),
     operator: 'Scrim',
     assistantName: 'OpenClaw',
-    nonInteractive: true,
     force: true,
   });
   const secondState = fs.readFileSync(
@@ -70,9 +81,7 @@ test('runOnboarding non-interactive requires explicit operator and assistant nam
   const workspace = makeTmpWorkspace();
   await assert.rejects(
     runOnboarding({
-      workspace,
-      nonInteractive: true,
-      force: false,
+      ...nonInteractiveBase(workspace),
     }),
     /Non-interactive onboarding requires --operator <name>/,
   );
@@ -81,11 +90,9 @@ test('runOnboarding non-interactive requires explicit operator and assistant nam
 test('runOnboarding non-interactive does not overwrite customized files without force', async () => {
   const workspace = makeTmpWorkspace();
   await runOnboarding({
-    workspace,
+    ...nonInteractiveBase(workspace),
     operator: 'Alex',
     assistantName: 'OpenClaw',
-    nonInteractive: true,
-    force: false,
   });
 
   const userPath = path.join(workspace, 'USER.md');
@@ -96,11 +103,9 @@ test('runOnboarding non-interactive does not overwrite customized files without 
   fs.writeFileSync(soulPath, '# SOUL\n\nCustom soul profile.\n', 'utf-8');
 
   await runOnboarding({
-    workspace,
+    ...nonInteractiveBase(workspace),
     operator: 'Different Name',
     assistantName: 'DifferentBot',
-    nonInteractive: true,
-    force: false,
   });
 
   assert.equal(
@@ -114,12 +119,43 @@ test('runOnboarding non-interactive does not overwrite customized files without 
 test('runOnboarding applies explicit assistant name to default scaffold without force', async () => {
   const workspace = makeTmpWorkspace();
   await runOnboarding({
-    workspace,
+    ...nonInteractiveBase(workspace),
     operator: 'Alex',
     assistantName: 'AgriBot',
-    nonInteractive: true,
-    force: false,
   });
 
   assert.match(fs.readFileSync(path.join(workspace, 'IDENTITY.md'), 'utf-8'), /Name: AgriBot/);
+});
+
+test('runOnboarding non-interactive requires --accept-risk', async () => {
+  const workspace = makeTmpWorkspace();
+  await assert.rejects(
+    runOnboarding({
+      ...nonInteractiveBase(workspace),
+      acceptRisk: false,
+      operator: 'Alex',
+      assistantName: 'OpenClaw',
+    }),
+    /requires explicit risk acknowledgement/i,
+  );
+});
+
+test('runOnboarding non-interactive local auth provider writes provider env', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    authChoice: 'openai',
+    apiKey: 'test-key',
+    model: 'gpt-4.1-mini',
+    gatewayPort: 29999,
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.match(envBody, /^PI_API=openai$/m);
+  assert.match(envBody, /^PI_MODEL=gpt-4.1-mini$/m);
+  assert.match(envBody, /^OPENAI_API_KEY=test-key$/m);
+  assert.match(envBody, /^FFT_NANO_TUI_PORT=29999$/m);
 });
