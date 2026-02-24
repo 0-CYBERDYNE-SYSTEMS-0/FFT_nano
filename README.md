@@ -52,9 +52,10 @@ cd FFT_nano
 - agent image build (Apple Container or Docker, auto-detected)
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
-- host service install/start by default (`FFT_NANO_AUTO_SERVICE=1`)
+- onboarding wizard (`risk gate`, `quickstart|advanced`, `local|remote`, provider/channel/hatch)
+- host service step (`install/start` by default, with `--no-install-daemon` support)
 - workspace onboarding seed (`SOUL.md`, `USER.md`, `IDENTITY.md`; keeps `BOOTSTRAP.md` for first-run ritual)
-- service restart + doctor health check
+- doctor health check
 
 Profile defaults:
 - fresh installs default to `core` profile
@@ -160,7 +161,7 @@ If you have not run `npm link`, use `./scripts/start.sh ...` and `./scripts/serv
 
 Host CLI:
 
-- `fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--non-interactive] [--force]`
+- `fft onboard [--workspace <dir>] [--env-path <file>] [--operator <name>] [--assistant-name <name>] [--non-interactive --accept-risk] [--flow quickstart|advanced] [--mode local|remote] [--auth-choice openai|anthropic|gemini|openrouter|zai|skip] [--api-key <token>] [--model <id>] [--remote-url <url>] [--gateway-port <port>] [--telegram-token <token>] [--whatsapp-enabled <0|1>] [--hatch tui|web|later] [--install-daemon|--no-install-daemon] [--skip-channels] [--skip-ui] [--force]`
 - `fft profile <status|set|apply> [core|farm]`
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`
@@ -170,7 +171,7 @@ Host CLI:
 
 Maintenance:
 
-- `./scripts/onboard-all.sh [--workspace /abs/path --non-interactive --operator "Name" --assistant-name OpenClaw]`
+- `./scripts/onboard-all.sh [--workspace /abs/path --env-path /abs/path/.env --non-interactive --accept-risk --operator "Name" --assistant-name OpenClaw]`
 - `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
 - `npm run restore:state -- --archive /abs/path/to/backup.tar.gz [--workspace-target /abs/path]`
 
@@ -204,7 +205,8 @@ Telegram commands (main/admin subset):
 Service-control note:
 
 - Linux may require elevated privileges for some service actions.
-- Runtime `/gateway` commands are non-interactive; if privilege escalation is required and not configured, run `./scripts/service.sh ...` (or `fft service ...`) directly in a shell with sufficient permissions.
+- Runtime `/gateway` commands are non-interactive and cannot prompt for sudo/password.
+- If privilege escalation is required, run `./scripts/service.sh ...` (or `fft service ...`) directly in a shell with sufficient permissions.
 
 TUI keybinds:
 
@@ -378,10 +380,10 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 
 Onboarding command options:
 
-- `fft onboard --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
-- `./scripts/onboard-all.sh --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
-- `npm run onboard -- --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
-- `./scripts/onboard.sh --workspace /abs/path --operator "Name" --assistant-name OpenClaw --non-interactive`
+- `fft onboard --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
+- `./scripts/onboard-all.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
+- `npm run onboard -- --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
+- `./scripts/onboard.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
 - `--force` rewrites `SOUL.md`, `USER.md`, and `IDENTITY.md` even when already customized.
 
 ## Pi-Native Project Skills
