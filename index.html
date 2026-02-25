@@ -41,7 +41,7 @@
     body {
       font-family: var(--font-body);
       background:
-        url('assets/images/dashboard.png') center/cover fixed;
+        url('assets/images/dashboard.webp') center/cover fixed;
       background-color: #f0ece6;
       color: #1a2424;
       min-height: 100vh;
@@ -358,7 +358,7 @@
       height: 100%;
       overflow: hidden;
       z-index: 1;
-      background: url('assets/images/dashboard.png') center/cover no-repeat;
+      background: url('assets/images/dashboard.webp') center/cover no-repeat;
     }
     .video-overlay {
       position: absolute;
@@ -537,7 +537,7 @@
       }
     }
 
-    /* Section Styles — dashboard.png is on body (fixed), sections are translucent overlays */
+    /* Section Styles — dashboard.webp is on body (fixed), sections are translucent overlays */
     section {
       width: min(100%, 1600px);
       padding: clamp(3rem, 5vw, 6rem) clamp(1rem, 3vw, 2rem);
@@ -2020,16 +2020,6 @@
       box-shadow: 0 12px 40px rgba(90, 158, 160, 0.4);
     }
 
-    .sponsors-iframe {
-      border-radius: 12px;
-      transition: transform 0.3s ease;
-      max-width: 100%;
-    }
-
-    .sponsors-iframe:hover {
-      transform: scale(1.02);
-    }
-
     /* Responsive Design */
 
     /* Header responsive polish */
@@ -2442,8 +2432,8 @@
         <p>Watch FFT Nano transform your farm operations</p>
       </div>
       <div class="video-player-wrapper">
-        <video controls autoplay muted loop playsinline preload="auto" poster="assets/backgrounds/hero-bg.jpg">
-          <source src="assets/fft_nano-hero-voice.mp4" type="video/mp4">
+        <video id="demo-player" controls autoplay muted loop playsinline preload="none" poster="assets/backgrounds/hero-bg.jpg">
+          <source data-src="assets/fft_nano-hero-voice.mp4" type="video/mp4">
           Your browser does not support the video tag.
         </video>
       </div>
@@ -3035,33 +3025,6 @@
               <i class="fas fa-heart"></i> Donate
             </a>
           </div>
-          <iframe
-            src="https://github.com/sponsors/0-CYBERDYNE-SYSTEMS-0/button"
-            title="Sponsor 0-CYBERDYNE-SYSTEMS-0"
-            aria-label="Sponsor FFT Nano on GitHub"
-            height="32"
-            width="114"
-            style="border: 0; border-radius: 6px;"
-            tabindex="0">
-          </iframe>
-        </div>
-
-        <!-- Sponsors Card -->
-        <div class="sponsors-card-wrapper">
-          <p style="color: var(--text-muted); margin-bottom: 1rem;">
-            <i class="fas fa-star" style="color: var(--brand-primary);"></i>
-            Become a Sponsor
-          </p>
-          <iframe
-            src="https://github.com/sponsors/0-CYBERDYNE-SYSTEMS-0/card"
-            title="Sponsor 0-CYBERDYNE-SYSTEMS-0 - View all sponsorship tiers"
-            aria-label="GitHub Sponsors card showing available sponsorship tiers"
-            height="225"
-            width="600"
-            style="border: 0;"
-            class="sponsors-iframe"
-            tabindex="0">
-          </iframe>
         </div>
       </div>
       
@@ -3441,6 +3404,23 @@
       });
     })();
 
+    // ── Lazy-load demo video when section enters viewport ─────────────────────
+    const demoPlayer = document.getElementById('demo-player');
+    if (demoPlayer) {
+      const videoObserver = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+          const src = demoPlayer.querySelector('source[data-src]');
+          if (src) {
+            src.src = src.dataset.src;
+            demoPlayer.load();
+            demoPlayer.play().catch(() => {});
+          }
+          videoObserver.disconnect();
+        }
+      }, { rootMargin: '200px' });
+      videoObserver.observe(demoPlayer);
+    }
+
     // ── Lenis smooth scroll ────────────────────────────────────────────────────
     const lenis = new Lenis({
       lerp: 0.1,
@@ -3541,7 +3521,7 @@
       });
     }
 
-    // ── Progressive transparency — dashboard.png bleeds through more as user scrolls down ──
+    // ── Progressive transparency — dashboard.webp bleeds through more as user scrolls down ──
     // Hero has its own dark overlay; non-hero sections start opaque and get lighter
     const sectionOpacities = [0.88, 0.84, 0.80, 0.76, 0.72, 0.68, 0.68, 0.68, 0.68];
     document.querySelectorAll('section:not(.hero)').forEach((section, i) => {
