@@ -2,7 +2,6 @@
 
 Generated from src/*.ts in this repository.
 
-- [apple-container](modules/apple-container.md)
 - [coding-delegation](modules/coding-delegation.md)
 - [config](modules/config.md)
 - [container-runner](modules/container-runner.md)

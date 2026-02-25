@@ -42,7 +42,7 @@ Start runtime:
 - optional `telegram-only` flag
 
 Container image builds:
-- Apple Container: `./container/build.sh`
+- Docker: `./container/build.sh`
 - Docker: `./container/build-docker.sh`
 
 WhatsApp auth:

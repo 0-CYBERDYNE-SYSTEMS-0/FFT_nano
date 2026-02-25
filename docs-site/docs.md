@@ -258,7 +258,7 @@ Task runs logged to SQLite with duration and result.
 ## Container Isolation
 
 Agents run inside:
-- **macOS:** Apple Container
+- **macOS:** Docker Desktop
 - **Linux:** Docker
 
 Each invocation spawns a container with mounted directories. Bash access is safe—commands run inside the container, not on your host.

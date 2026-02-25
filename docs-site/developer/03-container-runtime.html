@@ -108,26 +108,24 @@
           <h1>Container Runtime</h1>
           <p>Rendered from Markdown into styled HTML. Code blocks, tables, and links stay readable and theme-consistent.</p>
         </section>
-        <section class="toc-box"><h3>On This Page</h3><a class="" href="#runtime-selection">Runtime Selection</a><a class="" href="#mount-model">Mount Model</a><a class="" href="#env-passthrough-policy">Env Passthrough Policy</a><a class="" href="#additional-mount-security">Additional Mount Security</a><a class="" href="#container-execution">Container Execution</a><a class="" href="#apple-container-self-heal">Apple Container Self-Heal</a><a class="" href="#in-container-runtime">In-Container Runtime</a></section>
+        <section class="toc-box"><h3>On This Page</h3><a class="" href="#runtime-selection">Runtime Selection</a><a class="" href="#mount-model">Mount Model</a><a class="" href="#env-passthrough-policy">Env Passthrough Policy</a><a class="" href="#additional-mount-security">Additional Mount Security</a><a class="" href="#container-execution">Container Execution</a><a class="" href="#apple-container-self-heal">Runtime Health Checks</a><a class="" href="#in-container-runtime">In-Container Runtime</a></section>
         <article class="article">
           <h1 id="container-runtime">Container Runtime</h1>
 <p>Primary files:</p>
 <ul>
 <li><code>src/container-runtime.ts</code></li>
 <li><code>src/container-runner.ts</code></li>
-<li><code>src/apple-container.ts</code></li>
 <li><code>container/Dockerfile</code></li>
 <li><code>container/agent-runner/src/index.ts</code></li>
 </ul>
 <h2 id="runtime-selection">Runtime Selection</h2>
 <p>From <code>getContainerRuntime()</code>:</p>
 <ul>
-<li><code>CONTAINER_RUNTIME=apple|docker|auto</code></li>
+<li><code>CONTAINER_RUNTIME=auto|docker|host</code></li>
 <li><code>auto</code> behavior:<ul>
-<li>macOS + <code>container</code> command present -&gt; <code>apple</code></li>
-<li>else <code>docker</code> if present</li>
-<li>else fallback to <code>container</code> if present</li>
-<li>else throw hard startup error</li>
+<li><code>docker</code> if available</li>
+<li>else <code>host</code> only if <code>FFT_NANO_ALLOW_HOST_RUNTIME=1</code></li>
+<li>else throw startup error</li>
 </ul>
 </li>
 </ul>
@@ -175,7 +173,7 @@ Examples:</p>
 <p><code>runContainerAgent(...)</code>:</p>
 <ol>
 <li>Optionally builds retrieval-gated memory context.</li>
-<li>Spawns runtime command (<code>container</code> or <code>docker</code>) with generated args.</li>
+<li>Spawns runtime command (<code>docker</code>) or local host runner (<code>node container/agent-runner/dist/index.js</code>).</li>
 <li>Sends JSON input to stdin.</li>
 <li>Enforces timeout (<code>CONTAINER_TIMEOUT</code> or group override).</li>
 <li>Captures stdout/stderr with size limits (<code>CONTAINER_MAX_OUTPUT_SIZE</code>).</li>
@@ -184,17 +182,17 @@ Examples:</p>
 <li><code>---FFT_NANO_OUTPUT_END---</code></li>
 </ul>
 </li>
-<li>Writes per-run logs under <code>groups/&lt;group&gt;/logs/container-*.log</code>.</li>
+<li>Writes per-run logs under <code>groups/&lt;group&gt;/logs/runtime-*.log</code>.</li>
 </ol>
 <p>Abort behavior:</p>
 <ul>
 <li><code>SIGTERM</code>, escalate to <code>SIGKILL</code> after 750ms if process still alive.</li>
 </ul>
-<h2 id="apple-container-self-heal">Apple Container Self-Heal</h2>
-<p>If runtime is Apple Container and output error looks like network timeout, host may:</p>
+<h2 id="apple-container-self-heal">Runtime Health Checks</h2>
+<p>If runtime is Docker and an execution attempt fails, verify Docker daemon health and retry once:</p>
 <ol>
-<li><code>container system stop</code></li>
-<li><code>container system start</code></li>
+<li>Verify <code>docker info</code></li>
+<li>Start/restart Docker daemon if needed</li>
 <li>Retry one container run</li>
 </ol>
 <p>Guardrails:</p>

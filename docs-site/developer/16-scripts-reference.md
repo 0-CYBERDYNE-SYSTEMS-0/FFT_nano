@@ -50,5 +50,5 @@ This page covers repository scripts under `scripts/` and `container/`.
 
 ## Container image builds
 
-- `container/build.sh [tag]` (Apple Container)
+- `container/build.sh [tag]` (Docker)
 - `container/build-docker.sh [tag]` (Docker)
