@@ -23,6 +23,16 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
 
+docker_daemon_healthy() {
+  local err_file="$1"
+  : >"$err_file"
+  if perl -e 'my $t=shift; alarm $t; my $rc=system(@ARGV); exit($rc >> 8);' \
+    8 docker info >/dev/null 2>"$err_file"; then
+    return 0
+  fi
+  return 1
+}
+
 node_major() {
   node -p 'process.versions.node.split(".")[0]'
 }
@@ -55,9 +65,23 @@ ensure_runtime_ready() {
   local runtime="$1"
   if [[ "$runtime" == "docker" ]]; then
     need_cmd docker
-    if ! docker info >/dev/null 2>&1; then
-      fail "Docker is installed but not running (docker info failed). Start Docker Desktop (macOS) or the docker daemon (Linux)."
+    local docker_err
+    docker_err="$(mktemp -t fft_nano_docker_info.XXXXXX)"
+    if ! docker_daemon_healthy "$docker_err"; then
+      local err_preview
+      err_preview="$(tr '\n' ' ' <"$docker_err" | sed 's/[[:space:]]\+/ /g' | cut -c1-220)"
+      local no_space=0
+      if grep -qi "no space left on device" "$docker_err" 2>/dev/null || \
+        grep -qi "no space left on device" "$HOME/Library/Containers/com.docker.docker/Data/log/host/com.docker.backend.log" 2>/dev/null; then
+        no_space=1
+      fi
+      rm -f "$docker_err"
+      if [[ "$no_space" -eq 1 ]]; then
+        fail "Docker daemon unhealthy (disk/full VM signature detected: no space left on device). Run ./scripts/docker-recover.sh, then retry ./scripts/setup.sh."
+      fi
+      fail "Docker is installed but not healthy (docker info failed/timed out). Start Docker Desktop (macOS) or docker daemon (Linux). Details: ${err_preview:-none}. If this persists, run ./scripts/docker-recover.sh."
     fi
+    rm -f "$docker_err"
     return
   fi
 

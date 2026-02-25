@@ -90,6 +90,11 @@ Interactive mode prompts for flow/mode/provider/channel/hatch and identity value
   - `CONTAINER_RUNTIME=host`
   - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
   - in production, also set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
+- If Docker reports `EOF`, `Cannot connect`, or `no space left on device`, run:
+
+```bash
+./scripts/docker-recover.sh
+```
 
 ## Profiles
 

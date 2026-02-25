@@ -440,6 +440,7 @@ Common issues:
 - Missing provider key -> Pi reports no models available
 - Wrong provider/model combo -> model/provider not found
 - Multiple bot instances -> Telegram polling conflict
+- Docker daemon `EOF` / `Cannot connect` / `no space left on device` -> run `./scripts/docker-recover.sh` (backs up old `Docker.raw` and rebuilds Docker VM disk when needed)
 
 ## Development Checks
 
