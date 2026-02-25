@@ -63,10 +63,6 @@ import {
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
 import { getContainerRuntime } from './container-runtime.js';
-import {
-  restartAppleContainerSystemSingleFlight,
-  shouldSelfHealAppleContainer,
-} from './apple-container.js';
 import { acquireSingletonLock } from './singleton-lock.js';
 import {
   createTelegramBot,
@@ -122,9 +118,6 @@ const TELEGRAM_MAIN_CHAT_ID = process.env.TELEGRAM_MAIN_CHAT_ID;
 const TELEGRAM_ADMIN_SECRET = process.env.TELEGRAM_ADMIN_SECRET;
 const TELEGRAM_AUTO_REGISTER = !['0', 'false', 'no'].includes(
   (process.env.TELEGRAM_AUTO_REGISTER || '1').toLowerCase(),
-);
-const APPLE_CONTAINER_SELF_HEAL = !['0', 'false', 'no'].includes(
-  (process.env.FFT_NANO_APPLE_CONTAINER_SELF_HEAL || '1').toLowerCase(),
 );
 const HEARTBEAT_PROMPT = PARITY_CONFIG.heartbeat.prompt;
 const HEARTBEAT_INTERVAL_MS =
@@ -3455,26 +3448,7 @@ async function runAgent(
       noContinue: runtimePrefs.nextRunNoContinue === true,
     };
 
-    let output = await runContainerAgent(group, input, abortSignal);
-    if (
-      output.status === 'error' &&
-      runtime === 'apple' &&
-      APPLE_CONTAINER_SELF_HEAL &&
-      typeof output.error === 'string' &&
-      output.error &&
-      shouldSelfHealAppleContainer(output.error)
-    ) {
-      const restarted = await restartAppleContainerSystemSingleFlight(
-        output.error,
-      );
-      if (restarted) {
-        logger.warn(
-          { group: group.name, error: output.error },
-          'Retrying container agent after Apple Container self-heal',
-        );
-        output = await runContainerAgent(group, input, abortSignal);
-      }
-    }
+    const output = await runContainerAgent(group, input, abortSignal);
 
     if (output.status === 'error') {
       if (typeof output.error === 'string' && /aborted by user/i.test(output.error)) {
@@ -3494,11 +3468,7 @@ async function runAgent(
       // Reply with a short error rather than silently dropping the message.
       // Also mark ok=true so we don't keep re-sending the same failing prompt.
       const msg = output.error
-        ? `LLM error: ${output.error}${
-            runtime === 'apple'
-              ? '\n\nIf this persists on macOS Apple Container, run:\ncontainer system stop && container system start'
-              : ''
-          }`
+        ? `LLM error: ${output.error}`
         : 'LLM error: agent runner failed (no details).';
       return { result: msg, streamed: false, ok: true };
     }
@@ -4385,105 +4355,75 @@ function requestHeartbeatNow(reason = 'manual'): void {
 
 function ensureContainerSystemRunning(): void {
   const runtime = getContainerRuntime();
-  const cleanupStaleContainers = () => {
-    try {
-      const listCmd =
-        runtime === 'docker'
-          ? "docker ps -a --filter status=exited --filter name=nanoclaw- --format '{{.Names}}'"
-          : 'container ls -a --format {{.Names}}';
-      const removeCmd = runtime === 'docker' ? 'docker rm' : 'container rm';
-      const output = execSync(listCmd, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        encoding: 'utf-8',
-      });
-      const stale = output
-        .split('\n')
-        .map((n) => n.trim())
-        .filter((n) => n.startsWith('nanoclaw-'));
-      if (stale.length > 0) {
-        execSync(`${removeCmd} ${stale.join(' ')}`, { stdio: 'pipe' });
-        logger.info({ runtime, count: stale.length }, 'Cleaned up stale containers');
-      }
-    } catch {
-      // Ignore cleanup failures (unsupported flags/no stale containers/runtime quirks).
+  if (runtime === 'host') {
+    if (
+      (process.env.NODE_ENV || '').toLowerCase() === 'production' &&
+      !['1', 'true', 'yes', 'on'].includes(
+        (process.env.FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD || '').toLowerCase(),
+      )
+    ) {
+      throw new Error(
+        'Host runtime is blocked in production unless FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1',
+      );
     }
-  };
-
-  if (runtime === 'docker') {
-    try {
-      // Verifies Docker is installed and the daemon is reachable.
-      execSync('docker info', { stdio: 'pipe' });
-      logger.debug('Docker runtime available');
-      cleanupStaleContainers();
-      return;
-    } catch (err) {
-      logger.error({ err }, 'Docker runtime not available');
-      console.error(
-        '\n╔════════════════════════════════════════════════════════════════╗',
-      );
-      console.error(
-        '║  FATAL: Docker is required but is not available               ║',
-      );
-      console.error(
-        '║                                                                ║',
-      );
-      console.error(
-        '║  To fix:                                                       ║',
-      );
-      console.error(
-        '║  1. Install Docker (Desktop on macOS, engine on Linux/RPi)     ║',
-      );
-      console.error(
-        '║  2. Start the Docker daemon                                    ║',
-      );
-      console.error(
-        '║  3. Restart FFT_nano                                          ║',
-      );
-      console.error(
-        '╚════════════════════════════════════════════════════════════════╝\n',
-      );
-      throw new Error('Docker is required but not available');
-    }
+    logger.warn(
+      'Running in host runtime mode (no container isolation). This should only be used for trusted local workflows.',
+    );
+    return;
   }
 
   try {
-    execSync('container system status', { stdio: 'pipe' });
-    logger.debug('Apple Container system already running');
-  } catch {
-    logger.info('Starting Apple Container system...');
-    try {
-      execSync('container system start', { stdio: 'pipe', timeout: 30000 });
-      logger.info('Apple Container system started');
-    } catch (err) {
-      logger.error({ err }, 'Failed to start Apple Container system');
-      console.error(
-        '\n╔════════════════════════════════════════════════════════════════╗',
-      );
-      console.error(
-        '║  FATAL: Apple Container system failed to start                 ║',
-      );
-      console.error(
-        '║                                                                ║',
-      );
-      console.error(
-        '║  Agents cannot run without Apple Container. To fix:           ║',
-      );
-      console.error(
-        '║  1. Install from: https://github.com/apple/container/releases ║',
-      );
-      console.error(
-        '║  2. Run: container system start                               ║',
-      );
-      console.error(
-        '║  3. Restart FFT_nano                                          ║',
-      );
-      console.error(
-        '╚════════════════════════════════════════════════════════════════╝\n',
-      );
-      throw new Error('Apple Container system is required but failed to start');
-    }
+    // Verifies Docker is installed and the daemon is reachable.
+    execSync('docker info', { stdio: 'pipe' });
+    logger.debug('Docker runtime available');
+  } catch (err) {
+    logger.error({ err }, 'Docker runtime not available');
+    console.error(
+      '\n╔════════════════════════════════════════════════════════════════╗',
+    );
+    console.error(
+      '║  FATAL: Docker is required but is not available               ║',
+    );
+    console.error(
+      '║                                                                ║',
+    );
+    console.error(
+      '║  To fix:                                                       ║',
+    );
+    console.error(
+      '║  1. Install Docker (Desktop on macOS, engine on Linux/RPi)     ║',
+    );
+    console.error(
+      '║  2. Start the Docker daemon                                    ║',
+    );
+    console.error(
+      '║  3. Restart FFT_nano                                          ║',
+    );
+    console.error(
+      '╚════════════════════════════════════════════════════════════════╝\n',
+    );
+    throw new Error('Docker is required but not available');
   }
-  cleanupStaleContainers();
+
+  try {
+    const output = execSync(
+      "docker ps -a --filter status=exited --filter name=nanoclaw- --format '{{.Names}}'",
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+      },
+    );
+    const stale = output
+      .split('\n')
+      .map((n) => n.trim())
+      .filter((n) => n.startsWith('nanoclaw-'));
+    if (stale.length > 0) {
+      execSync(`docker rm ${stale.join(' ')}`, { stdio: 'pipe' });
+      logger.info({ runtime, count: stale.length }, 'Cleaned up stale containers');
+    }
+  } catch {
+    // Ignore cleanup failures (unsupported flags/no stale containers/runtime quirks).
+  }
 }
 
 function stopFarmServicesForShutdown(signal: string): void {

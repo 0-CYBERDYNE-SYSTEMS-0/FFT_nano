@@ -83,6 +83,14 @@ Interactive mode prompts for flow/mode/provider/channel/hatch and identity value
 ./scripts/service.sh restart
 ```
 
+## Runtime Modes
+
+- Default runtime is Docker (`CONTAINER_RUNTIME=auto` picks Docker when available).
+- Optional host runtime (no container isolation) requires explicit opt-in:
+  - `CONTAINER_RUNTIME=host`
+  - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
+  - in production, also set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
+
 ## Profiles
 
 Use `core` (default) or `farm` profile controls:

@@ -13,7 +13,7 @@ Adds Parallel AI MCP integration to FFT_nano for advanced web research capabilit
 User must have:
 1. Parallel AI API key from https://platform.parallel.ai
 2. FFT_nano already set up and running
-3. Container system working (Apple Container or Docker)
+3. Runtime available (Docker preferred, or explicit host mode)
 
 ## Implementation Steps
 
@@ -224,14 +224,9 @@ Build the container with updated agent runner:
 ./container/build.sh
 ```
 
-The build script will automatically:
-- Try Apple Container first
-- Fall back to Docker if Rosetta is required
-- Import to Apple Container
-
 Verify the build:
 ```bash
-echo '{}' | container run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK"
+echo '{}' | docker run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK"
 ```
 
 ### 7. Restart Service
@@ -269,10 +264,10 @@ Look for: `Parallel AI MCP servers configured`
 
 ## Troubleshooting
 
-**Container hangs or times out:**
+**Runtime hangs or times out:**
 - Check that `type: 'http'` is specified in MCP server config
 - Verify API key is correct in .env
-- Check container logs: `cat groups/main/logs/container-*.log | tail -50`
+- Check runtime logs: `cat groups/main/logs/runtime-*.log | tail -50`
 
 **MCP servers not loading:**
 - Ensure PARALLEL_API_KEY is in .env

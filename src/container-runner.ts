@@ -1,6 +1,6 @@
 /**
  * Container Runner for FFT_nano
- * Spawns agent execution in Apple Container and handles IPC
+ * Spawns agent execution via Docker (preferred) or explicit host runtime
  */
 import { exec, spawn } from 'child_process';
 import fs from 'fs';
@@ -23,7 +23,7 @@ import {
   PARITY_CONFIG,
   TIMEZONE,
 } from './config.js';
-import { getContainerRuntime, getRuntimeCommand } from './container-runtime.js';
+import { getContainerRuntime } from './container-runtime.js';
 import type { ContainerRuntime } from './container-runtime.js';
 import {
   assertValidGroupFolder,
@@ -189,7 +189,6 @@ function buildVolumeMounts(
     });
 
     // Global memory directory (read-only for non-main)
-    // Apple Container only supports directory mounts, not file mounts
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
       mounts.push({
@@ -351,7 +350,18 @@ function stripDotEnvQuotes(raw: string): string {
   return v;
 }
 
-function collectRuntimeSecrets(projectRoot: string): Record<string, string> {
+function collectRuntimeSecrets(params: {
+  projectRoot: string;
+  runtime: ContainerRuntime;
+  hostPaths?: {
+    projectDir: string;
+    groupDir: string;
+    globalDir: string;
+    ipcDir: string;
+    piHomeDir: string;
+  };
+}): Record<string, string> {
+  const { projectRoot, runtime, hostPaths } = params;
   const envFile = path.join(projectRoot, '.env');
   const allowedVars = [
     // Pi / OpenAI-compatible config
@@ -406,14 +416,51 @@ function collectRuntimeSecrets(projectRoot: string): Record<string, string> {
     merged.OPENAI_BASE_URL = merged.PI_BASE_URL;
   }
 
-  // Keep container runtime env stable without mounting env files.
+  // Keep runtime env stable without mounting env files.
   merged.TZ = TIMEZONE;
-  merged.HOME = '/home/node';
-  merged.PI_CODING_AGENT_DIR = '/home/node/.pi/agent';
   merged.FFT_NANO_PROMPT_FILE_MAX_CHARS = String(PARITY_CONFIG.workspace.bootstrapMaxChars);
   merged.FFT_NANO_PROMPT_TOTAL_MAX_CHARS = String(
     PARITY_CONFIG.workspace.bootstrapTotalMaxChars,
   );
+
+  if (runtime === 'docker') {
+    merged.HOME = '/home/node';
+    merged.PI_CODING_AGENT_DIR = '/home/node/.pi/agent-openclaw';
+  } else if (hostPaths) {
+    const hostHome = path.join(
+      DATA_DIR,
+      'host-home',
+      path.basename(path.dirname(hostPaths.piHomeDir)),
+    );
+    fs.mkdirSync(hostHome, { recursive: true });
+    const hostRunnerBin = path.join(
+      projectRoot,
+      'container',
+      'agent-runner',
+      'node_modules',
+      '.bin',
+    );
+
+    merged.HOME = hostHome;
+    merged.PATH = `${hostRunnerBin}:${process.env.PATH || ''}`;
+    merged.PI_CODING_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-openclaw');
+    merged.FFT_AGENT_WORKSPACE_ROOT_DIR = projectRoot;
+    merged.FFT_AGENT_WORKSPACE_PROJECT_DIR = hostPaths.projectDir;
+    merged.FFT_AGENT_WORKSPACE_GROUP_DIR = hostPaths.groupDir;
+    merged.FFT_AGENT_WORKSPACE_GLOBAL_DIR = hostPaths.globalDir;
+    merged.FFT_AGENT_WORKSPACE_IPC_DIR = hostPaths.ipcDir;
+    merged.FFT_AGENT_PI_HOME_DIR = hostPaths.piHomeDir;
+    merged.FFT_AGENT_PI_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-openclaw');
+    merged.FFT_AGENT_CODER_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-coder');
+    merged.FFT_AGENT_PI_ON_PI_EXTENSION_PATH = path.join(
+      projectRoot,
+      'container',
+      'agent-runner',
+      'dist',
+      'extensions',
+      'pi-on-pi.js',
+    );
+  }
   return merged;
 }
 
@@ -422,30 +469,29 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
 ): string[] {
+  if (runtime !== 'docker') {
+    throw new Error(`buildContainerArgs does not support runtime: ${runtime}`);
+  }
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  if (runtime === 'docker') {
-    for (const mount of mounts) {
-      const roSuffix = mount.readonly ? ':ro' : '';
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}${roSuffix}`);
-    }
-  } else {
-    // Apple Container: --mount for readonly, -v for read-write
-    for (const mount of mounts) {
-      if (mount.readonly) {
-        args.push(
-          '--mount',
-          `type=bind,source=${mount.hostPath},target=${mount.containerPath},readonly`,
-        );
-      } else {
-        args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
-      }
-    }
+  for (const mount of mounts) {
+    const roSuffix = mount.readonly ? ':ro' : '';
+    args.push('-v', `${mount.hostPath}:${mount.containerPath}${roSuffix}`);
   }
 
   args.push(CONTAINER_IMAGE);
 
   return args;
+}
+
+function resolveMountedHostPath(
+  mounts: VolumeMount[],
+  containerPath: string,
+  fallback = '',
+): string {
+  const direct = mounts.find((mount) => mount.containerPath === containerPath);
+  if (direct) return direct.hostPath;
+  return fallback;
 }
 
 export async function runContainerAgent(
@@ -506,9 +552,13 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const runtime = getContainerRuntime();
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(runtime, mounts, containerName);
-  const runtimeCmd = getRuntimeCommand(runtime);
+  const runtimeName = `nanoclaw-${safeName}-${Date.now()}`;
+  const runtimeCmd =
+    runtime === 'docker' ? 'docker' : process.execPath;
+  const runtimeArgs =
+    runtime === 'docker'
+      ? buildContainerArgs(runtime, mounts, runtimeName)
+      : [path.join(projectRoot, 'container', 'agent-runner', 'dist', 'index.js')];
 
   logger.debug(
     {
@@ -517,29 +567,42 @@ export async function runContainerAgent(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
-      containerName,
+      runtimeArgs: runtimeArgs.join(' '),
+      runtimeName,
       runtime,
     },
-    'Container mount configuration',
+    'Agent runtime mount configuration',
   );
 
   logger.info(
     {
       group: group.name,
-      containerName,
+      runtimeName,
       mountCount: mounts.length,
       isMain: input.isMain,
+      runtime,
     },
-    'Spawning container agent',
+    'Spawning agent runtime',
   );
 
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
+  if (runtime === 'host') {
+    const hostRunnerPath = runtimeArgs[0];
+    if (!hostRunnerPath || !fs.existsSync(hostRunnerPath)) {
+      return {
+        status: 'error',
+        result: null,
+        error: `Host runtime runner not found at ${path.join(projectRoot, 'container', 'agent-runner', 'dist', 'index.js')}. Run setup or build container/agent-runner.`,
+      };
+    }
+  }
+
   return new Promise((resolve) => {
-    const container = spawn(runtimeCmd, containerArgs, {
+    const runtimeProc = spawn(runtimeCmd, runtimeArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: runtime === 'host' ? projectRoot : undefined,
     });
     let settled = false;
     let onAbort: (() => void) | null = null;
@@ -561,14 +624,45 @@ export async function runContainerAgent(
       resolve(output);
     };
 
+    const hostProjectDir = resolveMountedHostPath(mounts, '/workspace/project', projectRoot);
+    const hostGroupDir = resolveMountedHostPath(mounts, '/workspace/group', groupDir);
+    const hostGlobalDir = resolveMountedHostPath(
+      mounts,
+      '/workspace/global',
+      path.join(GROUPS_DIR, 'global'),
+    );
+    const hostIpcDir = resolveMountedHostPath(
+      mounts,
+      '/workspace/ipc',
+      resolveGroupIpcPath(group.folder),
+    );
+    const hostPiHomeDir = resolveMountedHostPath(
+      mounts,
+      '/home/node/.pi',
+      path.join(DATA_DIR, 'pi', group.folder, '.pi'),
+    );
+
     const payloadWithSecrets: ContainerInput = {
       ...payload,
-      secrets: collectRuntimeSecrets(projectRoot),
+      secrets: collectRuntimeSecrets({
+        projectRoot,
+        runtime,
+        hostPaths:
+          runtime === 'host'
+            ? {
+                projectDir: hostProjectDir,
+                groupDir: hostGroupDir,
+                globalDir: hostGlobalDir,
+                ipcDir: hostIpcDir,
+                piHomeDir: hostPiHomeDir,
+              }
+            : undefined,
+      }),
     };
-    container.stdin.write(JSON.stringify(payloadWithSecrets));
-    container.stdin.end();
+    runtimeProc.stdin.write(JSON.stringify(payloadWithSecrets));
+    runtimeProc.stdin.end();
 
-    container.stdout.on('data', (data) => {
+    runtimeProc.stdout.on('data', (data) => {
       if (stdoutTruncated) return;
       const chunk = data.toString();
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
@@ -577,18 +671,18 @@ export async function runContainerAgent(
         stdoutTruncated = true;
         logger.warn(
           { group: group.name, size: stdout.length },
-          'Container stdout truncated due to size limit',
+          'Runtime stdout truncated due to size limit',
         );
       } else {
         stdout += chunk;
       }
     });
 
-    container.stderr.on('data', (data) => {
+    runtimeProc.stderr.on('data', (data) => {
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (line) logger.debug({ runtimeGroup: group.folder, runtime }, line);
       }
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
@@ -597,7 +691,7 @@ export async function runContainerAgent(
         stderrTruncated = true;
         logger.warn(
           { group: group.name, size: stderr.length },
-          'Container stderr truncated due to size limit',
+          'Runtime stderr truncated due to size limit',
         );
       } else {
         stderr += chunk;
@@ -609,20 +703,27 @@ export async function runContainerAgent(
     const timeout = setTimeout(() => {
       timedOut = true;
       logger.error(
-        { group: group.name, containerName, runtime, timeoutMs },
-        'Container timeout, stopping gracefully',
+        { group: group.name, runtimeName, runtime, timeoutMs },
+        'Agent runtime timeout, stopping gracefully',
       );
-      exec(`${runtimeCmd} stop ${containerName}`, { timeout: 15000 }, (err) => {
-        if (!err) return;
-        logger.warn(
-          { group: group.name, containerName, runtime, err },
-          'Graceful runtime stop failed; escalating to SIGKILL',
-        );
-        container.kill('SIGKILL');
-      });
+      if (runtime === 'docker') {
+        exec(`${runtimeCmd} stop ${runtimeName}`, { timeout: 15000 }, (err) => {
+          if (!err) return;
+          logger.warn(
+            { group: group.name, runtimeName, runtime, err },
+            'Graceful runtime stop failed; escalating to SIGKILL',
+          );
+          runtimeProc.kill('SIGKILL');
+        });
+      } else {
+        runtimeProc.kill('SIGTERM');
+        setTimeout(() => {
+          if (!exited) runtimeProc.kill('SIGKILL');
+        }, 750);
+      }
     }, timeoutMs);
 
-    container.once('exit', () => {
+    runtimeProc.once('exit', () => {
       exited = true;
       if (abortEscalationTimer) {
         clearTimeout(abortEscalationTimer);
@@ -631,17 +732,17 @@ export async function runContainerAgent(
     });
 
     onAbort = () => {
-      logger.info({ group: group.name }, 'Container run aborted by signal');
+      logger.info({ group: group.name, runtime }, 'Agent runtime run aborted by signal');
       if (!exited) {
-        container.kill('SIGTERM');
+        runtimeProc.kill('SIGTERM');
       }
       abortEscalationTimer = setTimeout(() => {
         if (exited) return;
         logger.warn(
-          { group: group.name },
-          'Container did not exit after SIGTERM; escalating to SIGKILL',
+          { group: group.name, runtime },
+          'Agent runtime did not exit after SIGTERM; escalating to SIGKILL',
         );
-        container.kill('SIGKILL');
+        runtimeProc.kill('SIGKILL');
       }, 750);
       clearTimeout(timeout);
       finish({
@@ -659,7 +760,7 @@ export async function runContainerAgent(
       }
     }
 
-    container.on('close', (code) => {
+    runtimeProc.on('close', (code) => {
       if (settled) return;
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
@@ -668,8 +769,8 @@ export async function runContainerAgent(
         const parsedAfterTimeout = tryParseContainerOutput(stdout);
         if (parsedAfterTimeout?.status === 'success') {
           logger.info(
-            { group: group.name, containerName, runtime, duration },
-            'Container timed out after output was emitted; treating as success',
+            { group: group.name, runtimeName, runtime, duration },
+            'Agent runtime timed out after output was emitted; treating as success',
           );
           finish(parsedAfterTimeout);
           return;
@@ -677,18 +778,18 @@ export async function runContainerAgent(
         finish({
           status: 'error',
           result: null,
-          error: `Container timed out after ${configuredTimeout}ms`,
+          error: `Agent runtime timed out after ${configuredTimeout}ms`,
         });
         return;
       }
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logFile = path.join(logsDir, `container-${timestamp}.log`);
+      const logFile = path.join(logsDir, `runtime-${timestamp}.log`);
       const isVerbose =
         process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
       const logLines = [
-        `=== Container Run Log ===`,
+        `=== Runtime Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
         `Group: ${group.name}`,
         `IsMain: ${input.isMain}`,
@@ -701,16 +802,16 @@ export async function runContainerAgent(
 
       const isError = code !== 0;
 
-      if (isVerbose || isError) {
-        logLines.push(
-          `=== Input ===`,
-          JSON.stringify(payload, null, 2),
-          ``,
-          `=== Container Args ===`,
-          containerArgs.join(' '),
-          ``,
-          `=== Mounts ===`,
-          mounts
+        if (isVerbose || isError) {
+          logLines.push(
+            `=== Input ===`,
+            JSON.stringify(payload, null, 2),
+            ``,
+            `=== Runtime Args ===`,
+            runtimeArgs.join(' '),
+            ``,
+            `=== Mounts ===`,
+            mounts
             .map(
               (m) =>
                 `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
@@ -759,7 +860,7 @@ export async function runContainerAgent(
             stdout,
             logFile,
           },
-          'Container exited with error',
+          'Agent runtime exited with error',
         );
 
         finish({
@@ -767,7 +868,7 @@ export async function runContainerAgent(
           result: null,
           error:
             parsedError ||
-            `Container exited with code ${code}: ${stderr.slice(-200)}`,
+            `Agent runtime exited with code ${code}: ${stderr.slice(-200)}`,
         });
         return;
       }
@@ -783,7 +884,7 @@ export async function runContainerAgent(
             status: output.status,
             hasResult: !!output.result,
           },
-          'Container completed',
+          'Agent runtime completed',
         );
 
         finish(output);
@@ -795,25 +896,25 @@ export async function runContainerAgent(
             stderr,
             error: err,
           },
-          'Failed to parse container output',
+          'Failed to parse runtime output',
         );
 
         finish({
           status: 'error',
           result: null,
-          error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Failed to parse runtime output: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
     });
 
-    container.on('error', (err) => {
+    runtimeProc.on('error', (err) => {
       if (settled) return;
       clearTimeout(timeout);
-      logger.error({ group: group.name, error: err }, 'Container spawn error');
+      logger.error({ group: group.name, runtime, error: err }, 'Agent runtime spawn error');
       finish({
         status: 'error',
         result: null,
-        error: `Container spawn error: ${err.message}`,
+        error: `Agent runtime spawn error: ${err.message}`,
       });
     });
   });
@@ -867,7 +968,7 @@ export interface AvailableGroup {
 }
 
 /**
- * Write available groups snapshot for the container to read.
+ * Write available groups snapshot for the agent runtime to read.
  * Only main group can see all available groups (for activation).
  * Non-main groups only see their own registration status.
  */

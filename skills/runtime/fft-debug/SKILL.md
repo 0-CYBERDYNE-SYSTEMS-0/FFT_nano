@@ -44,7 +44,7 @@ Use this skill for incident triage and deterministic debugging of FFT_nano host 
 - Provider key missing: Pi reports no models available.
 - Wrong `PI_API`/`PI_MODEL`: model/provider not found.
 - Multiple bot instances: Telegram getUpdates conflict.
-- Apple Container networking timeout on macOS.
+- Docker daemon unavailable or runtime permission issues.
 
 ## Recommended Debug Commands
 
@@ -65,12 +65,11 @@ Use this skill for incident triage and deterministic debugging of FFT_nano host 
 
 ## Container Runtime Debug
 
-- macOS Apple Container:
-  - `container system status`
-  - `container system stop && container system start`
-- Linux Docker:
+- Docker runtime:
   - `docker info`
   - `docker ps`
+- Host runtime (unisolated):
+  - verify explicit flags: `CONTAINER_RUNTIME=host`, `FFT_NANO_ALLOW_HOST_RUNTIME=1`
 
 ## Database/State Debug
 

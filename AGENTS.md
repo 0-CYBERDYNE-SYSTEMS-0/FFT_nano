@@ -105,7 +105,7 @@ Common failure modes:
 - Missing provider key: `pi` reports "No models available" (no API key passed through).
 - Wrong `PI_API`/`PI_MODEL`: `pi` reports "Model '<provider>'/'<model>' not found".
 - Multiple instances: Telegram polling can error with "Conflict: terminated by other getUpdates request". FFT_nano now uses a lock file (`data/fft_nano.lock`) to prevent two instances from running at once.
-- Apple Container networking: if you see `Request timed out.`, restart Apple Container: `container system stop && container system start` (or rely on `FFT_NANO_APPLE_CONTAINER_SELF_HEAL=1` default).
+- Docker daemon unavailable: run `docker info` and start Docker Desktop/daemon if needed.
 
 ---
 |||<VIP_VIP_VIP>

@@ -1,4 +1,9 @@
 import fs from 'fs';
+import {
+  WORKSPACE_GLOBAL_DIR,
+  WORKSPACE_GROUP_DIR,
+  WORKSPACE_IPC_DIR,
+} from './runtime-paths.js';
 
 export type CodingHint =
   | 'none'
@@ -183,7 +188,7 @@ function buildMainContextEntries(params: {
       entries,
       readFileIfExists: params.readFileIfExists,
       label: name,
-      path: `/workspace/group/${name}`,
+      path: `${WORKSPACE_GROUP_DIR}/${name}`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
     });
@@ -202,7 +207,7 @@ function buildMainContextEntries(params: {
       entries,
       readFileIfExists: params.readFileIfExists,
       label: `memory/${dateStr}.md`,
-      path: `/workspace/group/memory/${dateStr}.md`,
+      path: `${WORKSPACE_GROUP_DIR}/memory/${dateStr}.md`,
       fileMaxChars: Math.min(params.fileMaxChars, DEFAULT_MEMORY_DAILY_MAX_CHARS),
       remainingTotalChars: remaining,
     });
@@ -227,7 +232,7 @@ function buildNonMainContextEntries(params: {
     entries,
     readFileIfExists: params.readFileIfExists,
     label: 'global/SOUL.md',
-    path: '/workspace/global/SOUL.md',
+    path: `${WORKSPACE_GLOBAL_DIR}/SOUL.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
   });
@@ -236,41 +241,39 @@ function buildNonMainContextEntries(params: {
       entries,
       readFileIfExists: params.readFileIfExists,
       label: 'group/SOUL.md',
-      path: '/workspace/group/SOUL.md',
+      path: `${WORKSPACE_GROUP_DIR}/SOUL.md`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
     });
   }
 
   if (params.includeMemoryFallback && remaining > 0) {
+    const globalMemoryPrimary = `${WORKSPACE_GLOBAL_DIR}/MEMORY.md`;
+    const globalMemoryLegacy = `${WORKSPACE_GLOBAL_DIR}/memory.md`;
     const globalMemoryPath =
-      params.readFileIfExists('/workspace/global/MEMORY.md') !== null
-        ? '/workspace/global/MEMORY.md'
-        : '/workspace/global/memory.md';
+      params.readFileIfExists(globalMemoryPrimary) !== null
+        ? globalMemoryPrimary
+        : globalMemoryLegacy;
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
-      label:
-        globalMemoryPath === '/workspace/global/MEMORY.md'
-          ? 'global/MEMORY.md'
-          : 'global/memory.md',
+      label: globalMemoryPath === globalMemoryPrimary ? 'global/MEMORY.md' : 'global/memory.md',
       path: globalMemoryPath,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
     });
     if (remaining > 0) {
+      const groupMemoryPrimary = `${WORKSPACE_GROUP_DIR}/MEMORY.md`;
+      const groupMemoryLegacy = `${WORKSPACE_GROUP_DIR}/memory.md`;
       const groupMemoryPath =
-        params.readFileIfExists('/workspace/group/MEMORY.md') !== null
-          ? '/workspace/group/MEMORY.md'
-          : '/workspace/group/memory.md';
+        params.readFileIfExists(groupMemoryPrimary) !== null
+          ? groupMemoryPrimary
+          : groupMemoryLegacy;
       remaining = addContextEntry({
         entries,
         readFileIfExists: params.readFileIfExists,
-        label:
-          groupMemoryPath === '/workspace/group/MEMORY.md'
-            ? 'group/MEMORY.md'
-            : 'group/memory.md',
+        label: groupMemoryPath === groupMemoryPrimary ? 'group/MEMORY.md' : 'group/memory.md',
         path: groupMemoryPath,
         fileMaxChars: params.fileMaxChars,
         remainingTotalChars: remaining,
@@ -385,9 +388,13 @@ export function buildSystemPrompt(
   lines.push('');
 
   lines.push('## Workspace');
-  lines.push('- /workspace/group is writable workspace.');
-  lines.push('- /workspace/ipc is host bridge for outbound messages and scheduler actions.');
-  lines.push('- Durable memory belongs in /workspace/group/MEMORY.md and /workspace/group/memory/*.md.');
+  lines.push(`- ${WORKSPACE_GROUP_DIR} is writable workspace.`);
+  lines.push(
+    `- ${WORKSPACE_IPC_DIR} is host bridge for outbound messages and scheduler actions.`,
+  );
+  lines.push(
+    `- Durable memory belongs in ${WORKSPACE_GROUP_DIR}/MEMORY.md and ${WORKSPACE_GROUP_DIR}/memory/*.md.`,
+  );
   lines.push('- Keep SOUL.md stable; do not use it as compaction log storage.');
   lines.push('');
 
@@ -406,7 +413,9 @@ export function buildSystemPrompt(
     lines.push('## Reasoning Visibility');
     lines.push('Do not reveal private chain-of-thought. Provide concise high-level rationale when useful.');
     if (input.reasoningLevel === 'stream') {
-      lines.push('For long tasks, proactively send concise progress updates via /workspace/ipc/messages.');
+      lines.push(
+        `For long tasks, proactively send concise progress updates via ${WORKSPACE_IPC_DIR}/messages.`,
+      );
     }
     lines.push('');
   }
@@ -439,7 +448,9 @@ export function buildSystemPrompt(
   }
 
   lines.push('## Messaging IPC');
-  lines.push('To proactively message current chat, write JSON into /workspace/ipc/messages/*.json:');
+  lines.push(
+    `To proactively message current chat, write JSON into ${WORKSPACE_IPC_DIR}/messages/*.json:`,
+  );
   lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
   lines.push('Write atomically (temp file then rename).');
   lines.push('');
@@ -460,7 +471,7 @@ export function buildSystemPrompt(
   lines.push(
     `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${assistantName}"}`,
   );
-  lines.push('Read task snapshot from /workspace/ipc/current_tasks.json when needed.');
+  lines.push(`Read task snapshot from ${WORKSPACE_IPC_DIR}/current_tasks.json when needed.`);
   lines.push('');
 
   lines.push('## Output Style');

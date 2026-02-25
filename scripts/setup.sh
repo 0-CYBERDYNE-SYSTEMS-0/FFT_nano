@@ -31,27 +31,24 @@ detect_runtime() {
   local raw="${CONTAINER_RUNTIME:-auto}"
   raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
 
-  if [[ "$raw" == "apple" ]]; then
-    echo "apple"; return
-  fi
   if [[ "$raw" == "docker" ]]; then
     echo "docker"; return
   fi
+  if [[ "$raw" == "host" ]]; then
+    echo "host"; return
+  fi
   if [[ "$raw" != "auto" ]]; then
-    fail "Invalid CONTAINER_RUNTIME=$CONTAINER_RUNTIME (expected auto|apple|docker)"
+    fail "Invalid CONTAINER_RUNTIME=$CONTAINER_RUNTIME (expected auto|docker|host)"
   fi
 
   if command -v docker >/dev/null 2>&1; then
     echo "docker"; return
   fi
-  if [[ "$(uname -s)" == "Darwin" ]] && command -v container >/dev/null 2>&1; then
-    echo "apple"; return
-  fi
-  if command -v container >/dev/null 2>&1; then
-    echo "apple"; return
+  if is_truthy "${FFT_NANO_ALLOW_HOST_RUNTIME:-0}"; then
+    echo "host"; return
   fi
 
-  fail "No container runtime found. Install Apple Container (macOS) or Docker, or set CONTAINER_RUNTIME explicitly."
+  fail "No supported runtime found. Install Docker, or set CONTAINER_RUNTIME=host with FFT_NANO_ALLOW_HOST_RUNTIME=1."
 }
 
 ensure_runtime_ready() {
@@ -64,14 +61,26 @@ ensure_runtime_ready() {
     return
   fi
 
-  need_cmd container
-  if container system status >/dev/null 2>&1; then
+  if ! is_truthy "${FFT_NANO_ALLOW_HOST_RUNTIME:-0}"; then
+    fail "Host runtime requires explicit opt-in: FFT_NANO_ALLOW_HOST_RUNTIME=1"
+  fi
+  if [[ "${NODE_ENV:-}" == "production" ]] && ! is_truthy "${FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD:-0}"; then
+    fail "Host runtime is blocked in production unless FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1"
+  fi
+
+  local host_runner="container/agent-runner/dist/index.js"
+  local host_pi="container/agent-runner/node_modules/.bin/pi"
+  if [[ ! -f "$host_runner" || ! -x "$host_pi" ]]; then
+    say "Preparing host runtime runner dependencies..."
+    npm --prefix container/agent-runner install
+    npm --prefix container/agent-runner run build
+  fi
+  if command -v pi >/dev/null 2>&1; then
     return
   fi
 
-  say "Apple Container system not running; starting..."
-  if ! container system start >/dev/null 2>&1; then
-    fail "Apple Container system failed to start. Install from https://github.com/apple/container/releases then run: container system start"
+  if [[ ! -x "$host_pi" ]]; then
+    fail "Host runtime requires pi on PATH or ${host_pi}. Install agent-runner deps: npm --prefix container/agent-runner install"
   fi
 }
 
@@ -125,15 +134,19 @@ npm run typecheck
 say "Build..."
 npm run build
 
-say "Building agent image..."
+say "Preparing agent runtime..."
 if [[ "$runtime" == "docker" ]]; then
   ./container/build-docker.sh
   say "Smoke test: pi availability"
   echo '{"prompt":"ping","groupFolder":"setup","chatJid":"setup","isMain":false}' | docker run -i --rm --entrypoint pi "${CONTAINER_IMAGE:-fft-nano-agent:latest}" --version >/dev/null 2>&1 || true
 else
-  ./container/build.sh
-  say "Smoke test: pi availability"
-  echo '{"prompt":"ping","groupFolder":"setup","chatJid":"setup","isMain":false}' | container run -i --rm --entrypoint pi "${CONTAINER_IMAGE:-fft-nano-agent:latest}" --version >/dev/null 2>&1 || true
+  say "Host runtime selected: skipping container image build."
+  say "Smoke test: host pi availability"
+  if command -v pi >/dev/null 2>&1; then
+    pi --version >/dev/null 2>&1 || true
+  else
+    PATH="$ROOT_DIR/container/agent-runner/node_modules/.bin:${PATH}" pi --version >/dev/null 2>&1 || true
+  fi
 fi
 
 scaffold_env

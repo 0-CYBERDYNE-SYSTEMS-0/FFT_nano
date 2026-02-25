@@ -11,6 +11,12 @@ import fs from 'fs';
 import { runDelegatedCodingWorker } from './coder-worker.js';
 import { parsePiJsonOutput } from './pi-json-parser.js';
 import {
+  PI_AGENT_OPENCLAW_DIR,
+  PI_ON_PI_EXTENSION_PATH,
+  WORKSPACE_GROUP_DIR,
+  WORKSPACE_IPC_MESSAGES_DIR,
+} from './runtime-paths.js';
+import {
   buildSystemPrompt as buildSystemPromptArchitecture,
   type SystemPromptReport,
 } from './system-prompt.js';
@@ -80,7 +86,6 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---FFT_NANO_OUTPUT_END---';
-const PI_ON_PI_EXTENSION_PATH = '/app/dist/extensions/pi-on-pi.js';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -156,7 +161,8 @@ function isTelegramChatJid(chatJid: string): boolean {
 
 function writeIpcMessage(chatJid: string, text: string): boolean {
   try {
-    const dir = '/workspace/ipc/messages';
+    const dir = WORKSPACE_IPC_MESSAGES_DIR;
+    fs.mkdirSync(dir, { recursive: true });
     const ts = Date.now();
     const rand = Math.random().toString(36).slice(2, 8);
     const tmp = `${dir}/.tmp_${ts}_${rand}.json`;
@@ -241,7 +247,7 @@ async function runPiAgent(
       );
       const env = {
         ...process.env,
-        PI_CODING_AGENT_DIR: '/home/node/.pi/agent-openclaw',
+        PI_CODING_AGENT_DIR: PI_AGENT_OPENCLAW_DIR,
         FFT_NANO_CHAT_JID: input.chatJid,
         FFT_NANO_REQUEST_ID: input.requestId || '',
         FFT_NANO_CODING_HINT: input.codingHint,
@@ -249,7 +255,7 @@ async function runPiAgent(
       };
 
       const child = spawn('pi', args, {
-        cwd: '/workspace/group',
+        cwd: WORKSPACE_GROUP_DIR,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -377,7 +383,7 @@ async function main(): Promise<void> {
     // Keep explicit delegation behavior resilient for long outputs by sending
     // through IPC with file fallback, then suppressing the host final send.
     if (isForceDelegateHint(input.codingHint) && !input.isScheduledTask) {
-      const outDir = '/workspace/group/coder_runs';
+      const outDir = `${WORKSPACE_GROUP_DIR}/coder_runs`;
       fs.mkdirSync(outDir, { recursive: true });
       const rid = input.requestId || `coder_${Date.now()}`;
 

@@ -19,16 +19,14 @@ if [[ "$node_major" -lt 20 ]]; then
 fi
 
 runtime="none"
-if [[ "$(uname -s)" == "Darwin" ]] && command -v container >/dev/null 2>&1; then
-  runtime="apple"
-elif command -v docker >/dev/null 2>&1; then
+if command -v docker >/dev/null 2>&1; then
   runtime="docker"
-elif command -v container >/dev/null 2>&1; then
-  runtime="apple"
+elif [[ "${CONTAINER_RUNTIME:-}" == "host" ]] && [[ "${FFT_NANO_ALLOW_HOST_RUNTIME:-}" == "1" ]]; then
+  runtime="host"
 fi
 
 if [[ "$runtime" == "none" ]]; then
-  echo "no container runtime found (install Apple Container or Docker)"
+  echo "no supported runtime found (install Docker, or set CONTAINER_RUNTIME=host with FFT_NANO_ALLOW_HOST_RUNTIME=1)"
   exit 1
 fi
 
@@ -38,7 +36,7 @@ echo "runtime=$runtime"
 if [[ "$runtime" == "docker" ]]; then
   docker --version || true
 else
-  container --version || true
+  echo "host runtime requested (no container isolation)"
 fi
 
 echo "[fft-setup] prereqs OK"

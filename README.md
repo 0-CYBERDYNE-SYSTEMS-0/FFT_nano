@@ -12,7 +12,7 @@
 
 - Receives inbound chat messages
 - Stores chat + scheduling metadata in SQLite
-- Runs the agent in an isolated container (Apple Container on macOS, Docker on Linux)
+- Runs the agent in an isolated Docker container by default (optional host runtime for advanced local use)
 - Uses `~/nano` as the main/admin workspace (configurable via `FFT_NANO_MAIN_WORKSPACE_DIR`)
 - Persists non-main memory per group in `groups/<group>/MEMORY.md` (plus `groups/<group>/memory/*.md`)
 - Sends agent output back to the originating chat
@@ -49,7 +49,7 @@ cd FFT_nano
 - dependency install (`npm ci` when lockfile exists)
 - `npm run typecheck`
 - `npm run build`
-- agent image build (Apple Container or Docker, auto-detected)
+- agent image build (Docker)
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
 - onboarding wizard (`risk gate`, `quickstart|advanced`, `local|remote`, provider/channel/hatch)
@@ -237,14 +237,17 @@ npm run auth
 
 ### macOS
 
-- Preferred runtime is Apple Container when `container` is installed.
-- If Apple Container is not running: `container system start`
-- If LLM calls timeout on Apple Container networking:
+- Docker is the default runtime.
+- Ensure daemon health before start:
 
 ```bash
-container system stop
-container system start
+docker info
 ```
+
+- Optional advanced mode: unisolated host runtime (explicit opt-in)
+  - `CONTAINER_RUNTIME=host`
+  - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
+  - for production use additionally set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
 
 ### Linux
 
@@ -257,7 +260,7 @@ docker info
 
 ## Raspberry Pi Startup (Raspberry Pi OS 64-bit)
 
-FFT_nano runs on Pi as a Linux Docker deployment (not Apple Container).
+FFT_nano runs on Pi as a Linux Docker deployment.
 
 Canonical Pi guide (full runbook):
 - `docs/RASPBERRY_PI.md`

@@ -94,17 +94,16 @@ fi
 run_runtime_detect() {
   local raw="${CONTAINER_RUNTIME:-auto}"
   raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$raw" == "apple" || "$raw" == "docker" ]]; then
+  if [[ "$raw" == "docker" || "$raw" == "host" ]]; then
     echo "$raw"; return
   fi
   if command -v docker >/dev/null 2>&1; then
     echo "docker"; return
   fi
-  if [[ "$(uname -s)" == "Darwin" ]] && command -v container >/dev/null 2>&1; then
-    echo "apple"; return
-  fi
-  if command -v container >/dev/null 2>&1; then
-    echo "apple"; return
+  local allow_host="${FFT_NANO_ALLOW_HOST_RUNTIME:-0}"
+  allow_host="$(printf %s "$allow_host" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$allow_host" == "1" || "$allow_host" == "true" || "$allow_host" == "yes" || "$allow_host" == "on" ]]; then
+    echo "host"; return
   fi
   echo "unknown"
 }

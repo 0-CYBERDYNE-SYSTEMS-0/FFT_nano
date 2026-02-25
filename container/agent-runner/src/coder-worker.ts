@@ -1,5 +1,6 @@
 import { spawnSync } from 'child_process';
 import fs from 'fs';
+import path from 'path';
 
 import {
   createAgentSession,
@@ -8,9 +9,16 @@ import {
   DefaultResourceLoader,
   SessionManager,
 } from '@mariozechner/pi-coding-agent';
+import {
+  PI_AGENT_CODER_DIR,
+  WORKSPACE_GROUP_DIR,
+  WORKSPACE_IPC_MESSAGES_DIR,
+  WORKSPACE_PROJECT_DIR,
+  isAllowedWorkspaceAbsolutePath,
+} from './runtime-paths.js';
 
-const DEFAULT_WORKER_CWD = '/workspace/group';
-const DEFAULT_WORKER_AGENT_DIR = '/home/node/.pi/agent-coder';
+const DEFAULT_WORKER_CWD = WORKSPACE_GROUP_DIR;
+const DEFAULT_WORKER_AGENT_DIR = PI_AGENT_CODER_DIR;
 
 export type DelegateMode = 'plan' | 'execute';
 
@@ -46,7 +54,8 @@ function isTelegramChatJid(chatJid: string): boolean {
 function writeIpcMessage(chatJid: string, text: string): boolean {
   if (!chatJid) return false;
   try {
-    const dir = '/workspace/ipc/messages';
+    const dir = WORKSPACE_IPC_MESSAGES_DIR;
+    fs.mkdirSync(dir, { recursive: true });
     const ts = Date.now();
     const rand = Math.random().toString(36).slice(2, 8);
     const tmp = `${dir}/.tmp_${ts}_${rand}.json`;
@@ -147,7 +156,9 @@ function buildWorkerPrompt(params: DelegateParams): string {
     lines.push('- Implement the requested code changes directly.');
     lines.push('- Run relevant checks/tests when feasible.');
     lines.push('- Use real tools and produce actual file edits.');
-    lines.push('- Write project files under /workspace/project or /workspace/group.');
+    lines.push(
+      `- Write project files under ${WORKSPACE_PROJECT_DIR} or ${WORKSPACE_GROUP_DIR}.`,
+    );
     lines.push('- Do not claim file edits unless you actually performed them with tools.');
   }
 
@@ -217,8 +228,8 @@ function readPathArg(args: unknown): string | null {
 }
 
 function isDisallowedAbsolutePath(pathValue: string): boolean {
-  if (!pathValue.startsWith('/')) return false;
-  return !pathValue.startsWith('/workspace/');
+  if (!path.isAbsolute(pathValue)) return false;
+  return !isAllowedWorkspaceAbsolutePath(pathValue);
 }
 
 export async function runDelegatedCodingWorker(
@@ -333,7 +344,7 @@ export async function runDelegatedCodingWorker(
     throw new Error('Delegated coding request aborted before start');
   }
 
-  const beforeProject = getGitDirtySet('/workspace/project');
+  const beforeProject = getGitDirtySet(WORKSPACE_PROJECT_DIR);
   const beforeGroup = getGitDirtySet(workerCwd);
 
   const workerLoader = new DefaultResourceLoader({
@@ -413,7 +424,7 @@ export async function runDelegatedCodingWorker(
     const finalResult =
       result || 'Delegated worker completed without a response.';
 
-    const afterProject = getGitDirtySet('/workspace/project');
+    const afterProject = getGitDirtySet(WORKSPACE_PROJECT_DIR);
     const afterGroup = getGitDirtySet(workerCwd);
     const changedFiles = [
       ...getNewlyDirtyFiles(beforeProject, afterProject).map(
