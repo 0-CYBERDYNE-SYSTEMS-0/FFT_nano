@@ -51,6 +51,38 @@ mac_target() {
   printf 'gui/%s' "$(id -u)"
 }
 
+mac_service_ref() {
+  printf '%s/%s' "$(mac_target)" "${LAUNCHD_LABEL}"
+}
+
+mac_is_loaded() {
+  launchctl print "$(mac_service_ref)" >/dev/null 2>&1
+}
+
+mac_wait_unloaded() {
+  local attempts="${1:-30}"
+  while mac_is_loaded; do
+    ((attempts--)) || return 1
+    sleep 0.1
+  done
+}
+
+mac_bootout_loaded_job() {
+  local target service_ref
+  target="$(mac_target)"
+  service_ref="$(mac_service_ref)"
+
+  # Use domain+plist form first: this reliably unloads stale launchd jobs.
+  launchctl bootout "${target}" "${LAUNCHD_PLIST}" >/dev/null 2>&1 || true
+  if mac_wait_unloaded 30; then
+    return
+  fi
+
+  # Fallback for older launchd behavior where only the service ref unloads.
+  launchctl bootout "${service_ref}" >/dev/null 2>&1 || true
+  mac_wait_unloaded 30 || true
+}
+
 mac_install() {
   mkdir -p "${HOME}/Library/LaunchAgents" "${LOG_DIR}"
   cat >"${LAUNCHD_PLIST}" <<EOF
@@ -79,18 +111,32 @@ mac_install() {
 </plist>
 EOF
 
-  local target
+  local target service_ref bootstrap_out bootstrap_ok
   target="$(mac_target)"
-  launchctl bootout "${target}/${LAUNCHD_LABEL}" >/dev/null 2>&1 || true
-  launchctl bootstrap "${target}" "${LAUNCHD_PLIST}"
-  launchctl kickstart -k "${target}/${LAUNCHD_LABEL}"
+  service_ref="$(mac_service_ref)"
+  mac_bootout_loaded_job
+
+  bootstrap_out=""
+  bootstrap_ok=0
+  for _ in 1 2 3 4 5; do
+    if bootstrap_out="$(launchctl bootstrap "${target}" "${LAUNCHD_PLIST}" 2>&1)"; then
+      bootstrap_ok=1
+      break
+    fi
+    if mac_is_loaded; then
+      bootstrap_ok=1
+      break
+    fi
+    mac_bootout_loaded_job
+    sleep 0.25
+  done
+  [[ "${bootstrap_ok}" -eq 1 ]] || fail "launchctl bootstrap failed: ${bootstrap_out}"
+  launchctl kickstart -k "${service_ref}"
   say "Installed and started launchd service: ${LAUNCHD_LABEL}"
 }
 
 mac_uninstall() {
-  local target
-  target="$(mac_target)"
-  launchctl bootout "${target}/${LAUNCHD_LABEL}" >/dev/null 2>&1 || true
+  mac_bootout_loaded_job
   rm -f "${LAUNCHD_PLIST}"
   say "Uninstalled launchd service: ${LAUNCHD_LABEL}"
 }
@@ -104,9 +150,7 @@ mac_start() {
 }
 
 mac_stop() {
-  local target
-  target="$(mac_target)"
-  launchctl bootout "${target}/${LAUNCHD_LABEL}" >/dev/null 2>&1 || true
+  mac_bootout_loaded_job
 }
 
 mac_restart() {

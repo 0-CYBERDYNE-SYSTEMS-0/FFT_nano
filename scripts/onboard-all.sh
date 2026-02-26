@@ -241,7 +241,19 @@ is_placeholder() {
   [[ -z "$value" || "$value" == "replace-me" || "$value" == "..." ]]
 }
 
-is_env_configured() {
+provider_env_key() {
+  local provider="$1"
+  case "$provider" in
+    openai) printf '%s' "OPENAI_API_KEY" ;;
+    anthropic) printf '%s' "ANTHROPIC_API_KEY" ;;
+    gemini) printf '%s' "GEMINI_API_KEY" ;;
+    openrouter) printf '%s' "OPENROUTER_API_KEY" ;;
+    zai) printf '%s' "ZAI_API_KEY" ;;
+    *) printf '' ;;
+  esac
+}
+
+is_provider_configured() {
   local provider model token_var token_value
   provider="$(read_env_value PI_API)"
   model="$(read_env_value PI_MODEL)"
@@ -249,14 +261,7 @@ is_env_configured() {
     return 1
   fi
 
-  case "$provider" in
-    openai) token_var="OPENAI_API_KEY" ;;
-    anthropic) token_var="ANTHROPIC_API_KEY" ;;
-    gemini) token_var="GEMINI_API_KEY" ;;
-    openrouter) token_var="OPENROUTER_API_KEY" ;;
-    zai) token_var="ZAI_API_KEY" ;;
-    *) token_var="" ;;
-  esac
+  token_var="$(provider_env_key "$provider")"
 
   if [[ -n "$token_var" ]]; then
     token_value="$(read_env_value "$token_var")"
@@ -264,14 +269,181 @@ is_env_configured() {
       return 1
     fi
   fi
+  return 0
+}
 
+is_telegram_token_configured() {
   local tg_token
   tg_token="$(read_env_value TELEGRAM_BOT_TOKEN)"
   if is_placeholder "$tg_token"; then
     return 1
   fi
-
   return 0
+}
+
+is_telegram_admin_secret_configured() {
+  local secret
+  secret="$(read_env_value TELEGRAM_ADMIN_SECRET)"
+  if is_placeholder "$secret"; then
+    return 1
+  fi
+  return 0
+}
+
+is_telegram_main_chat_env_configured() {
+  local main_chat
+  main_chat="$(read_env_value TELEGRAM_MAIN_CHAT_ID)"
+  if is_placeholder "$main_chat"; then
+    return 1
+  fi
+  return 0
+}
+
+has_registered_main_group() {
+  local reg_path="${ROOT_DIR}/data/registered_groups.json"
+  [[ -f "$reg_path" ]] || return 1
+  node -e 'const fs=require("fs");
+const p=process.argv[1];
+try{
+  const parsed=JSON.parse(fs.readFileSync(p,"utf8"));
+  const hasMain=Object.values(parsed||{}).some((group)=>group&&group.folder==="main");
+  process.exit(hasMain?0:1);
+}catch{
+  process.exit(1);
+}' "$reg_path"
+}
+
+is_env_configured() {
+  if ! is_provider_configured; then
+    return 1
+  fi
+  if ! is_telegram_token_configured; then
+    return 1
+  fi
+  return 0
+}
+
+is_service_running() {
+  ./scripts/service.sh status >/dev/null 2>&1
+}
+
+print_readiness_line() {
+  local label="$1"
+  local status="$2"
+  local detail="${3:-}"
+  if [[ -n "$detail" ]]; then
+    say "  - ${label}: ${status} (${detail})"
+    return
+  fi
+  say "  - ${label}: ${status}"
+}
+
+print_numbered_list() {
+  local title="$1"
+  shift
+  local -a items=("$@")
+  say "${title}"
+  if [[ "${#items[@]}" -eq 0 ]]; then
+    say "  none"
+    return
+  fi
+  local i=1
+  for item in "${items[@]}"; do
+    say "  ${i}) ${item}"
+    ((i++))
+  done
+}
+
+render_completion_handoff() {
+  local install_daemon="$1"
+  local service_state="$2"
+
+  local provider_status="FAIL"
+  local telegram_token_status="FAIL"
+  local admin_secret_status="FAIL"
+  local main_chat_status="ACTION NEEDED"
+  local service_status="SKIPPED"
+
+  local provider_ready=0
+  local telegram_token_ready=0
+  local admin_secret_ready=0
+  local main_chat_ready=0
+
+  if is_provider_configured; then
+    provider_ready=1
+    provider_status="PASS"
+  fi
+  if is_telegram_token_configured; then
+    telegram_token_ready=1
+    telegram_token_status="PASS"
+  fi
+  if is_telegram_admin_secret_configured; then
+    admin_secret_ready=1
+    admin_secret_status="PASS"
+  fi
+  if is_telegram_main_chat_env_configured || has_registered_main_group; then
+    main_chat_ready=1
+    main_chat_status="PASS"
+  fi
+
+  if [[ "$install_daemon" == "1" ]]; then
+    if [[ "$service_state" == "running" ]]; then
+      service_status="PASS"
+    else
+      service_status="FAIL"
+    fi
+  else
+    service_status="SKIPPED"
+  fi
+
+  local -a required_now=()
+  local -a optional_next=()
+
+  if [[ "$provider_ready" -eq 0 ]]; then
+    required_now+=("Set PI_API/PI_MODEL/provider key in .env, then restart the service.")
+  fi
+  if [[ "$telegram_token_ready" -eq 0 ]]; then
+    required_now+=("Set TELEGRAM_BOT_TOKEN in .env, then restart the service.")
+  fi
+  if [[ "$install_daemon" == "1" ]] && [[ "$service_state" != "running" ]]; then
+    required_now+=("Run ./scripts/service.sh install && ./scripts/service.sh restart")
+  fi
+  if [[ "$telegram_token_ready" -eq 1 ]] && [[ "$main_chat_ready" -eq 0 ]]; then
+    if [[ "$admin_secret_ready" -eq 1 ]]; then
+      required_now+=("In Telegram DM with your bot: /id then /main <secret>")
+    else
+      required_now+=("Set TELEGRAM_ADMIN_SECRET in .env, restart service, then in Telegram DM run: /id then /main <secret>")
+    fi
+  fi
+
+  optional_next+=("./scripts/profile.sh status")
+  optional_next+=("./scripts/service.sh status")
+  optional_next+=("./scripts/start.sh tui")
+
+  say ""
+  say "Onboarding flow complete."
+  say ""
+  say "Readiness checks:"
+  print_readiness_line "AI provider config" "${provider_status}"
+  print_readiness_line "Telegram bot token" "${telegram_token_status}"
+  print_readiness_line "Telegram admin secret" "${admin_secret_status}"
+  if [[ "$install_daemon" == "1" ]]; then
+    print_readiness_line "Service running" "${service_status}"
+  else
+    print_readiness_line "Service running" "${service_status}" "--no-install-daemon"
+  fi
+  print_readiness_line "Main/admin chat claimed" "${main_chat_status}"
+  say ""
+
+  print_numbered_list "Required now:" "${required_now[@]}"
+  say ""
+  if [[ "${#required_now[@]}" -eq 0 ]]; then
+    say "ONBOARDING COMPLETE: READY"
+  else
+    say "ONBOARDING COMPLETE: USER ACTION REQUIRED"
+  fi
+  say ""
+  print_numbered_list "Optional next:" "${optional_next[@]}"
 }
 
 say "FFT_nano onboard (OpenClaw-style single command)"
@@ -408,11 +580,13 @@ else
   say "[5/5] Skipping doctor (--skip-doctor/--skip-health)"
 fi
 
-say ""
-say "Onboarding flow complete."
-say "Next:"
-say "  1) ./scripts/profile.sh status"
-say "  2) ./scripts/service.sh status"
-say "  3) ./scripts/web.sh"
-say "  4) ./scripts/start.sh tui"
-say "  5) In Telegram DM: /id then /main <secret>"
+service_state="skipped"
+if [[ "$INSTALL_DAEMON" == "1" ]]; then
+  if is_service_running; then
+    service_state="running"
+  else
+    service_state="not_running"
+  fi
+fi
+
+render_completion_handoff "$INSTALL_DAEMON" "$service_state"

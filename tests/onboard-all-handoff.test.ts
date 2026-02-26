@@ -1,0 +1,134 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+function setupOnboardAllFixture(options: { withMainChatId: boolean }): string {
+  const repoRoot = process.cwd();
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fft-onboard-all-'));
+  const scriptsDir = path.join(fixtureRoot, 'scripts');
+  const dataDir = path.join(fixtureRoot, 'data');
+  const homeDir = path.join(fixtureRoot, 'home');
+  mkdirSync(scriptsDir, { recursive: true });
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+
+  const onboardAllSource = readFileSync(path.join(repoRoot, 'scripts', 'onboard-all.sh'), 'utf8');
+  const onboardAllPath = path.join(scriptsDir, 'onboard-all.sh');
+  writeFileSync(onboardAllPath, onboardAllSource, 'utf8');
+  chmodSync(onboardAllPath, 0o755);
+
+  writeFileSync(
+    path.join(scriptsDir, 'onboard.sh'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+echo "stub onboard complete"
+`,
+    'utf8',
+  );
+  chmodSync(path.join(scriptsDir, 'onboard.sh'), 0o755);
+
+  writeFileSync(
+    path.join(scriptsDir, 'service.sh'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+state_file="\${FFT_TEST_SERVICE_STATE:?}"
+action="\${1:-status}"
+case "$action" in
+  install|start|restart)
+    printf 'running\\n' > "$state_file"
+    echo "stub service \${action}"
+    ;;
+  status)
+    [[ -f "$state_file" ]] || exit 1
+    ;;
+  *)
+    ;;
+esac
+`,
+    'utf8',
+  );
+  chmodSync(path.join(scriptsDir, 'service.sh'), 0o755);
+
+  writeFileSync(
+    path.join(fixtureRoot, '.env'),
+    [
+      'PI_API=openai',
+      'PI_MODEL=gpt-4o-mini',
+      'OPENAI_API_KEY=test-key',
+      'TELEGRAM_BOT_TOKEN=test-token',
+      'TELEGRAM_ADMIN_SECRET=test-secret',
+      options.withMainChatId ? 'TELEGRAM_MAIN_CHAT_ID=12345' : '',
+    ]
+      .filter(Boolean)
+      .join('\n') + '\n',
+    'utf8',
+  );
+
+  return fixtureRoot;
+}
+
+function runOnboardAllFixture(fixtureRoot: string): string {
+  const serviceState = path.join(fixtureRoot, 'service.state');
+  const args = [
+    'scripts/onboard-all.sh',
+    '--non-interactive',
+    '--accept-risk',
+    '--operator',
+    'Test Operator',
+    '--assistant-name',
+    'FarmFriend',
+    '--flow',
+    'quickstart',
+    '--mode',
+    'local',
+    '--auth-choice',
+    'skip',
+    '--hatch',
+    'later',
+    '--skip-channels',
+    '--skip-skills',
+    '--skip-health',
+    '--skip-ui',
+    '--skip-setup',
+    '--skip-doctor',
+    '--no-backup',
+  ];
+
+  const result = spawnSync('bash', args, {
+    cwd: fixtureRoot,
+    env: {
+      ...process.env,
+      HOME: path.join(fixtureRoot, 'home'),
+      FFT_TEST_SERVICE_STATE: serviceState,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  return result.stdout;
+}
+
+test('onboard-all prints required Telegram claim steps for first-run users', () => {
+  const fixtureRoot = setupOnboardAllFixture({ withMainChatId: false });
+  const output = runOnboardAllFixture(fixtureRoot);
+
+  assert.match(output, /ONBOARDING COMPLETE: USER ACTION REQUIRED/);
+  assert.match(output, /Required now:/);
+  assert.match(output, /In Telegram DM with your bot: \/id then \/main <secret>/);
+});
+
+test('onboard-all prints READY when Telegram main chat is already configured', () => {
+  const fixtureRoot = setupOnboardAllFixture({ withMainChatId: true });
+  const output = runOnboardAllFixture(fixtureRoot);
+
+  assert.match(output, /ONBOARDING COMPLETE: READY/);
+});
