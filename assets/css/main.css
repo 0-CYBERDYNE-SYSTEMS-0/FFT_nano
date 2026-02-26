@@ -2335,3 +2335,125 @@
       }
     }
   
+/* ── Skills Ticker ─────────────────────────────────────────────────────────── */
+
+.skills-ticker-wrap {
+  position: relative;
+  overflow: hidden;
+  padding: 1rem 0 2rem;
+  /* Fade edges to transparent */
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 8%,
+    black 92%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 8%,
+    black 92%,
+    transparent 100%
+  );
+}
+
+.skills-ticker-row {
+  overflow: hidden;
+  margin-bottom: 0.875rem;
+}
+
+.skills-ticker-track {
+  display: flex;
+  gap: 0.75rem;
+  width: max-content;
+  will-change: transform;
+}
+
+/* Row 1 scrolls left */
+.track-left {
+  animation: ticker-left 40s linear infinite;
+}
+
+/* Row 2 scrolls right — starts offset so rows feel independent */
+.track-right {
+  animation: ticker-right 45s linear infinite;
+}
+
+/* Pause on hover */
+.skills-ticker-wrap:hover .track-left,
+.skills-ticker-wrap:hover .track-right {
+  animation-play-state: paused;
+}
+
+@keyframes ticker-left {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes ticker-right {
+  0%   { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
+}
+
+/* Individual pill */
+.skill-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  /* Teal variant (row 1) */
+  background: rgba(90, 158, 160, 0.15);
+  color: var(--brand-primary);
+  border: 1px solid rgba(90, 158, 160, 0.35);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.skill-pill:hover {
+  background: rgba(90, 158, 160, 0.28);
+  border-color: var(--brand-primary);
+  transform: translateY(-2px);
+}
+
+/* Sage variant (row 2) */
+.skill-pill.pill-sage {
+  background: rgba(106, 170, 120, 0.15);
+  color: var(--brand-secondary);
+  border-color: rgba(106, 170, 120, 0.35);
+}
+
+.skill-pill.pill-sage:hover {
+  background: rgba(106, 170, 120, 0.28);
+  border-color: var(--brand-secondary);
+}
+
+.skill-pill i {
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+
+/* Reduced motion — show static pills, no scroll */
+@media (prefers-reduced-motion: reduce) {
+  .skills-ticker-track {
+    animation: none !important;
+    flex-wrap: wrap;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Dark band behind the ticker so pills pop */
+.skills-ticker-wrap {
+  background: var(--earth-dark);
+  border-radius: 16px;
+  padding: 1.75rem 0;
+  margin: 0 -1rem;
+}
