@@ -35,6 +35,13 @@ fft onboard
 
 Interactive mode prompts for flow/mode/provider/channel/hatch and identity values.
 
+If hatch is `web`, use:
+
+```bash
+fft web
+# or ./scripts/web.sh
+```
+
 ## Flags
 
 - `--workspace <dir>`: target main workspace (default: `FFT_NANO_MAIN_WORKSPACE_DIR` or `~/nano`)

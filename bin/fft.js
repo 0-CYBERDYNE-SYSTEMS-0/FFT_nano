@@ -11,6 +11,7 @@ function printUsage() {
   fft start [telegram-only]
   fft dev [telegram-only]
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
+  fft web [--open]
   fft doctor [--json]
   fft service <install|uninstall|start|stop|restart|status|logs>
 
@@ -89,7 +90,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['onboard', 'profile', 'start', 'dev', 'tui', 'service', 'doctor'].includes(command)) {
+  if (!['onboard', 'profile', 'start', 'dev', 'tui', 'web', 'service', 'doctor'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -133,6 +134,11 @@ function main() {
 
   if (command === 'onboard') {
     runInRepo(repoRoot, 'scripts/onboard-all.sh', commandArgs);
+    return;
+  }
+
+  if (command === 'web') {
+    runInRepo(repoRoot, 'scripts/web.sh', commandArgs);
     return;
   }
 

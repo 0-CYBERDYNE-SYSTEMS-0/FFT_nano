@@ -158,6 +158,16 @@ npm run typecheck
 say "Build..."
 npm run build
 
+if [[ -f web/control-center/package.json ]]; then
+  say "Building FFT Control Center..."
+  if [[ -f web/control-center/package-lock.json ]]; then
+    npm --prefix web/control-center ci
+  else
+    npm --prefix web/control-center install
+  fi
+  npm --prefix web/control-center run build
+fi
+
 say "Preparing agent runtime..."
 if [[ "$runtime" == "docker" ]]; then
   ./container/build-docker.sh
@@ -190,6 +200,7 @@ say "  edit .env                # set provider key + TELEGRAM_BOT_TOKEN (+ TELEG
 say "  ./scripts/service.sh restart  # apply .env changes"
 say "  ./scripts/service.sh status   # check daemon/service health"
 say "  ./scripts/service.sh logs     # view recent service logs"
+say "  ./scripts/web.sh              # show FFT CONTROL CENTER URL"
 say "  ./scripts/start.sh tui        # attach TUI to running host"
 say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name OpenClaw --non-interactive"
 say "  Telegram DM: /id then /main <secret>"

@@ -792,6 +792,12 @@ async function main(): Promise<void> {
       console.log(JSON.stringify(result, null, 2));
       return;
     }
+    const hatchHint =
+      result.hatch === 'web'
+        ? 'Next hatch: run `fft web` (or `./scripts/web.sh`) to open FFT CONTROL CENTER.'
+        : result.hatch === 'tui'
+          ? 'Next hatch: run `fft tui` (or `./scripts/start.sh tui`) to attach terminal UI.'
+          : 'Next hatch: run either `fft tui` or `fft web` when you are ready.';
     console.log(
       [
         'Onboarding complete.',
@@ -803,6 +809,7 @@ async function main(): Promise<void> {
         `Auth: ${result.authChoice}`,
         `Hatch: ${result.hatch}`,
         `Install daemon: ${result.installDaemon ? 'yes' : 'no'}`,
+        hatchHint,
       ].join('\n'),
     );
   } catch (err) {

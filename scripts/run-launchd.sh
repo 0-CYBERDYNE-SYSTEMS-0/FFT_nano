@@ -6,6 +6,16 @@ APP_ENTRY="$PROJECT_ROOT/dist/index.js"
 
 cd "$PROJECT_ROOT"
 
+# launchd starts with a minimal PATH that often omits Docker/Homebrew locations.
+login_shell="${SHELL:-/bin/zsh}"
+if [[ -x "$login_shell" ]]; then
+  login_path="$("$login_shell" -lc 'printf %s "$PATH"' 2>/dev/null || true)"
+  if [[ -n "$login_path" ]]; then
+    export PATH="$login_path:$PATH"
+  fi
+fi
+export PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+
 # Load .env if present (used for pi runtime config; can also include TELEGRAM_BOT_TOKEN).
 if [[ -f "$PROJECT_ROOT/.env" ]]; then
   set -a
@@ -56,6 +66,11 @@ export TELEGRAM_AUTO_REGISTER="${TELEGRAM_AUTO_REGISTER:-0}"
 
 # Attached TUI gateway defaults (overridable via launchd/env).
 export FFT_NANO_TUI_ENABLED="${FFT_NANO_TUI_ENABLED:-1}"
+export FFT_NANO_TUI_HOST="${FFT_NANO_TUI_HOST:-127.0.0.1}"
 export FFT_NANO_TUI_PORT="${FFT_NANO_TUI_PORT:-28989}"
+export FFT_NANO_WEB_ENABLED="${FFT_NANO_WEB_ENABLED:-1}"
+export FFT_NANO_WEB_ACCESS_MODE="${FFT_NANO_WEB_ACCESS_MODE:-localhost}"
+export FFT_NANO_WEB_HOST="${FFT_NANO_WEB_HOST:-127.0.0.1}"
+export FFT_NANO_WEB_PORT="${FFT_NANO_WEB_PORT:-28990}"
 
 exec "$NODE_BIN" "$APP_ENTRY"

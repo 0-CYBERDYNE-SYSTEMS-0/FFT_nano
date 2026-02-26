@@ -15,6 +15,16 @@ import {
   DATA_DIR,
   FEATURE_FARM,
   FARM_STATE_ENABLED,
+  FFT_NANO_TUI_AUTH_TOKEN,
+  FFT_NANO_TUI_ENABLED,
+  FFT_NANO_TUI_HOST,
+  FFT_NANO_TUI_PORT,
+  FFT_NANO_WEB_ACCESS_MODE,
+  FFT_NANO_WEB_AUTH_TOKEN,
+  FFT_NANO_WEB_ENABLED,
+  FFT_NANO_WEB_HOST,
+  FFT_NANO_WEB_PORT,
+  FFT_NANO_WEB_STATIC_DIR,
   FFT_PROFILE,
   IPC_POLL_INTERVAL,
   MAIN_WORKSPACE_DIR,
@@ -108,6 +118,11 @@ import {
 } from './tui/gateway-server.js';
 import { TuiRuntimeEventHub } from './tui/runtime-events.js';
 import type { TuiSessionSummary } from './tui/protocol.js';
+import {
+  startWebControlCenterServer,
+  type WebControlCenterAdapters,
+  type WebControlCenterServer,
+} from './web/control-center-server.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -275,9 +290,38 @@ let heartbeatLoopStarted = false;
 let shuttingDown = false;
 const tuiRuntimeEvents = new TuiRuntimeEventHub();
 let tuiGatewayServer: TuiGatewayServer | null = null;
+let webControlCenterServer: WebControlCenterServer | null = null;
 
 const TUI_SENDER_ID = '__fft_tui__';
 const TUI_SENDER_NAME = 'FFT_nano TUI';
+const SERVICE_STARTED_AT = new Date().toISOString();
+const APP_VERSION = process.env.npm_package_version || 'unknown';
+
+interface GitInfo {
+  branch?: string;
+  commit?: string;
+}
+
+function resolveGitInfo(): GitInfo {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf-8',
+    }).trim();
+    const commit = execSync('git rev-parse --short HEAD', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf-8',
+    }).trim();
+    return {
+      branch: branch || undefined,
+      commit: commit || undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+const GIT_INFO = resolveGitInfo();
 
 /**
  * Translate a JID from LID format to phone format if we have a mapping.
@@ -3520,12 +3564,34 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
   };
 }
 
+function createWebControlCenterAdapters(): WebControlCenterAdapters {
+  return {
+    getRuntimeStatus: () => ({
+      runtime: getContainerRuntime(),
+      sessions: buildTuiSessionList().length,
+      activeRuns: activeChatRunsById.size,
+    }),
+    getProfileStatus: () => ({
+      profile: FFT_PROFILE,
+      featureFarm: FEATURE_FARM,
+      profileDetection: PROFILE_DETECTION,
+    }),
+    getBuildInfo: () => ({
+      startedAt: SERVICE_STARTED_AT,
+      version: APP_VERSION,
+      ...GIT_INFO,
+    }),
+    getGatewayStatus: () => ({
+      host: FFT_NANO_TUI_HOST,
+      port: FFT_NANO_TUI_PORT,
+      authRequired: FFT_NANO_TUI_AUTH_TOKEN.length > 0,
+    }),
+  };
+}
+
 async function startTuiGatewayService(): Promise<void> {
   if (tuiGatewayServer) return;
-  const enabled = !['0', 'false', 'no'].includes(
-    (process.env.FFT_NANO_TUI_ENABLED || '1').toLowerCase(),
-  );
-  if (!enabled) {
+  if (!FFT_NANO_TUI_ENABLED) {
     logger.info('TUI gateway disabled via FFT_NANO_TUI_ENABLED');
     return;
   }
@@ -3533,6 +3599,11 @@ async function startTuiGatewayService(): Promise<void> {
     tuiGatewayServer = await startTuiGatewayServer(
       createTuiGatewayAdapters(),
       tuiRuntimeEvents,
+      {
+        host: FFT_NANO_TUI_HOST,
+        port: FFT_NANO_TUI_PORT,
+        authToken: FFT_NANO_TUI_AUTH_TOKEN || undefined,
+      },
     );
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
@@ -3549,6 +3620,53 @@ async function stopTuiGatewayService(): Promise<void> {
     logger.info('TUI gateway server stopped');
   } catch (err) {
     logger.warn({ err }, 'Failed to stop TUI gateway server cleanly');
+  }
+}
+
+async function startWebControlCenterService(): Promise<void> {
+  if (webControlCenterServer) return;
+  if (!FFT_NANO_WEB_ENABLED) {
+    logger.info('FFT Control Center disabled via FFT_NANO_WEB_ENABLED');
+    return;
+  }
+  if (!fs.existsSync(FFT_NANO_WEB_STATIC_DIR)) {
+    logger.warn(
+      { staticDir: FFT_NANO_WEB_STATIC_DIR },
+      'FFT Control Center build is missing; run npm run web:build',
+    );
+    return;
+  }
+
+  try {
+    webControlCenterServer = await startWebControlCenterServer(
+      createWebControlCenterAdapters(),
+      {
+        host: FFT_NANO_WEB_HOST,
+        port: FFT_NANO_WEB_PORT,
+        accessMode: FFT_NANO_WEB_ACCESS_MODE,
+        authToken: FFT_NANO_WEB_AUTH_TOKEN,
+        staticDir: FFT_NANO_WEB_STATIC_DIR,
+        logsDir: path.resolve(process.cwd(), 'logs'),
+      },
+    );
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    logger.error(
+      { err: error },
+      'FFT Control Center failed to start; continuing without web surface',
+    );
+  }
+}
+
+async function stopWebControlCenterService(): Promise<void> {
+  if (!webControlCenterServer) return;
+  const server = webControlCenterServer;
+  webControlCenterServer = null;
+  try {
+    await server.close();
+    logger.info('FFT Control Center server stopped');
+  } catch (err) {
+    logger.warn({ err }, 'Failed to stop FFT Control Center server cleanly');
   }
 }
 
@@ -4438,6 +4556,7 @@ function stopFarmServicesForShutdown(signal: string): void {
 
 async function shutdownAndExit(signal: string, exitCode: number): Promise<void> {
   stopFarmServicesForShutdown(signal);
+  await stopWebControlCenterService();
   await stopTuiGatewayService();
   process.exit(exitCode);
 }
@@ -4469,6 +4588,7 @@ async function main(): Promise<void> {
   migrateCompactionSummariesFromSoul();
   maybePromoteConfiguredTelegramMain();
   await startTuiGatewayService();
+  await startWebControlCenterService();
   logger.info(
     {
       profile: FFT_PROFILE,
@@ -4526,6 +4646,7 @@ async function main(): Promise<void> {
 
 main().catch(async (err) => {
   stopFarmServicesForShutdown('startup_error');
+  await stopWebControlCenterService();
   await stopTuiGatewayService();
   logger.error({ err }, 'Failed to start FFT_nano');
   process.exit(1);

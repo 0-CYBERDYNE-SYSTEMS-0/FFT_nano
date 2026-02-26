@@ -142,6 +142,17 @@ If you prefer the linked CLI form, use:
 fft onboard
 ```
 
+### 4b. Open FFT CONTROL CENTER (Web UI)
+
+The web dashboard is served by the same running host process.
+
+```bash
+fft web
+# or: ./scripts/web.sh
+```
+
+By default it listens on `http://127.0.0.1:28990`.
+
 ### 5. Claim Telegram as main/admin
 
 In the bot DM:
@@ -166,6 +177,7 @@ Host CLI:
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`
 - `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
+- `fft web [--open]`
 - `fft doctor [--json]`
 - `fft service <install|uninstall|start|stop|restart|status|logs>`
 
@@ -219,7 +231,17 @@ TUI keybinds:
 TUI gateway env:
 
 - `FFT_NANO_TUI_PORT` (default `28989`)
+- `FFT_NANO_TUI_HOST` (default `127.0.0.1`, uses `0.0.0.0` in LAN/remote web modes)
 - `FFT_NANO_TUI_ENABLED` (`1` default, set `0` to disable)
+- `FFT_NANO_TUI_AUTH_TOKEN` (optional, defaults to `FFT_NANO_WEB_AUTH_TOKEN` when set)
+
+FFT CONTROL CENTER env:
+
+- `FFT_NANO_WEB_ENABLED` (`1` default)
+- `FFT_NANO_WEB_ACCESS_MODE` (`localhost|lan|remote`, default `localhost`)
+- `FFT_NANO_WEB_HOST` (default `127.0.0.1` for localhost mode, else `0.0.0.0`)
+- `FFT_NANO_WEB_PORT` (default `28990`)
+- `FFT_NANO_WEB_AUTH_TOKEN` (required for `lan` and `remote` modes)
 
 TUI troubleshooting:
 

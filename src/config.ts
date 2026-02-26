@@ -91,6 +91,7 @@ export const TELEGRAM_MEDIA_MAX_MB = Math.max(
   1,
   parseInt(process.env.TELEGRAM_MEDIA_MAX_MB || '20', 10),
 );
+export type WebAccessMode = 'localhost' | 'lan' | 'remote';
 
 function envFlag(value: string | undefined, defaultValue: boolean): boolean {
   if (typeof value !== 'string') return defaultValue;
@@ -108,6 +109,27 @@ function envInt(
   const parsed = Number.parseInt(value || '', 10);
   if (!Number.isFinite(parsed)) return defaultValue;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function parseWebAccessMode(value: string | undefined): WebAccessMode {
+  const normalized = (value || 'localhost').trim().toLowerCase();
+  if (normalized === 'lan') return 'lan';
+  if (normalized === 'remote') return 'remote';
+  return 'localhost';
+}
+
+function resolveWebHost(accessMode: WebAccessMode): string {
+  const explicit = (process.env.FFT_NANO_WEB_HOST || '').trim();
+  if (explicit) return explicit;
+  if (accessMode === 'localhost') return '127.0.0.1';
+  return '0.0.0.0';
+}
+
+function resolveTuiHost(accessMode: WebAccessMode): string {
+  const explicit = (process.env.FFT_NANO_TUI_HOST || '').trim();
+  if (explicit) return explicit;
+  if (accessMode === 'localhost') return '127.0.0.1';
+  return '0.0.0.0';
 }
 
 function normalizeUrlCandidate(value: string): string | null {
@@ -140,6 +162,37 @@ export const MEMORY_CONTEXT_CHAR_BUDGET = envInt(
   1000,
   50000,
 );
+
+export const FFT_NANO_WEB_ACCESS_MODE = parseWebAccessMode(
+  process.env.FFT_NANO_WEB_ACCESS_MODE,
+);
+export const FFT_NANO_WEB_ENABLED = envFlag(process.env.FFT_NANO_WEB_ENABLED, true);
+export const FFT_NANO_WEB_PORT = envInt(
+  process.env.FFT_NANO_WEB_PORT,
+  28990,
+  1,
+  65535,
+);
+export const FFT_NANO_WEB_HOST = resolveWebHost(FFT_NANO_WEB_ACCESS_MODE);
+export const FFT_NANO_WEB_AUTH_TOKEN = (process.env.FFT_NANO_WEB_AUTH_TOKEN || '').trim();
+export const FFT_NANO_WEB_STATIC_DIR = path.resolve(
+  PROJECT_ROOT,
+  'dist-web',
+  'control-center',
+);
+
+export const FFT_NANO_TUI_ENABLED = envFlag(process.env.FFT_NANO_TUI_ENABLED, true);
+export const FFT_NANO_TUI_PORT = envInt(
+  process.env.FFT_NANO_TUI_PORT,
+  28989,
+  1,
+  65535,
+);
+export const FFT_NANO_TUI_HOST = resolveTuiHost(FFT_NANO_WEB_ACCESS_MODE);
+export const FFT_NANO_TUI_AUTH_TOKEN = (
+  process.env.FFT_NANO_TUI_AUTH_TOKEN ||
+  FFT_NANO_WEB_AUTH_TOKEN
+).trim();
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

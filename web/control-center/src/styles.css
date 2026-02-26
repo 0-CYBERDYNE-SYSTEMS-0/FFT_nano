@@ -1,0 +1,294 @@
+:root {
+  --bg: #ece9df;
+  --ink: #101010;
+  --muted: #5e5a52;
+  --panel: #f6f4ee;
+  --accent: #ff4f00;
+  --accent-alt: #0e6f7b;
+  --border: #101010;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(0deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.04)),
+    repeating-linear-gradient(
+      90deg,
+      rgba(16, 16, 16, 0.03),
+      rgba(16, 16, 16, 0.03) 1px,
+      transparent 1px,
+      transparent 18px
+    ),
+    var(--bg);
+  color: var(--ink);
+  font-family: "Avenir Next", "Franklin Gothic Medium", "Helvetica Neue", sans-serif;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+button,
+label {
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+p {
+  margin: 0;
+}
+
+pre {
+  margin: 0;
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.panel {
+  border: 3px solid var(--border);
+  background: var(--panel);
+  box-shadow: 6px 6px 0 var(--border);
+  padding: 0.8rem;
+}
+
+.masthead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  background:
+    linear-gradient(135deg, rgba(255, 79, 0, 0.18), rgba(14, 111, 123, 0.16)),
+    var(--panel);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.masthead p {
+  color: var(--muted);
+}
+
+.token-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: min(360px, 100%);
+}
+
+.token-control input {
+  border: 2px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  padding: 0.4rem 0.5rem;
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+}
+
+button {
+  border: 2px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+
+button:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--border);
+}
+
+button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.error {
+  background: #ffd8c9;
+  color: #6b1f00;
+}
+
+.grid {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.status-grid {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+}
+
+.stat h2 {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.stat-value {
+  margin: 0.3rem 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+}
+
+.main-grid {
+  grid-template-columns: 300px 1fr 360px;
+  align-items: stretch;
+}
+
+.sessions-panel,
+.chat-panel,
+.service-panel {
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.scroll-block {
+  flex: 1;
+  overflow: auto;
+  border: 2px solid var(--border);
+  background: #fff;
+  padding: 0.45rem;
+}
+
+.session-item {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  color: var(--ink);
+  margin-bottom: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.session-item.active {
+  background: var(--accent-alt);
+  color: #fff;
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.message {
+  border: 2px solid var(--border);
+  padding: 0.35rem;
+  background: #fff;
+}
+
+.message.user {
+  border-left: 10px solid var(--accent-alt);
+}
+
+.message.assistant {
+  border-left: 10px solid var(--accent);
+}
+
+.message.system {
+  border-left: 10px solid #7a7a7a;
+}
+
+.message .meta {
+  font-size: 0.62rem;
+  color: var(--muted);
+  display: inline-block;
+  margin-bottom: 0.2rem;
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  border: 2px solid var(--border);
+  padding: 0.5rem;
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+}
+
+.composer-actions,
+.service-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.service-output {
+  border: 2px solid var(--border);
+  background: #fff;
+  min-height: 120px;
+  max-height: 210px;
+  overflow: auto;
+  padding: 0.45rem;
+}
+
+.logs-grid {
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+}
+
+.logs-panel {
+  min-height: 280px;
+}
+
+.logs-panel pre {
+  margin-top: 0.45rem;
+  border: 2px solid var(--border);
+  background: #fff;
+  padding: 0.5rem;
+  min-height: 220px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+@media (max-width: 1200px) {
+  .status-grid {
+    grid-template-columns: repeat(2, minmax(200px, 1fr));
+  }
+
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sessions-panel,
+  .chat-panel,
+  .service-panel {
+    min-height: 340px;
+  }
+}
+
+@media (max-width: 720px) {
+  .masthead {
+    flex-direction: column;
+  }
+
+  .status-grid,
+  .logs-grid {
+    grid-template-columns: 1fr;
+  }
+}

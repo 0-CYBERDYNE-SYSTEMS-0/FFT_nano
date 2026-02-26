@@ -79,7 +79,12 @@ fi
 # OpenClaw-style attached TUI gateway defaults.
 # Allow explicit override (including disabling with 0/false/no).
 export FFT_NANO_TUI_ENABLED="${FFT_NANO_TUI_ENABLED:-1}"
+export FFT_NANO_TUI_HOST="${FFT_NANO_TUI_HOST:-127.0.0.1}"
 export FFT_NANO_TUI_PORT="${FFT_NANO_TUI_PORT:-28989}"
+export FFT_NANO_WEB_ENABLED="${FFT_NANO_WEB_ENABLED:-1}"
+export FFT_NANO_WEB_ACCESS_MODE="${FFT_NANO_WEB_ACCESS_MODE:-localhost}"
+export FFT_NANO_WEB_HOST="${FFT_NANO_WEB_HOST:-127.0.0.1}"
+export FFT_NANO_WEB_PORT="${FFT_NANO_WEB_PORT:-28990}"
 
 # Prefer TELEGRAM_BOT_TOKEN from .env/exports; fall back to macOS Keychain.
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] && [[ "$(uname -s)" == "Darwin" ]] && command -v security >/dev/null 2>&1; then
@@ -112,11 +117,16 @@ runtime="$(run_runtime_detect)"
 telegram="${TELEGRAM_BOT_TOKEN:-}"
 wa="${WHATSAPP_ENABLED:-1}"
 tui_enabled="${FFT_NANO_TUI_ENABLED:-1}"
+tui_host="${FFT_NANO_TUI_HOST:-127.0.0.1}"
 tui_port="${FFT_NANO_TUI_PORT:-28989}"
+web_enabled="${FFT_NANO_WEB_ENABLED:-1}"
+web_access="${FFT_NANO_WEB_ACCESS_MODE:-localhost}"
+web_host="${FFT_NANO_WEB_HOST:-127.0.0.1}"
+web_port="${FFT_NANO_WEB_PORT:-28990}"
 profile="${FFT_PROFILE:-core}"
 feature_farm="${FEATURE_FARM:-auto}"
 
-echo "FFT_nano start (mode=$mode, profile=$profile, feature_farm=$feature_farm, runtime=$runtime, whatsapp=$wa, telegram=$([[ -n "$telegram" ]] && echo enabled || echo disabled), tui_enabled=$tui_enabled, tui_port=$tui_port)"
+echo "FFT_nano start (mode=$mode, profile=$profile, feature_farm=$feature_farm, runtime=$runtime, whatsapp=$wa, telegram=$([[ -n "$telegram" ]] && echo enabled || echo disabled), tui_enabled=$tui_enabled, tui_host=$tui_host, tui_port=$tui_port, web_enabled=$web_enabled, web_access=$web_access, web_host=$web_host, web_port=$web_port)"
 
 if [[ "$mode" == "dev" ]]; then
   echo "Note: dev mode is for debugging only; normal runtime should use start mode (or omit mode)." >&2

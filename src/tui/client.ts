@@ -41,6 +41,8 @@ type SendMessageStatus = 'sent' | 'busy';
 const DEFAULT_PROVIDER = process.env.PI_API || '(provider)';
 const DEFAULT_MODEL = process.env.PI_MODEL || '(model)';
 const DEFAULT_GATEWAY_URL = `ws://127.0.0.1:${process.env.FFT_NANO_TUI_PORT || '28989'}`;
+const DEFAULT_GATEWAY_TOKEN =
+  process.env.FFT_NANO_TUI_AUTH_TOKEN || process.env.FFT_NANO_WEB_AUTH_TOKEN || '';
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'help', description: 'Show slash command help' },
@@ -680,7 +682,10 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   };
 
   await client.connect();
-  await client.request('connect', { client: 'fft_nano_tui' });
+  await client.request('connect', {
+    client: 'fft_nano_tui',
+    token: DEFAULT_GATEWAY_TOKEN || undefined,
+  });
   connectionStatus = 'connected';
 
   await loadSessions();

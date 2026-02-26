@@ -1,8 +1,10 @@
 # Dependencies
 node_modules/
+web/control-center/node_modules/
 
 # Build output
 dist/
+dist-web/
 
 # Local data & auth
 store/

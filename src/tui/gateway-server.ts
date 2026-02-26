@@ -35,6 +35,7 @@ export interface SessionHistoryMessage {
 
 export interface TuiGatewayServer {
   port: number;
+  host: string;
   close: () => Promise<void>;
 }
 
@@ -65,6 +66,13 @@ export interface TuiGatewayAdapters {
 }
 
 const DEFAULT_PORT = Number(process.env.FFT_NANO_TUI_PORT || 28989);
+const DEFAULT_HOST = process.env.FFT_NANO_TUI_HOST || '127.0.0.1';
+
+export interface TuiGatewayOptions {
+  port?: number;
+  host?: string;
+  authToken?: string;
+}
 
 function normalizeThinkLevel(raw: unknown): ThinkLevel | undefined {
   const key = String(raw || '')
@@ -153,22 +161,35 @@ function parseMessage(data: WebSocket.RawData): GatewayRequestFrame | null {
 export async function startTuiGatewayServer(
   adapters: TuiGatewayAdapters,
   eventHub: TuiRuntimeEventHub,
-  port = DEFAULT_PORT,
+  options: number | TuiGatewayOptions = {},
 ): Promise<TuiGatewayServer> {
+  const resolvedOptions =
+    typeof options === 'number'
+      ? { port: options }
+      : options;
+  const host = resolvedOptions.host || DEFAULT_HOST;
+  const port = resolvedOptions.port ?? DEFAULT_PORT;
+  const authToken = (resolvedOptions.authToken || '').trim();
+  const authRequired = authToken.length > 0;
+
   const clients = new Set<WebSocket>();
+  const authenticatedClients = new Set<WebSocket>();
   const wss = new WebSocketServer({
     port,
-    host: '127.0.0.1',
+    host,
   });
 
-  logger.info({ port }, 'TUI gateway server listening');
+  logger.info({ host, port, authRequired }, 'TUI gateway server listening');
 
   const unsubscribe = eventHub.subscribe((event) => {
+    const recipients = authRequired
+      ? new Set(Array.from(clients).filter((ws) => authenticatedClients.has(ws)))
+      : clients;
     if (event.kind === 'chat') {
-      broadcast(clients, { event: 'chat_event', payload: event.payload });
+      broadcast(recipients, { event: 'chat_event', payload: event.payload });
       return;
     }
-    broadcast(clients, { event: 'agent_event', payload: event.payload });
+    broadcast(recipients, { event: 'agent_event', payload: event.payload });
   });
 
   wss.on('connection', (ws) => {
@@ -176,6 +197,7 @@ export async function startTuiGatewayServer(
 
     ws.on('close', () => {
       clients.delete(ws);
+      authenticatedClients.delete(ws);
     });
 
     ws.on('message', (payload) => {
@@ -191,9 +213,34 @@ export async function startTuiGatewayServer(
       const params = (frame.params || {}) as Record<string, unknown>;
       const sessionKey = getSessionKey(params);
       const chatJid = adapters.resolveChatJid(sessionKey);
+      const isAuthenticated = !authRequired || authenticatedClients.has(ws);
+
+      if (frame.method !== 'connect' && !isAuthenticated) {
+        sendFrame(
+          ws,
+          failure(frame.id, 'Unauthorized: send connect with a valid gateway token first.'),
+        );
+        return;
+      }
 
       switch (frame.method) {
         case 'connect': {
+          if (authRequired) {
+            const providedToken = asText(params.token).trim();
+            if (providedToken !== authToken) {
+              sendFrame(ws, failure(frame.id, 'Unauthorized: invalid gateway token.'));
+              setTimeout(() => {
+                try {
+                  ws.close(4401, 'Unauthorized');
+                } catch {
+                  // ignore close errors
+                }
+              }, 10);
+              break;
+            }
+            authenticatedClients.add(ws);
+          }
+
           sendFrame(
             ws,
             response(frame.id, {
@@ -201,6 +248,7 @@ export async function startTuiGatewayServer(
               protocol: 'fft_nano.tui.v2',
               serverTime: new Date().toISOString(),
               defaultSessionKey: 'main',
+              authRequired,
             }),
           );
           break;
@@ -414,6 +462,7 @@ export async function startTuiGatewayServer(
 
   return {
     port,
+    host,
     close,
   };
 }
