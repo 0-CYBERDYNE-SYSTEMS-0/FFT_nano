@@ -33,6 +33,18 @@ interface GatewayStatusPayload {
   authRequired: boolean;
 }
 
+export interface WebControlCenterFileRoot {
+  id: string;
+  label: string;
+  path: string;
+}
+
+interface NormalizedFileRoot {
+  id: string;
+  label: string;
+  path: string;
+}
+
 export interface WebControlCenterAdapters {
   getRuntimeStatus: () => RuntimeStatusPayload;
   getProfileStatus: () => ProfileStatusPayload;
@@ -47,6 +59,7 @@ export interface WebControlCenterServerOptions {
   authToken: string;
   staticDir: string;
   logsDir: string;
+  fileRoots: WebControlCenterFileRoot[];
 }
 
 export interface WebControlCenterServer {
@@ -68,6 +81,10 @@ const MIME_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.webp': 'image/webp',
 };
+const MAX_FILE_WRITE_BYTES = 1024 * 1024;
+const MAX_FILE_READ_BYTES = 1024 * 1024;
+const MAX_SKILLS_SCAN_DIRS = 3000;
+const MAX_SKILLS_RESULTS_PER_ROOT = 500;
 
 function sendJson(
   res: http.ServerResponse,
@@ -101,6 +118,226 @@ function parseLineCount(raw: string | null): number {
   const parsed = Number.parseInt(raw || '', 10);
   if (!Number.isFinite(parsed)) return 120;
   return Math.max(10, Math.min(1000, parsed));
+}
+
+async function readJsonBody<T>(
+  req: http.IncomingMessage,
+  limitBytes = MAX_FILE_WRITE_BYTES,
+): Promise<T> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  await new Promise<void>((resolve, reject) => {
+    req.on('data', (chunk: Buffer | string) => {
+      const data = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      total += data.byteLength;
+      if (total > limitBytes) {
+        reject(new Error(`Request body exceeds ${limitBytes} bytes`));
+        req.destroy();
+        return;
+      }
+      chunks.push(data);
+    });
+    req.on('end', () => resolve());
+    req.on('error', reject);
+  });
+
+  const raw = Buffer.concat(chunks).toString('utf-8');
+  if (!raw.trim()) return {} as T;
+  return JSON.parse(raw) as T;
+}
+
+function normalizeSubPath(raw: string): string {
+  const trimmed = raw.trim().replace(/^\/+/, '');
+  return trimmed || '.';
+}
+
+function normalizeRelPosix(raw: string): string {
+  const cleaned = raw.replace(/\\/g, '/').replace(/^\/+/, '');
+  const normalized = path.posix.normalize(cleaned || '.');
+  return normalized === '' ? '.' : normalized;
+}
+
+function ensureWithinRoot(rootPath: string, subPath: string): string {
+  const resolved = path.resolve(rootPath, subPath);
+  const rel = path.relative(rootPath, resolved);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Path escapes root directory');
+  }
+  return resolved;
+}
+
+function ensureRealPathWithinRoot(rootPath: string, candidatePath: string): string {
+  const resolvedReal = fs.realpathSync(candidatePath);
+  const rootReal = fs.realpathSync(rootPath);
+  const rel = path.relative(rootReal, resolvedReal);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Path escapes root directory via symlink');
+  }
+  return resolvedReal;
+}
+
+function ensureWritePathWithinRoot(rootPath: string, filePath: string): void {
+  const rootReal = fs.realpathSync(rootPath);
+  const parentPath = path.dirname(filePath);
+  const parentReal = fs.realpathSync(parentPath);
+  const relParent = path.relative(rootReal, parentReal);
+  if (relParent.startsWith('..') || path.isAbsolute(relParent)) {
+    throw new Error('Path escapes root directory via symlink');
+  }
+
+  if (!fs.existsSync(filePath)) return;
+  const existing = fs.lstatSync(filePath);
+  if (existing.isSymbolicLink()) {
+    throw new Error('Refusing to write through symlink path');
+  }
+  ensureRealPathWithinRoot(rootPath, filePath);
+}
+
+function ensureWritableParentDirWithinRoot(rootPath: string, filePath: string): void {
+  const rootReal = fs.realpathSync(rootPath);
+  const targetDir = path.dirname(filePath);
+  const relDir = path.relative(rootPath, targetDir);
+  if (!relDir || relDir === '.') return;
+
+  const parts = relDir.split(path.sep).filter(Boolean);
+  let current = rootPath;
+  for (const part of parts) {
+    current = path.join(current, part);
+    if (!fs.existsSync(current)) {
+      fs.mkdirSync(current);
+      continue;
+    }
+    const existing = fs.lstatSync(current);
+    if (existing.isSymbolicLink()) {
+      throw new Error('Refusing to traverse symlink directory path');
+    }
+    if (!existing.isDirectory()) {
+      throw new Error('Parent path is not a directory');
+    }
+    const currentReal = fs.realpathSync(current);
+    const rel = path.relative(rootReal, currentReal);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error('Path escapes root directory via symlink');
+    }
+  }
+}
+
+function listDirectoryEntries(dirPath: string): Array<{
+  name: string;
+  relPath: string;
+  kind: 'file' | 'dir';
+  size: number;
+  modifiedAt: string;
+}> {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  return entries
+    .filter((entry) => !entry.name.startsWith('.'))
+    .map((entry) => {
+      const fullPath = path.join(dirPath, entry.name);
+      const lstat = fs.lstatSync(fullPath);
+      if (lstat.isSymbolicLink()) return null;
+      const stat = fs.statSync(fullPath);
+      const kind: 'file' | 'dir' = entry.isDirectory() ? 'dir' : 'file';
+      return {
+        name: entry.name,
+        relPath: entry.name,
+        kind,
+        size: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      };
+    })
+    .filter((entry): entry is {
+      name: string;
+      relPath: string;
+      kind: 'file' | 'dir';
+      size: number;
+      modifiedAt: string;
+    } => entry !== null)
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+function parseSkillDescription(raw: string): string {
+  const text = raw.trim();
+  if (!text) return '';
+
+  const frontmatterMatch = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (frontmatterMatch) {
+    const body = frontmatterMatch[1] || '';
+    const descriptionMatch = body.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+    if (descriptionMatch?.[1]) {
+      return descriptionMatch[1].trim();
+    }
+  }
+
+  const headingMatch = text.match(/^#\s+(.+)$/m);
+  if (headingMatch?.[1]) return headingMatch[1].trim();
+
+  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  return firstLine || '';
+}
+
+function scanSkillsCatalogForRoot(root: NormalizedFileRoot): Array<{
+  name: string;
+  path: string;
+  dir: string;
+  description: string;
+}> {
+  const entries: Array<{
+    name: string;
+    path: string;
+    dir: string;
+    description: string;
+  }> = [];
+  const queue = ['.'];
+  let visitedDirs = 0;
+
+  while (queue.length > 0) {
+    if (visitedDirs >= MAX_SKILLS_SCAN_DIRS || entries.length >= MAX_SKILLS_RESULTS_PER_ROOT) {
+      break;
+    }
+    const relDir = queue.shift() || '.';
+    const absDir = ensureWithinRoot(root.path, relDir);
+    let dirEntries: fs.Dirent[];
+    try {
+      dirEntries = fs.readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    visitedDirs += 1;
+
+    const hasSkill = dirEntries.some((entry) => entry.isFile() && entry.name === 'SKILL.md');
+    if (hasSkill) {
+      const skillRelPath = normalizeRelPosix(path.posix.join(relDir === '.' ? '' : relDir, 'SKILL.md'));
+      const skillPath = ensureWithinRoot(root.path, skillRelPath);
+      let description = '';
+      try {
+        description = parseSkillDescription(fs.readFileSync(skillPath, 'utf-8'));
+      } catch {
+        description = '';
+      }
+      const name = relDir === '.'
+        ? root.label
+        : path.basename(relDir);
+      entries.push({
+        name,
+        path: skillRelPath,
+        dir: normalizeRelPosix(relDir),
+        description,
+      });
+    }
+
+    for (const entry of dirEntries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const childRel = normalizeRelPosix(path.posix.join(relDir === '.' ? '' : relDir, entry.name));
+      queue.push(childRel);
+    }
+  }
+
+  return entries.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function tailFile(filePath: string, lineCount: number): string {
@@ -172,6 +409,25 @@ export async function startWebControlCenterServer(
 
   const staticDir = path.resolve(options.staticDir);
   const logsDir = path.resolve(options.logsDir);
+  const fileRoots: NormalizedFileRoot[] = options.fileRoots
+    .map((root) => {
+      const id = root.id.trim();
+      const label = root.label.trim() || id;
+      const resolved = path.resolve(root.path);
+      if (!id || !fs.existsSync(resolved)) return null;
+      try {
+        return {
+          id,
+          label,
+          path: fs.realpathSync(resolved),
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((root): root is NormalizedFileRoot => root !== null);
+  const fileRootsById = new Map(fileRoots.map((root) => [root.id, root]));
+  const skillsRoots = fileRoots.filter((root) => root.id.toLowerCase().includes('skill'));
   const indexPath = path.join(staticDir, 'index.html');
   if (!fs.existsSync(indexPath)) {
     throw new Error(
@@ -179,7 +435,7 @@ export async function startWebControlCenterServer(
     );
   }
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const method = (req.method || 'GET').toUpperCase();
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     const requestPath = decodeURIComponent(url.pathname || '/');
@@ -190,11 +446,6 @@ export async function startWebControlCenterServer(
     }
 
     if (requestPath.startsWith('/api/')) {
-      if (method !== 'GET') {
-        sendJson(res, 405, { ok: false, error: 'Method not allowed' });
-        return;
-      }
-
       if (!isAuthorized(req, authRequired, authToken)) {
         res.setHeader('WWW-Authenticate', 'Bearer');
         sendJson(res, 401, { ok: false, error: 'Unauthorized' });
@@ -202,6 +453,10 @@ export async function startWebControlCenterServer(
       }
 
       if (requestPath === '/api/runtime/status') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
         const runtime = adapters.getRuntimeStatus();
         const profile = adapters.getProfileStatus();
         const build = adapters.getBuildInfo();
@@ -227,6 +482,10 @@ export async function startWebControlCenterServer(
       }
 
       if (requestPath === '/api/profile') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
         sendJson(res, 200, {
           ok: true,
           ...adapters.getProfileStatus(),
@@ -235,6 +494,10 @@ export async function startWebControlCenterServer(
       }
 
       if (requestPath === '/api/logs/recent') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
         const target = (url.searchParams.get('target') || 'host').toLowerCase();
         const lines = parseLineCount(url.searchParams.get('lines'));
         const fileName =
@@ -250,6 +513,196 @@ export async function startWebControlCenterServer(
           filePath,
           content: text,
         });
+        return;
+      }
+
+      if (requestPath === '/api/files/roots') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          roots: fileRoots.map((root) => ({
+            id: root.id,
+            label: root.label,
+          })),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/skills/catalog') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        const rootFilter = (url.searchParams.get('root') || '').trim();
+        const query = (url.searchParams.get('q') || '').trim().toLowerCase();
+        const roots = rootFilter
+          ? skillsRoots.filter((root) => root.id === rootFilter)
+          : skillsRoots;
+        if (rootFilter && roots.length === 0) {
+          sendJson(res, 400, { ok: false, error: `Unknown skill root: ${rootFilter}` });
+          return;
+        }
+
+        const groups = roots.map((root) => {
+          const skills = scanSkillsCatalogForRoot(root)
+            .filter((entry) => {
+              if (!query) return true;
+              const haystack = `${entry.name} ${entry.path} ${entry.description}`.toLowerCase();
+              return haystack.includes(query);
+            })
+            .map((entry) => ({
+              ...entry,
+              rootId: root.id,
+              rootLabel: root.label,
+            }));
+          return {
+            root: {
+              id: root.id,
+              label: root.label,
+            },
+            skills,
+          };
+        });
+
+        sendJson(res, 200, { ok: true, groups });
+        return;
+      }
+
+      if (requestPath === '/api/files/tree') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        const rootId = (url.searchParams.get('root') || '').trim();
+        const root = fileRootsById.get(rootId);
+        if (!root) {
+          sendJson(res, 400, { ok: false, error: `Unknown file root: ${rootId}` });
+          return;
+        }
+        const relPath = normalizeSubPath(url.searchParams.get('path') || '.');
+        try {
+          const dirPath = ensureRealPathWithinRoot(
+            root.path,
+            ensureWithinRoot(root.path, relPath),
+          );
+          const stat = fs.statSync(dirPath);
+          if (!stat.isDirectory()) {
+            sendJson(res, 400, { ok: false, error: 'Requested path is not a directory' });
+            return;
+          }
+          const entries = listDirectoryEntries(dirPath).map((entry) => ({
+            ...entry,
+            relPath: path.posix.join(relPath === '.' ? '' : relPath, entry.relPath),
+          }));
+          sendJson(res, 200, {
+            ok: true,
+            root: { id: root.id, label: root.label },
+            path: relPath,
+            entries,
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/files/read') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        const rootId = (url.searchParams.get('root') || '').trim();
+        const root = fileRootsById.get(rootId);
+        if (!root) {
+          sendJson(res, 400, { ok: false, error: `Unknown file root: ${rootId}` });
+          return;
+        }
+        const relPath = normalizeSubPath(url.searchParams.get('path') || '');
+        try {
+          const filePath = ensureRealPathWithinRoot(
+            root.path,
+            ensureWithinRoot(root.path, relPath),
+          );
+          const stat = fs.statSync(filePath);
+          if (!stat.isFile()) {
+            sendJson(res, 400, { ok: false, error: 'Requested path is not a file' });
+            return;
+          }
+          if (stat.size > MAX_FILE_READ_BYTES) {
+            sendJson(res, 413, {
+              ok: false,
+              error: `File is larger than ${MAX_FILE_READ_BYTES} bytes`,
+            });
+            return;
+          }
+          const content = fs.readFileSync(filePath, 'utf-8');
+          sendJson(res, 200, {
+            ok: true,
+            root: { id: root.id, label: root.label },
+            path: relPath,
+            size: stat.size,
+            modifiedAt: stat.mtime.toISOString(),
+            content,
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/files/write') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        try {
+          const body = await readJsonBody<{
+            root?: string;
+            path?: string;
+            content?: string;
+          }>(req);
+          const rootId = (body.root || '').trim();
+          const root = fileRootsById.get(rootId);
+          if (!root) {
+            sendJson(res, 400, { ok: false, error: `Unknown file root: ${rootId}` });
+            return;
+          }
+          const relPath = normalizeSubPath(body.path || '');
+          const content = typeof body.content === 'string' ? body.content : '';
+          if (Buffer.byteLength(content, 'utf-8') > MAX_FILE_WRITE_BYTES) {
+            sendJson(res, 413, {
+              ok: false,
+              error: `Content exceeds ${MAX_FILE_WRITE_BYTES} bytes`,
+            });
+            return;
+          }
+          const filePath = ensureWithinRoot(root.path, relPath);
+          ensureWritableParentDirWithinRoot(root.path, filePath);
+          ensureWritePathWithinRoot(root.path, filePath);
+          fs.writeFileSync(filePath, content, 'utf-8');
+          const stat = fs.statSync(filePath);
+          sendJson(res, 200, {
+            ok: true,
+            root: { id: root.id, label: root.label },
+            path: relPath,
+            size: stat.size,
+            modifiedAt: stat.mtime.toISOString(),
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         return;
       }
 

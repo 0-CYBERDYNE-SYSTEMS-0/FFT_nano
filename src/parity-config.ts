@@ -64,6 +64,8 @@ export interface CronParityConfig {
 
 export interface WorkspaceParityConfig {
   skipBootstrap: boolean;
+  enforceBootstrapGate: boolean;
+  enforceBootstrapGateForExisting: boolean;
   bootstrapMaxChars: number;
   bootstrapTotalMaxChars: number;
   enableBootMd: boolean;
@@ -121,6 +123,8 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
   },
   workspace: {
     skipBootstrap: false,
+    enforceBootstrapGate: true,
+    enforceBootstrapGateForExisting: false,
     bootstrapMaxChars: 20_000,
     bootstrapTotalMaxChars: 150_000,
     enableBootMd: false,
@@ -365,6 +369,14 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
   next.workspace.skipBootstrap = envBool(
     process.env.FFT_NANO_WORKSPACE_SKIP_BOOTSTRAP,
     next.workspace.skipBootstrap,
+  );
+  next.workspace.enforceBootstrapGate = envBool(
+    process.env.FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE,
+    next.workspace.enforceBootstrapGate,
+  );
+  next.workspace.enforceBootstrapGateForExisting = envBool(
+    process.env.FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING,
+    next.workspace.enforceBootstrapGateForExisting,
   );
   next.workspace.bootstrapMaxChars = envInt(
     process.env.FFT_NANO_WORKSPACE_BOOT_MAX_CHARS,

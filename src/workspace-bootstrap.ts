@@ -38,6 +38,7 @@ export interface WorkspaceOnboardingState {
   version: number;
   bootstrapSeededAt?: string;
   onboardingCompletedAt?: string;
+  bootstrapGateEligibleAt?: string;
   bootExecutedAt?: string;
   bootHash?: string;
 }
@@ -168,6 +169,10 @@ function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
         typeof parsed.onboardingCompletedAt === 'string'
           ? parsed.onboardingCompletedAt
           : undefined,
+      bootstrapGateEligibleAt:
+        typeof parsed.bootstrapGateEligibleAt === 'string'
+          ? parsed.bootstrapGateEligibleAt
+          : undefined,
       bootExecutedAt:
         typeof parsed.bootExecutedAt === 'string'
           ? parsed.bootExecutedAt
@@ -199,6 +204,30 @@ export function writeMainWorkspaceState(
   state: WorkspaceOnboardingState,
 ): void {
   writeWorkspaceState(workspaceDir, state);
+}
+
+export interface MainWorkspaceOnboardingStatus {
+  state: WorkspaceOnboardingState;
+  bootstrapExists: boolean;
+  pending: boolean;
+  gateEligible: boolean;
+}
+
+export function getMainWorkspaceOnboardingStatus(workspaceDir: string): MainWorkspaceOnboardingStatus {
+  const state = readWorkspaceState(workspaceDir);
+  const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
+  const bootstrapExists = fs.existsSync(bootstrapPath);
+  const pending = bootstrapExists || (!!state.bootstrapSeededAt && !state.onboardingCompletedAt);
+  return {
+    state,
+    bootstrapExists,
+    pending,
+    gateEligible: !!state.bootstrapGateEligibleAt,
+  };
+}
+
+export function isMainWorkspaceOnboardingPending(workspaceDir: string): boolean {
+  return getMainWorkspaceOnboardingStatus(workspaceDir).pending;
 }
 
 export function computeBootFileHash(content: string): string {
@@ -274,8 +303,11 @@ export function ensureMainWorkspaceBootstrap(params: {
     if (onboardingAlreadyDone) {
       patchState({ onboardingCompletedAt: nowIso() });
     } else {
-      writeFileIfMissing(bootstrapPath, templates['BOOTSTRAP.md']);
+      const createdBootstrap = writeFileIfMissing(bootstrapPath, templates['BOOTSTRAP.md']);
       bootstrapExists = fs.existsSync(bootstrapPath);
+      if (createdBootstrap && !state.bootstrapGateEligibleAt) {
+        patchState({ bootstrapGateEligibleAt: nowIso() });
+      }
       if (bootstrapExists && !state.bootstrapSeededAt) {
         patchState({ bootstrapSeededAt: nowIso() });
       }
