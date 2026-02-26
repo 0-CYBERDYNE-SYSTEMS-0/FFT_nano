@@ -2457,3 +2457,15 @@
   padding: 1.75rem 0;
   margin: 0 -1rem;
 }
+
+/* btn-on-light: secondary button variant for use on light/cream backgrounds */
+.btn-on-light {
+  color: var(--brand-secondary-dark) !important;
+  background: rgba(106, 170, 120, 0.12) !important;
+  border-color: var(--brand-secondary) !important;
+  text-shadow: none !important;
+}
+.btn-on-light:hover {
+  color: #fff !important;
+  background: var(--brand-secondary) !important;
+}
