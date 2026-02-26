@@ -228,6 +228,70 @@ test('web control center file APIs list, read, and write within allowed roots', 
   }
 });
 
+test('web control center keeps configured roots even when missing at startup', async () => {
+  const port = await getFreePort();
+  const staticDir = createStaticDir();
+  const logsDir = createLogsDir();
+  const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-web-root-parent-'));
+  const lazyRootDir = path.join(parentDir, 'lazy-workspace');
+
+  const server = await startWebControlCenterServer(
+    {
+      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      getProfileStatus: () => ({
+        profile: 'core',
+        featureFarm: false,
+        profileDetection: { source: 'explicit', reason: 'test' },
+      }),
+      getBuildInfo: () => ({
+        startedAt: '2026-02-26T00:00:00.000Z',
+        version: '1.1.0',
+      }),
+      getGatewayStatus: () => ({
+        host: '127.0.0.1',
+        port: 28989,
+        authRequired: false,
+      }),
+    },
+    {
+      host: '127.0.0.1',
+      port,
+      accessMode: 'localhost',
+      authToken: '',
+      staticDir,
+      logsDir,
+      fileRoots: [
+        { id: 'workspace', label: 'Workspace', path: lazyRootDir },
+      ],
+    },
+  );
+
+  try {
+    const rootsRes = await fetch(`http://127.0.0.1:${port}/api/files/roots`);
+    assert.equal(rootsRes.status, 200);
+    const rootsJson = (await rootsRes.json()) as {
+      ok: boolean;
+      roots: Array<{ id: string; label: string }>;
+    };
+    assert.equal(rootsJson.ok, true);
+    assert.equal(rootsJson.roots.some((root) => root.id === 'workspace'), true);
+
+    const writeRes = await fetch(`http://127.0.0.1:${port}/api/files/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        root: 'workspace',
+        path: 'bootstrapped.txt',
+        content: 'created-after-startup\n',
+      }),
+    });
+    assert.equal(writeRes.status, 200);
+    assert.equal(fs.readFileSync(path.join(lazyRootDir, 'bootstrapped.txt'), 'utf-8'), 'created-after-startup\n');
+  } finally {
+    await server.close();
+  }
+});
+
 test('web control center file read rejects symlink escapes outside root', async (t) => {
   const port = await getFreePort();
   const staticDir = createStaticDir();

@@ -106,6 +106,10 @@ interface SkillCatalogGroup {
   skills: SkillCatalogEntry[];
 }
 
+type MessageBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'code'; language: string; code: string };
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -139,6 +143,151 @@ function parentDir(relPath: string): string {
 function normalizeRelPath(input: string): string {
   const normalized = input.replace(/\\/g, '/').replace(/^\/+/, '').trim();
   return normalized || '.';
+}
+
+function parseMessageBlocks(input: string): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  const fencePattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while (true) {
+    match = fencePattern.exec(input);
+    if (!match) break;
+
+    if (match.index > lastIndex) {
+      blocks.push({
+        kind: 'text',
+        text: input.slice(lastIndex, match.index),
+      });
+    }
+
+    blocks.push({
+      kind: 'code',
+      language: (match[1] || '').trim(),
+      code: (match[2] || '').replace(/\n$/, ''),
+    });
+    lastIndex = fencePattern.lastIndex;
+  }
+
+  if (lastIndex < input.length) {
+    blocks.push({
+      kind: 'text',
+      text: input.slice(lastIndex),
+    });
+  }
+
+  if (blocks.length === 0) {
+    return [{ kind: 'text', text: input }];
+  }
+  return blocks;
+}
+
+function normalizeLink(raw: string): string {
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^www\./i.test(raw)) return `https://${raw}`;
+  return '';
+}
+
+function renderInlineText(input: string, keyPrefix: string): Array<JSX.Element | string> {
+  const items: Array<JSX.Element | string> = [];
+  const tokenPattern = /(`[^`]+`|https?:\/\/[^\s<]+|www\.[^\s<]+)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let index = 0;
+
+  while (true) {
+    match = tokenPattern.exec(input);
+    if (!match) break;
+    if (match.index > lastIndex) {
+      items.push(input.slice(lastIndex, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith('`') && token.endsWith('`')) {
+      items.push(
+        <code key={`${keyPrefix}-inline-${index}`} className="message-inline-code">
+          {token.slice(1, -1)}
+        </code>,
+      );
+    } else {
+      const href = normalizeLink(token);
+      if (href) {
+        items.push(
+          <a
+            key={`${keyPrefix}-link-${index}`}
+            href={href}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="message-link"
+          >
+            {token}
+          </a>,
+        );
+      } else {
+        items.push(token);
+      }
+    }
+    lastIndex = tokenPattern.lastIndex;
+    index += 1;
+  }
+
+  if (lastIndex < input.length) {
+    items.push(input.slice(lastIndex));
+  }
+  return items;
+}
+
+function renderTextBlock(input: string, keyPrefix: string): JSX.Element[] {
+  const normalized = input.replace(/\r/g, '').trim();
+  if (!normalized) return [];
+  const paragraphs = normalized.split(/\n{2,}/);
+
+  return paragraphs.map((paragraph, paragraphIndex) => {
+    const lines = paragraph.split('\n');
+    return (
+      <p key={`${keyPrefix}-p-${paragraphIndex}`} className="message-paragraph">
+        {lines.map((line, lineIndex) => (
+          <span key={`${keyPrefix}-l-${paragraphIndex}-${lineIndex}`}>
+            {lineIndex > 0 ? <br /> : null}
+            {renderInlineText(line, `${keyPrefix}-${paragraphIndex}-${lineIndex}`)}
+          </span>
+        ))}
+      </p>
+    );
+  });
+}
+
+function renderRichMessage(input: string, keyPrefix: string): JSX.Element[] {
+  const blocks = parseMessageBlocks(input || '');
+  const nodes: JSX.Element[] = [];
+  let index = 0;
+
+  for (const block of blocks) {
+    if (block.kind === 'code') {
+      nodes.push(
+        <section key={`${keyPrefix}-code-${index}`} className="message-code-wrap">
+          {block.language ? <p className="message-code-lang">{block.language}</p> : null}
+          <pre className="message-code-block">
+            <code>{block.code}</code>
+          </pre>
+        </section>,
+      );
+      index += 1;
+      continue;
+    }
+
+    const textNodes = renderTextBlock(block.text, `${keyPrefix}-text-${index}`);
+    if (textNodes.length > 0) {
+      nodes.push(...textNodes);
+    }
+    index += 1;
+  }
+
+  if (nodes.length === 0) {
+    return [<p key={`${keyPrefix}-empty`} className="message-paragraph">(empty)</p>];
+  }
+  return nodes;
 }
 
 export function App(): JSX.Element {
@@ -184,6 +333,8 @@ export function App(): JSX.Element {
   const pendingRef = useRef<Map<string, PendingRequest>>(new Map());
   const activeSessionRef = useRef<string>(activeSession);
   const suppressAutoRootTreeLoadRef = useRef<string | null>(null);
+  const historyViewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   useEffect(() => {
     activeSessionRef.current = activeSession;
@@ -458,6 +609,13 @@ export function App(): JSX.Element {
     setHistory(Array.isArray(result.messages) ? result.messages : []);
   };
 
+  const onHistoryScroll = () => {
+    const viewport = historyViewportRef.current;
+    if (!viewport) return;
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom <= 48;
+  };
+
   useEffect(() => {
     void fetchRuntime();
     void fetchLogs('host');
@@ -583,8 +741,16 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (!gatewayConnected) return;
+    shouldStickToBottomRef.current = true;
     void loadHistory(activeSession);
   }, [activeSession, gatewayConnected]);
+
+  useEffect(() => {
+    const viewport = historyViewportRef.current;
+    if (!viewport) return;
+    if (!shouldStickToBottomRef.current) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [history, activeSession]);
 
   const onApplyToken = () => {
     const next = tokenInput.trim();
@@ -769,11 +935,20 @@ export function App(): JSX.Element {
 
         <article className="panel chat-panel">
           <h2>Live Chat · {activeSession}</h2>
-          <div className="scroll-block history">
+          <div
+            ref={historyViewportRef}
+            className="scroll-block history"
+            onScroll={onHistoryScroll}
+          >
             {history.map((msg, index) => (
               <div key={`${msg.timestamp}-${index}`} className={`message ${msg.role}`}>
-                <span className="meta">{msg.role}</span>
-                <pre>{msg.text}</pre>
+                <div className="message-meta-row">
+                  <span className="meta">{msg.role}</span>
+                  <span className="meta-time">{shortTime(msg.timestamp)}</span>
+                </div>
+                <div className="message-content">
+                  {renderRichMessage(msg.text, `${msg.timestamp}-${index}`)}
+                </div>
               </div>
             ))}
           </div>

@@ -11,6 +11,7 @@ store/
 data/
 logs/
 tmp-ipc/
+backups/
 
 # Runtime-generated group folders (keep template groups in repo)
 groups/telegram-*/

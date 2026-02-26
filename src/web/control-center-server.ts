@@ -414,15 +414,22 @@ export async function startWebControlCenterServer(
       const id = root.id.trim();
       const label = root.label.trim() || id;
       const resolved = path.resolve(root.path);
-      if (!id || !fs.existsSync(resolved)) return null;
+      if (!id) return null;
       try {
+        // If the root exists at startup, normalize through realpath to reduce aliasing.
+        // If it does not exist yet (lazy bootstrap), keep the resolved path so the root
+        // still appears in /api/files/roots and becomes available once created.
         return {
           id,
           label,
-          path: fs.realpathSync(resolved),
+          path: fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved,
         };
       } catch {
-        return null;
+        return {
+          id,
+          label,
+          path: resolved,
+        };
       }
     })
     .filter((root): root is NormalizedFileRoot => root !== null);
@@ -685,6 +692,8 @@ export async function startWebControlCenterServer(
             });
             return;
           }
+          // Roots may be created lazily after startup; create on first write.
+          fs.mkdirSync(root.path, { recursive: true });
           const filePath = ensureWithinRoot(root.path, relPath);
           ensureWritableParentDirWithinRoot(root.path, filePath);
           ensureWritePathWithinRoot(root.path, filePath);
