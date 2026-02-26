@@ -105,10 +105,17 @@ import {
   stripHeartbeatToken,
 } from './heartbeat-policy.js';
 import {
+  completeMainWorkspaceOnboarding,
   computeBootFileHash,
+  ensureMainWorkspaceBootstrap,
+  getMainWorkspaceOnboardingStatus,
   markMainWorkspaceBootExecuted,
   readMainWorkspaceState,
 } from './workspace-bootstrap.js';
+import {
+  extractOnboardingCompletion,
+  MAIN_ONBOARDING_COMPLETION_TOKEN,
+} from './onboarding-completion.js';
 import {
   startTuiGatewayServer,
   type SessionHistoryMessage,
@@ -677,6 +684,54 @@ function maybePromoteConfiguredTelegramMain(): void {
 
 function isMainChat(chatJid: string): boolean {
   return registeredGroups[chatJid]?.folder === MAIN_GROUP_FOLDER;
+}
+
+function resolveMainOnboardingGate(chatJid: string): {
+  active: boolean;
+  pending: boolean;
+} {
+  if (!isMainChat(chatJid)) return { active: false, pending: false };
+  if (PARITY_CONFIG.workspace.skipBootstrap) return { active: false, pending: false };
+  if (!PARITY_CONFIG.workspace.enforceBootstrapGate) return { active: false, pending: false };
+
+  // Ensure first-message gate checks observe freshly seeded bootstrap state.
+  ensureMainWorkspaceBootstrap({ workspaceDir: MAIN_WORKSPACE_DIR });
+  const status = getMainWorkspaceOnboardingStatus(MAIN_WORKSPACE_DIR);
+  if (!status.pending) return { active: false, pending: false };
+
+  const enforceForWorkspace =
+    status.gateEligible || PARITY_CONFIG.workspace.enforceBootstrapGateForExisting;
+  return {
+    active: enforceForWorkspace,
+    pending: true,
+  };
+}
+
+function isCoderDelegationCommand(content: string): boolean {
+  return /^\/(?:coder|coder-plan|coder_plan)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(content.trim());
+}
+
+function onboardingCommandBlockedText(): string {
+  return `${ASSISTANT_NAME}: onboarding is in progress. Finish the bootstrap interview before using coder delegation commands.`;
+}
+
+function buildOnboardingInterviewPrompt(params: {
+  prompt: string;
+  latestUserText: string;
+}): string {
+  return [
+    '[ONBOARDING INTERVIEW MODE]',
+    'Main workspace onboarding is pending. Continue first-run interview flow now.',
+    'Use BOOTSTRAP.md instructions. Ask one concise question at a time and keep the exchange practical.',
+    'Update USER.md, IDENTITY.md, SOUL.md, PRINCIPLES.md, and TOOLS.md as needed based on user responses.',
+    `When onboarding is complete, remove BOOTSTRAP.md and include the token ${MAIN_ONBOARDING_COMPLETION_TOKEN} exactly once on its own line in your final reply.`,
+    '',
+    '[LATEST USER MESSAGE]',
+    params.latestUserText,
+    '',
+    '[RECENT CHAT CONTEXT]',
+    params.prompt,
+  ].join('\n');
 }
 
 function parseTelegramTargetJid(raw: string): string | null {
@@ -2438,6 +2493,12 @@ async function handleTelegramCommand(m: {
       );
       return true;
     }
+    const onboardingGate = resolveMainOnboardingGate(m.chatJid);
+    if (onboardingGate.active) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'blocked by onboarding gate');
+      await sendMessage(m.chatJid, onboardingCommandBlockedText());
+      return true;
+    }
     logTelegramCommandAudit(m.chatJid, cmd, true, 'pass-through');
     // Let the normal agent path process /coder and /coder-plan.
     return false;
@@ -2974,6 +3035,12 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
 
   // Main group responds to all messages; other groups require trigger prefix
   if (!isMainGroup && !freeChatEnabled && !TRIGGER_PATTERN.test(content)) return true;
+  const onboardingGate = resolveMainOnboardingGate(msg.chat_jid);
+
+  if (onboardingGate.active && isCoderDelegationCommand(content)) {
+    await sendMessage(msg.chat_jid, onboardingCommandBlockedText());
+    return true;
+  }
 
   if (queueDebounceMs > 0) {
     logger.debug(
@@ -2993,7 +3060,9 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   // In main, allow "/coder...", "/coder-plan...", or explicit alias phrases.
   // In non-main, trigger prefix is required (checked above) and delegation is blocked.
   const stripped = content.replace(TRIGGER_PATTERN, '').trimStart();
-  const parsedTrigger = parseDelegationTrigger(stripped);
+  const parsedTrigger = onboardingGate.active
+    ? { hint: 'none' as CodingHint, instruction: null }
+    : parseDelegationTrigger(stripped);
   const wantsDelegation = parsedTrigger.hint !== 'none';
 
   if (wantsDelegation && !isMainGroup) {
@@ -3092,6 +3161,15 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
       `Debounce preference is ${queueDebounceMs}ms; keep responses concise and account for rapid bursts.`;
   }
 
+  if (onboardingGate.active) {
+    codingHint = 'none';
+    requestId = makeRunId('onboarding');
+    finalPrompt = buildOnboardingInterviewPrompt({
+      prompt,
+      latestUserText,
+    });
+  }
+
   logger.info(
     {
       group: group.name,
@@ -3100,6 +3178,7 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
       queueMode,
       queueCap: queueCap || 0,
       queueDrop,
+      onboardingGate: onboardingGate.active,
     },
     'Processing message',
   );
@@ -3182,6 +3261,21 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
     activeCoderRuns.delete(requestId);
   }
 
+  if (ok && onboardingGate.active) {
+    const completion = extractOnboardingCompletion(result);
+    result = completion.text;
+    if (completion.completed) {
+      completeMainWorkspaceOnboarding({ workspaceDir: MAIN_WORKSPACE_DIR });
+      if (!result) {
+        result = 'Onboarding complete.';
+      }
+      logger.info(
+        { chatJid: msg.chat_jid, requestId },
+        'Completed main workspace onboarding from gated interview run',
+      );
+    }
+  }
+
   // Only advance last-agent timestamp after a successful run; otherwise the
   // next loop should retry with the same context window.
   if (ok) {
@@ -3260,6 +3354,7 @@ async function runDirectSessionTurn(params: {
   if (existing) {
     return { runId: existing.requestId, status: 'already_running' };
   }
+  const onboardingGate = resolveMainOnboardingGate(chatJid);
 
   const sessionKey = getSessionKeyForChat(chatJid);
   persistTuiUserHistory(chatJid, text, runId);
@@ -3283,7 +3378,13 @@ async function runDirectSessionTurn(params: {
     runPreferences.nextRunNoContinue = true;
   }
 
-  const prompt = `[${new Date().toISOString()}] ${TUI_SENDER_NAME}: ${text}`;
+  const directPrompt = `[${new Date().toISOString()}] ${TUI_SENDER_NAME}: ${text}`;
+  const prompt = onboardingGate.active
+    ? buildOnboardingInterviewPrompt({
+        prompt: directPrompt,
+        latestUserText: text,
+      })
+    : directPrompt;
   const abortController = new AbortController();
   const activeRun: ActiveChatRun = {
     chatJid,
@@ -3345,6 +3446,21 @@ async function runDirectSessionTurn(params: {
       detail: 'run failed',
     });
     throw new Error('Run failed');
+  }
+
+  if (onboardingGate.active) {
+    const completion = extractOnboardingCompletion(result);
+    result = completion.text;
+    if (completion.completed) {
+      completeMainWorkspaceOnboarding({ workspaceDir: MAIN_WORKSPACE_DIR });
+      if (!result) {
+        result = 'Onboarding complete.';
+      }
+      logger.info(
+        { chatJid, runId },
+        'Completed main workspace onboarding from direct session run',
+      );
+    }
   }
 
   updateChatUsage(chatJid, usage);
@@ -3647,6 +3763,23 @@ async function startWebControlCenterService(): Promise<void> {
         authToken: FFT_NANO_WEB_AUTH_TOKEN,
         staticDir: FFT_NANO_WEB_STATIC_DIR,
         logsDir: path.resolve(process.cwd(), 'logs'),
+        fileRoots: [
+          {
+            id: 'workspace',
+            label: 'Main Workspace',
+            path: MAIN_WORKSPACE_DIR,
+          },
+          {
+            id: 'skills-project',
+            label: 'Project Skills',
+            path: path.resolve(process.cwd(), 'skills'),
+          },
+          {
+            id: 'skills-user',
+            label: 'User Skills',
+            path: path.join(MAIN_WORKSPACE_DIR, 'skills'),
+          },
+        ],
       },
     );
   } catch (err) {

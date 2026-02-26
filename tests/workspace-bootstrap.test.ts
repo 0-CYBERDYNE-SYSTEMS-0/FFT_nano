@@ -4,7 +4,11 @@ import os from 'os';
 import path from 'path';
 import test from 'node:test';
 
-import { ensureMainWorkspaceBootstrap } from '../src/workspace-bootstrap.ts';
+import {
+  ensureMainWorkspaceBootstrap,
+  getMainWorkspaceOnboardingStatus,
+  isMainWorkspaceOnboardingPending,
+} from '../src/workspace-bootstrap.ts';
 
 function makeTmpWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fft-nano-workspace-'));
@@ -27,7 +31,9 @@ test('fresh workspace seeds core files, BOOTSTRAP.md, and state bootstrapSeededA
   assert.ok(fs.existsSync(path.join(workspaceDir, 'MEMORY.md')));
   assert.ok(fs.existsSync(path.join(workspaceDir, 'BOOTSTRAP.md')));
   assert.equal(state.bootstrapSeededAt, '2026-02-17T10:00:00.000Z');
+  assert.equal(state.bootstrapGateEligibleAt, '2026-02-17T10:00:00.000Z');
   assert.equal(state.onboardingCompletedAt, undefined);
+  assert.equal(isMainWorkspaceOnboardingPending(workspaceDir), true);
 });
 
 test('legacy/onboarded workspace does not recreate BOOTSTRAP.md and marks onboarding complete', () => {
@@ -68,6 +74,27 @@ test('when onboarding is completed and BOOTSTRAP.md removed, reruns do not recre
   });
   assert.equal(fs.existsSync(bootstrapPath), false);
   assert.equal(state2.onboardingCompletedAt, '2026-02-17T12:00:00.000Z');
+});
+
+test('legacy bootstrap state without gate marker is pending but not gate-eligible', () => {
+  const workspaceDir = makeTmpWorkspace();
+  fs.mkdirSync(path.join(workspaceDir, '.fft_nano'), { recursive: true });
+  fs.writeFileSync(path.join(workspaceDir, 'BOOTSTRAP.md'), '# BOOTSTRAP\n\nLegacy pending onboarding.\n');
+  fs.writeFileSync(
+    path.join(workspaceDir, '.fft_nano', 'workspace-state.json'),
+    JSON.stringify(
+      {
+        version: 1,
+        bootstrapSeededAt: '2026-02-01T10:00:00.000Z',
+      },
+      null,
+      2,
+    ),
+  );
+
+  const status = getMainWorkspaceOnboardingStatus(workspaceDir);
+  assert.equal(status.pending, true);
+  assert.equal(status.gateEligible, false);
 });
 
 test('seeded USER template is generic and contains no install-specific personal info', () => {

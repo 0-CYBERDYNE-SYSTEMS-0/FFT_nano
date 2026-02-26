@@ -395,6 +395,13 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 - Default main memory and context files live outside this git repo (`~/nano`), which helps keep personal notes out of commits.
 - `groups/main/` is intentionally kept as an empty placeholder in-repo; if you point main workspace into the repo, treat it as local-only and never commit personal memory/state files.
 - Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/` + `skills/`.
+- Main chat bootstrap interview is host-enforced by default for fresh installs while `BOOTSTRAP.md` is pending.
+- During enforced bootstrap, normal tasks are redirected into onboarding interview flow and `/coder` commands are blocked until completion.
+- Completion marker token: `ONBOARDING_COMPLETE` (host strips token and finalizes onboarding state).
+- Soft rollout default: existing installs are not retroactively gated unless explicitly enabled.
+- Gate controls:
+  - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE=1|0`
+  - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING=1|0`
 - Optional startup ritual file: `BOOT.md` (enable with `FFT_NANO_WORKSPACE_ENABLE_BOOT_MD=1` or parity config).
 - Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
 - Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).

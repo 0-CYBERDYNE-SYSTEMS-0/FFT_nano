@@ -35,6 +35,8 @@
   },
   "workspace": {
     "skipBootstrap": false,
+    "enforceBootstrapGate": true,
+    "enforceBootstrapGateForExisting": false,
     "bootstrapMaxChars": 20000,
     "bootstrapTotalMaxChars": 150000,
     "enableBootMd": false

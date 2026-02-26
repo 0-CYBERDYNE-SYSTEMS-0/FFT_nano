@@ -68,15 +68,24 @@ fft web
 - `--skip-doctor` (guided command only): skip doctor check
 - `--no-backup` (guided command only): skip preflight backup
 
+Runtime gate env toggles:
+
+- `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE=1|0` (default: `1`)
+- `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING=1|0` (default: `0`)
+
 ## Behavior
 
 1. Ensures core bootstrap files exist (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`; optional `BOOT.md` when enabled).
 2. Writes onboarding identity values to `SOUL.md`, `USER.md`, and `IDENTITY.md` when files are default/empty (or when `--force` is used).
 3. Preserves customized identity files on upgrades unless `--force` is set.
 4. Preserves `BOOTSTRAP.md` for first-run conversational bootstrap.
-5. Records bootstrap seeding in `.fft_nano/workspace-state.json`.
-6. Records wizard run metadata in `.fft_nano/wizard-state.json`.
-7. Updates the selected env file (`--env-path`) for provider/channel/remote URL settings.
+5. Main-chat bootstrap interview can be host-enforced while `BOOTSTRAP.md` is pending.
+6. During enforced bootstrap, normal tasks are redirected into onboarding interview flow and `/coder` commands are blocked.
+7. When onboarding is complete, agent should emit `ONBOARDING_COMPLETE`; host finalizes state and removes the token from user-visible output.
+8. Soft rollout default: legacy pending workspaces are not retroactively gated unless `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING=1`.
+9. Records bootstrap seeding in `.fft_nano/workspace-state.json`.
+10. Records wizard run metadata in `.fft_nano/wizard-state.json`.
+11. Updates the selected env file (`--env-path`) for provider/channel/remote URL settings.
 
 ## Privileges
 
