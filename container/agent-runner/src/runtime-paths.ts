@@ -36,7 +36,7 @@ export const WORKSPACE_IPC_ACTION_RESULTS_DIR = path.join(
 export const PI_HOME_DIR = clean(process.env.FFT_AGENT_PI_HOME_DIR, '/home/node/.pi');
 export const PI_AGENT_OPENCLAW_DIR = clean(
   process.env.FFT_AGENT_PI_AGENT_DIR,
-  path.join(PI_HOME_DIR, 'agent-openclaw'),
+  path.join(PI_HOME_DIR, 'agent-fft'),
 );
 export const PI_AGENT_CODER_DIR = clean(
   process.env.FFT_AGENT_CODER_AGENT_DIR,
@@ -65,4 +65,3 @@ export function isAllowedWorkspaceAbsolutePath(candidatePath: string): boolean {
     return candidatePath.startsWith(prefix);
   });
 }
-

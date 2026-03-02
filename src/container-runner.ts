@@ -674,7 +674,7 @@ function collectRuntimeSecrets(params: {
 
   if (runtime === 'docker') {
     merged.HOME = '/home/node';
-    merged.PI_CODING_AGENT_DIR = '/home/node/.pi/agent-openclaw';
+    merged.PI_CODING_AGENT_DIR = '/home/node/.pi/agent-fft';
   } else if (hostPaths) {
     const hostHome = path.join(
       DATA_DIR,
@@ -692,14 +692,14 @@ function collectRuntimeSecrets(params: {
 
     merged.HOME = hostHome;
     merged.PATH = `${hostRunnerBin}:${process.env.PATH || ''}`;
-    merged.PI_CODING_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-openclaw');
+    merged.PI_CODING_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-fft');
     merged.FFT_AGENT_WORKSPACE_ROOT_DIR = projectRoot;
     merged.FFT_AGENT_WORKSPACE_PROJECT_DIR = hostPaths.projectDir;
     merged.FFT_AGENT_WORKSPACE_GROUP_DIR = hostPaths.groupDir;
     merged.FFT_AGENT_WORKSPACE_GLOBAL_DIR = hostPaths.globalDir;
     merged.FFT_AGENT_WORKSPACE_IPC_DIR = hostPaths.ipcDir;
     merged.FFT_AGENT_PI_HOME_DIR = hostPaths.piHomeDir;
-    merged.FFT_AGENT_PI_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-openclaw');
+    merged.FFT_AGENT_PI_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-fft');
     merged.FFT_AGENT_CODER_AGENT_DIR = path.join(hostPaths.piHomeDir, 'agent-coder');
     merged.FFT_AGENT_PI_ON_PI_EXTENSION_PATH = path.join(
       projectRoot,
