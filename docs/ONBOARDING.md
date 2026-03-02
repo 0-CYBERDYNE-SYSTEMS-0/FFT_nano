@@ -9,8 +9,10 @@ backup -> setup -> onboarding wizard -> daemon step -> doctor.
 # guided wrapper (backup/setup/wizard/service/doctor)
 ./scripts/onboard-all.sh
 
-# wizard-only
+# full guided wrapper (same behavior as onboard-all)
 fft onboard
+
+# wizard-only
 ./scripts/onboard.sh
 
 # non-interactive quickstart (safe defaults, no provider wiring)
@@ -32,6 +34,11 @@ fft onboard
   --remote-url ws://127.0.0.1:18789 \
   --hatch later --no-install-daemon
 ```
+
+Config edit note:
+- There is no dedicated `fft config` command.
+- `fft onboard` runs the full guided wrapper (`onboard-all` path).
+- Use `./scripts/onboard.sh` when you want wizard-only edits without backup/setup/doctor steps.
 
 Interactive mode prompts for flow/mode/provider/channel/hatch and identity values.
 
@@ -86,6 +93,7 @@ Runtime gate env toggles:
 9. Records bootstrap seeding in `.fft_nano/workspace-state.json`.
 10. Records wizard run metadata in `.fft_nano/wizard-state.json`.
 11. Updates the selected env file (`--env-path`) for provider/channel/remote URL settings.
+12. Telegram `/main` first-claim shortcut: if no main chat exists yet and `TELEGRAM_ADMIN_SECRET` is unset, a direct Telegram DM can claim main with `/main`; set `TELEGRAM_ADMIN_SECRET` afterward and restart.
 
 ## Privileges
 

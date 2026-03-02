@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'node:readline/promises';
+import { randomBytes } from 'node:crypto';
 import { stdin as input, stdout as output } from 'node:process';
 
 import { ASSISTANT_NAME, MAIN_WORKSPACE_DIR } from './config.js';
@@ -8,6 +9,7 @@ import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 
 export type OnboardFlow = 'quickstart' | 'advanced';
 export type OnboardMode = 'local' | 'remote';
+export type OnboardRuntime = 'auto' | 'docker' | 'host';
 export type OnboardAuthChoice =
   | 'openai'
   | 'anthropic'
@@ -27,6 +29,7 @@ export interface OnboardCliOptions {
   acceptRisk: boolean;
   flow?: OnboardFlow;
   mode?: OnboardMode;
+  runtime?: OnboardRuntime;
   authChoice?: OnboardAuthChoice;
   model?: string;
   apiKey?: string;
@@ -49,6 +52,7 @@ export interface OnboardSummary {
   assistantName: string;
   flow: OnboardFlow;
   mode: OnboardMode;
+  runtime: OnboardRuntime;
   authChoice: OnboardAuthChoice;
   hatch: OnboardHatchChoice;
   installDaemon: boolean;
@@ -72,6 +76,19 @@ const ENV_KEY_BY_PROVIDER: Record<Exclude<OnboardAuthChoice, 'skip'>, string> = 
   zai: 'ZAI_API_KEY',
 };
 
+function hasMeaningfulEnvValue(raw: string | undefined): boolean {
+  if (!raw) return false;
+  const value = raw.trim();
+  if (!value) return false;
+  return value !== 'replace-me' && value !== '...';
+}
+
+function ensureAdminSecret(updates: Record<string, string | undefined>, envMap: Record<string, string>): void {
+  const existing = envMap.TELEGRAM_ADMIN_SECRET;
+  if (hasMeaningfulEnvValue(existing)) return;
+  updates.TELEGRAM_ADMIN_SECRET = randomBytes(24).toString('hex');
+}
+
 function usage(): string {
   return [
     'Usage:',
@@ -90,6 +107,7 @@ function usage(): string {
     'Wizard options:',
     '  --flow <quickstart|advanced|manual>',
     '  --mode <local|remote>',
+    '  --runtime <auto|docker|host>',
     '  --auth-choice <openai|anthropic|gemini|openrouter|zai|skip>',
     '  --model <provider/model-or-id>',
     '  --api-key <token>            API key for selected auth choice',
@@ -136,6 +154,13 @@ function parseMode(raw: string | undefined): OnboardMode | undefined {
   const value = raw.trim().toLowerCase();
   if (value === 'local' || value === 'remote') return value;
   throw new Error(`Invalid --mode (use local|remote): ${raw}`);
+}
+
+function parseRuntime(raw: string | undefined): OnboardRuntime | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === 'auto' || value === 'docker' || value === 'host') return value;
+  throw new Error(`Invalid --runtime (use auto|docker|host): ${raw}`);
 }
 
 function parseAuthChoice(raw: string | undefined): OnboardAuthChoice | undefined {
@@ -217,6 +242,11 @@ export function parseOnboardArgs(argv: string[]): OnboardCliOptions {
     }
     if (arg === '--mode') {
       options.mode = parseMode(parseFlagValue(argv, i));
+      i += 1;
+      continue;
+    }
+    if (arg === '--runtime') {
+      options.runtime = parseRuntime(parseFlagValue(argv, i));
       i += 1;
       continue;
     }
@@ -360,7 +390,11 @@ function normalizeBody(body: string): string {
 
 function shouldRewriteIdentityFile(existingBody: string, force: boolean): boolean {
   if (shouldRewriteFile(existingBody, force)) return true;
-  return normalizeBody(existingBody) === normalizeBody(renderIdentity(ASSISTANT_NAME));
+  const normalized = normalizeBody(existingBody);
+  if (normalized === normalizeBody(renderIdentity(ASSISTANT_NAME))) return true;
+  if (normalized === normalizeBody(renderIdentity('FarmFriend'))) return true;
+  if (normalized === normalizeBody(renderIdentity('OpenClaw'))) return true;
+  return false;
 }
 
 function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
@@ -490,6 +524,7 @@ async function resolveWizardSelections(
 ): Promise<{
   flow: OnboardFlow;
   mode: OnboardMode;
+  runtime: OnboardRuntime;
   authChoice: OnboardAuthChoice;
   model?: string;
   apiKey?: string;
@@ -503,6 +538,7 @@ async function resolveWizardSelections(
   if (opts.nonInteractive) {
     const flow = opts.flow || 'quickstart';
     const mode = opts.mode || (flow === 'quickstart' ? 'local' : 'local');
+    const runtime = opts.runtime || (mode === 'local' ? 'docker' : 'auto');
     const authChoice = opts.authChoice || 'skip';
     const installDaemon = opts.installDaemon ?? true;
     const hatch = opts.hatch || 'tui';
@@ -512,6 +548,7 @@ async function resolveWizardSelections(
     return {
       flow,
       mode,
+      runtime,
       authChoice,
       model: opts.model?.trim() || undefined,
       apiKey: opts.apiKey?.trim() || undefined,
@@ -543,6 +580,7 @@ async function resolveWizardSelections(
       return {
         flow,
         mode,
+        runtime: opts.runtime || 'auto',
         authChoice: 'skip',
         remoteUrl,
         installDaemon,
@@ -550,6 +588,10 @@ async function resolveWizardSelections(
         gatewayPort: opts.gatewayPort,
       };
     }
+
+    const runtime = opts.runtime
+      ? opts.runtime
+      : await askSelect(rl, 'Agent runtime', ['docker', 'host'], 'docker');
 
     const authChoice = opts.authChoice
       ? opts.authChoice
@@ -615,6 +657,7 @@ async function resolveWizardSelections(
     return {
       flow,
       mode,
+      runtime,
       authChoice,
       model,
       apiKey,
@@ -672,6 +715,7 @@ function writeWizardMetadata(workspace: string, summary: OnboardSummary): void {
     lastRunVersion: process.env.npm_package_version || 'unknown',
     lastRunCommand: 'onboard',
     lastRunMode: summary.mode,
+    lastRunRuntime: summary.runtime,
     flow: summary.flow,
     hatch: summary.hatch,
   };
@@ -726,7 +770,12 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<OnboardSum
     const updates: Record<string, string | undefined> = {
       FFT_NANO_TUI_PORT:
         typeof wizard.gatewayPort === 'number' ? String(wizard.gatewayPort) : undefined,
+      CONTAINER_RUNTIME: wizard.runtime,
     };
+    if (wizard.runtime === 'host') {
+      updates.FFT_NANO_ALLOW_HOST_RUNTIME = '1';
+    }
+    ensureAdminSecret(updates, envMap);
 
     if (wizard.authChoice !== 'skip') {
       const provider = wizard.authChoice;
@@ -753,9 +802,16 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<OnboardSum
 
     upsertDotEnv(envPath, updates);
   } else {
-    upsertDotEnv(envPath, {
+    const updates: Record<string, string | undefined> = {
       FFT_NANO_REMOTE_URL: wizard.remoteUrl?.trim() || '',
-    });
+    };
+    if (opts.runtime) {
+      updates.CONTAINER_RUNTIME = wizard.runtime;
+      if (wizard.runtime === 'host') {
+        updates.FFT_NANO_ALLOW_HOST_RUNTIME = '1';
+      }
+    }
+    upsertDotEnv(envPath, updates);
   }
 
   if (shouldRewriteFile(userCurrent, opts.force)) {
@@ -774,6 +830,7 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<OnboardSum
     assistantName: resolved.assistantName,
     flow: wizard.flow,
     mode: wizard.mode,
+    runtime: wizard.runtime,
     authChoice: wizard.authChoice,
     hatch: wizard.hatch,
     installDaemon: wizard.installDaemon,
@@ -806,6 +863,7 @@ async function main(): Promise<void> {
         `Assistant: ${result.assistantName}`,
         `Flow: ${result.flow}`,
         `Mode: ${result.mode}`,
+        `Runtime: ${result.runtime}`,
         `Auth: ${result.authChoice}`,
         `Hatch: ${result.hatch}`,
         `Install daemon: ${result.installDaemon ? 'yes' : 'no'}`,

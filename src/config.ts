@@ -74,12 +74,15 @@ export const FFT_DASHBOARD_REPO_PATH = process.env.FFT_DASHBOARD_REPO_PATH || ''
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'fft-nano-agent:latest';
+const DEFAULT_CONTAINER_TIMEOUT_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const CONTAINER_TIMEOUT = parseInt(
-  process.env.CONTAINER_TIMEOUT || '300000',
+  process.env.CONTAINER_TIMEOUT || String(DEFAULT_CONTAINER_TIMEOUT_MS),
   10,
 );
 export const IDLE_TIMEOUT = parseInt(
-  process.env.IDLE_TIMEOUT || process.env.CONTAINER_TIMEOUT || '300000',
+  process.env.IDLE_TIMEOUT ||
+    process.env.CONTAINER_TIMEOUT ||
+    String(DEFAULT_CONTAINER_TIMEOUT_MS),
   10,
 );
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(

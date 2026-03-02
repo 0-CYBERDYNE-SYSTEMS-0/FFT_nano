@@ -36,7 +36,7 @@ interface SessionPrefs {
   reasoningLevel?: ReasoningLevel;
 }
 
-type SendMessageStatus = 'sent' | 'busy';
+type SendMessageStatus = 'sent' | 'queued' | 'busy';
 
 const DEFAULT_PROVIDER = process.env.PI_API || '(provider)';
 const DEFAULT_MODEL = process.env.PI_MODEL || '(model)';
@@ -374,12 +374,6 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   };
 
   const sendMessage = async (text: string): Promise<SendMessageStatus> => {
-    if (activeRunId) {
-      chatLog.addSystem('run already in progress; wait for completion or /abort before sending.');
-      setActivityStatus('running');
-      return 'busy';
-    }
-
     setActivityStatus('sending');
     const res = await client.request<{ runId: string; status: string }>('chat.send', {
       sessionKey,
@@ -389,6 +383,10 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
     const runId = asString(res.runId) || null;
     const status = asString(res.status) || 'started';
 
+    if (status === 'queued') {
+      chatLog.addSystem('message queued; will process when current run completes.');
+      return 'queued';
+    }
     if (status === 'already_running') {
       if (runId) activeRunId = runId;
       chatLog.addSystem('run already in progress; message was not sent. Press Esc or /abort, then resend.');
@@ -590,8 +588,19 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           chatLog.addSystem('no active run');
           break;
         }
-        await client.request('chat.abort', { sessionKey, runId: activeRunId });
-        chatLog.addSystem('abort signal sent');
+        {
+          const res = await client.request<{ aborted?: boolean }>('chat.abort', {
+            sessionKey,
+            runId: activeRunId,
+          });
+          if (res.aborted) {
+            chatLog.addSystem('abort signal sent');
+          } else {
+            activeRunId = null;
+            setActivityStatus('idle');
+            chatLog.addSystem('No matching active run on host; cleared local run lock.');
+          }
+        }
         break;
 
       case 'exit':
@@ -624,7 +633,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
 
     void sendMessage(value)
       .then((status) => {
-        if (status === 'sent') {
+        if (status === 'sent' || status === 'queued') {
           editor.setText('');
           return;
         }
@@ -642,7 +651,14 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   editor.onEscape = () => {
     if (!activeRunId) return;
     void client
-      .request('chat.abort', { sessionKey, runId: activeRunId })
+      .request<{ aborted?: boolean }>('chat.abort', { sessionKey, runId: activeRunId })
+      .then((res: { aborted?: boolean }) => {
+        if (!res.aborted) {
+          activeRunId = null;
+          setActivityStatus('idle');
+          chatLog.addSystem('No matching active run on host; cleared local run lock.');
+        }
+      })
       .catch(() => undefined)
       .finally(() => {
         tui.requestRender();

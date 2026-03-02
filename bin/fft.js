@@ -6,7 +6,7 @@ import path from 'path';
 
 function printUsage() {
   process.stdout.write(`Usage:
-  fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--non-interactive] [--force]
+  fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--runtime auto|docker|host] [--non-interactive] [--force]
   fft profile <status|set|apply> [core|farm]
   fft start [telegram-only]
   fft dev [telegram-only]

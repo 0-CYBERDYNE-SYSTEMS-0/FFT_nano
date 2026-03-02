@@ -26,6 +26,7 @@ import {
   FFT_NANO_WEB_PORT,
   FFT_NANO_WEB_STATIC_DIR,
   FFT_PROFILE,
+  GROUPS_DIR,
   IPC_POLL_INTERVAL,
   MAIN_WORKSPACE_DIR,
   MAIN_GROUP_FOLDER,
@@ -157,6 +158,11 @@ const HEARTBEAT_INCLUDE_REASONING = PARITY_CONFIG.heartbeat.includeReasoning;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
+const TELEGRAM_CAPTION_MAX_CHARS = 1024;
+const TELEGRAM_ATTACHMENT_HINT_RE = /\[Attachment\b([^\]]*)\]/gi;
+const TELEGRAM_MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(([^)\n]+)\)/g;
+const TELEGRAM_MARKDOWN_LINK_RE = /\[[^\]]+\]\(([^)\n]+)\)/g;
+const TELEGRAM_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 
 const TELEGRAM_COMMON_COMMANDS = [
   { command: 'help', description: 'Show command help' },
@@ -269,6 +275,18 @@ interface ActiveChatRun {
   startedAt: number;
   requestId: string;
   abortController: AbortController;
+}
+
+interface TelegramAttachmentHint {
+  rawPath: string;
+  caption?: string;
+}
+
+interface TelegramResolvedAttachment {
+  hostPath: string;
+  fileName: string;
+  kind: 'photo' | 'document';
+  caption?: string;
 }
 
 let sock: WASocket;
@@ -2511,6 +2529,7 @@ async function handleTelegramCommand(m: {
       await sendMessage(m.chatJid, 'Could not parse chat id for this chat.');
       return true;
     }
+    const isDirectTelegramDm = !chatId.startsWith('-');
 
     // If main is already configured, don't let random chats steal it.
     const existingMain = hasMainGroup();
@@ -2521,6 +2540,20 @@ async function handleTelegramCommand(m: {
       await sendMessage(
         m.chatJid,
         'Main chat is already set. If you want to change it, edit data/registered_groups.json (or delete it to re-bootstrap).',
+      );
+      return true;
+    }
+
+    if (!existingMain && isDirectTelegramDm && !TELEGRAM_ADMIN_SECRET) {
+      promoteChatToMain(m.chatJid, m.chatName || `${ASSISTANT_NAME} (main)`);
+      await refreshTelegramCommandMenus();
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'first-claim without secret');
+      await sendMessage(
+        m.chatJid,
+        [
+          'This chat is now the main/admin channel.',
+          'Note: TELEGRAM_ADMIN_SECRET is not set yet; set it in .env and restart to lock future re-claim actions.',
+        ].join('\n'),
       );
       return true;
     }
@@ -2923,7 +2956,7 @@ async function handleTelegramCommand(m: {
         } else if (run.result) {
           persistAssistantHistory(m.chatJid, run.result, requestId);
           if (!run.streamed) {
-            await sendMessage(m.chatJid, run.result);
+            await sendAgentResultMessage(m.chatJid, run.result);
           }
           emitTuiChatEvent({
             runId: requestId,
@@ -3296,10 +3329,7 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
     } else if (result) {
       persistAssistantHistory(msg.chat_jid, result, requestId);
       if (!streamed) {
-        const finalMessage = isTelegramJid(msg.chat_jid)
-          ? result
-          : `${ASSISTANT_NAME}: ${result}`;
-        await sendMessage(msg.chat_jid, finalMessage);
+        await sendAgentResultMessage(msg.chat_jid, result, { prefixWhatsApp: true });
       }
       emitTuiChatEvent({
         runId: requestId,
@@ -3344,7 +3374,7 @@ async function runDirectSessionTurn(params: {
   text: string;
   runId: string;
   deliver: boolean;
-}): Promise<{ runId: string; status: 'started' | 'already_running' }> {
+}): Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }> {
   const { chatJid, text, runId, deliver } = params;
   const group = registeredGroups[chatJid];
   if (!group) {
@@ -3352,7 +3382,17 @@ async function runDirectSessionTurn(params: {
   }
   const existing = activeChatRuns.get(chatJid);
   if (existing) {
-    return { runId: existing.requestId, status: 'already_running' };
+    // Store to queue instead of blocking
+    storeTextMessage({
+      id: `tui-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      chatJid,
+      sender: 'tui',
+      senderName: TUI_SENDER_NAME,
+      content: text,
+      timestamp: new Date().toISOString(),
+      isFromMe: false,
+    });
+    return { runId: existing.requestId, status: 'queued' };
   }
   const onboardingGate = resolveMainOnboardingGate(chatJid);
 
@@ -3483,8 +3523,7 @@ async function runDirectSessionTurn(params: {
   if (result) {
     persistAssistantHistory(chatJid, result, runId);
     if (deliver && !streamed) {
-      const finalMessage = isTelegramJid(chatJid) ? result : `${ASSISTANT_NAME}: ${result}`;
-      await sendMessage(chatJid, finalMessage);
+      await sendAgentResultMessage(chatJid, result, { prefixWhatsApp: true });
     }
   }
 
@@ -3801,6 +3840,276 @@ async function stopWebControlCenterService(): Promise<void> {
   } catch (err) {
     logger.warn({ err }, 'Failed to stop FFT Control Center server cleanly');
   }
+}
+
+function truncateTelegramCaption(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.length > TELEGRAM_CAPTION_MAX_CHARS
+    ? trimmed.slice(0, TELEGRAM_CAPTION_MAX_CHARS)
+    : trimmed;
+}
+
+function extractAttachmentAttribute(rawAttrs: string, key: string): string | null {
+  const pattern = new RegExp(
+    `\\b${key}=(?:\"([^\"]+)\"|'([^']+)'|([^\\s\\]]+))`,
+    'i',
+  );
+  const match = rawAttrs.match(pattern);
+  if (!match) return null;
+  const value = match[1] || match[2] || match[3] || '';
+  const trimmed = value.trim().replace(/^`+|`+$/g, '');
+  return trimmed || null;
+}
+
+function normalizeTelegramReplyText(text: string): string {
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function parseMarkdownLocalPath(rawTarget: string): string | null {
+  const trimmed = rawTarget.trim();
+  if (!trimmed) return null;
+  let token = trimmed.match(/^\S+/)?.[0] || trimmed;
+  token = token.replace(/^<|>$/g, '').replace(/^`+|`+$/g, '');
+  if (!token) return null;
+  if (!token.startsWith('/workspace/')) return null;
+  return token;
+}
+
+function extractTelegramAttachmentHints(
+  text: string,
+): { cleanedText: string; hints: TelegramAttachmentHint[] } {
+  const hints: TelegramAttachmentHint[] = [];
+  let cleaned = text;
+
+  cleaned = cleaned.replace(TELEGRAM_ATTACHMENT_HINT_RE, (_full, attrs: string) => {
+    const rawPath = extractAttachmentAttribute(attrs, 'path');
+    if (rawPath) {
+      hints.push({
+        rawPath,
+        caption: truncateTelegramCaption(extractAttachmentAttribute(attrs, 'caption')),
+      });
+    }
+    return '';
+  });
+
+  cleaned = cleaned.replace(
+    TELEGRAM_MARKDOWN_IMAGE_RE,
+    (full: string, alt: string, target: string) => {
+      const localPath = parseMarkdownLocalPath(target);
+      if (!localPath) return full;
+      hints.push({
+        rawPath: localPath,
+        caption: truncateTelegramCaption(alt),
+      });
+      return '';
+    },
+  );
+
+  cleaned = cleaned.replace(TELEGRAM_MARKDOWN_LINK_RE, (full: string, target: string) => {
+    const localPath = parseMarkdownLocalPath(target);
+    if (!localPath) return full;
+    hints.push({ rawPath: localPath });
+    return '';
+  });
+
+  const deduped = new Map<string, TelegramAttachmentHint>();
+  for (const hint of hints) {
+    const existing = deduped.get(hint.rawPath);
+    if (!existing) {
+      deduped.set(hint.rawPath, hint);
+      continue;
+    }
+    if (!existing.caption && hint.caption) {
+      deduped.set(hint.rawPath, { ...existing, caption: hint.caption });
+    }
+  }
+
+  return {
+    cleanedText: normalizeTelegramReplyText(cleaned),
+    hints: Array.from(deduped.values()),
+  };
+}
+
+function isPathWithinBase(baseDir: string, targetPath: string): boolean {
+  const relative = path.relative(baseDir, targetPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function resolveTelegramAttachmentHostPath(chatJid: string, rawPath: string): string | null {
+  const group = registeredGroups[chatJid];
+  if (!group) return null;
+
+  const groupRoot =
+    group.folder === MAIN_GROUP_FOLDER
+      ? path.resolve(MAIN_WORKSPACE_DIR)
+      : resolveGroupFolderPath(group.folder);
+  const projectRoot = path.resolve(process.cwd());
+  const globalRoot = path.resolve(path.join(GROUPS_DIR, 'global'));
+
+  const allowedRoots: string[] = [groupRoot];
+  if (group.folder === MAIN_GROUP_FOLDER) {
+    allowedRoots.push(projectRoot);
+  }
+  if (fs.existsSync(globalRoot)) {
+    allowedRoots.push(globalRoot);
+  }
+
+  const trimmed = rawPath.trim();
+  if (!trimmed) return null;
+
+  let resolved: string;
+  if (trimmed === '/workspace/group') {
+    resolved = groupRoot;
+  } else if (trimmed.startsWith('/workspace/group/')) {
+    resolved = path.resolve(groupRoot, trimmed.slice('/workspace/group/'.length));
+  } else if (trimmed === '/workspace/project') {
+    resolved = projectRoot;
+  } else if (trimmed.startsWith('/workspace/project/')) {
+    resolved = path.resolve(projectRoot, trimmed.slice('/workspace/project/'.length));
+  } else if (trimmed === '/workspace/global') {
+    resolved = globalRoot;
+  } else if (trimmed.startsWith('/workspace/global/')) {
+    resolved = path.resolve(globalRoot, trimmed.slice('/workspace/global/'.length));
+  } else if (path.isAbsolute(trimmed)) {
+    resolved = path.resolve(trimmed);
+  } else {
+    resolved = path.resolve(groupRoot, trimmed);
+  }
+
+  if (!allowedRoots.some((root) => isPathWithinBase(root, resolved))) {
+    return null;
+  }
+
+  return resolved;
+}
+
+function resolveTelegramAttachments(
+  chatJid: string,
+  hints: TelegramAttachmentHint[],
+): { attachments: TelegramResolvedAttachment[]; skipped: number } {
+  const attachments: TelegramResolvedAttachment[] = [];
+  let skipped = 0;
+
+  for (const hint of hints) {
+    const hostPath = resolveTelegramAttachmentHostPath(chatJid, hint.rawPath);
+    if (!hostPath) {
+      skipped += 1;
+      logger.warn({ chatJid, rawPath: hint.rawPath }, 'Blocked Telegram attachment path');
+      continue;
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(hostPath);
+    } catch {
+      skipped += 1;
+      logger.warn({ chatJid, hostPath }, 'Telegram attachment path not found');
+      continue;
+    }
+
+    if (!stat.isFile()) {
+      skipped += 1;
+      logger.warn({ chatJid, hostPath }, 'Telegram attachment path is not a file');
+      continue;
+    }
+
+    if (stat.size > TELEGRAM_MEDIA_MAX_BYTES) {
+      skipped += 1;
+      logger.warn(
+        { chatJid, hostPath, size: stat.size, maxBytes: TELEGRAM_MEDIA_MAX_BYTES },
+        'Telegram attachment exceeded max size',
+      );
+      continue;
+    }
+
+    const fileName = path.basename(hostPath);
+    const ext = path.extname(fileName).toLowerCase();
+    const kind: 'photo' | 'document' = TELEGRAM_IMAGE_EXTENSIONS.has(ext)
+      ? 'photo'
+      : 'document';
+    attachments.push({
+      hostPath,
+      fileName,
+      kind,
+      caption: truncateTelegramCaption(hint.caption),
+    });
+  }
+
+  return { attachments, skipped };
+}
+
+async function sendTelegramAgentReply(chatJid: string, text: string): Promise<void> {
+  if (!telegramBot) {
+    await sendMessage(chatJid, text);
+    return;
+  }
+
+  const extracted = extractTelegramAttachmentHints(text);
+  if (extracted.hints.length === 0) {
+    await sendMessage(chatJid, text);
+    return;
+  }
+
+  const resolved = resolveTelegramAttachments(chatJid, extracted.hints);
+  if (resolved.attachments.length === 0) {
+    await sendMessage(chatJid, text);
+    return;
+  }
+
+  if (extracted.cleanedText) {
+    await sendMessage(chatJid, extracted.cleanedText);
+  }
+
+  let failedSends = 0;
+  for (const attachment of resolved.attachments) {
+    try {
+      const data = fs.readFileSync(attachment.hostPath);
+      if (attachment.kind === 'photo') {
+        await telegramBot.sendPhoto(chatJid, data, attachment.caption);
+      } else {
+        await telegramBot.sendDocument(
+          chatJid,
+          data,
+          attachment.fileName,
+          attachment.caption,
+        );
+      }
+      logger.info(
+        { chatJid, kind: attachment.kind, fileName: attachment.fileName, path: attachment.hostPath },
+        'Telegram attachment sent',
+      );
+    } catch (err) {
+      failedSends += 1;
+      logger.error(
+        { chatJid, err, fileName: attachment.fileName, path: attachment.hostPath },
+        'Failed to send Telegram attachment',
+      );
+    }
+  }
+
+  const failedTotal = failedSends + resolved.skipped;
+  if (failedTotal > 0) {
+    await sendMessage(
+      chatJid,
+      `Note: ${failedTotal} attachment${failedTotal === 1 ? '' : 's'} could not be delivered.`,
+    );
+  }
+}
+
+async function sendAgentResultMessage(
+  chatJid: string,
+  text: string,
+  opts: { prefixWhatsApp?: boolean } = {},
+): Promise<void> {
+  if (isTelegramJid(chatJid)) {
+    await sendTelegramAgentReply(chatJid, text);
+    return;
+  }
+
+  const outgoing = opts.prefixWhatsApp ? `${ASSISTANT_NAME}: ${text}` : text;
+  await sendMessage(chatJid, outgoing);
 }
 
 async function sendMessage(jid: string, text: string): Promise<void> {

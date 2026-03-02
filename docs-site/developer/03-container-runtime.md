@@ -3,7 +3,6 @@
 Primary files:
 - `src/container-runtime.ts`
 - `src/container-runner.ts`
-- `container/Dockerfile`
 - `container/agent-runner/src/index.ts`
 
 ## Runtime Selection
@@ -11,83 +10,67 @@ Primary files:
 From `getContainerRuntime()`:
 - `CONTAINER_RUNTIME=auto|docker|host`
 - `auto` behavior:
-  - `docker` if available
-  - else `host` only if `FFT_NANO_ALLOW_HOST_RUNTIME=1`
-  - else throw startup error
+  - `docker` if Docker CLI is available
+  - otherwise `host` only when `FFT_NANO_ALLOW_HOST_RUNTIME=1`
+  - otherwise startup error
+- `CONTAINER_RUNTIME=host` always requires `FFT_NANO_ALLOW_HOST_RUNTIME=1`
 
-## Mount Model
-
-Mount construction in `buildVolumeMounts(group, isMain)`:
+## Mount Model (`buildVolumeMounts`)
 
 Main group:
-- host project root -> `/workspace/project` (rw)
-- main workspace (`~/nano` by default) -> `/workspace/group` (rw)
+- repo root -> `/workspace/project` (**read-only**)
+- main workspace (`~/nano` default) -> `/workspace/group` (read-write)
 
 Non-main group:
-- `groups/<group-folder>` -> `/workspace/group` (rw)
-- `groups/global` -> `/workspace/global` (ro when exists)
+- `groups/<group-folder>` -> `/workspace/group` (read-write)
+- `groups/global` -> `/workspace/global` (read-only, if present)
 
 Common mounts:
-- per-group pi home `data/pi/<group>/.pi` -> `/home/node/.pi`
-- per-group IPC dir `data/ipc/<group>` -> `/workspace/ipc`
-- optional farm-state, dashboard dirs
-- env passthrough dir -> `/workspace/env-dir` (ro)
+- per-group Pi home: `data/pi/<group>/.pi` -> `/home/node/.pi` (rw)
+- per-group Codex home: `data/codex/<group>/.codex` -> `/home/node/.codex` (rw)
+- per-group IPC: `data/ipc/<group>` -> `/workspace/ipc` (rw)
+- agent-runner source copy: `data/sessions/<group>/agent-runner-src` -> `/app/src` (rw)
+- optional farm mounts (`/workspace/farm-state`, `/workspace/dashboard`, `/workspace/dashboard-templates`)
 
 ## Env Passthrough Policy
 
-Only allowlisted vars are exported into `/workspace/env-dir/env`.
-Examples:
-- provider/runtime: `PI_API`, `PI_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...
-- farm bridge: `HA_URL`, `HA_TOKEN`
-- debug: `FFT_NANO_DRY_RUN`
+Runtime secrets are collected from host `.env` and process env using an explicit allowlist in `collectRuntimeSecrets(...)`.
 
-Additional compatibility behavior:
-- if `PI_BASE_URL` is set and `OPENAI_BASE_URL` missing, host writes `OPENAI_BASE_URL=PI_BASE_URL`.
+Key allowlisted vars include:
+- provider/runtime: `PI_API`, `PI_MODEL`, `PI_BASE_URL`, `PI_API_KEY`
+- provider keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY`
+- bridge/debug: `HA_URL`, `HA_TOKEN`, `FFT_NANO_DRY_RUN`
+
+Compatibility behavior:
+- if `PI_BASE_URL` is set and `OPENAI_BASE_URL` is unset, host injects `OPENAI_BASE_URL=PI_BASE_URL`.
 
 ## Additional Mount Security
 
-If group has `containerConfig.additionalMounts`, mounts are validated through `validateAdditionalMounts`:
-- allowlist file outside project: `~/.config/fft_nano/mount-allowlist.json`
-- blocked-pattern checks (`.ssh`, `.env`, tokens, credentials, etc.)
-- root-prefix checks against allowlisted roots
+`containerConfig.additionalMounts` is validated by `validateAdditionalMounts(...)` against:
+- external allowlist file: `~/.config/fft_nano/mount-allowlist.json`
+- blocked path patterns (`.ssh`, `.env`, key material, credentials)
+- containment under allowlisted roots
 - non-main read-only enforcement when configured
-- target path constrained to `/workspace/extra/<relative-path>`
+- target path policy under `/workspace/extra/...`
 
-## Container Execution
+## Execution Path (`runContainerAgent`)
 
-`runContainerAgent(...)`:
-1. Optionally builds retrieval-gated memory context.
-2. Spawns runtime command (`docker`) or local host runner (`node container/agent-runner/dist/index.js`).
-3. Sends JSON input to stdin.
-4. Enforces timeout (`CONTAINER_TIMEOUT` or group override).
-5. Captures stdout/stderr with size limits (`CONTAINER_MAX_OUTPUT_SIZE`).
-6. Parses JSON output between markers:
-   - `---FFT_NANO_OUTPUT_START---`
-   - `---FFT_NANO_OUTPUT_END---`
-7. Writes per-run logs under `groups/<group>/logs/runtime-*.log`.
+1. Build snapshots (`tasks`, available groups) for the group.
+2. Resolve runtime (`docker` or `host`).
+3. Build mounts, runtime secrets, and input payload.
+4. Start runtime process (`docker run ...` or host runner entrypoint).
+5. Stream/capture stdout+stderr with `CONTAINER_MAX_OUTPUT_SIZE` cap.
+6. Apply timeout with guard rails:
+   - baseline `CONTAINER_TIMEOUT` (default 6h)
+   - per-group timeout only increases baseline (stale low values are ignored)
+   - idle guard floor `IDLE_TIMEOUT + 30000`
+7. Parse structured output and return result/usage/streaming flags.
+8. Persist per-run logs under `groups/<group>/logs/runtime-*.log`.
 
 Abort behavior:
-- `SIGTERM`, escalate to `SIGKILL` after 750ms if process still alive.
+- user/system abort sends `SIGTERM`
+- escalates to `SIGKILL` when needed
 
-## Runtime Health Checks
+## Host Runtime Note
 
-If runtime is Docker and an execution attempt fails, verify Docker daemon health and retry once:
-1. Verify `docker info`
-2. Start/restart Docker daemon if needed
-3. Retry one container run
-
-Guardrails:
-- single-flight restart lock
-- 60s cooldown between restarts
-
-## In-Container Runtime
-
-Container entrypoint:
-- sources `/workspace/env-dir/env` if present
-- runs `/app/dist/index.js` (compiled agent-runner)
-
-Agent-runner responsibilities:
-- normalize input options
-- assemble system prompt and workspace context
-- invoke `pi` with JSON mode
-- return structured output markers to host
+`host` runtime means no Docker isolation. It does not imply Linux root user by itself; service account is controlled by system service config.

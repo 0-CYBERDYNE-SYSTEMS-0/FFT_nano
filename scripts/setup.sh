@@ -13,6 +13,59 @@ cd "$ROOT_DIR"
 say() { printf "%s\n" "$*"; }
 fail() { printf "\nERROR: %s\n" "$*" >&2; exit 1; }
 
+usage() {
+  cat <<'USAGE'
+Usage:
+  ./scripts/setup.sh [--runtime auto|docker|host]
+
+Options:
+  --runtime <mode>   Runtime preference (default: CONTAINER_RUNTIME or auto)
+  -h, --help         Show this help
+USAGE
+}
+
+normalize_runtime_pref() {
+  local raw="${1:-auto}"
+  raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$raw" != "auto" && "$raw" != "docker" && "$raw" != "host" ]]; then
+    fail "Invalid runtime preference: $1 (expected auto|docker|host)"
+  fi
+  printf '%s' "$raw"
+}
+
+SETUP_RUNTIME_PREF=""
+SETUP_RUNTIME_SOURCE=""
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "${1}" in
+      --runtime)
+        [[ $# -ge 2 ]] || fail "--runtime requires a value"
+        SETUP_RUNTIME_PREF="$(normalize_runtime_pref "$2")"
+        SETUP_RUNTIME_SOURCE="flag --runtime"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "Unknown argument: $1 (use --help for usage)"
+        ;;
+    esac
+  done
+
+  if [[ -z "$SETUP_RUNTIME_SOURCE" ]]; then
+    if [[ -n "${CONTAINER_RUNTIME:-}" ]]; then
+      SETUP_RUNTIME_PREF="$(normalize_runtime_pref "${CONTAINER_RUNTIME}")"
+      SETUP_RUNTIME_SOURCE="env CONTAINER_RUNTIME"
+    else
+      SETUP_RUNTIME_PREF="auto"
+      SETUP_RUNTIME_SOURCE="default auto"
+    fi
+  fi
+}
+
 is_truthy() {
   local raw="${1:-}"
   raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
@@ -38,17 +91,14 @@ node_major() {
 }
 
 detect_runtime() {
-  local raw="${CONTAINER_RUNTIME:-auto}"
-  raw="$(printf %s "$raw" | tr '[:upper:]' '[:lower:]')"
+  local raw="${1:-auto}"
+  raw="$(normalize_runtime_pref "$raw")"
 
   if [[ "$raw" == "docker" ]]; then
     echo "docker"; return
   fi
   if [[ "$raw" == "host" ]]; then
     echo "host"; return
-  fi
-  if [[ "$raw" != "auto" ]]; then
-    fail "Invalid CONTAINER_RUNTIME=$CONTAINER_RUNTIME (expected auto|docker|host)"
   fi
 
   if command -v docker >/dev/null 2>&1; then
@@ -119,6 +169,21 @@ scaffold_env() {
   say "Created .env from .env.example (fill in keys/endpoints before running)."
 }
 
+ensure_admin_secret() {
+  local env_file=".env"
+  [[ -f "$env_file" ]] || return
+  if grep -Eq '^TELEGRAM_ADMIN_SECRET=' "$env_file"; then
+    return
+  fi
+  local generated
+  generated="$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")"
+  {
+    printf '\n'
+    printf 'TELEGRAM_ADMIN_SECRET=%s\n' "$generated"
+  } >>"$env_file"
+  say "Generated TELEGRAM_ADMIN_SECRET in .env (used by Telegram /main claim flow)."
+}
+
 scaffold_mount_allowlist() {
   local dst="${HOME}/.config/fft_nano/mount-allowlist.json"
   if [[ -f "$dst" ]]; then
@@ -132,6 +197,7 @@ scaffold_mount_allowlist() {
 }
 
 say "FFT_nano setup (root: $ROOT_DIR)"
+parse_args "$@"
 
 need_cmd node
 need_cmd npm
@@ -141,8 +207,8 @@ if [[ "$maj" -lt 20 ]]; then
   fail "Node.js 20+ required (found $(node -v))."
 fi
 
-runtime="$(detect_runtime)"
-say "Detected container runtime: $runtime"
+runtime="$(detect_runtime "$SETUP_RUNTIME_PREF")"
+say "Detected container runtime: $runtime (preference=${SETUP_RUNTIME_PREF}, source=${SETUP_RUNTIME_SOURCE})"
 ensure_runtime_ready "$runtime"
 
 say "Installing dependencies..."
@@ -183,7 +249,19 @@ else
   fi
 fi
 
+if is_truthy "${FFT_NANO_AUTO_LINK:-1}"; then
+  say "Linking FFT CLI globally (npm link)..."
+  if npm link; then
+    say "CLI linked: use 'fft ...' from this checkout."
+  else
+    say "WARN: npm link failed. Continue with ./scripts/... commands or run npm link manually."
+  fi
+else
+  say "Skipping CLI global link (FFT_NANO_AUTO_LINK disabled)."
+fi
+
 scaffold_env
+ensure_admin_secret
 scaffold_mount_allowlist
 
 if is_truthy "${FFT_NANO_AUTO_SERVICE:-1}"; then

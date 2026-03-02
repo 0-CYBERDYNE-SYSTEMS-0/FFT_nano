@@ -37,6 +37,23 @@ echo "stub onboard complete"
   chmodSync(path.join(scriptsDir, 'onboard.sh'), 0o755);
 
   writeFileSync(
+    path.join(scriptsDir, 'setup.sh'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+log_file="\${FFT_TEST_SETUP_LOG:-}"
+if [[ -n "$log_file" ]]; then
+  {
+    printf 'args:%s\\n' "$*"
+    printf 'allow_host:%s\\n' "\${FFT_NANO_ALLOW_HOST_RUNTIME:-}"
+  } > "$log_file"
+fi
+echo "stub setup complete"
+`,
+    'utf8',
+  );
+  chmodSync(path.join(scriptsDir, 'setup.sh'), 0o755);
+
+  writeFileSync(
     path.join(scriptsDir, 'service.sh'),
     `#!/usr/bin/env bash
 set -euo pipefail
@@ -76,8 +93,12 @@ esac
   return fixtureRoot;
 }
 
-function runOnboardAllFixture(fixtureRoot: string): string {
+function runOnboardAllFixture(
+  fixtureRoot: string,
+  options: { runtime?: 'auto' | 'docker' | 'host'; skipSetup?: boolean } = {},
+): string {
   const serviceState = path.join(fixtureRoot, 'service.state');
+  const setupLog = path.join(fixtureRoot, 'setup.log');
   const args = [
     'scripts/onboard-all.sh',
     '--non-interactive',
@@ -98,10 +119,15 @@ function runOnboardAllFixture(fixtureRoot: string): string {
     '--skip-skills',
     '--skip-health',
     '--skip-ui',
-    '--skip-setup',
     '--skip-doctor',
     '--no-backup',
   ];
+  if (options.skipSetup !== false) {
+    args.push('--skip-setup');
+  }
+  if (options.runtime) {
+    args.push('--runtime', options.runtime);
+  }
 
   const result = spawnSync('bash', args, {
     cwd: fixtureRoot,
@@ -109,6 +135,7 @@ function runOnboardAllFixture(fixtureRoot: string): string {
       ...process.env,
       HOME: path.join(fixtureRoot, 'home'),
       FFT_TEST_SERVICE_STATE: serviceState,
+      FFT_TEST_SETUP_LOG: setupLog,
     },
     encoding: 'utf8',
   });
@@ -131,4 +158,12 @@ test('onboard-all prints READY when Telegram main chat is already configured', (
   const output = runOnboardAllFixture(fixtureRoot);
 
   assert.match(output, /ONBOARDING COMPLETE: READY/);
+});
+
+test('onboard-all passes explicit host opt-in to setup when runtime=host', () => {
+  const fixtureRoot = setupOnboardAllFixture({ withMainChatId: false });
+  runOnboardAllFixture(fixtureRoot, { runtime: 'host', skipSetup: false });
+  const setupLog = readFileSync(path.join(fixtureRoot, 'setup.log'), 'utf8');
+  assert.match(setupLog, /args:--runtime host/);
+  assert.match(setupLog, /allow_host:1/);
 });

@@ -58,7 +58,7 @@ export interface TuiGatewayAdapters {
     message: string;
     runId: string;
     deliver: boolean;
-  }) => Promise<{ runId: string; status: 'started' | 'already_running' }>;
+  }) => Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }>;
   abortChat: (params: { chatJid: string; runId: string }) => Promise<{ aborted: boolean }>;
   serviceGateway: (params: {
     action: 'status' | 'restart' | 'doctor';

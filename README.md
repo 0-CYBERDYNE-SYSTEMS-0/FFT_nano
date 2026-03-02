@@ -49,7 +49,10 @@ cd FFT_nano
 - dependency install (`npm ci` when lockfile exists)
 - `npm run typecheck`
 - `npm run build`
-- agent image build (Docker)
+- global CLI link (`npm link`) so `fft ...` commands are available
+- runtime prep:
+  - Docker runtime: build agent image
+  - Host runtime: prepare host `pi` runner deps (no image build)
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
 - onboarding wizard (`risk gate`, `quickstart|advanced`, `local|remote`, provider/channel/hatch)
@@ -70,6 +73,16 @@ npm run backup:state -- --dry-run
 ```
 
 Backups are written to `./backups/` by default.
+
+Choose runtime at install time:
+
+```bash
+# default/recommended isolated runtime
+./scripts/onboard-all.sh --runtime docker
+
+# unisolated host runtime (advanced)
+./scripts/onboard-all.sh --runtime host
+```
 
 ### 2. Configure `.env` (minimum required)
 
@@ -116,7 +129,8 @@ If you disabled auto-service during setup (`FFT_NANO_AUTO_SERVICE=0`), install/s
 
 ### 4. Attach the TUI
 
-Install CLI aliases (optional):
+`fft` CLI should already be linked globally by onboarding setup.
+If needed, relink manually:
 
 ```bash
 npm link
@@ -159,6 +173,7 @@ In the bot DM:
 
 1. Run `/id` to confirm chat id.
 2. Run `/main <secret>` using `TELEGRAM_ADMIN_SECRET`.
+   - First-claim shortcut: if no main chat exists yet, and `TELEGRAM_ADMIN_SECRET` is unset, a direct Telegram DM can claim main with `/main`. Set `TELEGRAM_ADMIN_SECRET` afterward and restart.
 
 Once claimed:
 
@@ -168,11 +183,11 @@ Once claimed:
 
 ### Unified Command Reference
 
-If you have not run `npm link`, use `./scripts/start.sh ...` and `./scripts/service.sh ...` equivalents.
+If CLI linking is unavailable/disabled (`FFT_NANO_AUTO_LINK=0`), use `./scripts/start.sh ...` and `./scripts/service.sh ...` equivalents.
 
 Host CLI:
 
-- `fft onboard [--workspace <dir>] [--env-path <file>] [--operator <name>] [--assistant-name <name>] [--non-interactive --accept-risk] [--flow quickstart|advanced] [--mode local|remote] [--auth-choice openai|anthropic|gemini|openrouter|zai|skip] [--api-key <token>] [--model <id>] [--remote-url <url>] [--gateway-port <port>] [--telegram-token <token>] [--whatsapp-enabled <0|1>] [--hatch tui|web|later] [--install-daemon|--no-install-daemon] [--skip-channels] [--skip-ui] [--force]`
+- `fft onboard [--workspace <dir>] [--env-path <file>] [--operator <name>] [--assistant-name <name>] [--non-interactive --accept-risk] [--flow quickstart|advanced|manual] [--mode local|remote] [--runtime auto|docker|host] [--auth-choice openai|anthropic|gemini|openrouter|zai|skip] [--api-key <token>] [--model <id>] [--remote-url <url>] [--gateway-port <port>] [--telegram-token <token>] [--whatsapp-enabled <0|1>] [--hatch tui|web|later] [--install-daemon|--no-install-daemon] [--skip-channels] [--skip-skills] [--skip-health] [--skip-ui] [--force] [--json]`
 - `fft profile <status|set|apply> [core|farm]`
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`
@@ -183,9 +198,15 @@ Host CLI:
 
 Maintenance:
 
-- `./scripts/onboard-all.sh [--workspace /abs/path --env-path /abs/path/.env --non-interactive --accept-risk --operator "Name" --assistant-name OpenClaw]`
+- `./scripts/onboard-all.sh [--workspace /abs/path --env-path /abs/path/.env --runtime docker|host|auto --non-interactive --accept-risk --operator "Name" --assistant-name OpenClaw --skip-setup --skip-restart --skip-doctor --no-backup --skip-channels --skip-skills --skip-health --skip-ui --install-daemon|--no-install-daemon]`
 - `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
 - `npm run restore:state -- --archive /abs/path/to/backup.tar.gz [--workspace-target /abs/path]`
+
+Config edit note:
+
+- There is no separate `fft config` command in this repo.
+- `fft onboard` runs the full guided wrapper (`onboard-all` path).
+- Use `./scripts/onboard.sh` for wizard-only edits.
 
 TUI slash commands:
 
@@ -367,6 +388,7 @@ Main/admin chat setup:
 1. DM the bot and run `/id`
 2. Set `TELEGRAM_ADMIN_SECRET` on host
 3. Run `/main <secret>` in the bot DM
+   - If no main chat exists yet and `TELEGRAM_ADMIN_SECRET` is unset, direct DM `/main` can first-claim main. Set secret afterward and restart.
 
 Alternative: set `TELEGRAM_MAIN_CHAT_ID` and restart.
 
@@ -536,9 +558,10 @@ No. Use `skills/setup` and `skills/runtime` in this repo.
 
 ## Security Model
 
-- Agent runs in Linux containers, not directly on host.
+- Default runtime is Linux container isolation.
+- Optional host runtime exists as an explicit unsafe opt-in (`CONTAINER_RUNTIME=host` + allow flags).
 - Mounts define visibility boundaries.
 - Additional mounts are validated against external allowlist at:
   - `~/.config/fft_nano/mount-allowlist.json`
 
-See `docs/SECURITY.md` for full details.
+See `.github/SECURITY.md` and `docs-site/developer/11-security-model.md` for details.

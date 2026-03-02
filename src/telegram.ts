@@ -508,6 +508,12 @@ export interface TelegramBot {
     photo: string | Buffer,
     caption?: string,
   ) => Promise<void>;
+  sendDocument: (
+    chatJid: string,
+    document: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ) => Promise<void>;
   setTyping: (chatJid: string, isTyping: boolean) => Promise<void>;
   setCommands: (
     commands: TelegramCommand[],
@@ -1070,6 +1076,45 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }
   }
 
+  async function sendDocument(
+    chatId: string,
+    document: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ): Promise<void> {
+    const chatIdParsed = parseTelegramChatId(chatId);
+    if (!chatIdParsed) {
+      throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+    }
+
+    const formData = new FormData();
+    formData.append('chat_id', chatIdParsed);
+    if (typeof document === 'string') {
+      formData.append('document', document);
+    } else {
+      formData.append(
+        'document',
+        new Blob([document]),
+        fileName && fileName.trim() ? fileName.trim() : 'attachment.bin',
+      );
+    }
+    if (caption) {
+      formData.append('caption', caption);
+    }
+
+    const url = new URL(`${base}/sendDocument`);
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      body: formData as any,
+    });
+
+    if (!res.ok) {
+      const body = (await res.json()) as TelegramApiResponse<never>;
+      const description = body?.description || `Telegram API error (status ${res.status})`;
+      throw new Error(description);
+    }
+  }
+
   return {
     startPolling: (onEvent) => {
       startPolling(onEvent).catch((err) =>
@@ -1079,6 +1124,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     sendMessage,
     sendMessageWithKeyboard,
     sendPhoto,
+    sendDocument,
     setTyping,
     setCommands,
     deleteCommands,

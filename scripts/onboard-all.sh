@@ -17,6 +17,7 @@ Options:
   --accept-risk             Pass explicit risk acknowledgement to onboarding
   --flow <flow>             quickstart|advanced|manual
   --mode <mode>             local|remote
+  --runtime <runtime>       auto|docker|host
   --auth-choice <choice>    openai|anthropic|gemini|openrouter|zai|skip
   --model <id>              Model id/provider model
   --api-key <token>         Provider API key for selected auth choice
@@ -48,6 +49,15 @@ USAGE
 say() { printf '%s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+normalize_runtime() {
+  local raw="${1:-}"
+  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    auto|docker|host) printf '%s' "$raw" ;;
+    *) fail "Invalid --runtime (use auto|docker|host): $1" ;;
+  esac
+}
+
 WORKSPACE_DIR="${FFT_NANO_MAIN_WORKSPACE_DIR:-$HOME/nano}"
 ENV_PATH_ARG=""
 OPERATOR_NAME=""
@@ -62,6 +72,7 @@ BACKUP_OUT_DIR=""
 ACCEPT_RISK=0
 FLOW_ARG=""
 MODE_ARG=""
+RUNTIME_ARG=""
 AUTH_CHOICE_ARG=""
 MODEL_ARG=""
 API_KEY_ARG=""
@@ -110,6 +121,11 @@ while [[ $# -gt 0 ]]; do
     --mode)
       [[ $# -ge 2 ]] || fail "--mode requires a value"
       MODE_ARG="$2"
+      shift 2
+      ;;
+    --runtime)
+      [[ $# -ge 2 ]] || fail "--runtime requires a value"
+      RUNTIME_ARG="$(normalize_runtime "$2")"
       shift 2
       ;;
     --auth-choice)
@@ -357,6 +373,7 @@ print_numbered_list() {
 render_completion_handoff() {
   local install_daemon="$1"
   local service_state="$2"
+  local runtime_pref="$3"
 
   local provider_status="FAIL"
   local telegram_token_status="FAIL"
@@ -425,6 +442,7 @@ render_completion_handoff() {
   say ""
   say "Readiness checks:"
   print_readiness_line "AI provider config" "${provider_status}"
+  print_readiness_line "Runtime preference" "${runtime_pref}"
   print_readiness_line "Telegram bot token" "${telegram_token_status}"
   print_readiness_line "Telegram admin secret" "${admin_secret_status}"
   if [[ "$install_daemon" == "1" ]]; then
@@ -464,7 +482,16 @@ fi
 
 if [[ "$SKIP_SETUP" -eq 0 ]]; then
   say "[2/5] Running setup (deps/build/image/service)..."
-  FFT_NANO_AUTO_SERVICE=0 ./scripts/setup.sh
+  setup_args=()
+  if [[ -n "$RUNTIME_ARG" ]]; then
+    setup_args+=(--runtime "$RUNTIME_ARG")
+  fi
+  setup_env=(FFT_NANO_AUTO_SERVICE=0)
+  if [[ "$RUNTIME_ARG" == "host" ]]; then
+    # Runtime choice in onboarding is explicit user opt-in for host mode.
+    setup_env+=(FFT_NANO_ALLOW_HOST_RUNTIME=1)
+  fi
+  env "${setup_env[@]}" ./scripts/setup.sh "${setup_args[@]}"
 else
   say "[2/5] Skipping setup (--skip-setup)"
 fi
@@ -502,6 +529,9 @@ if [[ -n "$FLOW_ARG" ]]; then
 fi
 if [[ -n "$MODE_ARG" ]]; then
   onboard_args+=(--mode "$MODE_ARG")
+fi
+if [[ -n "$RUNTIME_ARG" ]]; then
+  onboard_args+=(--runtime "$RUNTIME_ARG")
 fi
 if [[ -n "$AUTH_CHOICE_ARG" ]]; then
   onboard_args+=(--auth-choice "$AUTH_CHOICE_ARG")
@@ -589,4 +619,12 @@ if [[ "$INSTALL_DAEMON" == "1" ]]; then
   fi
 fi
 
-render_completion_handoff "$INSTALL_DAEMON" "$service_state"
+runtime_pref="$RUNTIME_ARG"
+if [[ -z "$runtime_pref" ]]; then
+  runtime_pref="$(read_env_value CONTAINER_RUNTIME)"
+  if is_placeholder "$runtime_pref"; then
+    runtime_pref="auto"
+  fi
+fi
+
+render_completion_handoff "$INSTALL_DAEMON" "$service_state" "$runtime_pref"

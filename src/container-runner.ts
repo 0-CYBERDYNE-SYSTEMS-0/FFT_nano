@@ -2,7 +2,8 @@
  * Container Runner for FFT_nano
  * Spawns agent execution via Docker (preferred) or explicit host runtime
  */
-import { exec, spawn } from 'child_process';
+import { createHash } from 'crypto';
+import { exec, spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -41,6 +42,254 @@ import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---FFT_NANO_OUTPUT_END---';
+
+function envPositiveInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+const DOCKER_REUSE_ENABLED = !['0', 'false', 'no'].includes(
+  (process.env.FFT_NANO_DOCKER_REUSE || '1').trim().toLowerCase(),
+);
+const DOCKER_REUSE_MAX_RUNS = envPositiveInt('FFT_NANO_DOCKER_REUSE_MAX_RUNS', 200);
+const DOCKER_REUSE_MAX_AGE_MS = envPositiveInt(
+  'FFT_NANO_DOCKER_REUSE_MAX_AGE_MS',
+  6 * 60 * 60 * 1000,
+);
+const DOCKER_REUSE_MAX_IDLE_MS = envPositiveInt(
+  'FFT_NANO_DOCKER_REUSE_MAX_IDLE_MS',
+  20 * 60 * 1000,
+);
+const PROJECT_RUNTIME_SLUG = createHash('sha1')
+  .update(process.cwd())
+  .digest('hex')
+  .slice(0, 8);
+
+interface DockerContainerState {
+  name: string;
+  groupFolder: string;
+  createdAt: number;
+  lastUsedAt: number;
+  runs: number;
+  mountSignature: string;
+}
+
+const dockerContainerStates = new Map<string, DockerContainerState>();
+
+function resolveReusableContainerName(groupFolder: string): string {
+  const safe = groupFolder.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 40);
+  return `nanoclaw-${PROJECT_RUNTIME_SLUG}-${safe}`;
+}
+
+function mountSignature(mounts: VolumeMount[]): string {
+  return mounts
+    .map((mount) => `${mount.hostPath}->${mount.containerPath}${mount.readonly ? ':ro' : ':rw'}`)
+    .sort()
+    .join('|');
+}
+
+function runDockerCtl(args: string[], timeoutMs = 15_000): {
+  ok: boolean;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  const result = spawnSync('docker', args, {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: timeoutMs,
+  });
+  return {
+    ok: (result.status ?? 1) === 0,
+    code: result.status,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+  };
+}
+
+function dockerContainerRunning(name: string): boolean {
+  const inspect = runDockerCtl(['inspect', '-f', '{{.State.Running}}', name], 10_000);
+  return inspect.ok && inspect.stdout.trim() === 'true';
+}
+
+function dockerContainerExists(name: string): boolean {
+  const inspect = runDockerCtl(['inspect', name], 10_000);
+  return inspect.ok;
+}
+
+function dockerStopAndRemove(name: string): void {
+  if (!dockerContainerExists(name)) return;
+  runDockerCtl(['stop', '-t', '3', name], 10_000);
+  runDockerCtl(['rm', '-f', name], 10_000);
+}
+
+interface DockerInspectMount {
+  Type?: string;
+  Source?: string;
+  Destination?: string;
+  RW?: boolean;
+}
+
+interface DockerInspectContainer {
+  Mounts?: DockerInspectMount[];
+}
+
+function dockerContainerMountSignature(name: string): string | null {
+  const inspect = runDockerCtl(['inspect', name], 10_000);
+  if (!inspect.ok) return null;
+  try {
+    const parsed = JSON.parse(inspect.stdout) as DockerInspectContainer[];
+    const mounts = Array.isArray(parsed?.[0]?.Mounts) ? parsed[0].Mounts : [];
+    return mounts
+      .filter((mount) => mount?.Type === 'bind')
+      .map((mount) => {
+        const source = String(mount.Source || '');
+        const destination = String(mount.Destination || '');
+        const rw = mount.RW === false ? ':ro' : ':rw';
+        return `${source}->${destination}${rw}`;
+      })
+      .filter((entry) => !entry.startsWith('->'))
+      .sort()
+      .join('|');
+  } catch {
+    return null;
+  }
+}
+
+function createReusableContainer(params: {
+  name: string;
+  groupFolder: string;
+  mounts: VolumeMount[];
+}): { ok: boolean; error?: string } {
+  const args: string[] = [
+    'run',
+    '-d',
+    '--name',
+    params.name,
+    '--label',
+    'fft.nano.managed=1',
+    '--label',
+    `fft.nano.group=${params.groupFolder}`,
+    '--entrypoint',
+    'sh',
+  ];
+
+  for (const mount of params.mounts) {
+    const roSuffix = mount.readonly ? ':ro' : '';
+    args.push('-v', `${mount.hostPath}:${mount.containerPath}${roSuffix}`);
+  }
+
+  args.push(CONTAINER_IMAGE, '-lc', 'while true; do sleep 3600; done');
+  const run = runDockerCtl(args, 30_000);
+  if (!run.ok) {
+    return {
+      ok: false,
+      error: run.stderr.trim() || `docker run failed with code ${run.code ?? 'unknown'}`,
+    };
+  }
+  return { ok: true };
+}
+
+function ensureReusableDockerContainer(params: {
+  group: RegisteredGroup;
+  mounts: VolumeMount[];
+}): { ok: boolean; name: string; recycled: boolean; error?: string } {
+  const { group, mounts } = params;
+  const name = resolveReusableContainerName(group.folder);
+  const now = Date.now();
+  const signature = mountSignature(mounts);
+  const existingState = dockerContainerStates.get(group.folder);
+
+  const shouldRecycleByPolicy =
+    !!existingState &&
+    (existingState.mountSignature !== signature ||
+      existingState.runs >= DOCKER_REUSE_MAX_RUNS ||
+      now - existingState.createdAt >= DOCKER_REUSE_MAX_AGE_MS ||
+      now - existingState.lastUsedAt >= DOCKER_REUSE_MAX_IDLE_MS);
+
+  let recycled = false;
+  if (shouldRecycleByPolicy) {
+    dockerStopAndRemove(name);
+    dockerContainerStates.delete(group.folder);
+    recycled = true;
+  }
+
+  // On fresh process startup, in-memory state is empty; validate live mounts directly.
+  if (dockerContainerExists(name)) {
+    const liveSignature = dockerContainerMountSignature(name);
+    if (!liveSignature || liveSignature !== signature) {
+      logger.warn(
+        { group: group.name, name, expectedSignature: signature, liveSignature },
+        'Reusable container mount signature mismatch; recycling container',
+      );
+      dockerStopAndRemove(name);
+      dockerContainerStates.delete(group.folder);
+      recycled = true;
+    }
+  }
+
+  if (dockerContainerRunning(name)) {
+    if (existingState) {
+      existingState.lastUsedAt = now;
+    } else {
+      dockerContainerStates.set(group.folder, {
+        name,
+        groupFolder: group.folder,
+        createdAt: now,
+        lastUsedAt: now,
+        runs: 0,
+        mountSignature: signature,
+      });
+    }
+    return { ok: true, name, recycled };
+  }
+
+  if (dockerContainerExists(name)) {
+    const started = runDockerCtl(['start', name], 15_000);
+    if (!started.ok) {
+      dockerStopAndRemove(name);
+      recycled = true;
+    } else {
+      dockerContainerStates.set(group.folder, {
+        name,
+        groupFolder: group.folder,
+        createdAt: now,
+        lastUsedAt: now,
+        runs: existingState?.runs || 0,
+        mountSignature: signature,
+      });
+      return { ok: true, name, recycled };
+    }
+  }
+
+  const created = createReusableContainer({
+    name,
+    groupFolder: group.folder,
+    mounts,
+  });
+  if (!created.ok) {
+    return { ok: false, name, recycled, error: created.error };
+  }
+
+  dockerContainerStates.set(group.folder, {
+    name,
+    groupFolder: group.folder,
+    createdAt: now,
+    lastUsedAt: now,
+    runs: 0,
+    mountSignature: signature,
+  });
+  return { ok: true, name, recycled };
+}
+
+function markReusableContainerRun(groupFolder: string): void {
+  const state = dockerContainerStates.get(groupFolder);
+  if (!state) return;
+  state.runs += 1;
+  state.lastUsedAt = Date.now();
+}
 
 function tryParseContainerOutput(stdout: string): ContainerOutput | null {
   try {
@@ -552,13 +801,33 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const runtime = getContainerRuntime();
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const runtimeName = `nanoclaw-${safeName}-${Date.now()}`;
+  const ephemeralRuntimeName = `nanoclaw-${safeName}-${Date.now()}`;
+  let runtimeName = ephemeralRuntimeName;
   const runtimeCmd =
     runtime === 'docker' ? 'docker' : process.execPath;
-  const runtimeArgs =
+  let runtimeArgs: string[] =
     runtime === 'docker'
       ? buildContainerArgs(runtime, mounts, runtimeName)
       : [path.join(projectRoot, 'container', 'agent-runner', 'dist', 'index.js')];
+
+  if (runtime === 'docker' && DOCKER_REUSE_ENABLED) {
+    const ensured = ensureReusableDockerContainer({ group, mounts });
+    if (!ensured.ok) {
+      return {
+        status: 'error',
+        result: null,
+        error: `Failed to prepare reusable container: ${ensured.error || 'unknown error'}`,
+      };
+    }
+    runtimeName = ensured.name;
+    runtimeArgs = ['exec', '-i', runtimeName, '/app/entrypoint.sh'];
+    if (ensured.recycled) {
+      logger.info(
+        { group: group.name, runtimeName },
+        'Recycled reusable container before run',
+      );
+    }
+  }
 
   logger.debug(
     {
@@ -581,6 +850,7 @@ export async function runContainerAgent(
       mountCount: mounts.length,
       isMain: input.isMain,
       runtime,
+      reuse: runtime === 'docker' ? DOCKER_REUSE_ENABLED : false,
     },
     'Spawning agent runtime',
   );
@@ -599,10 +869,45 @@ export async function runContainerAgent(
     }
   }
 
+  const hostProjectDir = resolveMountedHostPath(mounts, '/workspace/project', projectRoot);
+  const hostGroupDir = resolveMountedHostPath(mounts, '/workspace/group', groupDir);
+  const hostGlobalDir = resolveMountedHostPath(
+    mounts,
+    '/workspace/global',
+    path.join(GROUPS_DIR, 'global'),
+  );
+  const hostIpcDir = resolveMountedHostPath(
+    mounts,
+    '/workspace/ipc',
+    resolveGroupIpcPath(group.folder),
+  );
+  const hostPiHomeDir = resolveMountedHostPath(
+    mounts,
+    '/home/node/.pi',
+    path.join(DATA_DIR, 'pi', group.folder, '.pi'),
+  );
+
+  const runtimeSecrets = collectRuntimeSecrets({
+    projectRoot,
+    runtime,
+    hostPaths:
+      runtime === 'host'
+        ? {
+            projectDir: hostProjectDir,
+            groupDir: hostGroupDir,
+            globalDir: hostGlobalDir,
+            ipcDir: hostIpcDir,
+            piHomeDir: hostPiHomeDir,
+          }
+        : undefined,
+  });
+
   return new Promise((resolve) => {
     const runtimeProc = spawn(runtimeCmd, runtimeArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: runtime === 'host' ? projectRoot : undefined,
+      // Host runner loads workspace paths at process startup; inject now.
+      env: runtime === 'host' ? { ...process.env, ...runtimeSecrets } : process.env,
     });
     let settled = false;
     let onAbort: (() => void) | null = null;
@@ -624,40 +929,9 @@ export async function runContainerAgent(
       resolve(output);
     };
 
-    const hostProjectDir = resolveMountedHostPath(mounts, '/workspace/project', projectRoot);
-    const hostGroupDir = resolveMountedHostPath(mounts, '/workspace/group', groupDir);
-    const hostGlobalDir = resolveMountedHostPath(
-      mounts,
-      '/workspace/global',
-      path.join(GROUPS_DIR, 'global'),
-    );
-    const hostIpcDir = resolveMountedHostPath(
-      mounts,
-      '/workspace/ipc',
-      resolveGroupIpcPath(group.folder),
-    );
-    const hostPiHomeDir = resolveMountedHostPath(
-      mounts,
-      '/home/node/.pi',
-      path.join(DATA_DIR, 'pi', group.folder, '.pi'),
-    );
-
     const payloadWithSecrets: ContainerInput = {
       ...payload,
-      secrets: collectRuntimeSecrets({
-        projectRoot,
-        runtime,
-        hostPaths:
-          runtime === 'host'
-            ? {
-                projectDir: hostProjectDir,
-                groupDir: hostGroupDir,
-                globalDir: hostGlobalDir,
-                ipcDir: hostIpcDir,
-                piHomeDir: hostPiHomeDir,
-              }
-            : undefined,
-      }),
+      secrets: runtimeSecrets,
     };
     runtimeProc.stdin.write(JSON.stringify(payloadWithSecrets));
     runtimeProc.stdin.end();
@@ -698,7 +972,14 @@ export async function runContainerAgent(
       }
     });
 
-    const configuredTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    const groupTimeout =
+      typeof group.containerConfig?.timeout === 'number' &&
+      Number.isFinite(group.containerConfig.timeout) &&
+      group.containerConfig.timeout > 0
+        ? Math.floor(group.containerConfig.timeout)
+        : 0;
+    // Prevent stale/low per-group settings from undercutting the global baseline.
+    const configuredTimeout = Math.max(groupTimeout, CONTAINER_TIMEOUT);
     const timeoutMs = Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000);
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -707,14 +988,24 @@ export async function runContainerAgent(
         'Agent runtime timeout, stopping gracefully',
       );
       if (runtime === 'docker') {
-        exec(`${runtimeCmd} stop ${runtimeName}`, { timeout: 15000 }, (err) => {
-          if (!err) return;
+        if (DOCKER_REUSE_ENABLED) {
           logger.warn(
-            { group: group.name, runtimeName, runtime, err },
-            'Graceful runtime stop failed; escalating to SIGKILL',
+            { group: group.name, runtimeName },
+            'Run timed out in reusable container; recycling container',
           );
+          dockerStopAndRemove(runtimeName);
+          dockerContainerStates.delete(group.folder);
           runtimeProc.kill('SIGKILL');
-        });
+        } else {
+          exec(`${runtimeCmd} stop ${runtimeName}`, { timeout: 15000 }, (err) => {
+            if (!err) return;
+            logger.warn(
+              { group: group.name, runtimeName, runtime, err },
+              'Graceful runtime stop failed; escalating to SIGKILL',
+            );
+            runtimeProc.kill('SIGKILL');
+          });
+        }
       } else {
         runtimeProc.kill('SIGTERM');
         setTimeout(() => {
@@ -764,6 +1055,9 @@ export async function runContainerAgent(
       if (settled) return;
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+      if (runtime === 'docker' && DOCKER_REUSE_ENABLED) {
+        markReusableContainerRun(group.folder);
+      }
 
       if (timedOut) {
         const parsedAfterTimeout = tryParseContainerOutput(stdout);
@@ -778,7 +1072,7 @@ export async function runContainerAgent(
         finish({
           status: 'error',
           result: null,
-          error: `Agent runtime timed out after ${configuredTimeout}ms`,
+          error: `Agent runtime timed out after ${timeoutMs}ms (configured=${configuredTimeout}ms, idle_guard=${IDLE_TIMEOUT + 30_000}ms)`,
         });
         return;
       }

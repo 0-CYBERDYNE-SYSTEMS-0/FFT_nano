@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import test from 'node:test';
 
-import { runOnboarding } from '../src/onboard-cli.ts';
+import { parseOnboardArgs, runOnboarding } from '../src/onboard-cli.ts';
 
 function makeTmpWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fft-onboard-'));
@@ -158,4 +158,52 @@ test('runOnboarding non-interactive local auth provider writes provider env', as
   assert.match(envBody, /^PI_MODEL=gpt-4.1-mini$/m);
   assert.match(envBody, /^OPENAI_API_KEY=test-key$/m);
   assert.match(envBody, /^FFT_NANO_TUI_PORT=29999$/m);
+});
+
+test('runOnboarding defaults local runtime to docker and persists it', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.equal(result.runtime, 'docker');
+  assert.match(envBody, /^CONTAINER_RUNTIME=docker$/m);
+});
+
+test('runOnboarding host runtime writes host opt-in env flags', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    runtime: 'host',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.equal(result.runtime, 'host');
+  assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
+  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+});
+
+test('parseOnboardArgs parses and validates --runtime', () => {
+  const parsed = parseOnboardArgs([
+    '--workspace',
+    '/tmp/ws',
+    '--runtime',
+    'host',
+    '--operator',
+    'A',
+    '--assistant-name',
+    'B',
+  ]);
+  assert.equal(parsed.runtime, 'host');
+  assert.throws(
+    () => parseOnboardArgs(['--workspace', '/tmp/ws', '--runtime', 'invalid']),
+    /Invalid --runtime/i,
+  );
 });

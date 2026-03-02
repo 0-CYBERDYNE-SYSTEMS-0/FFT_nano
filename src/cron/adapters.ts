@@ -203,6 +203,10 @@ export function resolveCronPolicy(payload: ScheduleTaskIpcPayload): CronV2Policy
     ? payload.wake_mode
     : 'next-heartbeat';
   const timeoutSeconds = parseFiniteInt(payload.timeout_seconds);
+  const timeoutMaxSeconds = Math.max(
+    60,
+    parseFiniteInt(process.env.FFT_NANO_TASK_TIMEOUT_MAX_SECONDS) || 24 * 60 * 60,
+  );
   const staggerMs = parseFiniteInt(payload.stagger_ms);
 
   const delivery = normalizeDelivery(payload);
@@ -219,7 +223,9 @@ export function resolveCronPolicy(payload: ScheduleTaskIpcPayload): CronV2Policy
     wakeMode,
     delivery,
     timeoutSeconds:
-      timeoutSeconds && timeoutSeconds > 0 ? Math.min(timeoutSeconds, 60 * 60) : undefined,
+      timeoutSeconds && timeoutSeconds > 0
+        ? Math.min(timeoutSeconds, timeoutMaxSeconds)
+        : undefined,
     staggerMs: staggerMs && staggerMs > 0 ? staggerMs : undefined,
     deleteAfterRun: parseBool(payload.delete_after_run),
   };
