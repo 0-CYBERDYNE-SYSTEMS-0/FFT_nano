@@ -34,7 +34,7 @@ export const WORKSPACE_IPC_ACTION_RESULTS_DIR = path.join(
 );
 
 export const PI_HOME_DIR = clean(process.env.FFT_AGENT_PI_HOME_DIR, '/home/node/.pi');
-export const PI_AGENT_OPENCLAW_DIR = clean(
+export const PI_AGENT_FFT_DIR = clean(
   process.env.FFT_AGENT_PI_AGENT_DIR,
   path.join(PI_HOME_DIR, 'agent-fft'),
 );

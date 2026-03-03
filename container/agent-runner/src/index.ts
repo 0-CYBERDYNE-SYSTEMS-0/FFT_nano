@@ -11,7 +11,7 @@ import fs from 'fs';
 import { runDelegatedCodingWorker } from './coder-worker.js';
 import { parsePiJsonOutput } from './pi-json-parser.js';
 import {
-  PI_AGENT_OPENCLAW_DIR,
+  PI_AGENT_FFT_DIR,
   PI_ON_PI_EXTENSION_PATH,
   WORKSPACE_GROUP_DIR,
   WORKSPACE_IPC_MESSAGES_DIR,
@@ -247,7 +247,7 @@ async function runPiAgent(
       );
       const env = {
         ...process.env,
-        PI_CODING_AGENT_DIR: PI_AGENT_OPENCLAW_DIR,
+        PI_CODING_AGENT_DIR: PI_AGENT_FFT_DIR,
         FFT_NANO_CHAT_JID: input.chatJid,
         FFT_NANO_REQUEST_ID: input.requestId || '',
         FFT_NANO_CODING_HINT: input.codingHint,
