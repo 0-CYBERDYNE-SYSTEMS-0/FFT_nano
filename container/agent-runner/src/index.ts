@@ -9,13 +9,19 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 
 import { runDelegatedCodingWorker } from './coder-worker.js';
-import { parsePiJsonOutput } from './pi-json-parser.js';
+import { parsePiJsonOutput, type PiToolExecution } from './pi-json-parser.js';
+import { extractAssistantTextDeltaFromPiEvent } from './pi-stream-parser.js';
 import {
   PI_AGENT_FFT_DIR,
   PI_ON_PI_EXTENSION_PATH,
   WORKSPACE_GROUP_DIR,
   WORKSPACE_IPC_MESSAGES_DIR,
 } from './runtime-paths.js';
+import {
+  deriveTelegramDraftId,
+  normalizeTelegramDraftText,
+  writeIpcTelegramDraftUpdate,
+} from './telegram-draft.js';
 import {
   buildSystemPrompt as buildSystemPromptArchitecture,
   type SystemPromptReport,
@@ -33,6 +39,7 @@ interface ContainerInput {
   model?: string;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   reasoningLevel?: 'off' | 'on' | 'stream';
+  verboseMode?: 'off' | 'on' | 'full';
   noContinue?: boolean;
   memoryContext?: string;
   extraSystemPrompt?: string;
@@ -55,6 +62,7 @@ interface NormalizedContainerInput extends Omit<ContainerInput, 'codingHint'> {
   codingHint: CodingHint;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   reasoningLevel?: 'off' | 'on' | 'stream';
+  verboseMode?: 'off' | 'on' | 'full';
   noContinue?: boolean;
 }
 
@@ -135,12 +143,22 @@ function normalizeReasoningLevel(
   return undefined;
 }
 
+function normalizeVerboseMode(
+  value: ContainerInput['verboseMode'],
+): 'off' | 'on' | 'full' | undefined {
+  if (value === 'off' || value === 'on' || value === 'full') {
+    return value;
+  }
+  return undefined;
+}
+
 function normalizeInput(input: ContainerInput): NormalizedContainerInput {
   return {
     ...input,
     codingHint: normalizeCodingHint(input.codingHint),
     thinkLevel: normalizeThinkLevel(input.thinkLevel),
     reasoningLevel: normalizeReasoningLevel(input.reasoningLevel),
+    verboseMode: normalizeVerboseMode(input.verboseMode),
     noContinue: input.noContinue === true,
   };
 }
@@ -215,6 +233,41 @@ function getPiArgs(
   return args;
 }
 
+function appendToolVerboseSection(
+  baseResult: string,
+  mode: 'off' | 'on' | 'full' | undefined,
+  toolExecutions: PiToolExecution[] | undefined,
+): string {
+  if (mode !== 'on' && mode !== 'full') return baseResult;
+  if (!toolExecutions || toolExecutions.length === 0) return baseResult;
+
+  const includeAll = mode === 'full';
+  const selected = includeAll
+    ? toolExecutions
+    : toolExecutions.filter((entry) => entry.status === 'error');
+  if (selected.length === 0) return baseResult;
+
+  const maxRows = includeAll ? 60 : 30;
+  const truncated = selected.length > maxRows;
+  const rows = selected.slice(0, maxRows).map((entry) => {
+    const parts = [`#${entry.index}`, entry.toolName, entry.status];
+    if (entry.args) parts.push(`args=${entry.args}`);
+    if (entry.error) parts.push(`error=${entry.error}`);
+    if (includeAll && entry.output) parts.push(`output=${entry.output}`);
+    return `- ${parts.join(' ')}`;
+  });
+  const header = includeAll
+    ? '[verbose:full] Tool calls'
+    : '[verbose:on] Tool failures';
+  if (truncated) {
+    rows.push(
+      `- ... ${selected.length - maxRows} additional item(s) omitted`,
+    );
+  }
+  const section = [header, ...rows].join('\n');
+  return baseResult ? `${baseResult}\n\n${section}` : section;
+}
+
 async function runPiAgent(
   systemPrompt: string,
   prompt: string,
@@ -235,9 +288,24 @@ async function runPiAgent(
     !input.isScheduledTask &&
     (isForceDelegateHint(input.codingHint) || input.codingHint === 'auto') &&
     fs.existsSync(PI_ON_PI_EXTENSION_PATH);
+  const canStreamTelegramDraft =
+    isTelegramChatJid(input.chatJid) && !input.isScheduledTask;
+  const draftId = deriveTelegramDraftId(
+    `${input.chatJid}:${input.requestId || `run-${Date.now()}`}`,
+  );
+  const draftMinIntervalMs = Math.max(
+    400,
+    Number.parseInt(process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '1000', 10) ||
+      1000,
+  );
 
   const tryRun = (useContinue: boolean) =>
-    new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    new Promise<{
+      code: number | null;
+      stdout: string;
+      stderr: string;
+      streamedDraft: boolean;
+    }>((resolve) => {
       const args = getPiArgs(
         systemPrompt,
         prompt,
@@ -262,18 +330,83 @@ async function runPiAgent(
 
       let stdout = '';
       let stderr = '';
+      let lineBuffer = '';
+      let assistantSoFar = '';
+      let streamedDraft = false;
+      let lastDraftSentAt = 0;
+      let lastDraftText = '';
+
+      const maybeSendDraft = (force = false) => {
+        if (!canStreamTelegramDraft) return;
+        if (!assistantSoFar) return;
+        const now = Date.now();
+        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        const nextDraftText = normalizeTelegramDraftText(assistantSoFar);
+        if (nextDraftText === lastDraftText) return;
+        const ok = writeIpcTelegramDraftUpdate({
+          chatJid: input.chatJid,
+          requestId: input.requestId,
+          draftId,
+          text: nextDraftText,
+        });
+        if (!ok) return;
+        streamedDraft = true;
+        lastDraftSentAt = now;
+        lastDraftText = nextDraftText;
+      };
+
+      const applyDelta = (delta: { kind: 'append' | 'replace'; text: string }) => {
+        if (delta.kind === 'append') assistantSoFar += delta.text;
+        else assistantSoFar = delta.text;
+      };
+
+      const processStdoutLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        try {
+          const event = JSON.parse(trimmed) as unknown;
+          const delta = extractAssistantTextDeltaFromPiEvent(event);
+          if (!delta) return;
+          applyDelta(delta);
+          maybeSendDraft(false);
+        } catch {
+          // ignore non-json lines
+        }
+      };
+
+      const ticker = canStreamTelegramDraft
+        ? setInterval(() => {
+            maybeSendDraft(false);
+          }, 1000)
+        : null;
 
       child.stdout.on('data', (d) => {
-        stdout += d.toString();
+        const chunk = d.toString();
+        stdout += chunk;
+        if (!canStreamTelegramDraft) return;
+        lineBuffer += chunk;
+        while (true) {
+          const newlineIdx = lineBuffer.indexOf('\n');
+          if (newlineIdx === -1) break;
+          const line = lineBuffer.slice(0, newlineIdx);
+          lineBuffer = lineBuffer.slice(newlineIdx + 1);
+          processStdoutLine(line);
+        }
       });
       child.stderr.on('data', (d) => {
         stderr += d.toString();
       });
       child.on('close', (code) => {
-        resolve({ code, stdout, stderr });
+        if (ticker) clearInterval(ticker);
+        if (lineBuffer.trim()) {
+          processStdoutLine(lineBuffer);
+        }
+        maybeSendDraft(true);
+        resolve({ code, stdout, stderr, streamedDraft });
       });
       child.on('error', (err) => {
-        resolve({ code: 1, stdout, stderr: String(err) });
+        if (ticker) clearInterval(ticker);
+        resolve({ code: 1, stdout, stderr: String(err), streamedDraft });
       });
     });
 
@@ -288,12 +421,21 @@ async function runPiAgent(
     throw new Error(res.stderr.trim() || `pi exited with code ${res.code}`);
   }
 
+  if (res.streamedDraft) {
+    log(`Sent Telegram draft updates for ${input.chatJid} (draft_id=${draftId})`);
+  }
+
   const parsed = parsePiJsonOutput({
     stdout: res.stdout,
     provider: input.provider,
     model: input.model,
   });
-  return { result: parsed.result, streamed: false, usage: parsed.usage };
+  const result = appendToolVerboseSection(
+    parsed.result,
+    input.verboseMode,
+    parsed.toolExecutions,
+  );
+  return { result, streamed: false, usage: parsed.usage };
 }
 
 async function main(): Promise<void> {

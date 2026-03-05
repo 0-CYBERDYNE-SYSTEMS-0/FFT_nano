@@ -90,6 +90,111 @@ function mountSignature(mounts: VolumeMount[]): string {
     .join('|');
 }
 
+function syncAgentRunnerSourceFiles(params: {
+  sourceDir: string;
+  targetDir: string;
+}): { copied: number; preservedNewerTarget: number } {
+  const { sourceDir, targetDir } = params;
+  let copied = 0;
+  let preservedNewerTarget = 0;
+
+  const syncDir = (srcDir: string, dstDir: string): void => {
+    fs.mkdirSync(dstDir, { recursive: true });
+    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(srcDir, entry.name);
+      const dstPath = path.join(dstDir, entry.name);
+
+      if (entry.isDirectory()) {
+        syncDir(srcPath, dstPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (!fs.existsSync(dstPath)) {
+        fs.copyFileSync(srcPath, dstPath);
+        copied++;
+        continue;
+      }
+
+      const srcStat = fs.statSync(srcPath);
+      const dstStat = fs.statSync(dstPath);
+      if (srcStat.mtimeMs > dstStat.mtimeMs) {
+        fs.copyFileSync(srcPath, dstPath);
+        copied++;
+      } else {
+        preservedNewerTarget++;
+      }
+    }
+  };
+
+  syncDir(sourceDir, targetDir);
+  return { copied, preservedNewerTarget };
+}
+
+function getNewestFileMtimeMs(dirPath: string): number {
+  let newest = 0;
+
+  const walk = (currentDir: string): void => {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const mtime = fs.statSync(fullPath).mtimeMs;
+      if (mtime > newest) newest = mtime;
+    }
+  };
+
+  if (fs.existsSync(dirPath)) {
+    walk(dirPath);
+  }
+  return newest;
+}
+
+function ensureHostAgentRunnerBuildFresh(projectRoot: string): { ok: boolean; error?: string } {
+  const runnerDir = path.join(projectRoot, 'container', 'agent-runner');
+  const srcDir = path.join(runnerDir, 'src');
+  const distIndexPath = path.join(runnerDir, 'dist', 'index.js');
+
+  if (!fs.existsSync(srcDir)) {
+    return { ok: false, error: `Host runtime source not found: ${srcDir}` };
+  }
+
+  const newestSrcMtime = getNewestFileMtimeMs(srcDir);
+  const distMtime = fs.existsSync(distIndexPath) ? fs.statSync(distIndexPath).mtimeMs : 0;
+  if (distMtime >= newestSrcMtime && distMtime > 0) {
+    return { ok: true };
+  }
+
+  logger.info(
+    {
+      srcDir,
+      distIndexPath,
+      newestSrcMtime,
+      distMtime,
+    },
+    'Host runtime agent-runner dist is stale; rebuilding',
+  );
+
+  const build = spawnSync('npm', ['--prefix', runnerDir, 'run', 'build'], {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 5 * 60 * 1000,
+  });
+  if ((build.status ?? 1) !== 0) {
+    const details = (build.stderr || build.stdout || '').trim();
+    return {
+      ok: false,
+      error: details || `Failed to build host runtime agent-runner (code=${build.status ?? 'unknown'})`,
+    };
+  }
+  return { ok: true };
+}
+
 function runDockerCtl(args: string[], timeoutMs = 15_000): {
   ok: boolean;
   code: number | null;
@@ -332,6 +437,7 @@ export interface ContainerInput {
   model?: string;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   reasoningLevel?: 'off' | 'on' | 'stream';
+  verboseMode?: 'off' | 'on' | 'full';
   noContinue?: boolean;
 }
 
@@ -560,8 +666,21 @@ function buildVolumeMounts(
   // groups. Recompiled on container startup via entrypoint.sh.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
   const groupAgentRunnerDir = path.join(DATA_DIR, 'sessions', group.folder, 'agent-runner-src');
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  if (fs.existsSync(agentRunnerSrc)) {
+    const syncStats = syncAgentRunnerSourceFiles({
+      sourceDir: agentRunnerSrc,
+      targetDir: groupAgentRunnerDir,
+    });
+    if (syncStats.copied > 0) {
+      logger.info(
+        {
+          group: group.name,
+          copiedFiles: syncStats.copied,
+          preservedNewerTargetFiles: syncStats.preservedNewerTarget,
+        },
+        'Synchronized updated agent-runner source files into group runtime',
+      );
+    }
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
@@ -859,6 +978,14 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   if (runtime === 'host') {
+    const ensureBuild = ensureHostAgentRunnerBuildFresh(projectRoot);
+    if (!ensureBuild.ok) {
+      return {
+        status: 'error',
+        result: null,
+        error: ensureBuild.error || 'Failed to ensure host runtime agent-runner build',
+      };
+    }
     const hostRunnerPath = runtimeArgs[0];
     if (!hostRunnerPath || !fs.existsSync(hostRunnerPath)) {
       return {

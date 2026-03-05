@@ -16,6 +16,11 @@ import {
   WORKSPACE_PROJECT_DIR,
   isAllowedWorkspaceAbsolutePath,
 } from './runtime-paths.js';
+import {
+  deriveTelegramDraftId,
+  normalizeTelegramDraftText,
+  writeIpcTelegramDraftUpdate,
+} from './telegram-draft.js';
 
 const DEFAULT_WORKER_CWD = WORKSPACE_GROUP_DIR;
 const DEFAULT_WORKER_AGENT_DIR = PI_AGENT_CODER_DIR;
@@ -253,19 +258,21 @@ export async function runDelegatedCodingWorker(
 
   const canStream = chatJid.length > 0;
   const isTelegram = canStream && isTelegramChatJid(chatJid);
+  const draftId = deriveTelegramDraftId(
+    `${chatJid}:${requestId || `coder-${Date.now()}`}`,
+  );
 
   let streamed = false;
   let assistantSoFar = '';
-  let pendingDiff = '';
-  let lastStreamedLen = 0;
-  let lastProgressSend = 0;
-  let progressMsgCount = 0;
+  let lastTelegramSendAt = 0;
+  let telegramUpdateCount = 0;
+  let lastTelegramDraftText = '';
 
-  const maxTelegramMessages = 50;
+  const maxTelegramUpdates = 240;
   const telegramMinIntervalMs = 4000;
-  const telegramMaxChunk = 900;
 
   const maxWhatsAppMessages = 3;
+  let whatsAppMessageCount = 0;
   const whatsAppMilestonesMs = [30_000, 120_000, 240_000];
   const startTs = Date.now();
   let milestoneIdx = 0;
@@ -277,35 +284,33 @@ export async function runDelegatedCodingWorker(
   const editWritePaths = new Set<string>();
   const disallowedAbsolutePaths = new Set<string>();
 
-  const maybeSendTelegramProgress = () => {
+  const maybeSendTelegramProgress = (force = false) => {
     if (!canStream || !isTelegram) return;
-    if (!pendingDiff) return;
-    if (progressMsgCount >= maxTelegramMessages) return;
+    if (!assistantSoFar) return;
+    if (!force && telegramUpdateCount >= maxTelegramUpdates) return;
 
     const now = Date.now();
-    if (now - lastProgressSend < telegramMinIntervalMs) return;
+    if (!force && now - lastTelegramSendAt < telegramMinIntervalMs) return;
 
-    // Chunk at word boundary to avoid cutting words mid-word
-    // Find the last space within ~850-900 characters to prevent word truncation
-    const searchRange = pendingDiff.slice(0, telegramMaxChunk);
-    const lastSpaceIndex = searchRange.lastIndexOf(' ');
-    // Only use word boundary if space exists and is reasonably close to max chunk
-    // This avoids tiny chunks while still preventing word breaks
-    const chunkSize = (lastSpaceIndex > telegramMaxChunk * 0.9) ? lastSpaceIndex + 1 : telegramMaxChunk;
-    const chunk = pendingDiff.slice(0, chunkSize);
-    pendingDiff = pendingDiff.slice(chunk.length);
-
-    const ok = writeIpcMessage(chatJid, `${prefix}${chunk}`);
+    const text = normalizeTelegramDraftText(`${prefix}${assistantSoFar}`);
+    if (text === lastTelegramDraftText) return;
+    const ok = writeIpcTelegramDraftUpdate({
+      chatJid,
+      requestId,
+      draftId,
+      text,
+    });
     if (ok) {
       streamed = true;
-      progressMsgCount++;
-      lastProgressSend = now;
+      telegramUpdateCount++;
+      lastTelegramSendAt = now;
+      lastTelegramDraftText = text;
     }
   };
 
   const maybeSendWhatsAppMilestone = () => {
     if (!canStream || isTelegram) return;
-    if (progressMsgCount >= maxWhatsAppMessages) return;
+    if (whatsAppMessageCount >= maxWhatsAppMessages) return;
 
     const now = Date.now();
     if (milestoneIdx >= whatsAppMilestonesMs.length) return;
@@ -319,25 +324,14 @@ export async function runDelegatedCodingWorker(
     const ok = writeIpcMessage(chatJid, `${prefix}Progress update: ${preview}`);
     if (ok) {
       streamed = true;
-      progressMsgCount++;
+      whatsAppMessageCount++;
     }
   };
 
   const applyDelta = (delta: TextDelta) => {
     if (delta.kind === 'append') assistantSoFar += delta.text;
     else assistantSoFar = delta.text;
-
-    if (!canStream || !isTelegram) return;
-
-    if (assistantSoFar.length > lastStreamedLen) {
-      pendingDiff += assistantSoFar.slice(lastStreamedLen);
-      lastStreamedLen = assistantSoFar.length;
-    } else if (assistantSoFar.length < lastStreamedLen) {
-      lastStreamedLen = assistantSoFar.length;
-      pendingDiff = '';
-    }
-
-    maybeSendTelegramProgress();
+    maybeSendTelegramProgress(false);
   };
 
   if (options.signal?.aborted) {
@@ -419,6 +413,7 @@ export async function runDelegatedCodingWorker(
   try {
     const workerPrompt = buildWorkerPrompt(params);
     await session.prompt(workerPrompt);
+    maybeSendTelegramProgress(true);
 
     const result = getLatestAssistantText(session.state.messages).trim();
     const finalResult =

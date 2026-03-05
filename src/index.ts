@@ -86,6 +86,11 @@ import type {
   TelegramInboundMessage,
   TelegramInlineKeyboard,
 } from './telegram.js';
+import {
+  TelegramDraftDisableRegistry,
+  parseTelegramDraftIpcMessage,
+  sendTelegramDraftWithFallback,
+} from './telegram-draft-ipc.js';
 import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
 import { executeFarmAction } from './farm-action-gateway.js';
 import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
@@ -163,6 +168,11 @@ const TELEGRAM_ATTACHMENT_HINT_RE = /\[Attachment\b([^\]]*)\]/gi;
 const TELEGRAM_MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(([^)\n]+)\)/g;
 const TELEGRAM_MARKDOWN_LINK_RE = /\[[^\]]+\]\(([^)\n]+)\)/g;
 const TELEGRAM_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+const TELEGRAM_DRAFT_DISABLE_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.FFT_NANO_TELEGRAM_DRAFT_DISABLE_MS || '1800000', 10) ||
+    1_800_000,
+);
 
 const TELEGRAM_COMMON_COMMANDS = [
   { command: 'help', description: 'Show command help' },
@@ -172,6 +182,7 @@ const TELEGRAM_COMMON_COMMANDS = [
   { command: 'model', description: 'Show/set model override' },
   { command: 'think', description: 'Show/set thinking level' },
   { command: 'reasoning', description: 'Show/set reasoning visibility' },
+  { command: 'verbose', description: 'Show/set tool/verbose output mode' },
   { command: 'new', description: 'Start a fresh session' },
   { command: 'reset', description: 'Reset session (alias for /new)' },
   { command: 'stop', description: 'Stop current run' },
@@ -207,6 +218,8 @@ type TelegramCommandName =
   | '/t'
   | '/reasoning'
   | '/reason'
+  | '/verbose'
+  | '/v'
   | '/new'
   | '/reset'
   | '/stop'
@@ -238,6 +251,7 @@ interface ActiveCoderRun {
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
+type VerboseMode = 'off' | 'on' | 'full';
 type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -251,6 +265,7 @@ interface ChatRunPreferences {
   model?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
+  verboseMode?: VerboseMode;
   queueMode?: QueueMode;
   queueDebounceMs?: number;
   queueCap?: number;
@@ -299,6 +314,10 @@ let chatUsageStats: Record<string, ChatUsageStats> = {};
 const activeCoderRuns = new Map<string, ActiveCoderRun>();
 const activeChatRuns = new Map<string, ActiveChatRun>();
 const activeChatRunsById = new Map<string, ActiveChatRun>();
+const telegramDraftDisabledRuns = new TelegramDraftDisableRegistry(
+  TELEGRAM_DRAFT_DISABLE_MS,
+);
+const telegramHostStreamedRuns = new Map<string, number>();
 const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
 const heartbeatLastTargetByChannel = new Map<'telegram' | 'whatsapp', string>();
 let heartbeatLastTargetAny: string | null = null;
@@ -1054,6 +1073,15 @@ function normalizeReasoningLevel(raw: string): ReasoningLevel | undefined {
   return undefined;
 }
 
+function normalizeVerboseMode(raw: string): VerboseMode | undefined {
+  const key = raw.trim().toLowerCase();
+  if (!key) return undefined;
+  if (['off', 'false', 'no', '0'].includes(key)) return 'off';
+  if (['on', 'true', 'yes', '1'].includes(key)) return 'on';
+  if (['full', 'max', 'all', '2'].includes(key)) return 'full';
+  return undefined;
+}
+
 function normalizeQueueMode(raw: string): QueueMode | undefined {
   const key = raw.trim().toLowerCase();
   if (
@@ -1179,6 +1207,9 @@ function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPreference
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
     next.reasoningLevel = prefs.reasoningLevel;
   }
+  if (prefs.verboseMode && prefs.verboseMode !== 'off') {
+    next.verboseMode = prefs.verboseMode;
+  }
   if (prefs.queueMode && prefs.queueMode !== 'collect') next.queueMode = prefs.queueMode;
   if (
     typeof prefs.queueDebounceMs === 'number' &&
@@ -1292,6 +1323,7 @@ function formatChatRuntimePreferences(chatJid: string): string[] {
   const prefs = chatRunPreferences[chatJid] || {};
   const think = prefs.thinkLevel || 'off';
   const reasoning = prefs.reasoningLevel || 'off';
+  const verbose = prefs.verboseMode || 'off';
   const freeChat = prefs.freeChat ? 'yes' : 'no';
   const newPending = prefs.nextRunNoContinue ? 'yes' : 'no';
   const queueMode = prefs.queueMode || 'collect';
@@ -1302,6 +1334,7 @@ function formatChatRuntimePreferences(chatJid: string): string[] {
     `- chat_model: ${getEffectiveModelLabel(chatJid)}`,
     `- chat_think: ${think}`,
     `- chat_reasoning: ${reasoning}`,
+    `- chat_verbose: ${verbose}`,
     `- chat_free_chat: ${freeChat}`,
     `- chat_queue: mode=${queueMode} debounce_ms=${queueDebounce} cap=${queueCap} drop=${queueDrop}`,
     `- chat_new_pending: ${newPending}`,
@@ -1562,6 +1595,8 @@ function normalizeTelegramCommandToken(token: string): TelegramCommandName | nul
     '/t',
     '/reasoning',
     '/reason',
+    '/verbose',
+    '/v',
     '/new',
     '/reset',
     '/stop',
@@ -1595,6 +1630,7 @@ function formatHelpText(isMainGroup: boolean): string {
     '/model [provider/model|reset] - show/set chat model',
     '/think [off|minimal|low|medium|high|xhigh] - set thinking level',
     '/reasoning [off|on|stream] - set reasoning visibility mode',
+    '/verbose [/v] [off|on|full] - tool/verbose output visibility',
     '/new - start fresh session on next run',
     '/reset - alias for /new',
     '/stop - stop the current in-flight run',
@@ -2368,6 +2404,42 @@ async function handleTelegramCommand(m: {
         : normalized === 'stream'
           ? 'Reasoning stream enabled for this chat.'
           : 'Reasoning visibility enabled for this chat.',
+    );
+    return true;
+  }
+
+  if (cmd === '/verbose' || cmd === '/v') {
+    const argText = rest.join(' ').trim();
+    if (!argText) {
+      const current = chatRunPreferences[m.chatJid]?.verboseMode || 'off';
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+      await sendMessage(m.chatJid, `Current verbose mode: ${current}`);
+      return true;
+    }
+
+    const normalized = normalizeVerboseMode(argText);
+    if (!normalized) {
+      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid verbose mode');
+      await sendMessage(
+        m.chatJid,
+        'Unrecognized verbose mode. Valid: off, on, full',
+      );
+      return true;
+    }
+
+    updateChatRunPreferences(m.chatJid, (prefs) => {
+      if (normalized === 'off') delete prefs.verboseMode;
+      else prefs.verboseMode = normalized;
+      return prefs;
+    });
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+    await sendMessage(
+      m.chatJid,
+      normalized === 'off'
+        ? 'Verbose output disabled for this chat.'
+        : normalized === 'full'
+          ? 'Verbose mode set to full (tool calls and failures included).'
+          : 'Verbose mode set to on (tool failures included).',
     );
     return true;
   }
@@ -3312,6 +3384,9 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   // Only advance last-agent timestamp after a successful run; otherwise the
   // next loop should retry with the same context window.
   if (ok) {
+    if (!streamed && isTelegramJid(msg.chat_jid) && consumeTelegramHostStreamedRun(msg.chat_jid, requestId)) {
+      streamed = true;
+    }
     updateChatUsage(msg.chat_jid, usage);
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
     if (abortController.signal.aborted) {
@@ -3504,6 +3579,9 @@ async function runDirectSessionTurn(params: {
   }
 
   updateChatUsage(chatJid, usage);
+  if (!streamed && isTelegramJid(chatJid) && consumeTelegramHostStreamedRun(chatJid, runId)) {
+    streamed = true;
+  }
 
   if (abortController.signal.aborted) {
     emitTuiChatEvent({
@@ -3623,6 +3701,7 @@ async function runAgent(
             model_override: runtimePrefs.model || null,
             think_level: runtimePrefs.thinkLevel || null,
             reasoning_level: runtimePrefs.reasoningLevel || null,
+            verbose_mode: runtimePrefs.verboseMode || null,
             container_runtime: runtime,
           },
         },
@@ -3644,6 +3723,7 @@ async function runAgent(
       model: runtimePrefs.model,
       thinkLevel: runtimePrefs.thinkLevel,
       reasoningLevel: runtimePrefs.reasoningLevel,
+      verboseMode: runtimePrefs.verboseMode,
       noContinue: runtimePrefs.nextRunNoContinue === true,
     };
 
@@ -4139,6 +4219,31 @@ async function sendMessage(jid: string, text: string): Promise<void> {
   }
 }
 
+function getTelegramHostStreamKey(chatJid: string, requestId: string): string {
+  return `${chatJid}:${requestId}`;
+}
+
+function noteTelegramHostStreamedRun(chatJid: string, requestId: string): boolean {
+  const key = getTelegramHostStreamKey(chatJid, requestId);
+  const had = telegramHostStreamedRuns.has(key);
+  telegramHostStreamedRuns.set(key, Date.now());
+  return !had;
+}
+
+function consumeTelegramHostStreamedRun(chatJid: string, requestId: string): boolean {
+  const key = getTelegramHostStreamKey(chatJid, requestId);
+  const had = telegramHostStreamedRuns.has(key);
+  if (had) telegramHostStreamedRuns.delete(key);
+  return had;
+}
+
+function pruneTelegramHostStreamedRuns(): void {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const [key, ts] of telegramHostStreamedRuns.entries()) {
+    if (ts <= cutoff) telegramHostStreamedRuns.delete(key);
+  }
+}
+
 function startIpcWatcher(): void {
   if (ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
@@ -4162,6 +4267,8 @@ function startIpcWatcher(): void {
       setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
       return;
     }
+    telegramDraftDisabledRuns.prune();
+    pruneTelegramHostStreamedRuns();
 
     for (const sourceGroup of groupFolders) {
       const isMain = sourceGroup === MAIN_GROUP_FOLDER;
@@ -4178,7 +4285,69 @@ function startIpcWatcher(): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              const draftUpdate = parseTelegramDraftIpcMessage(data);
+              if (draftUpdate) {
+                const targetGroup = registeredGroups[draftUpdate.chatJid];
+                if (!isMain && (!targetGroup || targetGroup.folder !== sourceGroup)) {
+                  logger.warn(
+                    { chatJid: draftUpdate.chatJid, sourceGroup },
+                    'Unauthorized IPC Telegram draft update blocked',
+                  );
+                } else if (!isTelegramJid(draftUpdate.chatJid)) {
+                  logger.debug(
+                    { chatJid: draftUpdate.chatJid, sourceGroup },
+                    'Ignoring IPC Telegram draft update for non-Telegram chat',
+                  );
+                } else if (!telegramBot) {
+                  logger.debug(
+                    { chatJid: draftUpdate.chatJid, sourceGroup },
+                    'Ignoring IPC Telegram draft update while Telegram is disabled',
+                  );
+                } else {
+                  const sendResult = await sendTelegramDraftWithFallback({
+                    bot: telegramBot,
+                    draft: draftUpdate,
+                    registry: telegramDraftDisabledRuns,
+                  });
+                  if (sendResult.sent && draftUpdate.requestId) {
+                    const firstStreamForRun = noteTelegramHostStreamedRun(
+                      draftUpdate.chatJid,
+                      draftUpdate.requestId,
+                    );
+                    if (firstStreamForRun) {
+                      logger.info(
+                        {
+                          chatJid: draftUpdate.chatJid,
+                          sourceGroup,
+                          requestId: draftUpdate.requestId,
+                          runKey: sendResult.runKey,
+                        },
+                        'Telegram streaming preview active for run',
+                      );
+                    }
+                  }
+                  if (!sendResult.sent && sendResult.disabled && !sendResult.error) {
+                    logger.debug(
+                      {
+                        chatJid: draftUpdate.chatJid,
+                        sourceGroup,
+                        runKey: sendResult.runKey,
+                      },
+                      'Skipping Telegram draft update for disabled run',
+                    );
+                  } else if (sendResult.error) {
+                    logger.warn(
+                      {
+                        chatJid: draftUpdate.chatJid,
+                        sourceGroup,
+                        runKey: sendResult.runKey,
+                        err: sendResult.error,
+                      },
+                      'Telegram draft update failed; disabling draft updates for this run',
+                    );
+                  }
+                }
+              } else if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
