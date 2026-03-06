@@ -5504,9 +5504,13 @@ function consumeTelegramHostStreamState(
   const key = getTelegramHostStreamKey(chatJid, requestId);
   telegramHostStreamedRuns.delete(key);
   const state = telegramDraftDisabledRuns.getStreamState(key);
-  if (state) telegramDraftDisabledRuns.deleteStreamState(key);
   telegramDraftDisabledRuns.disable(key);
-  return state || null;
+  if (!state || state.mode !== 'message') return null;
+  return {
+    messageId: state.messageId,
+    lastText: state.lastText,
+    updatedAt: state.updatedAt,
+  };
 }
 
 function pruneTelegramHostStreamedRuns(): void {
@@ -5585,8 +5589,10 @@ function startIpcWatcher(): void {
                     registry: telegramDraftDisabledRuns,
                   });
                   if (
-                    sendResult.delivery === 'message' &&
-                    draftUpdate.requestId
+                    sendResult.sent &&
+                    draftUpdate.requestId &&
+                    telegramDraftDisabledRuns.getStreamState(sendResult.runKey)?.mode ===
+                      'message'
                   ) {
                     const firstStreamForRun = noteTelegramHostStreamedRun(
                       draftUpdate.chatJid,
