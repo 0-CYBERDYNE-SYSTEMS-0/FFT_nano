@@ -516,6 +516,7 @@ export interface TelegramBotOptions {
 export interface TelegramBot {
   startPolling: (onEvent: (event: TelegramInboundEvent) => Promise<void>) => void;
   sendMessage: (chatJid: string, text: string) => Promise<void>;
+  deleteMessage: (chatJid: string, messageId: number) => Promise<void>;
   sendMessageDraft: (
     chatJid: string,
     draftId: number,
@@ -535,6 +536,12 @@ export interface TelegramBot {
   ) => Promise<void>;
   sendMessageWithKeyboard: (
     chatJid: string,
+    text: string,
+    keyboard: TelegramInlineKeyboard,
+  ) => Promise<void>;
+  editMessageWithKeyboard: (
+    chatJid: string,
+    messageId: number,
     text: string,
     keyboard: TelegramInlineKeyboard,
   ) => Promise<void>;
@@ -831,6 +838,9 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
         for (const u of updates) {
           offset = Math.max(offset, u.update_id + 1);
+          // Persist immediately so commands that intentionally restart the host
+          // do not replay the same Telegram update on the next boot.
+          persistOffset();
 
           if (u.callback_query?.message) {
             const callback = u.callback_query;
@@ -932,6 +942,20 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }
   }
 
+  async function deleteMessage(chatJid: string, messageId: number): Promise<void> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) {
+      throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
+    }
+    if (!Number.isInteger(messageId) || messageId <= 0) {
+      throw new Error(`Invalid Telegram message id: ${messageId}`);
+    }
+    await apiPostWithRetry('deleteMessage', {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  }
+
   async function sendMessageDraft(
     chatJid: string,
     draftId: number,
@@ -1027,6 +1051,36 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       const chunk = chunks[i];
       if (!chunk || chunk.length > TELEGRAM_MAX_MESSAGE_LEN) continue;
       await sendMessageChunk(chatId, chunk, i === 0 ? replyMarkup : undefined);
+    }
+  }
+
+  async function editMessageWithKeyboard(
+    chatJid: string,
+    messageId: number,
+    text: string,
+    keyboard: TelegramInlineKeyboard,
+  ): Promise<void> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) {
+      throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
+    }
+    if (!Number.isInteger(messageId) || messageId <= 0) {
+      throw new Error(`Invalid Telegram message id for keyboard edit: ${messageId}`);
+    }
+
+    try {
+      await apiPostWithRetry('editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text: normalizeTelegramDraftText(text),
+        disable_web_page_preview: true,
+        reply_markup: buildReplyMarkup(keyboard),
+      });
+    } catch (err) {
+      if (err instanceof TelegramApiError && TELEGRAM_MESSAGE_NOT_MODIFIED_RE.test(err.message)) {
+        return;
+      }
+      throw err;
     }
   }
 
@@ -1236,10 +1290,12 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       );
     },
     sendMessage,
+    deleteMessage,
     sendMessageDraft,
     sendStreamMessage,
     editStreamMessage,
     sendMessageWithKeyboard,
+    editMessageWithKeyboard,
     sendPhoto,
     sendDocument,
     setTyping,

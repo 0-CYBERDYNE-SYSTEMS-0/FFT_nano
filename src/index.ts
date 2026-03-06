@@ -79,13 +79,32 @@ import {
   createTelegramBot,
   isTelegramJid,
   parseTelegramChatId,
+  splitTelegramText,
 } from './telegram.js';
+import {
+  formatHelpText,
+  normalizeTelegramCommandToken,
+  TELEGRAM_ADMIN_COMMANDS,
+  TELEGRAM_COMMON_COMMANDS,
+} from './telegram-command-spec.js';
+import { resolvePiExecutable } from './pi-executable.js';
+import {
+  applyProcessEnvUpdates,
+  getDefaultDotEnvPath,
+  getRuntimeProviderDefinitionByPreset,
+  loadDotEnvMap,
+  resolveRuntimeConfigSnapshot,
+  RUNTIME_PROVIDER_DEFINITIONS,
+  type RuntimeProviderPreset,
+  upsertDotEnv,
+} from './runtime-config.js';
 import type {
   TelegramBot,
   TelegramInboundCallbackQuery,
   TelegramInboundMessage,
   TelegramInlineKeyboard,
 } from './telegram.js';
+import type { TelegramCommandName } from './telegram-command-spec.js';
 import {
   TelegramDraftDisableRegistry,
   parseTelegramDraftIpcMessage,
@@ -174,73 +193,6 @@ const TELEGRAM_DRAFT_DISABLE_MS = Math.max(
     1_800_000,
 );
 
-const TELEGRAM_COMMON_COMMANDS = [
-  { command: 'help', description: 'Show command help' },
-  { command: 'status', description: 'Show runtime status' },
-  { command: 'id', description: 'Show this chat id' },
-  { command: 'models', description: 'List available models' },
-  { command: 'model', description: 'Show/set model override' },
-  { command: 'think', description: 'Show/set thinking level' },
-  { command: 'reasoning', description: 'Show/set reasoning visibility' },
-  { command: 'verbose', description: 'Show/set tool/verbose output mode' },
-  { command: 'new', description: 'Start a fresh session' },
-  { command: 'reset', description: 'Reset session (alias for /new)' },
-  { command: 'stop', description: 'Stop current run' },
-  { command: 'usage', description: 'Show usage counters' },
-  { command: 'queue', description: 'Show/set queue behavior' },
-  { command: 'compact', description: 'Compact session context' },
-] as const;
-
-const TELEGRAM_ADMIN_COMMANDS = [
-  { command: 'main', description: 'Claim this chat as main/admin' },
-  { command: 'freechat', description: 'Manage non-main free-chat allowlist' },
-  { command: 'gateway', description: 'Gateway service ops: /gateway status|restart|doctor' },
-  { command: 'coder', description: 'Delegate coding execution' },
-  { command: 'coder_plan', description: 'Delegate coding plan-only' },
-  { command: 'subagents', description: 'List/stop/spawn subagent runs' },
-  { command: 'tasks', description: 'List scheduled tasks' },
-  { command: 'task_pause', description: 'Pause a task: /task_pause <id>' },
-  { command: 'task_resume', description: 'Resume a task: /task_resume <id>' },
-  { command: 'task_cancel', description: 'Cancel a task: /task_cancel <id>' },
-  { command: 'groups', description: 'List registered groups' },
-  { command: 'reload', description: 'Refresh command state and metadata' },
-  { command: 'panel', description: 'Open admin panel buttons' },
-] as const;
-
-type TelegramCommandName =
-  | '/help'
-  | '/status'
-  | '/id'
-  | '/models'
-  | '/model'
-  | '/think'
-  | '/thinking'
-  | '/t'
-  | '/reasoning'
-  | '/reason'
-  | '/verbose'
-  | '/v'
-  | '/new'
-  | '/reset'
-  | '/stop'
-  | '/usage'
-  | '/queue'
-  | '/compact'
-  | '/subagents'
-  | '/main'
-  | '/gateway'
-  | '/tasks'
-  | '/task_pause'
-  | '/task_resume'
-  | '/task_cancel'
-  | '/groups'
-  | '/reload'
-  | '/panel'
-  | '/coder'
-  | '/coder-plan'
-  | '/coder_plan'
-  | '/freechat';
-
 interface ActiveCoderRun {
   requestId: string;
   mode: 'execute' | 'plan';
@@ -259,6 +211,7 @@ type QueueMode =
   | 'steer'
   | 'steer-backlog';
 type QueueDropPolicy = 'old' | 'new' | 'summarize';
+type PanelScope = 'home' | 'models' | 'think' | 'reasoning' | 'verbose' | 'queue';
 
 interface ChatRunPreferences {
   provider?: string;
@@ -284,6 +237,51 @@ interface ChatUsageStats {
   lastModel?: string;
   updatedAt: number;
 }
+
+interface PiModelEntry {
+  provider: string;
+  model: string;
+}
+
+type TelegramSetupInputKind = 'provider' | 'model' | 'endpoint' | 'api-key';
+
+interface TelegramSetupInputState {
+  kind: TelegramSetupInputKind;
+  expiresAt: number;
+}
+
+type TelegramSettingsPanelAction =
+  | { kind: 'show-home' }
+  | { kind: 'show-model-providers' }
+  | { kind: 'show-models-for-provider'; provider: string; page: number }
+  | { kind: 'set-model'; provider: string; model: string; returnTo: PanelScope }
+  | { kind: 'reset-model'; returnTo: PanelScope }
+  | { kind: 'show-think' }
+  | { kind: 'set-think'; value: ThinkLevel }
+  | { kind: 'show-reasoning' }
+  | { kind: 'set-reasoning'; value: ReasoningLevel }
+  | { kind: 'show-verbose' }
+  | { kind: 'set-verbose'; value: VerboseMode }
+  | { kind: 'show-queue' }
+  | { kind: 'set-queue-mode'; value: QueueMode }
+  | { kind: 'show-subagents' }
+  | { kind: 'stop-subagents'; target: 'current' | 'all' }
+  | { kind: 'trigger-new' }
+  | { kind: 'show-setup-home' }
+  | { kind: 'show-setup-providers' }
+  | { kind: 'set-setup-provider'; preset: RuntimeProviderPreset }
+  | { kind: 'show-setup-models'; preset: RuntimeProviderPreset; page: number }
+  | { kind: 'set-setup-model'; preset: RuntimeProviderPreset; model: string }
+  | { kind: 'prompt-setup-provider' }
+  | { kind: 'prompt-setup-model' }
+  | { kind: 'prompt-setup-model-typed' }
+  | { kind: 'show-setup-endpoint' }
+  | { kind: 'prompt-setup-endpoint' }
+  | { kind: 'clear-setup-endpoint' }
+  | { kind: 'show-setup-api-key' }
+  | { kind: 'prompt-setup-api-key' }
+  | { kind: 'clear-setup-api-key' }
+  | { kind: 'restart-gateway' };
 
 interface ActiveChatRun {
   chatJid: string;
@@ -318,10 +316,16 @@ const telegramDraftDisabledRuns = new TelegramDraftDisableRegistry(
   TELEGRAM_DRAFT_DISABLE_MS,
 );
 const telegramHostStreamedRuns = new Map<string, number>();
+const telegramHostCompletedRuns = new Map<string, number>();
 const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
 const heartbeatLastTargetByChannel = new Map<'telegram' | 'whatsapp', string>();
 let heartbeatLastTargetAny: string | null = null;
 const compactionMemoryFlushMarkers = new Map<string, number>();
+const telegramSettingsPanelActions = new Map<
+  string,
+  { chatJid: string; action: TelegramSettingsPanelAction; expiresAt: number }
+>();
+const telegramSetupInputStates = new Map<string, TelegramSetupInputState>();
 let bootRunInFlight = false;
 let lastTelegramMenuMainChatId: string | null = null;
 // LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
@@ -340,6 +344,11 @@ const TUI_SENDER_ID = '__fft_tui__';
 const TUI_SENDER_NAME = 'FFT_nano TUI';
 const SERVICE_STARTED_AT = new Date().toISOString();
 const APP_VERSION = process.env.npm_package_version || 'unknown';
+const TELEGRAM_SETTINGS_PANEL_PREFIX = 'cfg:';
+const TELEGRAM_SETTINGS_PANEL_TTL_MS = 15 * 60 * 1000;
+const TELEGRAM_SETUP_INPUT_TTL_MS = 15 * 60 * 1000;
+const TELEGRAM_MODEL_PANEL_PAGE_SIZE = 8;
+let piModelsCache: { entries: PiModelEntry[]; loadedAt: number } | null = null;
 
 interface GitInfo {
   branch?: string;
@@ -1445,10 +1454,19 @@ function formatUsageText(chatJid: string, scope: 'chat' | 'all' = 'chat'): strin
 }
 
 function runPiListModels(searchText: string): { ok: boolean; text: string } {
+  const piExecutable = resolvePiExecutable();
+  if (!piExecutable) {
+    return {
+      ok: false,
+      text:
+        'Model listing is unavailable: `pi` was not found on PATH and no repo-local fallback exists at container/agent-runner/node_modules/.bin/pi. Run setup or install agent-runner dependencies.',
+    };
+  }
+
   const args = ['--list-models'];
   const trimmed = searchText.trim();
   if (trimmed) args.push(trimmed);
-  const result = spawnSync('pi', args, {
+  const result = spawnSync(piExecutable, args, {
     encoding: 'utf8',
     env: process.env,
     maxBuffer: 4 * 1024 * 1024,
@@ -1457,7 +1475,7 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
   if (result.error) {
     return {
       ok: false,
-      text: `Failed to run pi --list-models: ${result.error.message}`,
+      text: `Failed to run ${piExecutable} --list-models: ${result.error.message}`,
     };
   }
 
@@ -1485,6 +1503,799 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
   return {
     ok: true,
     text: trimmed ? `Models matching "${trimmed}":\n${bounded}` : `Available models:\n${bounded}`,
+  };
+}
+
+function parsePiModelListOutput(output: string): PiModelEntry[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
+    .filter((line) => !/^provider\s{2,}model\b/i.test(line))
+    .map((line) => line.trim().split(/\s{2,}/))
+    .filter((parts) => parts.length >= 2)
+    .map((parts) => ({
+      provider: (parts[0] || '').trim(),
+      model: (parts[1] || '').trim(),
+    }))
+    .filter((entry) => entry.provider.length > 0 && entry.model.length > 0);
+}
+
+function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
+  if (
+    !forceRefresh &&
+    piModelsCache &&
+    Date.now() - piModelsCache.loadedAt < 60_000 &&
+    piModelsCache.entries.length > 0
+  ) {
+    return { ok: true, entries: piModelsCache.entries };
+  }
+
+  const piExecutable = resolvePiExecutable();
+  if (!piExecutable) {
+    return {
+      ok: false,
+      text:
+        'Model picker is unavailable because `pi` is not installed for the running service.',
+    };
+  }
+
+  const result = spawnSync(piExecutable, ['--list-models'], {
+    encoding: 'utf8',
+    env: process.env,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (result.error) {
+    return {
+      ok: false,
+      text: `Failed to load models from ${piExecutable}: ${result.error.message}`,
+    };
+  }
+  if (result.status !== 0) {
+    const details = (result.stderr || result.stdout || '').trim();
+    return {
+      ok: false,
+      text: details || `pi --list-models exited with code ${result.status ?? 'unknown'}`,
+    };
+  }
+
+  const entries = parsePiModelListOutput(result.stdout || '');
+  if (entries.length === 0) {
+    return {
+      ok: false,
+      text: 'Model picker is unavailable because pi returned no models.',
+    };
+  }
+  piModelsCache = { entries, loadedAt: Date.now() };
+  return { ok: true, entries };
+}
+
+function getRuntimeConfigEnv(): Record<string, string | undefined> {
+  const saved = loadDotEnvMap(getDefaultDotEnvPath(process.cwd()));
+  return { ...saved, ...process.env };
+}
+
+function getRuntimeConfigSummaryLines(): string[] {
+  const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+  const label =
+    snapshot.providerPreset === 'manual'
+      ? `manual (${snapshot.provider})`
+      : snapshot.provider;
+  return [
+    `Provider: ${label}`,
+    `Model: ${snapshot.model}`,
+    `API key (${snapshot.apiKeyEnv}): ${snapshot.apiKeyConfigured ? 'set' : 'missing'}`,
+    snapshot.endpointEnv
+      ? `Endpoint (${snapshot.endpointEnv}): ${snapshot.endpointValue || '(default)'}`
+      : 'Endpoint: provider default',
+  ];
+}
+
+function persistRuntimeConfigUpdates(updates: Record<string, string | undefined>): void {
+  const envPath = getDefaultDotEnvPath(process.cwd());
+  upsertDotEnv(envPath, updates);
+  applyProcessEnvUpdates(updates);
+  piModelsCache = null;
+}
+
+function setTelegramSetupInputState(chatJid: string, kind: TelegramSetupInputKind): void {
+  telegramSetupInputStates.set(chatJid, {
+    kind,
+    expiresAt: Date.now() + TELEGRAM_SETUP_INPUT_TTL_MS,
+  });
+}
+
+function clearTelegramSetupInputState(chatJid: string): void {
+  telegramSetupInputStates.delete(chatJid);
+}
+
+function getTelegramSetupInputState(chatJid: string): TelegramSetupInputState | null {
+  const current = telegramSetupInputStates.get(chatJid);
+  if (!current) return null;
+  if (current.expiresAt <= Date.now()) {
+    telegramSetupInputStates.delete(chatJid);
+    return null;
+  }
+  return current;
+}
+
+function buildTelegramSetupHomePanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  return {
+    text: [
+      'Runtime setup wizard (.env + live runtime defaults):',
+      ...getRuntimeConfigSummaryLines(),
+      '',
+      'Provider/model/key changes apply to new runs immediately. Endpoint override writes OPENAI_BASE_URL + PI_BASE_URL for openai-compatible endpoints.',
+    ].join('\n'),
+    keyboard: [
+      [
+        {
+          text: 'Provider',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-setup-providers',
+          }),
+        },
+        {
+          text: 'Model',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'prompt-setup-model',
+          }),
+        },
+      ],
+      [
+        {
+          text: 'API Key',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-setup-api-key',
+          }),
+        },
+        {
+          text: 'Endpoint',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-setup-endpoint',
+          }),
+        },
+      ],
+      [
+        {
+          text: 'Restart Gateway',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'restart-gateway',
+          }),
+        },
+        {
+          text: 'Refresh',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-setup-home',
+          }),
+        },
+      ],
+    ],
+  };
+}
+
+function buildTelegramSetupProviderPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const rows: TelegramInlineKeyboard = [];
+  for (let i = 0; i < RUNTIME_PROVIDER_DEFINITIONS.length; i += 2) {
+    rows.push(
+      RUNTIME_PROVIDER_DEFINITIONS.slice(i, i + 2).map((provider) => ({
+        text: provider.label,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'set-setup-provider',
+          preset: provider.id,
+        }),
+      })),
+    );
+  }
+  rows.push([
+    {
+      text: 'Manual Provider',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'prompt-setup-provider',
+      }),
+    },
+  ]);
+  rows.push([
+    {
+      text: 'Home',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-setup-home' }),
+    },
+  ]);
+  return {
+    text: [
+      'Choose a default provider preset:',
+      ...getRuntimeConfigSummaryLines(),
+      '',
+      'Manual provider writes raw PI_API and uses PI_API_KEY.',
+    ].join('\n'),
+    keyboard: rows,
+  };
+}
+
+function buildTelegramSetupModelPanel(
+  chatJid: string,
+  preset: RuntimeProviderPreset,
+  page = 0,
+): { text: string; keyboard: TelegramInlineKeyboard } {
+  const provider = getRuntimeProviderDefinitionByPreset(preset);
+  const loaded = loadPiModels();
+  if (!loaded.ok) {
+    return {
+      text: `Model picker error:\n${loaded.text}`,
+      keyboard: [
+        [
+          {
+            text: 'Type Model',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'prompt-setup-model-typed',
+            }),
+          },
+        ],
+        [
+          {
+            text: 'Home',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-setup-home',
+            }),
+          },
+        ],
+      ],
+    };
+  }
+
+  const models = loaded.entries
+    .filter((entry) => entry.provider === provider.piApi)
+    .map((entry) => entry.model)
+    .sort((a, b) => a.localeCompare(b));
+  if (models.length === 0) {
+    return {
+      text: [
+        `No picker models were returned for ${provider.label}.`,
+        '',
+        'Use typed model entry instead.',
+      ].join('\n'),
+      keyboard: [
+        [
+          {
+            text: 'Type Model',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'prompt-setup-model-typed',
+            }),
+          },
+        ],
+        [
+          {
+            text: 'Home',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-setup-home',
+            }),
+          },
+        ],
+      ],
+    };
+  }
+
+  const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+  const totalPages = Math.max(1, Math.ceil(models.length / TELEGRAM_MODEL_PANEL_PAGE_SIZE));
+  const safePage = Math.max(0, Math.min(page, totalPages - 1));
+  const start = safePage * TELEGRAM_MODEL_PANEL_PAGE_SIZE;
+  const pageModels = models.slice(start, start + TELEGRAM_MODEL_PANEL_PAGE_SIZE);
+  const rows: TelegramInlineKeyboard = [];
+  for (let i = 0; i < pageModels.length; i += 2) {
+    rows.push(
+      pageModels.slice(i, i + 2).map((model) => ({
+        text: snapshot.model === model ? `* ${truncateButtonLabel(model)}` : truncateButtonLabel(model),
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'set-setup-model',
+          preset,
+          model,
+        }),
+      })),
+    );
+  }
+  if (totalPages > 1) {
+    const nav: TelegramInlineKeyboard[number] = [];
+    if (safePage > 0) {
+      nav.push({
+        text: 'Prev',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-setup-models',
+          preset,
+          page: safePage - 1,
+        }),
+      });
+    }
+    if (safePage < totalPages - 1) {
+      nav.push({
+        text: 'Next',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-setup-models',
+          preset,
+          page: safePage + 1,
+        }),
+      });
+    }
+    if (nav.length > 0) rows.push(nav);
+  }
+  rows.push([
+    {
+      text: 'Type Model',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'prompt-setup-model-typed',
+      }),
+    },
+    {
+      text: 'Providers',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-setup-providers',
+      }),
+    },
+  ]);
+  rows.push([
+    {
+      text: 'Home',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-setup-home',
+      }),
+    },
+  ]);
+  return {
+    text: [
+      `Select a default ${provider.label} model:`,
+      `Current: ${snapshot.model}`,
+      `Page ${safePage + 1} of ${totalPages}`,
+    ].join('\n'),
+    keyboard: rows,
+  };
+}
+
+function buildTelegramSetupEndpointPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+  return {
+    text: [
+      'Endpoint override:',
+      `Current: ${snapshot.endpointValue || '(default)'}`,
+      '',
+      'This writes OPENAI_BASE_URL and PI_BASE_URL for openai-compatible/local endpoints.',
+    ].join('\n'),
+    keyboard: [
+      [
+        {
+          text: 'Set Endpoint',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'prompt-setup-endpoint',
+          }),
+        },
+        {
+          text: 'Clear',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'clear-setup-endpoint',
+          }),
+        },
+      ],
+      [
+        {
+          text: 'Home',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-setup-home' }),
+        },
+      ],
+    ],
+  };
+}
+
+function buildTelegramSetupApiKeyPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+  return {
+    text: [
+      'API key setup:',
+      `Target env: ${snapshot.apiKeyEnv}`,
+      `Current status: ${snapshot.apiKeyConfigured ? 'set' : 'missing'}`,
+      '',
+      'The next plain-text message you send can be captured as the new key.',
+    ].join('\n'),
+    keyboard: [
+      [
+        {
+          text: 'Set Key',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'prompt-setup-api-key',
+          }),
+        },
+        {
+          text: 'Clear',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'clear-setup-api-key',
+          }),
+        },
+      ],
+      [
+        {
+          text: 'Home',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-setup-home' }),
+        },
+      ],
+    ],
+  };
+}
+
+function pruneTelegramSettingsPanelActions(): void {
+  const now = Date.now();
+  for (const [token, state] of telegramSettingsPanelActions.entries()) {
+    if (state.expiresAt <= now) telegramSettingsPanelActions.delete(token);
+  }
+}
+
+function registerTelegramSettingsPanelAction(
+  chatJid: string,
+  action: TelegramSettingsPanelAction,
+): string {
+  pruneTelegramSettingsPanelActions();
+  let token = '';
+  do {
+    token = Math.random().toString(36).slice(2, 10);
+  } while (telegramSettingsPanelActions.has(token));
+  telegramSettingsPanelActions.set(token, {
+    chatJid,
+    action,
+    expiresAt: Date.now() + TELEGRAM_SETTINGS_PANEL_TTL_MS,
+  });
+  return `${TELEGRAM_SETTINGS_PANEL_PREFIX}${token}`;
+}
+
+function getTelegramSettingsPanelAction(
+  chatJid: string,
+  callbackData: string,
+): TelegramSettingsPanelAction | null {
+  if (!callbackData.startsWith(TELEGRAM_SETTINGS_PANEL_PREFIX)) return null;
+  pruneTelegramSettingsPanelActions();
+  const token = callbackData.slice(TELEGRAM_SETTINGS_PANEL_PREFIX.length);
+  if (!token) return null;
+  const state = telegramSettingsPanelActions.get(token);
+  if (!state || state.chatJid !== chatJid) return null;
+  return state.action;
+}
+
+function truncateButtonLabel(text: string, max = 28): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
+  const prefs = chatRunPreferences[chatJid] || {};
+  return [
+    `Model: ${getEffectiveModelLabel(chatJid)}`,
+    `Think: ${prefs.thinkLevel || 'off'}`,
+    `Reasoning: ${prefs.reasoningLevel || 'off'}`,
+    `Verbose: ${prefs.verboseMode || 'off'}`,
+    `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
+  ];
+}
+
+function buildTelegramSettingsHomePanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  return {
+    text: ['Runtime controls for this chat:', ...formatTelegramSettingsPanelSummary(chatJid)].join('\n'),
+    keyboard: [
+      [
+        {
+          text: 'Models',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-model-providers',
+          }),
+        },
+        {
+          text: 'Think',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-think' }),
+        },
+      ],
+      [
+        {
+          text: 'Queue',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-queue' }),
+        },
+        {
+          text: 'Fresh Next Run',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'trigger-new' }),
+        },
+      ],
+      [
+        {
+          text: 'Reasoning',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-reasoning',
+          }),
+        },
+        {
+          text: 'Verbose',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-verbose' }),
+        },
+      ],
+      [
+        {
+          text: 'Reset Model',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'reset-model',
+            returnTo: 'home',
+          }),
+        },
+      ],
+    ],
+  };
+}
+
+function buildTelegramModelProviderPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const loaded = loadPiModels();
+  if (!loaded.ok) {
+    return {
+      text: `Model picker error:\n${loaded.text}`,
+      keyboard: [[{ text: 'Back', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]],
+    };
+  }
+
+  const providerCounts = new Map<string, number>();
+  for (const entry of loaded.entries) {
+    providerCounts.set(entry.provider, (providerCounts.get(entry.provider) || 0) + 1);
+  }
+  const providers = Array.from(providerCounts.entries()).sort((a, b) =>
+    a[0].localeCompare(b[0]),
+  );
+  const rows: TelegramInlineKeyboard = [];
+  for (let i = 0; i < providers.length; i += 2) {
+    const slice = providers.slice(i, i + 2);
+    rows.push(
+      slice.map(([provider, count]) => ({
+        text: `${provider} (${count})`,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-models-for-provider',
+          provider,
+          page: 0,
+        }),
+      })),
+    );
+  }
+  rows.push([{ text: 'Back', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+  return {
+    text: ['Select a provider:', ...formatTelegramSettingsPanelSummary(chatJid)].join('\n'),
+    keyboard: rows,
+  };
+}
+
+function buildTelegramProviderModelPanel(
+  chatJid: string,
+  provider: string,
+  page = 0,
+): { text: string; keyboard: TelegramInlineKeyboard } {
+  const loaded = loadPiModels();
+  if (!loaded.ok) {
+    return {
+      text: `Model picker error:\n${loaded.text}`,
+      keyboard: [[{ text: 'Back', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]],
+    };
+  }
+  const models = loaded.entries
+    .filter((entry) => entry.provider === provider)
+    .map((entry) => entry.model)
+    .sort((a, b) => a.localeCompare(b));
+
+  const totalPages = Math.max(1, Math.ceil(models.length / TELEGRAM_MODEL_PANEL_PAGE_SIZE));
+  const safePage = Math.max(0, Math.min(page, totalPages - 1));
+  const start = safePage * TELEGRAM_MODEL_PANEL_PAGE_SIZE;
+  const pageModels = models.slice(start, start + TELEGRAM_MODEL_PANEL_PAGE_SIZE);
+  const current = getEffectiveModelLabel(chatJid);
+
+  const rows: TelegramInlineKeyboard = [];
+  for (let i = 0; i < pageModels.length; i += 2) {
+    rows.push(
+      pageModels.slice(i, i + 2).map((model) => {
+        const full = `${provider}/${model}`;
+        const selected = current === full;
+        return {
+          text: selected ? `* ${truncateButtonLabel(model)}` : truncateButtonLabel(model),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'set-model',
+            provider,
+            model,
+            returnTo: 'models',
+          }),
+        };
+      }),
+    );
+  }
+
+  if (totalPages > 1) {
+    const navRow: TelegramInlineKeyboard[number] = [];
+    if (safePage > 0) {
+      navRow.push({
+        text: 'Prev',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-models-for-provider',
+          provider,
+          page: safePage - 1,
+        }),
+      });
+    }
+    if (safePage < totalPages - 1) {
+      navRow.push({
+        text: 'Next',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-models-for-provider',
+          provider,
+          page: safePage + 1,
+        }),
+      });
+    }
+    if (navRow.length > 0) rows.push(navRow);
+  }
+
+  rows.push([
+    {
+      text: 'Reset Model',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'reset-model',
+        returnTo: 'models',
+      }),
+    },
+    {
+      text: 'Providers',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-model-providers',
+      }),
+    },
+  ]);
+  rows.push([{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+
+  return {
+    text: [
+      `Select a model from ${provider}:`,
+      `Current: ${current}`,
+      `Page ${safePage + 1} of ${totalPages}`,
+    ].join('\n'),
+    keyboard: rows,
+  };
+}
+
+function buildThinkPanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
+  const current = chatRunPreferences[chatJid]?.thinkLevel || 'off';
+  const levels: ThinkLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+  const rows: TelegramInlineKeyboard = [];
+  for (let i = 0; i < levels.length; i += 2) {
+    rows.push(
+      levels.slice(i, i + 2).map((value) => ({
+        text: value === current ? `* ${value}` : value,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'set-think', value }),
+      })),
+    );
+  }
+  rows.push([{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+  return {
+    text: `Select thinking level:\nCurrent: ${current}`,
+    keyboard: rows,
+  };
+}
+
+function buildReasoningPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const current = chatRunPreferences[chatJid]?.reasoningLevel || 'off';
+  const levels: ReasoningLevel[] = ['off', 'on', 'stream'];
+  return {
+    text: `Select reasoning mode:\nCurrent: ${current}`,
+    keyboard: [
+      levels.map((value) => ({
+        text: value === current ? `* ${value}` : value,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'set-reasoning',
+          value,
+        }),
+      })),
+      [{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }],
+    ],
+  };
+}
+
+function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
+  const current = chatRunPreferences[chatJid]?.verboseMode || 'off';
+  const levels: VerboseMode[] = ['off', 'on', 'full'];
+  return {
+    text: `Select verbose mode:\nCurrent: ${current}`,
+    keyboard: [
+      levels.map((value) => ({
+        text: value === current ? `* ${value}` : value,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'set-verbose',
+          value,
+        }),
+      })),
+      [{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }],
+    ],
+  };
+}
+
+function buildQueuePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
+  const prefs = chatRunPreferences[chatJid] || {};
+  const current = prefs.queueMode || 'collect';
+  const modes: QueueMode[] = ['collect', 'followup', 'interrupt', 'steer', 'steer-backlog'];
+  const rows: TelegramInlineKeyboard = [];
+  for (let i = 0; i < modes.length; i += 2) {
+    rows.push(
+      modes.slice(i, i + 2).map((value) => ({
+        text: value === current ? `* ${truncateButtonLabel(value, 24)}` : truncateButtonLabel(value, 24),
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'set-queue-mode',
+          value,
+        }),
+      })),
+    );
+  }
+  rows.push([{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+  return {
+    text: [
+      'Select queue mode:',
+      `Current mode: ${current}`,
+      `Debounce: ${prefs.queueDebounceMs || 0}ms`,
+      `Cap: ${prefs.queueCap || 0}`,
+      `Drop policy: ${prefs.queueDrop || 'old'}`,
+      '',
+      'Buttons change only the mode. Use typed /queue args for debounce, cap, and drop.',
+    ].join('\n'),
+    keyboard: rows,
+  };
+}
+
+function buildSubagentsPanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
+  const text = [
+    'Subagent controls:',
+    formatActiveSubagentsText(),
+    '',
+    'Spawn still uses typed text: /subagents spawn <task>',
+  ].join('\n');
+  return {
+    text,
+    keyboard: [
+      [
+        {
+          text: 'Refresh',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-subagents' }),
+        },
+        {
+          text: 'Stop Current',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'stop-subagents',
+            target: 'current',
+          }),
+        },
+      ],
+      [
+        {
+          text: 'Stop All',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'stop-subagents',
+            target: 'all',
+          }),
+        },
+        {
+          text: 'Home',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }),
+        },
+      ],
+    ],
   };
 }
 
@@ -1556,6 +2367,17 @@ function runGatewayServiceCommand(
       ? `${combined.slice(0, 12000)}\n\n...output truncated...`
       : combined;
 
+  if (
+    action === 'restart' &&
+    result.status === null &&
+    (result.signal === 'SIGTERM' || result.signal === 'SIGKILL')
+  ) {
+    return {
+      ok: true,
+      text: bounded || 'Gateway restart handed off to the service manager.',
+    };
+  }
+
   if (result.status !== 0) {
     const needsPrivileges = /root privileges|sudo|permission denied|operation not permitted|bootstrap failed|input\/output error/i.test(
       bounded,
@@ -1576,96 +2398,6 @@ function runGatewayServiceCommand(
     ok: true,
     text: bounded || `Gateway service command completed: ${action}`,
   };
-}
-
-function normalizeTelegramCommandToken(token: string): TelegramCommandName | null {
-  if (!token.startsWith('/')) return null;
-  const normalized = token.split('@')[0]?.toLowerCase();
-  if (!normalized) return null;
-  const commandToken = normalized.split(':')[0] || normalized;
-  const command = commandToken as TelegramCommandName;
-  const known: Set<TelegramCommandName> = new Set([
-    '/help',
-    '/status',
-    '/id',
-    '/models',
-    '/model',
-    '/think',
-    '/thinking',
-    '/t',
-    '/reasoning',
-    '/reason',
-    '/verbose',
-    '/v',
-    '/new',
-    '/reset',
-    '/stop',
-    '/usage',
-    '/queue',
-    '/compact',
-    '/subagents',
-    '/main',
-    '/gateway',
-    '/tasks',
-    '/task_pause',
-    '/task_resume',
-    '/task_cancel',
-    '/groups',
-    '/reload',
-    '/panel',
-    '/coder',
-    '/coder-plan',
-    '/coder_plan',
-    '/freechat',
-  ]);
-  return known.has(command) ? command : null;
-}
-
-function formatHelpText(isMainGroup: boolean): string {
-  const common = [
-    '/help - show this help',
-    '/status - runtime and queue status',
-    '/id - show current Telegram chat id',
-    '/models [query] - list/search available models',
-    '/model [provider/model|reset] - show/set chat model',
-    '/think [off|minimal|low|medium|high|xhigh] - set thinking level',
-    '/reasoning [off|on|stream] - set reasoning visibility mode',
-    '/verbose [/v] [off|on|full] - tool/verbose output visibility',
-    '/new - start fresh session on next run',
-    '/reset - alias for /new',
-    '/stop - stop the current in-flight run',
-    '/usage [all|reset] - usage counters',
-    '/queue [mode/debounce/cap/drop] - queue policy for this chat',
-    '/compact [instructions] - summarize + roll session',
-  ];
-  if (!isMainGroup) {
-    return [
-      'Telegram commands:',
-      ...common,
-      '',
-      `Admin commands are only available in the main chat for safety.`,
-    ].join('\n');
-  }
-
-  return [
-    'Telegram commands (main/admin):',
-    ...common,
-    '/main <secret> - claim chat as main/admin',
-    '/gateway status|restart|doctor - host service + diagnostics',
-    '/tasks [list|due|detail|runs] - inspect scheduled tasks',
-    '/task_pause <id> - pause task',
-    '/task_resume <id> - resume task',
-    '/task_cancel <id> - cancel task',
-    '/groups - list registered groups',
-    '/freechat add <chatId> - enable free chat in a non-main Telegram chat',
-    '/freechat remove <chatId> - disable free chat in a non-main Telegram chat',
-    '/freechat list - list chats with free chat enabled',
-    '/reload - refresh command menus and group metadata',
-    '/panel - open admin quick actions',
-    '/coder <task> - explicit delegated coding run',
-    '/coder-plan <task> - explicit delegated planning run',
-    '/subagents list|stop|spawn - manage delegated subagent runs',
-  ].join('\n');
 }
 
 function formatStatusText(chatJid?: string): string {
@@ -1807,6 +2539,71 @@ function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
       { text: 'Health', callbackData: 'panel:health' },
     ],
   ];
+}
+
+function resolveTelegramSettingsPanel(
+  chatJid: string,
+  action: TelegramSettingsPanelAction,
+): { text: string; keyboard: TelegramInlineKeyboard } {
+  switch (action.kind) {
+    case 'show-home':
+      return buildTelegramSettingsHomePanel(chatJid);
+    case 'show-model-providers':
+      return buildTelegramModelProviderPanel(chatJid);
+    case 'show-models-for-provider':
+      return buildTelegramProviderModelPanel(chatJid, action.provider, action.page);
+    case 'show-think':
+      return buildThinkPanel(chatJid);
+    case 'show-reasoning':
+      return buildReasoningPanel(chatJid);
+    case 'show-verbose':
+      return buildVerbosePanel(chatJid);
+    case 'show-queue':
+      return buildQueuePanel(chatJid);
+    case 'show-subagents':
+      return buildSubagentsPanel(chatJid);
+    case 'show-setup-home':
+      return buildTelegramSetupHomePanel(chatJid);
+    case 'show-setup-providers':
+      return buildTelegramSetupProviderPanel(chatJid);
+    case 'show-setup-models':
+      return buildTelegramSetupModelPanel(chatJid, action.preset, action.page);
+    case 'show-setup-endpoint':
+      return buildTelegramSetupEndpointPanel(chatJid);
+    case 'show-setup-api-key':
+      return buildTelegramSetupApiKeyPanel(chatJid);
+    default:
+      return buildTelegramSettingsHomePanel(chatJid);
+  }
+}
+
+async function sendTelegramSettingsPanel(
+  chatJid: string,
+  action: TelegramSettingsPanelAction = { kind: 'show-home' },
+): Promise<void> {
+  if (!telegramBot) return;
+  const panel = resolveTelegramSettingsPanel(chatJid, action);
+  await telegramBot.sendMessageWithKeyboard(chatJid, panel.text, panel.keyboard);
+}
+
+async function editTelegramSettingsPanel(
+  chatJid: string,
+  messageId: number,
+  action: TelegramSettingsPanelAction,
+): Promise<void> {
+  if (!telegramBot) return;
+  const panel = resolveTelegramSettingsPanel(chatJid, action);
+  await telegramBot.editMessageWithKeyboard(chatJid, messageId, panel.text, panel.keyboard);
+}
+
+async function promptTelegramSetupInput(
+  chatJid: string,
+  kind: TelegramSetupInputKind,
+  prompt: string,
+): Promise<void> {
+  clearTelegramSetupInputState(chatJid);
+  setTelegramSetupInputState(chatJid, kind);
+  await sendMessage(chatJid, `${prompt}\n\nNext plain-text message will be captured. Send /setup cancel to abort.`);
 }
 
 function formatActiveSubagentsText(): string {
@@ -2175,6 +2972,220 @@ async function handleTelegramCallbackQuery(
     logger.debug({ err, callbackId: q.id }, 'Failed answering callback query');
   }
 
+  const settingsAction = getTelegramSettingsPanelAction(q.chatJid, q.data);
+  if (settingsAction) {
+    switch (settingsAction.kind) {
+      case 'show-home':
+      case 'show-model-providers':
+      case 'show-models-for-provider':
+      case 'show-think':
+      case 'show-reasoning':
+      case 'show-verbose':
+      case 'show-queue':
+      case 'show-subagents':
+      case 'show-setup-home':
+      case 'show-setup-providers':
+      case 'show-setup-models':
+      case 'show-setup-endpoint':
+      case 'show-setup-api-key':
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, settingsAction);
+        return;
+      case 'set-model':
+        updateChatRunPreferences(q.chatJid, (prefs) => {
+          prefs.provider = settingsAction.provider;
+          prefs.model = settingsAction.model;
+          return prefs;
+        });
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, {
+          kind: 'show-models-for-provider',
+          provider: settingsAction.provider,
+          page: 0,
+        });
+        return;
+      case 'reset-model':
+        updateChatRunPreferences(q.chatJid, (prefs) => {
+          delete prefs.provider;
+          delete prefs.model;
+          return prefs;
+        });
+        await editTelegramSettingsPanel(
+          q.chatJid,
+          q.messageId,
+          settingsAction.returnTo === 'models'
+            ? { kind: 'show-model-providers' }
+            : { kind: 'show-home' },
+        );
+        return;
+      case 'set-think':
+        updateChatRunPreferences(q.chatJid, (prefs) => {
+          if (settingsAction.value === 'off') delete prefs.thinkLevel;
+          else prefs.thinkLevel = settingsAction.value;
+          return prefs;
+        });
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-think' });
+        return;
+      case 'set-reasoning':
+        updateChatRunPreferences(q.chatJid, (prefs) => {
+          if (settingsAction.value === 'off') delete prefs.reasoningLevel;
+          else prefs.reasoningLevel = settingsAction.value;
+          return prefs;
+        });
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-reasoning' });
+        return;
+      case 'set-verbose':
+        updateChatRunPreferences(q.chatJid, (prefs) => {
+          if (settingsAction.value === 'off') delete prefs.verboseMode;
+          else prefs.verboseMode = settingsAction.value;
+          return prefs;
+        });
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-verbose' });
+        return;
+      case 'set-queue-mode':
+        updateChatRunPreferences(q.chatJid, (prefs) => {
+          if (settingsAction.value === 'collect') delete prefs.queueMode;
+          else prefs.queueMode = settingsAction.value;
+          return prefs;
+        });
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-queue' });
+        return;
+      case 'stop-subagents':
+        if (!isMainChat(q.chatJid)) {
+          await sendMessage(
+            q.chatJid,
+            `${ASSISTANT_NAME}: subagent controls are only available in the main/admin chat.`,
+          );
+          return;
+        }
+        if (settingsAction.target === 'all') {
+          for (const run of activeChatRuns.values()) {
+            run.abortController.abort(new Error('Stopped via Telegram panel (all)'));
+          }
+        } else {
+          const run = activeChatRuns.get(q.chatJid);
+          if (run) {
+            run.abortController.abort(new Error('Stopped via Telegram panel (current)'));
+          }
+        }
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-subagents' });
+        return;
+      case 'trigger-new':
+        updateChatRunPreferences(q.chatJid, (prefs) => {
+          prefs.nextRunNoContinue = true;
+          return prefs;
+        });
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-home' });
+        return;
+      case 'set-setup-provider': {
+        const provider = getRuntimeProviderDefinitionByPreset(settingsAction.preset);
+        persistRuntimeConfigUpdates({
+          PI_API: provider.piApi,
+          PI_MODEL: provider.defaultModel,
+        });
+        clearTelegramSetupInputState(q.chatJid);
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, {
+          kind: 'show-setup-models',
+          preset: settingsAction.preset,
+          page: 0,
+        });
+        return;
+      }
+      case 'set-setup-model':
+        persistRuntimeConfigUpdates({
+          PI_API: getRuntimeProviderDefinitionByPreset(settingsAction.preset).piApi,
+          PI_MODEL: settingsAction.model,
+        });
+        clearTelegramSetupInputState(q.chatJid);
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, {
+          kind: 'show-setup-home',
+        });
+        return;
+      case 'prompt-setup-provider':
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
+        await promptTelegramSetupInput(
+          q.chatJid,
+          'provider',
+          'Send the raw provider id to save into PI_API. Example: minimax, kimi-coding, openai, or another pi-supported provider.',
+        );
+        return;
+      case 'prompt-setup-model': {
+        const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+        if (snapshot.providerPreset !== 'manual') {
+          await editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-setup-models',
+            preset: snapshot.providerPreset,
+            page: 0,
+          });
+          return;
+        }
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
+        await promptTelegramSetupInput(
+          q.chatJid,
+          'model',
+          'Send the raw model id to save into PI_MODEL.',
+        );
+        return;
+      }
+      case 'prompt-setup-model-typed':
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
+        await promptTelegramSetupInput(
+          q.chatJid,
+          'model',
+          'Send the raw model id to save into PI_MODEL.',
+        );
+        return;
+      case 'prompt-setup-endpoint':
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-endpoint' });
+        await promptTelegramSetupInput(
+          q.chatJid,
+          'endpoint',
+          'Send the openai-compatible base URL to save. Example: http://localhost:11434/v1',
+        );
+        return;
+      case 'clear-setup-endpoint':
+        persistRuntimeConfigUpdates({
+          PI_BASE_URL: undefined,
+          OPENAI_BASE_URL: undefined,
+        });
+        clearTelegramSetupInputState(q.chatJid);
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-endpoint' });
+        return;
+      case 'prompt-setup-api-key':
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-api-key' });
+        await promptTelegramSetupInput(
+          q.chatJid,
+          'api-key',
+          `Send the API key for ${resolveRuntimeConfigSnapshot(getRuntimeConfigEnv()).apiKeyEnv}.`,
+        );
+        return;
+      case 'clear-setup-api-key': {
+        const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+        persistRuntimeConfigUpdates({ [snapshot.apiKeyEnv]: undefined });
+        clearTelegramSetupInputState(q.chatJid);
+        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-api-key' });
+        return;
+      }
+      case 'restart-gateway': {
+        await sendMessage(
+          q.chatJid,
+          'Restarting gateway service. Expect a brief disconnect while the host restarts.',
+        );
+        const result = runGatewayServiceCommand('restart');
+        if (!result.ok) {
+          await sendMessage(q.chatJid, `Gateway restart failed:\n${result.text}`);
+        }
+        return;
+      }
+    }
+  }
+
+  if (q.data.startsWith(TELEGRAM_SETTINGS_PANEL_PREFIX)) {
+    await sendMessage(
+      q.chatJid,
+      'That panel expired. Run /model, /think, /reasoning, /verbose, /queue, or /subagents again.',
+    );
+    return;
+  }
+
   if (!q.data.startsWith('panel:')) {
     return;
   }
@@ -2215,6 +3226,56 @@ async function handleTelegramCallbackQuery(
       return;
     default:
       return;
+  }
+}
+
+async function handleTelegramSetupInput(
+  m: {
+    chatJid: string;
+    content: string;
+  },
+): Promise<boolean> {
+  const pending = getTelegramSetupInputState(m.chatJid);
+  if (!pending) return false;
+
+  const content = m.content.trim();
+  if (!content || content.startsWith('/')) return false;
+
+  switch (pending.kind) {
+    case 'provider':
+      persistRuntimeConfigUpdates({ PI_API: content });
+      clearTelegramSetupInputState(m.chatJid);
+      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
+      await sendMessage(
+        m.chatJid,
+        `Saved provider: ${content}\nUse /setup -> Model next if you need to change PI_MODEL.`,
+      );
+      return true;
+    case 'model':
+      persistRuntimeConfigUpdates({ PI_MODEL: content });
+      clearTelegramSetupInputState(m.chatJid);
+      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
+      await sendMessage(m.chatJid, `Saved model: ${content}`);
+      return true;
+    case 'endpoint':
+      persistRuntimeConfigUpdates({
+        PI_BASE_URL: content,
+        OPENAI_BASE_URL: content,
+      });
+      clearTelegramSetupInputState(m.chatJid);
+      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
+      await sendMessage(m.chatJid, `Saved openai-compatible endpoint: ${content}`);
+      return true;
+    case 'api-key': {
+      const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+      persistRuntimeConfigUpdates({ [snapshot.apiKeyEnv]: content });
+      clearTelegramSetupInputState(m.chatJid);
+      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
+      await sendMessage(m.chatJid, `Saved API key in ${snapshot.apiKeyEnv}.`);
+      return true;
+    }
+    default:
+      return false;
   }
 }
 
@@ -2267,7 +3328,18 @@ async function handleTelegramCommand(m: {
     logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
     const searchText = rest.join(' ');
     const listed = runPiListModels(searchText);
-    await sendMessage(m.chatJid, listed.text);
+    if (!searchText && telegramBot) {
+      await telegramBot.sendMessageWithKeyboard(m.chatJid, listed.text, [[
+        {
+          text: 'Open Model Picker',
+          callbackData: registerTelegramSettingsPanelAction(m.chatJid, {
+            kind: 'show-model-providers',
+          }),
+        },
+      ]]);
+    } else {
+      await sendMessage(m.chatJid, listed.text);
+    }
     return true;
   }
 
@@ -2275,14 +3347,18 @@ async function handleTelegramCommand(m: {
     const argText = rest.join(' ').trim();
     if (!argText) {
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      const prefs = chatRunPreferences[m.chatJid] || {};
-      const override = prefs.provider || prefs.model;
-      await sendMessage(
-        m.chatJid,
-        override
-          ? `Current model override: ${getEffectiveModelLabel(m.chatJid)}`
-          : `Current model: ${getEffectiveModelLabel(m.chatJid)}\n(no override set; using env defaults)`,
-      );
+      if (telegramBot) {
+        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-model-providers' });
+      } else {
+        const prefs = chatRunPreferences[m.chatJid] || {};
+        const override = prefs.provider || prefs.model;
+        await sendMessage(
+          m.chatJid,
+          override
+            ? `Current model override: ${getEffectiveModelLabel(m.chatJid)}`
+            : `Current model: ${getEffectiveModelLabel(m.chatJid)}\n(no override set; using env defaults)`,
+        );
+      }
       return true;
     }
 
@@ -2343,7 +3419,11 @@ async function handleTelegramCommand(m: {
     if (!argText) {
       const current = chatRunPreferences[m.chatJid]?.thinkLevel || 'off';
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      await sendMessage(m.chatJid, `Current thinking level: ${current}`);
+      if (telegramBot) {
+        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-think' });
+      } else {
+        await sendMessage(m.chatJid, `Current thinking level: ${current}`);
+      }
       return true;
     }
 
@@ -2377,7 +3457,11 @@ async function handleTelegramCommand(m: {
     if (!argText) {
       const current = chatRunPreferences[m.chatJid]?.reasoningLevel || 'off';
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      await sendMessage(m.chatJid, `Current reasoning level: ${current}`);
+      if (telegramBot) {
+        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-reasoning' });
+      } else {
+        await sendMessage(m.chatJid, `Current reasoning level: ${current}`);
+      }
       return true;
     }
 
@@ -2413,7 +3497,11 @@ async function handleTelegramCommand(m: {
     if (!argText) {
       const current = chatRunPreferences[m.chatJid]?.verboseMode || 'off';
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      await sendMessage(m.chatJid, `Current verbose mode: ${current}`);
+      if (telegramBot) {
+        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-verbose' });
+      } else {
+        await sendMessage(m.chatJid, `Current verbose mode: ${current}`);
+      }
       return true;
     }
 
@@ -2501,18 +3589,22 @@ async function handleTelegramCommand(m: {
       const cap = prefs.queueCap || 0;
       const drop = prefs.queueDrop || 'old';
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      await sendMessage(
-        m.chatJid,
-        [
-          'Queue settings (this chat):',
-          `- mode: ${mode}`,
-          `- debounce_ms: ${debounce}`,
-          `- cap: ${cap}`,
-          `- drop: ${drop}`,
-          '',
-          'Usage: /queue mode=<collect|interrupt|followup|steer|steer-backlog> debounce=<500ms|2s|1m> cap=<n> drop=<old|new|summarize>',
-        ].join('\n'),
-      );
+      if (telegramBot) {
+        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-queue' });
+      } else {
+        await sendMessage(
+          m.chatJid,
+          [
+            'Queue settings (this chat):',
+            `- mode: ${mode}`,
+            `- debounce_ms: ${debounce}`,
+            `- cap: ${cap}`,
+            `- drop: ${drop}`,
+            '',
+            'Usage: /queue mode=<collect|interrupt|followup|steer|steer-backlog> debounce=<500ms|2s|1m> cap=<n> drop=<old|new|summarize>',
+          ].join('\n'),
+        );
+      }
       return true;
     }
 
@@ -2669,6 +3761,19 @@ async function handleTelegramCommand(m: {
     return true;
   }
 
+  if (cmd === '/restart') {
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested');
+    await sendMessage(
+      m.chatJid,
+      'Restarting gateway service. Expect a brief disconnect while the host restarts.',
+    );
+    const result = runGatewayServiceCommand('restart');
+    if (!result.ok) {
+      await sendMessage(m.chatJid, `Gateway restart failed:\n${result.text}`);
+    }
+    return true;
+  }
+
   if (cmd === '/gateway') {
     const actionRaw = (rest[0] || 'status').trim().toLowerCase();
     const action =
@@ -2709,6 +3814,20 @@ async function handleTelegramCommand(m: {
       m.chatJid,
       result.ok ? `Gateway ${action}:\n${result.text}` : `Gateway ${action} failed:\n${result.text}`,
     );
+    return true;
+  }
+
+  if (cmd === '/setup') {
+    const arg = rest.join(' ').trim().toLowerCase();
+    if (arg === 'cancel') {
+      clearTelegramSetupInputState(m.chatJid);
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'cancel');
+      await sendMessage(m.chatJid, 'Setup prompt cancelled.');
+      return true;
+    }
+
+    logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
+    await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
     return true;
   }
 
@@ -2905,6 +4024,11 @@ async function handleTelegramCommand(m: {
 
   if (cmd === '/subagents') {
     const action = (rest[0] || 'list').toLowerCase();
+    if (!rest[0] && telegramBot) {
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
+      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-subagents' });
+      return true;
+    }
     if (action === 'list') {
       logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
       await sendMessage(m.chatJid, formatActiveSubagentsText());
@@ -3082,7 +4206,6 @@ async function startTelegram(): Promise<void> {
     assistantName: ASSISTANT_NAME,
     triggerPattern: TRIGGER_PATTERN,
   });
-  await refreshTelegramCommandMenus();
 
   telegramBot.startPolling(async (event) => {
     if (event.kind === 'callback_query') {
@@ -3096,6 +4219,8 @@ async function startTelegram(): Promise<void> {
     if (didRegister && isMainChat(m.chatJid)) {
       await refreshTelegramCommandMenus();
     }
+
+    if (await handleTelegramSetupInput(m)) return;
 
     // Handle lightweight admin commands without invoking the agent.
     if (await handleTelegramCommand(m)) return;
@@ -3117,6 +4242,7 @@ async function startTelegram(): Promise<void> {
   });
 
   logger.info('Telegram polling started');
+  void refreshTelegramCommandMenus();
 }
 
 async function processMessage(msg: NewMessage): Promise<boolean> {
@@ -3384,12 +4510,25 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   // Only advance last-agent timestamp after a successful run; otherwise the
   // next loop should retry with the same context window.
   if (ok) {
-    if (!streamed && isTelegramJid(msg.chat_jid) && consumeTelegramHostStreamedRun(msg.chat_jid, requestId)) {
+    const externallyCompleted = isTelegramJid(msg.chat_jid)
+      ? consumeTelegramHostCompletedRun(msg.chat_jid, requestId)
+      : false;
+    const telegramPreviewState =
+      isTelegramJid(msg.chat_jid)
+        ? consumeTelegramHostStreamState(msg.chat_jid, requestId)
+        : null;
+    if (!streamed && (telegramPreviewState || externallyCompleted)) {
       streamed = true;
     }
     updateChatUsage(msg.chat_jid, usage);
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
     if (abortController.signal.aborted) {
+      if (telegramPreviewState) {
+        await deleteTelegramPreviewMessage(
+          msg.chat_jid,
+          telegramPreviewState.messageId,
+        );
+      }
       emitTuiChatEvent({
         runId: requestId,
         sessionKey,
@@ -3403,7 +4542,18 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
       });
     } else if (result) {
       persistAssistantHistory(msg.chat_jid, result, requestId);
-      if (!streamed) {
+      let finalizedPreview = false;
+      if (!externallyCompleted && telegramPreviewState) {
+        finalizedPreview = await finalizeTelegramPreviewMessage(
+          msg.chat_jid,
+          telegramPreviewState.messageId,
+          result,
+        );
+      }
+      if (
+        !externallyCompleted &&
+        (!streamed || (telegramPreviewState && !finalizedPreview))
+      ) {
         await sendAgentResultMessage(msg.chat_jid, result, { prefixWhatsApp: true });
       }
       emitTuiChatEvent({
@@ -3420,6 +4570,12 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
         detail: streamed ? 'streamed' : 'complete',
       });
     } else {
+      if (telegramPreviewState) {
+        await deleteTelegramPreviewMessage(
+          msg.chat_jid,
+          telegramPreviewState.messageId,
+        );
+      }
       emitTuiAgentEvent({
         runId: requestId,
         sessionKey,
@@ -3579,11 +4735,20 @@ async function runDirectSessionTurn(params: {
   }
 
   updateChatUsage(chatJid, usage);
-  if (!streamed && isTelegramJid(chatJid) && consumeTelegramHostStreamedRun(chatJid, runId)) {
+  const externallyCompleted = isTelegramJid(chatJid)
+    ? consumeTelegramHostCompletedRun(chatJid, runId)
+    : false;
+  const telegramPreviewState = isTelegramJid(chatJid)
+    ? consumeTelegramHostStreamState(chatJid, runId)
+    : null;
+  if (!streamed && (telegramPreviewState || externallyCompleted)) {
     streamed = true;
   }
 
   if (abortController.signal.aborted) {
+    if (telegramPreviewState) {
+      await deleteTelegramPreviewMessage(chatJid, telegramPreviewState.messageId);
+    }
     emitTuiChatEvent({
       runId,
       sessionKey,
@@ -3600,9 +4765,23 @@ async function runDirectSessionTurn(params: {
 
   if (result) {
     persistAssistantHistory(chatJid, result, runId);
-    if (deliver && !streamed) {
+    let finalizedPreview = false;
+    if (!externallyCompleted && telegramPreviewState) {
+      finalizedPreview = await finalizeTelegramPreviewMessage(
+        chatJid,
+        telegramPreviewState.messageId,
+        result,
+      );
+    }
+    if (
+      deliver &&
+      !externallyCompleted &&
+      (!streamed || (telegramPreviewState && !finalizedPreview))
+    ) {
       await sendAgentResultMessage(chatJid, result, { prefixWhatsApp: true });
     }
+  } else if (telegramPreviewState) {
+    await deleteTelegramPreviewMessage(chatJid, telegramPreviewState.messageId);
   }
 
   emitTuiChatEvent({
@@ -4219,6 +5398,77 @@ async function sendMessage(jid: string, text: string): Promise<void> {
   }
 }
 
+async function deleteTelegramPreviewMessage(
+  chatJid: string,
+  messageId: number,
+): Promise<void> {
+  if (!telegramBot) return;
+  try {
+    await telegramBot.deleteMessage(chatJid, messageId);
+    logger.info({ chatJid, messageId }, 'Telegram streaming preview deleted');
+  } catch (err) {
+    logger.warn(
+      { chatJid, messageId, err },
+      'Failed to delete Telegram streaming preview',
+    );
+  }
+}
+
+async function finalizeTelegramPreviewMessage(
+  chatJid: string,
+  messageId: number,
+  text: string,
+): Promise<boolean> {
+  if (!telegramBot) return false;
+
+  const extracted = extractTelegramAttachmentHints(text);
+  if (extracted.hints.length > 0) {
+    await deleteTelegramPreviewMessage(chatJid, messageId);
+    await sendTelegramAgentReply(chatJid, text);
+    logger.info(
+      { chatJid, messageId, finalizeMode: 'delete-then-send' },
+      'Telegram streaming preview finalized',
+    );
+    return true;
+  }
+
+  const chunks = splitTelegramText(text);
+  if (chunks.length === 0) {
+    await deleteTelegramPreviewMessage(chatJid, messageId);
+    logger.info(
+      { chatJid, messageId, finalizeMode: 'delete-empty' },
+      'Telegram streaming preview finalized',
+    );
+    return true;
+  }
+
+  try {
+    await telegramBot.editStreamMessage(chatJid, messageId, chunks[0]);
+  } catch (err) {
+    logger.warn(
+      { chatJid, messageId, err },
+      'Failed to finalize Telegram streaming preview in place',
+    );
+    await deleteTelegramPreviewMessage(chatJid, messageId);
+    return false;
+  }
+
+  for (const chunk of chunks.slice(1)) {
+    await telegramBot.sendMessage(chatJid, chunk);
+  }
+
+  logger.info(
+    {
+      chatJid,
+      messageId,
+      finalizeMode: chunks.length > 1 ? 'edit-plus-followups' : 'edit-in-place',
+      chunkCount: chunks.length,
+    },
+    'Telegram streaming preview finalized',
+  );
+  return true;
+}
+
 function getTelegramHostStreamKey(chatJid: string, requestId: string): string {
   return `${chatJid}:${requestId}`;
 }
@@ -4230,17 +5480,42 @@ function noteTelegramHostStreamedRun(chatJid: string, requestId: string): boolea
   return !had;
 }
 
-function consumeTelegramHostStreamedRun(chatJid: string, requestId: string): boolean {
+function noteTelegramHostCompletedRun(chatJid: string, requestId: string): void {
+  telegramHostCompletedRuns.set(
+    getTelegramHostStreamKey(chatJid, requestId),
+    Date.now(),
+  );
+}
+
+function consumeTelegramHostCompletedRun(
+  chatJid: string,
+  requestId: string,
+): boolean {
   const key = getTelegramHostStreamKey(chatJid, requestId);
-  const had = telegramHostStreamedRuns.has(key);
-  if (had) telegramHostStreamedRuns.delete(key);
+  const had = telegramHostCompletedRuns.has(key);
+  if (had) telegramHostCompletedRuns.delete(key);
   return had;
+}
+
+function consumeTelegramHostStreamState(
+  chatJid: string,
+  requestId: string,
+): { messageId: number; lastText: string; updatedAt: number } | null {
+  const key = getTelegramHostStreamKey(chatJid, requestId);
+  telegramHostStreamedRuns.delete(key);
+  const state = telegramDraftDisabledRuns.getStreamState(key);
+  if (state) telegramDraftDisabledRuns.deleteStreamState(key);
+  telegramDraftDisabledRuns.disable(key);
+  return state || null;
 }
 
 function pruneTelegramHostStreamedRuns(): void {
   const cutoff = Date.now() - 60 * 60 * 1000;
   for (const [key, ts] of telegramHostStreamedRuns.entries()) {
     if (ts <= cutoff) telegramHostStreamedRuns.delete(key);
+  }
+  for (const [key, ts] of telegramHostCompletedRuns.entries()) {
+    if (ts <= cutoff) telegramHostCompletedRuns.delete(key);
   }
 }
 
@@ -4309,7 +5584,10 @@ function startIpcWatcher(): void {
                     draft: draftUpdate,
                     registry: telegramDraftDisabledRuns,
                   });
-                  if (sendResult.sent && draftUpdate.requestId) {
+                  if (
+                    sendResult.delivery === 'message' &&
+                    draftUpdate.requestId
+                  ) {
                     const firstStreamForRun = noteTelegramHostStreamedRun(
                       draftUpdate.chatJid,
                       draftUpdate.requestId,
@@ -4350,16 +5628,40 @@ function startIpcWatcher(): void {
               } else if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
+                const requestId =
+                  typeof data.requestId === 'string' && data.requestId.trim()
+                    ? data.requestId.trim()
+                    : undefined;
                 if (
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await sendMessage(
-                    data.chatJid,
-                    `${ASSISTANT_NAME}: ${data.text}`,
-                  );
+                  if (isTelegramJid(data.chatJid) && requestId) {
+                    const previewState = consumeTelegramHostStreamState(
+                      data.chatJid,
+                      requestId,
+                    );
+                    noteTelegramHostCompletedRun(data.chatJid, requestId);
+                    if (previewState) {
+                      const finalized = await finalizeTelegramPreviewMessage(
+                        data.chatJid,
+                        previewState.messageId,
+                        data.text,
+                      );
+                      if (!finalized) {
+                        await sendTelegramAgentReply(data.chatJid, data.text);
+                      }
+                    } else {
+                      await sendTelegramAgentReply(data.chatJid, data.text);
+                    }
+                  } else {
+                    await sendMessage(
+                      data.chatJid,
+                      `${ASSISTANT_NAME}: ${data.text}`,
+                    );
+                  }
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
+                    { chatJid: data.chatJid, sourceGroup, requestId },
                     'IPC message sent',
                   );
                 } else {

@@ -229,8 +229,10 @@ Telegram commands (main/admin subset):
 - `/help`
 - `/status`
 - `/id`
+- `/models [query]`
 - `/main <secret>`
 - `/gateway <status|restart|doctor>`
+- `/restart` (alias for `/gateway restart`)
 - `/coder <task>`
 - `/coder-plan <task>`
 - `/tasks [list|due|detail <id>|runs <id> [limit]]`

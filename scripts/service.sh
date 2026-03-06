@@ -239,6 +239,13 @@ linux_stop() {
 
 linux_restart() {
   linux_require_systemd
+  if [[ "${FFT_NANO_GATEWAY_CALL:-0}" == "1" ]]; then
+    if systemctl restart --no-block "${SERVICE_NAME}" >/dev/null 2>&1; then
+      say "Queued restart for ${SERVICE_NAME}."
+      return
+    fi
+  fi
+
   if systemctl restart "${SERVICE_NAME}" >/dev/null 2>&1; then
     return
   fi

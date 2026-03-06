@@ -5,6 +5,12 @@ import { randomBytes } from 'node:crypto';
 import { stdin as input, stdout as output } from 'node:process';
 
 import { ASSISTANT_NAME, MAIN_WORKSPACE_DIR } from './config.js';
+import {
+  getDefaultDotEnvPath,
+  loadDotEnvMap,
+  RUNTIME_PROVIDER_DEFINITIONS,
+  upsertDotEnv,
+} from './runtime-config.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 
 export type OnboardFlow = 'quickstart' | 'advanced';
@@ -16,6 +22,8 @@ export type OnboardAuthChoice =
   | 'gemini'
   | 'openrouter'
   | 'zai'
+  | 'minimax'
+  | 'kimi-coding'
   | 'skip';
 export type OnboardHatchChoice = 'tui' | 'web' | 'later';
 
@@ -60,21 +68,15 @@ export interface OnboardSummary {
   gatewayPort?: number;
 }
 
-const DEFAULT_MODEL_BY_PROVIDER: Record<Exclude<OnboardAuthChoice, 'skip'>, string> = {
-  openai: 'gpt-4o-mini',
-  anthropic: 'claude-3-5-sonnet-latest',
-  gemini: 'gemini-2.0-flash',
-  openrouter: 'anthropic/claude-3.5-sonnet',
-  zai: 'glm-4.7',
-};
+const DEFAULT_MODEL_BY_PROVIDER: Record<Exclude<OnboardAuthChoice, 'skip'>, string> =
+  Object.fromEntries(
+    RUNTIME_PROVIDER_DEFINITIONS.map((provider) => [provider.id, provider.defaultModel]),
+  ) as Record<Exclude<OnboardAuthChoice, 'skip'>, string>;
 
-const ENV_KEY_BY_PROVIDER: Record<Exclude<OnboardAuthChoice, 'skip'>, string> = {
-  openai: 'OPENAI_API_KEY',
-  anthropic: 'ANTHROPIC_API_KEY',
-  gemini: 'GEMINI_API_KEY',
-  openrouter: 'OPENROUTER_API_KEY',
-  zai: 'ZAI_API_KEY',
-};
+const ENV_KEY_BY_PROVIDER: Record<Exclude<OnboardAuthChoice, 'skip'>, string> =
+  Object.fromEntries(
+    RUNTIME_PROVIDER_DEFINITIONS.map((provider) => [provider.id, provider.apiKeyEnv]),
+  ) as Record<Exclude<OnboardAuthChoice, 'skip'>, string>;
 
 function hasMeaningfulEnvValue(raw: string | undefined): boolean {
   if (!raw) return false;
@@ -108,7 +110,7 @@ function usage(): string {
     '  --flow <quickstart|advanced|manual>',
     '  --mode <local|remote>',
     '  --runtime <auto|docker|host>',
-    '  --auth-choice <openai|anthropic|gemini|openrouter|zai|skip>',
+    '  --auth-choice <openai|anthropic|gemini|openrouter|zai|minimax|kimi-coding|skip>',
     '  --model <provider/model-or-id>',
     '  --api-key <token>            API key for selected auth choice',
     '  --remote-url <url>           Remote gateway URL (remote mode)',
@@ -172,12 +174,14 @@ function parseAuthChoice(raw: string | undefined): OnboardAuthChoice | undefined
     value === 'gemini' ||
     value === 'openrouter' ||
     value === 'zai' ||
+    value === 'minimax' ||
+    value === 'kimi-coding' ||
     value === 'skip'
   ) {
     return value;
   }
   throw new Error(
-    `Invalid --auth-choice (use openai|anthropic|gemini|openrouter|zai|skip): ${raw}`,
+    `Invalid --auth-choice (use openai|anthropic|gemini|openrouter|zai|minimax|kimi-coding|skip): ${raw}`,
   );
 }
 
@@ -400,51 +404,10 @@ function shouldRewriteIdentityFile(existingBody: string, force: boolean): boolea
 function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
   if (force) return true;
   if (!existingBody.trim()) return true;
-  if (/You are (?:FarmFriend|OpenClaw): concise, practical, and technically rigorous\./i.test(existingBody)) {
+  if (/You are (?:FarmFriend|OpenClaw|FFT_nano): concise, practical, and technically rigorous\./i.test(existingBody)) {
     return true;
   }
   return false;
-}
-
-function loadDotEnvMap(envPath: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!fs.existsSync(envPath)) return out;
-  const lines = fs.readFileSync(envPath, 'utf-8').replace(/\r\n/g, '\n').split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const idx = trimmed.indexOf('=');
-    if (idx <= 0) continue;
-    const key = trimmed.slice(0, idx).trim();
-    const value = trimmed.slice(idx + 1).trim();
-    out[key] = value.replace(/^['"]|['"]$/g, '');
-  }
-  return out;
-}
-
-function upsertDotEnv(envPath: string, updates: Record<string, string | undefined>): void {
-  const existing = fs.existsSync(envPath)
-    ? fs.readFileSync(envPath, 'utf-8').replace(/\r\n/g, '\n').split('\n')
-    : [];
-  const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
-  if (keys.length === 0) return;
-
-  const updated = new Set<string>();
-  const lines = existing.map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) return line;
-    const key = trimmed.slice(0, trimmed.indexOf('=')).trim();
-    if (!keys.includes(key)) return line;
-    updated.add(key);
-    const value = updates[key];
-    return `${key}=${value}`;
-  });
-
-  for (const key of keys) {
-    if (updated.has(key)) continue;
-    lines.push(`${key}=${updates[key]}`);
-  }
-  fs.writeFileSync(envPath, `${lines.filter((line, idx, arr) => !(idx === arr.length - 1 && line === '')).join('\n')}\n`, 'utf-8');
 }
 
 async function askText(
@@ -598,7 +561,7 @@ async function resolveWizardSelections(
       : await askSelect(
           rl,
           'Auth provider',
-          ['openai', 'anthropic', 'gemini', 'openrouter', 'zai', 'skip'],
+          ['openai', 'anthropic', 'gemini', 'openrouter', 'zai', 'minimax', 'kimi-coding', 'skip'],
           'openai',
         );
     let model = opts.model?.trim();
@@ -730,7 +693,7 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<OnboardSum
 
   const workspace = path.resolve(opts.workspace);
   ensureMainWorkspaceBootstrap({ workspaceDir: workspace });
-  const envPath = opts.envPath || path.join(process.cwd(), '.env');
+  const envPath = opts.envPath || getDefaultDotEnvPath(process.cwd());
   const envMap = loadDotEnvMap(envPath);
 
   const userPath = path.join(workspace, 'USER.md');

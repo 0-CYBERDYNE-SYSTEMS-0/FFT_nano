@@ -746,6 +746,8 @@ function collectRuntimeSecrets(params: {
     'OPENROUTER_API_KEY',
     'GROQ_API_KEY',
     'ZAI_API_KEY',
+    'MINIMAX_API_KEY',
+    'KIMI_API_KEY',
 
     // Debugging
     'FFT_NANO_DRY_RUN',
