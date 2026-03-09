@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { extractAssistantTextDeltaFromPiEvent } from './pi-stream-parser.js';
+import {
+  createToolTrackerState,
+  extractAssistantTextDeltaFromPiEvent,
+  extractToolDeltaFromPiEvent,
+} from './pi-stream-parser.js';
 
 test('extractAssistantTextDeltaFromPiEvent reads message_update text deltas', () => {
   const delta = extractAssistantTextDeltaFromPiEvent({
@@ -47,4 +51,70 @@ test('extractAssistantTextDeltaFromPiEvent ignores non-assistant message_end', (
     },
   });
   assert.equal(delta, null);
+});
+
+test('extractToolDeltaFromPiEvent tracks tool start and completion', () => {
+  const state = createToolTrackerState();
+  const start = extractToolDeltaFromPiEvent(
+    {
+      type: 'tool_call_start',
+      toolName: 'bash',
+      toolCallId: 'call-1',
+      args: { command: 'pwd' },
+    },
+    state,
+  );
+  const end = extractToolDeltaFromPiEvent(
+    {
+      type: 'tool_call_end',
+      toolCallId: 'call-1',
+      status: 'ok',
+      output: '/workspace',
+    },
+    state,
+  );
+
+  assert.deepEqual(start, {
+    index: 1,
+    toolName: 'bash',
+    status: 'start',
+    args: '{"command":"pwd"}',
+  });
+  assert.deepEqual(end, {
+    index: 1,
+    toolName: 'bash',
+    status: 'ok',
+    args: '{"command":"pwd"}',
+    output: '/workspace',
+  });
+});
+
+test('extractToolDeltaFromPiEvent surfaces tool errors', () => {
+  const state = createToolTrackerState();
+  extractToolDeltaFromPiEvent(
+    {
+      type: 'tool_execution_start',
+      toolName: 'read',
+      toolCallId: 'call-2',
+      args: { path: '/tmp/missing.txt' },
+    },
+    state,
+  );
+  const end = extractToolDeltaFromPiEvent(
+    {
+      type: 'tool_execution_end',
+      toolCallId: 'call-2',
+      status: 'error',
+      errorMessage: 'ENOENT',
+    },
+    state,
+  );
+
+  assert.deepEqual(end, {
+    index: 1,
+    toolName: 'read',
+    status: 'error',
+    args: '{"path":"/tmp/missing.txt"}',
+    error: 'ENOENT',
+  });
 });

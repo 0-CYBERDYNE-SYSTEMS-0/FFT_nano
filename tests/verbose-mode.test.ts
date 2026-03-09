@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  cycleVerboseMode,
+  describeVerboseMode,
+  normalizeVerboseMode,
+  parseVerboseDirective,
+} from '../src/verbose-mode.js';
+
+test('normalizeVerboseMode accepts canonical values and aliases', () => {
+  assert.equal(normalizeVerboseMode('new'), 'new');
+  assert.equal(normalizeVerboseMode('on'), 'all');
+  assert.equal(normalizeVerboseMode('ALL'), 'all');
+  assert.equal(normalizeVerboseMode('full'), 'verbose');
+  assert.equal(normalizeVerboseMode('0'), 'off');
+  assert.equal(normalizeVerboseMode('weird'), undefined);
+});
+
+test('parseVerboseDirective handles cycle and explicit set forms', () => {
+  assert.deepEqual(parseVerboseDirective('/verbose'), {
+    kind: 'cycle',
+    prompt: '/verbose',
+  });
+  assert.deepEqual(parseVerboseDirective('/verbose verbose'), {
+    kind: 'set',
+    prompt: '/verbose verbose',
+    mode: 'verbose',
+  });
+});
+
+test('cycleVerboseMode matches Hermes cycle ordering', () => {
+  assert.equal(cycleVerboseMode(undefined), 'verbose');
+  assert.equal(cycleVerboseMode('off'), 'new');
+  assert.equal(cycleVerboseMode('new'), 'all');
+  assert.equal(cycleVerboseMode('all'), 'verbose');
+  assert.equal(cycleVerboseMode('verbose'), 'off');
+});
+
+test('parseVerboseDirective accepts bot-suffixed command tokens', () => {
+  assert.deepEqual(parseVerboseDirective('/verbose@TestBot on'), {
+    kind: 'set',
+    prompt: '/verbose@TestBot on',
+    mode: 'all',
+  });
+});
+
+test('parseVerboseDirective rejects invalid command mode values', () => {
+  assert.deepEqual(parseVerboseDirective('/verbose noisy'), {
+    kind: 'invalid',
+    prompt: '/verbose noisy',
+    value: 'noisy',
+  });
+});
+
+test('parseVerboseDirective rejects inline prompt payloads', () => {
+  assert.deepEqual(parseVerboseDirective('/verbose all fix the build'), {
+    kind: 'invalid',
+    prompt: '/verbose all fix the build',
+    value: 'all fix the build',
+  });
+});
+
+test('describeVerboseMode returns operator-facing status copy', () => {
+  assert.match(describeVerboseMode('off'), /silent mode/i);
+  assert.match(describeVerboseMode('new'), /skip repeats/i);
+  assert.match(describeVerboseMode('all'), /every tool call/i);
+  assert.match(describeVerboseMode('verbose'), /full args, results, and debug logs/i);
+});

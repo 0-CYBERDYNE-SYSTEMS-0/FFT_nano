@@ -17,12 +17,14 @@ import type { TuiRuntimeEventHub } from './runtime-events.js';
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
+type VerboseMode = 'off' | 'new' | 'all' | 'verbose';
 
 export interface SessionPrefs {
   provider?: string;
   model?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
+  verboseMode?: VerboseMode;
   noContinueNext?: boolean;
 }
 
@@ -96,6 +98,18 @@ function normalizeReasoningLevel(raw: unknown): ReasoningLevel | undefined {
   if (['off', 'false', '0', 'no'].includes(key)) return 'off';
   if (['on', 'true', '1', 'yes'].includes(key)) return 'on';
   if (['stream', 'streaming', 'live'].includes(key)) return 'stream';
+  return undefined;
+}
+
+function normalizeVerboseMode(raw: unknown): VerboseMode | undefined {
+  const key = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (!key) return undefined;
+  if (['off', 'false', '0', 'no'].includes(key)) return 'off';
+  if (key === 'new') return 'new';
+  if (['all', 'on', 'true', '1', 'yes'].includes(key)) return 'all';
+  if (['verbose', 'full', 'max', '2'].includes(key)) return 'verbose';
   return undefined;
 }
 
@@ -318,12 +332,14 @@ export async function startTuiGatewayServer(
           const model = asText(params.model).trim();
           const thinkLevel = normalizeThinkLevel(params.thinkLevel);
           const reasoningLevel = normalizeReasoningLevel(params.reasoningLevel);
+          const verboseMode = normalizeVerboseMode(params.verboseMode);
 
           const patch: SessionPrefs = {};
           if (provider || params.provider === '') patch.provider = provider || undefined;
           if (model || params.model === '') patch.model = model || undefined;
           if (thinkLevel) patch.thinkLevel = thinkLevel;
           if (reasoningLevel) patch.reasoningLevel = reasoningLevel;
+          if (verboseMode) patch.verboseMode = verboseMode;
 
           const next = adapters.patchSessionPrefs(chatJid, patch);
           sendFrame(

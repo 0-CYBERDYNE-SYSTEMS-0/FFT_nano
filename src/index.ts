@@ -120,6 +120,13 @@ import {
   migrateCompactionsForGroup,
 } from './memory-maintenance.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
+import {
+  cycleVerboseMode,
+  describeVerboseMode,
+  normalizeVerboseMode,
+  parseVerboseDirective,
+  type VerboseMode,
+} from './verbose-mode.js';
 import { resolveCronExecutionPlan, resolveCronPolicy } from './cron/adapters.js';
 import type { CronV2Schedule } from './cron/types.js';
 import {
@@ -203,7 +210,6 @@ interface ActiveCoderRun {
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
-type VerboseMode = 'off' | 'on' | 'full';
 type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -1021,6 +1027,34 @@ function emitTuiAgentEvent(payload: {
   });
 }
 
+function emitTuiToolEvent(payload: {
+  runId: string;
+  sessionKey: string;
+  index: number;
+  toolName: string;
+  status: 'start' | 'ok' | 'error';
+  args?: string;
+  output?: string;
+  error?: string;
+}): void {
+  tuiRuntimeEvents.emit({
+    kind: 'agent',
+    payload: {
+      runId: payload.runId,
+      stream: 'tool',
+      sessionKey: payload.sessionKey,
+      data: {
+        index: payload.index,
+        toolName: payload.toolName,
+        status: payload.status,
+        ...(payload.args ? { args: payload.args } : {}),
+        ...(payload.output ? { output: payload.output } : {}),
+        ...(payload.error ? { error: payload.error } : {}),
+      },
+    },
+  });
+}
+
 function makeRunId(prefix = 'run'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -1079,15 +1113,6 @@ function normalizeReasoningLevel(raw: string): ReasoningLevel | undefined {
   if (['off', 'false', 'no', '0'].includes(key)) return 'off';
   if (['on', 'true', 'yes', '1'].includes(key)) return 'on';
   if (['stream', 'streaming', 'live'].includes(key)) return 'stream';
-  return undefined;
-}
-
-function normalizeVerboseMode(raw: string): VerboseMode | undefined {
-  const key = raw.trim().toLowerCase();
-  if (!key) return undefined;
-  if (['off', 'false', 'no', '0'].includes(key)) return 'off';
-  if (['on', 'true', 'yes', '1'].includes(key)) return 'on';
-  if (['full', 'max', 'all', '2'].includes(key)) return 'full';
   return undefined;
 }
 
@@ -1263,6 +1288,7 @@ function getTuiSessionPrefs(chatJid: string): TuiSessionPrefs {
     model: prefs.model,
     thinkLevel: prefs.thinkLevel,
     reasoningLevel: prefs.reasoningLevel,
+    verboseMode: prefs.verboseMode,
     noContinueNext: prefs.nextRunNoContinue === true,
   };
 }
@@ -1291,6 +1317,13 @@ function patchTuiSessionPrefs(chatJid: string, patch: TuiSessionPrefs): TuiSessi
         delete prefs.reasoningLevel;
       }
     }
+    if (Object.prototype.hasOwnProperty.call(patch, 'verboseMode')) {
+      if (patch.verboseMode && patch.verboseMode !== 'off') {
+        prefs.verboseMode = patch.verboseMode;
+      } else {
+        delete prefs.verboseMode;
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(patch, 'noContinueNext')) {
       if (patch.noContinueNext) prefs.nextRunNoContinue = true;
       else delete prefs.nextRunNoContinue;
@@ -1302,6 +1335,7 @@ function patchTuiSessionPrefs(chatJid: string, patch: TuiSessionPrefs): TuiSessi
     model: next.model,
     thinkLevel: next.thinkLevel,
     reasoningLevel: next.reasoningLevel,
+    verboseMode: next.verboseMode,
     noContinueNext: next.nextRunNoContinue === true,
   };
 }
@@ -1343,7 +1377,7 @@ function formatChatRuntimePreferences(chatJid: string): string[] {
     `- chat_model: ${getEffectiveModelLabel(chatJid)}`,
     `- chat_think: ${think}`,
     `- chat_reasoning: ${reasoning}`,
-    `- chat_verbose: ${verbose}`,
+    `- chat_tool_progress: ${verbose}`,
     `- chat_free_chat: ${freeChat}`,
     `- chat_queue: mode=${queueMode} debounce_ms=${queueDebounce} cap=${queueCap} drop=${queueDrop}`,
     `- chat_new_pending: ${newPending}`,
@@ -1566,6 +1600,20 @@ function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[]
       text: 'Model picker is unavailable because pi returned no models.',
     };
   }
+
+  // Append locally available Ollama models
+  const ollamaResult = spawnSync('ollama', ['list'], { encoding: 'utf8' });
+  if (!ollamaResult.error && ollamaResult.status === 0) {
+    const ollamaModels = (ollamaResult.stdout || '')
+      .split(/\r?\n/)
+      .slice(1) // skip header row
+      .map((line) => line.trim().split(/\s+/)[0])
+      .filter((name): name is string => !!name && name.length > 0);
+    for (const model of ollamaModels) {
+      entries.push({ provider: 'ollama', model });
+    }
+  }
+
   piModelsCache = { entries, loadedAt: Date.now() };
   return { ok: true, entries };
 }
@@ -1977,7 +2025,7 @@ function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
     `Model: ${getEffectiveModelLabel(chatJid)}`,
     `Think: ${prefs.thinkLevel || 'off'}`,
     `Reasoning: ${prefs.reasoningLevel || 'off'}`,
-    `Verbose: ${prefs.verboseMode || 'off'}`,
+    `Tool progress: ${prefs.verboseMode || 'off'}`,
     `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
   ];
 }
@@ -2212,19 +2260,32 @@ function buildReasoningPanel(chatJid: string): {
 
 function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
   const current = chatRunPreferences[chatJid]?.verboseMode || 'off';
-  const levels: VerboseMode[] = ['off', 'on', 'full'];
-  return {
-    text: `Select verbose mode:\nCurrent: ${current}`,
-    keyboard: [
-      levels.map((value) => ({
+  const levels: VerboseMode[] = ['off', 'new', 'all', 'verbose'];
+  const rows: TelegramInlineKeyboard = [];
+  for (let i = 0; i < levels.length; i += 2) {
+    rows.push(
+      levels.slice(i, i + 2).map((value) => ({
         text: value === current ? `* ${value}` : value,
         callbackData: registerTelegramSettingsPanelAction(chatJid, {
           kind: 'set-verbose',
           value,
         }),
       })),
-      [{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }],
-    ],
+    );
+  }
+  rows.push([
+    {
+      text: 'Home',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }),
+    },
+  ]);
+  return {
+    text: [
+      'Select tool progress mode:',
+      `Current: ${current}`,
+      'fft_nano tool progress modes: off -> new -> all -> verbose.',
+    ].join('\n'),
+    keyboard: rows,
   };
 }
 
@@ -3493,42 +3554,37 @@ async function handleTelegramCommand(m: {
   }
 
   if (cmd === '/verbose' || cmd === '/v') {
-    const argText = rest.join(' ').trim();
-    if (!argText) {
-      const current = chatRunPreferences[m.chatJid]?.verboseMode || 'off';
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (telegramBot) {
-        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-verbose' });
-      } else {
-        await sendMessage(m.chatJid, `Current verbose mode: ${current}`);
-      }
-      return true;
-    }
-
-    const normalized = normalizeVerboseMode(argText);
-    if (!normalized) {
+    const parsed = parseVerboseDirective(m.content);
+    if (parsed.kind === 'invalid' || parsed.kind === 'none') {
       logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid verbose mode');
       await sendMessage(
         m.chatJid,
-        'Unrecognized verbose mode. Valid: off, on, full',
+        'Unrecognized tool progress mode. Valid: off, new, all, verbose. `/verbose` cycles modes.',
       );
       return true;
     }
 
+    if (parsed.kind === 'cycle') {
+      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+      if (telegramBot) {
+        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-verbose' });
+      } else {
+        await sendMessage(
+          m.chatJid,
+          `Current tool progress mode: ${chatRunPreferences[m.chatJid]?.verboseMode || 'off'}`,
+        );
+      }
+      return true;
+    }
+
+    const normalized = parsed.mode;
     updateChatRunPreferences(m.chatJid, (prefs) => {
       if (normalized === 'off') delete prefs.verboseMode;
       else prefs.verboseMode = normalized;
       return prefs;
     });
     logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
-    await sendMessage(
-      m.chatJid,
-      normalized === 'off'
-        ? 'Verbose output disabled for this chat.'
-        : normalized === 'full'
-          ? 'Verbose mode set to full (tool calls and failures included).'
-          : 'Verbose mode set to on (tool failures included).',
-    );
+    await sendMessage(m.chatJid, describeVerboseMode(normalized));
     return true;
   }
 
@@ -4906,7 +4962,29 @@ async function runAgent(
       noContinue: runtimePrefs.nextRunNoContinue === true,
     };
 
-    const output = await runContainerAgent(group, input, abortSignal);
+    const sessionKey = getSessionKeyForChat(chatJid);
+    const output = await runContainerAgent(group, input, abortSignal, (event) => {
+      if (event.kind !== 'tool' || !requestId) return;
+      if (isTelegramJid(chatJid)) {
+        queueTelegramToolProgressUpdate(chatJid, requestId, runtimePrefs.verboseMode, {
+          toolName: event.toolName,
+          status: event.status,
+          ...(event.args ? { args: event.args } : {}),
+          ...(event.output ? { output: event.output } : {}),
+          ...(event.error ? { error: event.error } : {}),
+        });
+      }
+      emitTuiToolEvent({
+        runId: requestId,
+        sessionKey,
+        index: event.index,
+        toolName: event.toolName,
+        status: event.status,
+        ...(event.args ? { args: event.args } : {}),
+        ...(event.output ? { output: event.output } : {}),
+        ...(event.error ? { error: event.error } : {}),
+      });
+    });
 
     if (output.status === 'error') {
       if (typeof output.error === 'string' && /aborted by user/i.test(output.error)) {
@@ -4940,6 +5018,10 @@ async function runAgent(
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return { result: null, streamed: false, ok: false };
+  } finally {
+    if (requestId && isTelegramJid(chatJid)) {
+      await finalizeTelegramToolProgress(chatJid, requestId);
+    }
   }
 }
 
@@ -5395,6 +5477,156 @@ async function sendMessage(jid: string, text: string): Promise<void> {
     logger.info({ jid, length: text.length }, 'Message sent');
   } catch (err) {
     logger.error({ jid, err }, 'Failed to send message');
+  }
+}
+
+interface TelegramToolProgressState {
+  messageId?: number;
+  lines: string[];
+  lastToolName?: string;
+  chain: Promise<void>;
+}
+
+const telegramToolProgressRuns = new Map<string, TelegramToolProgressState>();
+
+const TELEGRAM_TOOL_EMOJIS: Record<string, string> = {
+  bash: '💻',
+  read: '📖',
+  write: '✍️',
+  edit: '🔧',
+  grep: '🔎',
+  find: '🔎',
+  ls: '📂',
+  web: '🌐',
+  fetch: '📄',
+  search: '🔍',
+};
+
+function getTelegramToolProgressKey(chatJid: string, requestId: string): string {
+  return `${chatJid}::${requestId}`;
+}
+
+function truncateToolProgressPreview(value: string, max = 80): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  return compact.length <= max ? compact : `${compact.slice(0, max - 3)}...`;
+}
+
+function extractToolProgressPreview(args?: string): string | null {
+  if (!args) return null;
+  try {
+    const parsed = JSON.parse(args) as Record<string, unknown>;
+    for (const key of ['command', 'path', 'url', 'query', 'pattern', 'task', 'prompt', 'message']) {
+      const value = parsed[key];
+      if (typeof value === 'string' && value.trim()) {
+        return truncateToolProgressPreview(value);
+      }
+    }
+    const firstString = Object.values(parsed).find((value) => typeof value === 'string' && value.trim());
+    if (typeof firstString === 'string') {
+      return truncateToolProgressPreview(firstString);
+    }
+  } catch {
+    return truncateToolProgressPreview(args);
+  }
+  return truncateToolProgressPreview(args);
+}
+
+function buildTelegramToolProgressLine(
+  event: {
+    toolName: string;
+    status: 'start' | 'ok' | 'error';
+    args?: string;
+    output?: string;
+    error?: string;
+  },
+  mode: VerboseMode,
+  lastToolName?: string,
+): string | null {
+  const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '⚙️';
+  if (event.status === 'start') {
+    if (mode === 'new' && event.toolName === lastToolName) return null;
+    if (mode === 'verbose' && event.args) {
+      let keys = '';
+      try {
+        const parsed = JSON.parse(event.args) as Record<string, unknown>;
+        keys = Object.keys(parsed).join(', ');
+      } catch {
+        keys = '';
+      }
+      return keys
+        ? `${emoji} ${event.toolName}(${keys})\n${truncateToolProgressPreview(event.args, 200)}`
+        : `${emoji} ${event.toolName}\n${truncateToolProgressPreview(event.args, 200)}`;
+    }
+    const preview = extractToolProgressPreview(event.args);
+    return preview ? `${emoji} ${event.toolName}: "${preview}"` : `${emoji} ${event.toolName}...`;
+  }
+  if (event.status === 'error') {
+    const preview = truncateToolProgressPreview(event.error || event.output || 'tool failed', 120);
+    return `⚠️ ${event.toolName} error: ${preview}`;
+  }
+  if (mode === 'verbose' && event.output) {
+    return `↳ ${event.toolName}: ${truncateToolProgressPreview(event.output, 160)}`;
+  }
+  return null;
+}
+
+function queueTelegramToolProgressUpdate(
+  chatJid: string,
+  requestId: string,
+  mode: VerboseMode | undefined,
+  event: {
+    toolName: string;
+    status: 'start' | 'ok' | 'error';
+    args?: string;
+    output?: string;
+    error?: string;
+  },
+): void {
+  const bot = telegramBot;
+  if (!bot) return;
+  const effectiveMode = mode || 'off';
+  if (effectiveMode === 'off') return;
+
+  const key = getTelegramToolProgressKey(chatJid, requestId);
+  const state = telegramToolProgressRuns.get(key) || {
+    lines: [],
+    chain: Promise.resolve(),
+  };
+  telegramToolProgressRuns.set(key, state);
+
+  state.chain = state.chain
+    .then(async () => {
+      const line = buildTelegramToolProgressLine(event, effectiveMode, state.lastToolName);
+      if (!line) return;
+      if (event.status === 'start') {
+        state.lastToolName = event.toolName;
+      }
+      state.lines.push(line);
+      const text = state.lines.join('\n');
+      if (!state.messageId) {
+        state.messageId = await bot.sendStreamMessage(chatJid, text);
+        return;
+      }
+      await bot.editStreamMessage(chatJid, state.messageId, text);
+    })
+    .catch((err) => {
+      logger.warn({ chatJid, requestId, err }, 'Failed to update Telegram tool progress');
+    });
+}
+
+async function finalizeTelegramToolProgress(
+  chatJid: string,
+  requestId: string,
+): Promise<void> {
+  const key = getTelegramToolProgressKey(chatJid, requestId);
+  const state = telegramToolProgressRuns.get(key);
+  if (!state) return;
+  telegramToolProgressRuns.delete(key);
+  try {
+    await state.chain;
+  } catch {
+    // best-effort cleanup
   }
 }
 

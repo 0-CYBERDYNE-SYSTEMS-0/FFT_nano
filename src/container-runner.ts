@@ -437,7 +437,7 @@ export interface ContainerInput {
   model?: string;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   reasoningLevel?: 'off' | 'on' | 'stream';
-  verboseMode?: 'off' | 'on' | 'full';
+  verboseMode?: 'off' | 'new' | 'all' | 'verbose';
   noContinue?: boolean;
 }
 
@@ -455,10 +455,46 @@ export interface ContainerOutput {
   };
 }
 
+export interface ContainerRuntimeEvent {
+  kind: 'tool';
+  index: number;
+  toolName: string;
+  status: 'start' | 'ok' | 'error';
+  args?: string;
+  output?: string;
+  error?: string;
+}
+
 interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly?: boolean;
+}
+
+const RUNTIME_EVENT_PREFIX = '[fft_nano_event]';
+
+function parseRuntimeEventLine(line: string): ContainerRuntimeEvent | null {
+  if (!line.startsWith(RUNTIME_EVENT_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(line.slice(RUNTIME_EVENT_PREFIX.length)) as Record<string, unknown>;
+    if (parsed.kind !== 'tool') return null;
+    const index = typeof parsed.index === 'number' ? parsed.index : NaN;
+    const toolName = typeof parsed.toolName === 'string' ? parsed.toolName : '';
+    const status = parsed.status;
+    if (!Number.isFinite(index) || !toolName) return null;
+    if (status !== 'start' && status !== 'ok' && status !== 'error') return null;
+    return {
+      kind: 'tool',
+      index,
+      toolName,
+      status,
+      ...(typeof parsed.args === 'string' && parsed.args ? { args: parsed.args } : {}),
+      ...(typeof parsed.output === 'string' && parsed.output ? { output: parsed.output } : {}),
+      ...(typeof parsed.error === 'string' && parsed.error ? { error: parsed.error } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function ensureMainWorkspaceSeed(): void {
@@ -868,6 +904,7 @@ export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
   abortSignal?: AbortSignal,
+  onRuntimeEvent?: (event: ContainerRuntimeEvent) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
   let payload: ContainerInput = input;
@@ -1046,6 +1083,7 @@ export async function runContainerAgent(
 
     let stdout = '';
     let stderr = '';
+    let stderrLineBuffer = '';
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
@@ -1081,23 +1119,41 @@ export async function runContainerAgent(
       }
     });
 
-    runtimeProc.stderr.on('data', (data) => {
-      const chunk = data.toString();
-      const lines = chunk.trim().split('\n');
-      for (const line of lines) {
-        if (line) logger.debug({ runtimeGroup: group.folder, runtime }, line);
-      }
-      if (stderrTruncated) return;
+    const appendStderr = (text: string) => {
+      if (stderrTruncated || !text) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
-      if (chunk.length > remaining) {
-        stderr += chunk.slice(0, remaining);
+      if (text.length > remaining) {
+        stderr += text.slice(0, remaining);
         stderrTruncated = true;
         logger.warn(
           { group: group.name, size: stderr.length },
           'Runtime stderr truncated due to size limit',
         );
-      } else {
-        stderr += chunk;
+        return;
+      }
+      stderr += text;
+    };
+
+    const processStderrLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const runtimeEvent = parseRuntimeEventLine(trimmed);
+      if (runtimeEvent) {
+        onRuntimeEvent?.(runtimeEvent);
+        return;
+      }
+      logger.debug({ runtimeGroup: group.folder, runtime }, trimmed);
+      appendStderr(`${line}\n`);
+    };
+
+    runtimeProc.stderr.on('data', (data) => {
+      stderrLineBuffer += data.toString();
+      while (true) {
+        const newlineIdx = stderrLineBuffer.indexOf('\n');
+        if (newlineIdx === -1) break;
+        const line = stderrLineBuffer.slice(0, newlineIdx);
+        stderrLineBuffer = stderrLineBuffer.slice(newlineIdx + 1);
+        processStderrLine(line);
       }
     });
 
@@ -1145,6 +1201,10 @@ export async function runContainerAgent(
 
     runtimeProc.once('exit', () => {
       exited = true;
+      if (stderrLineBuffer.trim()) {
+        processStderrLine(stderrLineBuffer);
+        stderrLineBuffer = '';
+      }
       if (abortEscalationTimer) {
         clearTimeout(abortEscalationTimer);
         abortEscalationTimer = null;

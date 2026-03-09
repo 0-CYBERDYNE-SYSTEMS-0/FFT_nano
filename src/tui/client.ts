@@ -19,6 +19,12 @@ import { ChatLog } from './components/chat-log.js';
 import { CustomEditor } from './components/custom-editor.js';
 import { resolveStartupSession } from './startup-session.js';
 import { editorTheme, theme } from './theme/theme.js';
+import {
+  cycleVerboseMode,
+  describeVerboseMode,
+  normalizeVerboseMode,
+  type VerboseMode,
+} from '../verbose-mode.js';
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
@@ -34,6 +40,7 @@ interface SessionPrefs {
   model?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
+  verboseMode?: VerboseMode;
 }
 
 type SendMessageStatus = 'sent' | 'queued' | 'busy';
@@ -53,6 +60,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'model', description: 'Set model (provider/model or model)' },
   { name: 'think', description: 'Set thinking level' },
   { name: 'reasoning', description: 'Set reasoning level' },
+  { name: 'verbose', description: 'Cycle or set tool progress mode' },
   { name: 'deliver', description: 'Set delivery mode (on/off)' },
   { name: 'gateway', description: 'Gateway service action (status|restart)' },
   { name: 'new', description: 'Reset session before next run' },
@@ -148,6 +156,7 @@ function helpText(): string {
     '/model <provider/model|model>',
     '/think <off|minimal|low|medium|high|xhigh>',
     '/reasoning <off|on|stream>',
+    '/verbose [off|new|all|verbose]',
     '/deliver <on|off>',
     '/gateway <status|restart|doctor>',
     '/new or /reset',
@@ -229,9 +238,18 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
 
       if (frame.event === 'agent_event') {
         const evt = frame.payload as AgentEventPayload & { sessionKey?: string };
-        if (!evt || evt.stream !== 'lifecycle') return;
+        if (!evt) return;
         if (evt.sessionKey && evt.sessionKey !== sessionKey) return;
         if (activeRunId && evt.runId !== activeRunId) return;
+
+        if (evt.stream === 'tool') {
+          if ((sessionPrefs.verboseMode || 'off') === 'off') return;
+          chatLog.upsertToolEvent(evt.runId, evt.data, sessionPrefs.verboseMode || 'off');
+          tui.requestRender();
+          return;
+        }
+
+        if (evt.stream !== 'lifecycle') return;
 
         if (evt.data?.phase === 'start') {
           setActivityStatus('running');
@@ -316,12 +334,14 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
     const model = sessionPrefs.model || DEFAULT_MODEL;
     const think = sessionPrefs.thinkLevel || 'off';
     const reasoning = sessionPrefs.reasoningLevel || 'off';
+    const verbose = sessionPrefs.verboseMode || 'off';
     footer.setText(
       theme.dim(
         [
           `${provider}/${model}`,
           `think=${think}`,
           `reasoning=${reasoning}`,
+          `verbose=${verbose}`,
           `deliver=${deliver ? 'on' : 'off'}`,
           connectionStatus,
         ]
@@ -526,6 +546,24 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           reasoningLevel: normalized,
         });
         sessionPrefs.reasoningLevel = normalized === 'off' ? undefined : normalized;
+        updateFooter();
+        break;
+      }
+
+      case 'verbose': {
+        const normalized = args
+          ? normalizeVerboseMode(args)
+          : cycleVerboseMode(sessionPrefs.verboseMode);
+        if (!normalized) {
+          chatLog.addSystem('usage: /verbose [off|new|all|verbose]');
+          break;
+        }
+        await client.request('sessions.patch', {
+          sessionKey,
+          verboseMode: normalized,
+        });
+        sessionPrefs.verboseMode = normalized === 'off' ? undefined : normalized;
+        chatLog.addSystem(describeVerboseMode(normalized));
         updateFooter();
         break;
       }

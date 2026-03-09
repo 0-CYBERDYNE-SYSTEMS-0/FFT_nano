@@ -218,6 +218,7 @@ TUI slash commands:
 - `/model <provider/model|model>`
 - `/think <off|minimal|low|medium|high|xhigh>`
 - `/reasoning <off|on|stream>`
+- `/verbose [off|new|all|verbose]`
 - `/deliver <on|off>`
 - `/gateway <status|restart|doctor>`
 - `/new` (or `/reset`)
@@ -236,6 +237,12 @@ Telegram commands (main/admin subset):
 - `/coder <task>`
 - `/coder-plan <task>`
 - `/tasks [list|due|detail <id>|runs <id> [limit]]`
+
+Tool progress notes:
+
+- `/verbose` cycles `off -> new -> all -> verbose`.
+- `/verbose <off|new|all|verbose>` sets the mode explicitly.
+- Telegram uses a separate progress bubble that is edited as tool calls arrive.
 
 Service-control note:
 
