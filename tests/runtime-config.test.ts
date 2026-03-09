@@ -6,12 +6,14 @@ import test from 'node:test';
 
 import {
   applyProcessEnvUpdates,
+  buildRuntimeProviderPresetUpdates,
   loadDotEnvMap,
+  RUNTIME_PROVIDER_PRESET_ENV,
   resolveRuntimeConfigSnapshot,
   upsertDotEnv,
 } from '../src/runtime-config.js';
 
-test('resolveRuntimeConfigSnapshot supports minimax and kimi-coding presets', () => {
+test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, ollama, and lm-studio presets', () => {
   const minimax = resolveRuntimeConfigSnapshot({
     PI_API: 'minimax',
     PI_MODEL: 'MiniMax-M2.1',
@@ -29,6 +31,55 @@ test('resolveRuntimeConfigSnapshot supports minimax and kimi-coding presets', ()
   assert.equal(kimi.providerPreset, 'kimi-coding');
   assert.equal(kimi.apiKeyEnv, 'KIMI_API_KEY');
   assert.equal(kimi.apiKeyConfigured, true);
+
+  const ollama = resolveRuntimeConfigSnapshot({
+    PI_API: 'ollama',
+    PI_MODEL: 'qwen3.5:4b',
+    PI_API_KEY: 'ollama',
+    OPENAI_BASE_URL: 'http://localhost:11434/v1',
+  });
+  assert.equal(ollama.providerPreset, 'ollama');
+  assert.equal(ollama.provider, 'ollama');
+  assert.equal(ollama.apiKeyEnv, 'PI_API_KEY');
+  assert.equal(ollama.apiKeyConfigured, true);
+  assert.equal(ollama.endpointValue, 'http://localhost:11434/v1');
+
+  const lmStudio = resolveRuntimeConfigSnapshot({
+    [RUNTIME_PROVIDER_PRESET_ENV]: 'lm-studio',
+    PI_API: 'openai',
+    PI_MODEL: 'qwen2.5-coder-7b-instruct',
+    PI_API_KEY: 'lm-studio',
+    OPENAI_BASE_URL: 'http://127.0.0.1:1234/v1',
+  });
+  assert.equal(lmStudio.providerPreset, 'lm-studio');
+  assert.equal(lmStudio.provider, 'lm-studio');
+  assert.equal(lmStudio.apiKeyEnv, 'PI_API_KEY');
+  assert.equal(lmStudio.apiKeyConfigured, true);
+  assert.equal(lmStudio.endpointValue, 'http://127.0.0.1:1234/v1');
+});
+
+test('buildRuntimeProviderPresetUpdates applies local defaults for ollama and lm-studio', () => {
+  const ollamaUpdates = buildRuntimeProviderPresetUpdates({
+    preset: 'ollama',
+    source: {},
+    applyLocalDefaults: true,
+  });
+  assert.equal(ollamaUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'ollama');
+  assert.equal(ollamaUpdates.PI_API, 'ollama');
+  assert.equal(ollamaUpdates.OPENAI_BASE_URL, 'http://localhost:11434/v1');
+  assert.equal(ollamaUpdates.PI_BASE_URL, 'http://localhost:11434/v1');
+  assert.equal(ollamaUpdates.PI_API_KEY, 'ollama');
+
+  const lmStudioUpdates = buildRuntimeProviderPresetUpdates({
+    preset: 'lm-studio',
+    source: {},
+    applyLocalDefaults: true,
+  });
+  assert.equal(lmStudioUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'lm-studio');
+  assert.equal(lmStudioUpdates.PI_API, 'openai');
+  assert.equal(lmStudioUpdates.OPENAI_BASE_URL, 'http://127.0.0.1:1234/v1');
+  assert.equal(lmStudioUpdates.PI_BASE_URL, 'http://127.0.0.1:1234/v1');
+  assert.equal(lmStudioUpdates.PI_API_KEY, 'lm-studio');
 });
 
 test('resolveRuntimeConfigSnapshot falls back to manual provider state', () => {

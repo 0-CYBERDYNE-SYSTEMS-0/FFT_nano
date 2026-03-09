@@ -1,3 +1,4 @@
+import { spawnSync } from 'child_process';
 import { Type } from '@sinclair/typebox';
 import {
   type ExtensionAPI,
@@ -9,7 +10,37 @@ import {
   type DelegateParams,
 } from '../coder-worker.js';
 
+function registerOllamaProvider(pi: ExtensionAPI): void {
+  const result = spawnSync('ollama', ['list'], { encoding: 'utf8' });
+  if (result.error || result.status !== 0) return;
+
+  const models = (result.stdout || '')
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/)[0])
+    .filter((name): name is string => !!name);
+
+  if (models.length === 0) return;
+
+  pi.registerProvider('ollama', {
+    baseUrl:
+      process.env.OPENAI_BASE_URL || process.env.PI_BASE_URL || 'http://localhost:11434/v1',
+    apiKey: process.env.PI_API_KEY || process.env.OPENAI_API_KEY || 'ollama',
+    api: 'openai-completions',
+    models: models.map((id) => ({
+      id,
+      name: id,
+      reasoning: false,
+      input: ['text'] as ('text' | 'image')[],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 8192,
+      maxTokens: 4096,
+    })),
+  });
+}
+
 export default function piOnPiExtension(pi: ExtensionAPI): void {
+  registerOllamaProvider(pi);
   const delegateTool: ToolDefinition = {
     name: 'delegate_to_coding_agent',
     label: 'Delegate To Coding Agent',

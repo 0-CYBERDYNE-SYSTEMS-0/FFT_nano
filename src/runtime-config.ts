@@ -3,12 +3,18 @@ import path from 'path';
 
 export type RuntimeProviderPreset =
   | 'openai'
+  | 'lm-studio'
   | 'anthropic'
   | 'gemini'
   | 'openrouter'
   | 'zai'
   | 'minimax'
-  | 'kimi-coding';
+  | 'kimi-coding'
+  | 'ollama';
+
+export const RUNTIME_PROVIDER_PRESET_ENV = 'FFT_NANO_RUNTIME_PROVIDER_PRESET';
+
+export type RuntimeProviderModelInputMode = 'picker' | 'typed';
 
 export interface RuntimeProviderDefinition {
   id: RuntimeProviderPreset;
@@ -17,6 +23,10 @@ export interface RuntimeProviderDefinition {
   defaultModel: string;
   apiKeyEnv: string;
   endpointEnv?: string;
+  defaultEndpointValue?: string;
+  defaultApiKeyValue?: string;
+  apiKeyRequired?: boolean;
+  modelInputMode?: RuntimeProviderModelInputMode;
 }
 
 export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
@@ -27,6 +37,18 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     defaultModel: 'gpt-4o-mini',
     apiKeyEnv: 'OPENAI_API_KEY',
     endpointEnv: 'OPENAI_BASE_URL',
+  },
+  {
+    id: 'lm-studio',
+    label: 'LM Studio (local)',
+    piApi: 'openai',
+    defaultModel: 'qwen2.5-coder-7b-instruct',
+    apiKeyEnv: 'PI_API_KEY',
+    endpointEnv: 'OPENAI_BASE_URL',
+    defaultEndpointValue: 'http://127.0.0.1:1234/v1',
+    defaultApiKeyValue: 'lm-studio',
+    apiKeyRequired: false,
+    modelInputMode: 'typed',
   },
   {
     id: 'anthropic',
@@ -69,6 +91,21 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     piApi: 'kimi-coding',
     defaultModel: 'kimi-k2-thinking',
     apiKeyEnv: 'KIMI_API_KEY',
+  },
+  {
+    // Ollama uses OpenAI-compatible API at localhost:11434/v1 — no real API key needed.
+    // Available models: qwen3.5:4b, qwen3.5:2b, qwen3.5:0.8b, sam860/lucy:1.7b,
+    //   deepscaler:latest, granite3.1-dense:2b, granite3.1-moe:latest,
+    //   granite3.1-moe:1b, llama3.2:1b, deepseek-r1:1.5b
+    id: 'ollama',
+    label: 'Ollama (local)',
+    piApi: 'ollama',
+    defaultModel: 'qwen3.5:4b',
+    apiKeyEnv: 'PI_API_KEY',
+    endpointEnv: 'OPENAI_BASE_URL',
+    defaultEndpointValue: 'http://localhost:11434/v1',
+    defaultApiKeyValue: 'ollama',
+    apiKeyRequired: false,
   },
 ];
 
@@ -162,6 +199,27 @@ export function getRuntimeProviderDefinitionByPiApi(
   );
 }
 
+export function isRuntimeProviderPreset(
+  value: string | undefined,
+): value is RuntimeProviderPreset {
+  if (!value) return false;
+  return RUNTIME_PROVIDER_DEFINITIONS.some((entry) => entry.id === value);
+}
+
+function getRuntimeProviderDefinitionBySource(
+  source: Record<string, string | undefined>,
+): RuntimeProviderDefinition | null {
+  const provider = (source.PI_API || '').trim().toLowerCase();
+  const preset = (source[RUNTIME_PROVIDER_PRESET_ENV] || '').trim().toLowerCase();
+  if (isRuntimeProviderPreset(preset)) {
+    const presetDef = getRuntimeProviderDefinitionByPreset(preset);
+    if (!provider || presetDef.piApi === provider) {
+      return presetDef;
+    }
+  }
+  return getRuntimeProviderDefinitionByPiApi(provider);
+}
+
 export interface RuntimeConfigSnapshot {
   providerPreset: RuntimeProviderPreset | 'manual';
   provider: string;
@@ -177,7 +235,7 @@ export function resolveRuntimeConfigSnapshot(
 ): RuntimeConfigSnapshot {
   const provider = (source.PI_API || '').trim();
   const model = (source.PI_MODEL || '').trim();
-  const providerDef = getRuntimeProviderDefinitionByPiApi(provider);
+  const providerDef = getRuntimeProviderDefinitionBySource(source);
   if (providerDef) {
     const endpointValue =
       providerDef.endpointEnv === 'OPENAI_BASE_URL'
@@ -187,7 +245,7 @@ export function resolveRuntimeConfigSnapshot(
           : '';
     return {
       providerPreset: providerDef.id,
-      provider: provider || providerDef.piApi,
+      provider: providerDef.id,
       model: model || providerDef.defaultModel,
       endpointEnv: providerDef.endpointEnv,
       endpointValue: endpointValue || undefined,
@@ -207,4 +265,36 @@ export function resolveRuntimeConfigSnapshot(
     apiKeyEnv: 'PI_API_KEY',
     apiKeyConfigured: hasMeaningfulSecret(source.PI_API_KEY),
   };
+}
+
+export function buildRuntimeProviderPresetUpdates(params: {
+  preset: RuntimeProviderPreset;
+  model?: string;
+  source?: Record<string, string | undefined>;
+  applyLocalDefaults?: boolean;
+}): Record<string, string | undefined> {
+  const { preset, model, source = {}, applyLocalDefaults = false } = params;
+  const provider = getRuntimeProviderDefinitionByPreset(preset);
+  const updates: Record<string, string | undefined> = {
+    [RUNTIME_PROVIDER_PRESET_ENV]: preset,
+    PI_API: provider.piApi,
+    PI_MODEL: model || provider.defaultModel,
+  };
+
+  if (applyLocalDefaults && provider.defaultEndpointValue) {
+    updates.OPENAI_BASE_URL = provider.defaultEndpointValue;
+    updates.PI_BASE_URL = provider.defaultEndpointValue;
+  }
+
+  if (
+    applyLocalDefaults &&
+    provider.defaultApiKeyValue &&
+    !hasMeaningfulSecret(source[provider.apiKeyEnv]) &&
+    !hasMeaningfulSecret(source.PI_API_KEY) &&
+    !hasMeaningfulSecret(source.OPENAI_API_KEY)
+  ) {
+    updates[provider.apiKeyEnv] = provider.defaultApiKeyValue;
+  }
+
+  return updates;
 }

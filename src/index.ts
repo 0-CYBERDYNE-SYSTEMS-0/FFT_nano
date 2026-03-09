@@ -90,10 +90,12 @@ import {
 import { resolvePiExecutable } from './pi-executable.js';
 import {
   applyProcessEnvUpdates,
+  buildRuntimeProviderPresetUpdates,
   getDefaultDotEnvPath,
   getRuntimeProviderDefinitionByPreset,
   loadDotEnvMap,
   resolveRuntimeConfigSnapshot,
+  RUNTIME_PROVIDER_PRESET_ENV,
   RUNTIME_PROVIDER_DEFINITIONS,
   type RuntimeProviderPreset,
   upsertDotEnv,
@@ -1579,27 +1581,14 @@ function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[]
     env: process.env,
     maxBuffer: 4 * 1024 * 1024,
   });
-  if (result.error) {
-    return {
-      ok: false,
-      text: `Failed to load models from ${piExecutable}: ${result.error.message}`,
-    };
-  }
-  if (result.status !== 0) {
-    const details = (result.stderr || result.stdout || '').trim();
-    return {
-      ok: false,
-      text: details || `pi --list-models exited with code ${result.status ?? 'unknown'}`,
-    };
-  }
-
-  const entries = parsePiModelListOutput(result.stdout || '');
-  if (entries.length === 0) {
-    return {
-      ok: false,
-      text: 'Model picker is unavailable because pi returned no models.',
-    };
-  }
+  const entries =
+    !result.error && result.status === 0 ? parsePiModelListOutput(result.stdout || '') : [];
+  const piFailureText = result.error
+    ? `Failed to load models from ${piExecutable}: ${result.error.message}`
+    : result.status !== 0
+      ? ((result.stderr || result.stdout || '').trim() ||
+          `pi --list-models exited with code ${result.status ?? 'unknown'}`)
+      : 'Model picker is unavailable because pi returned no models.';
 
   // Append locally available Ollama models
   const ollamaResult = spawnSync('ollama', ['list'], { encoding: 'utf8' });
@@ -1612,6 +1601,13 @@ function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[]
     for (const model of ollamaModels) {
       entries.push({ provider: 'ollama', model });
     }
+  }
+
+  if (entries.length === 0) {
+    return {
+      ok: false,
+      text: piFailureText,
+    };
   }
 
   piModelsCache = { entries, loadedAt: Date.now() };
@@ -1628,7 +1624,7 @@ function getRuntimeConfigSummaryLines(): string[] {
   const label =
     snapshot.providerPreset === 'manual'
       ? `manual (${snapshot.provider})`
-      : snapshot.provider;
+      : getRuntimeProviderDefinitionByPreset(snapshot.providerPreset).label;
   return [
     `Provider: ${label}`,
     `Model: ${snapshot.model}`,
@@ -1772,6 +1768,43 @@ function buildTelegramSetupModelPanel(
   page = 0,
 ): { text: string; keyboard: TelegramInlineKeyboard } {
   const provider = getRuntimeProviderDefinitionByPreset(preset);
+  if (provider.modelInputMode === 'typed') {
+    const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
+    return {
+      text: [
+        `${provider.label} uses typed model entry.`,
+        `Current: ${snapshot.model}`,
+        '',
+        'Set the raw model id exposed by your local server.',
+      ].join('\n'),
+      keyboard: [
+        [
+          {
+            text: 'Type Model',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'prompt-setup-model-typed',
+            }),
+          },
+        ],
+        [
+          {
+            text: 'Providers',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-setup-providers',
+            }),
+          },
+        ],
+        [
+          {
+            text: 'Home',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-setup-home',
+            }),
+          },
+        ],
+      ],
+    };
+  }
   const loaded = loadPiModels();
   if (!loaded.ok) {
     return {
@@ -3137,11 +3170,13 @@ async function handleTelegramCallbackQuery(
         await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-home' });
         return;
       case 'set-setup-provider': {
-        const provider = getRuntimeProviderDefinitionByPreset(settingsAction.preset);
-        persistRuntimeConfigUpdates({
-          PI_API: provider.piApi,
-          PI_MODEL: provider.defaultModel,
-        });
+        persistRuntimeConfigUpdates(
+          buildRuntimeProviderPresetUpdates({
+            preset: settingsAction.preset,
+            source: getRuntimeConfigEnv(),
+            applyLocalDefaults: true,
+          }),
+        );
         clearTelegramSetupInputState(q.chatJid);
         await editTelegramSettingsPanel(q.chatJid, q.messageId, {
           kind: 'show-setup-models',
@@ -3151,10 +3186,13 @@ async function handleTelegramCallbackQuery(
         return;
       }
       case 'set-setup-model':
-        persistRuntimeConfigUpdates({
-          PI_API: getRuntimeProviderDefinitionByPreset(settingsAction.preset).piApi,
-          PI_MODEL: settingsAction.model,
-        });
+        persistRuntimeConfigUpdates(
+          buildRuntimeProviderPresetUpdates({
+            preset: settingsAction.preset,
+            model: settingsAction.model,
+            source: getRuntimeConfigEnv(),
+          }),
+        );
         clearTelegramSetupInputState(q.chatJid);
         await editTelegramSettingsPanel(q.chatJid, q.messageId, {
           kind: 'show-setup-home',
@@ -3165,7 +3203,7 @@ async function handleTelegramCallbackQuery(
         await promptTelegramSetupInput(
           q.chatJid,
           'provider',
-          'Send the raw provider id to save into PI_API. Example: minimax, kimi-coding, openai, or another pi-supported provider.',
+          'Send the raw provider id to save into PI_API. Example: minimax, kimi-coding, openai, ollama, or another pi-supported provider.',
         );
         return;
       case 'prompt-setup-model': {
@@ -3199,7 +3237,7 @@ async function handleTelegramCallbackQuery(
         await promptTelegramSetupInput(
           q.chatJid,
           'endpoint',
-          'Send the openai-compatible base URL to save. Example: http://localhost:11434/v1',
+          'Send the openai-compatible base URL to save. Example: http://localhost:11434/v1 (Ollama) or http://127.0.0.1:1234/v1 (LM Studio)',
         );
         return;
       case 'clear-setup-endpoint':
@@ -3304,7 +3342,10 @@ async function handleTelegramSetupInput(
 
   switch (pending.kind) {
     case 'provider':
-      persistRuntimeConfigUpdates({ PI_API: content });
+      persistRuntimeConfigUpdates({
+        [RUNTIME_PROVIDER_PRESET_ENV]: undefined,
+        PI_API: content,
+      });
       clearTelegramSetupInputState(m.chatJid);
       await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
       await sendMessage(

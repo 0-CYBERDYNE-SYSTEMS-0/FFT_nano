@@ -91,6 +91,7 @@ At minimum set provider runtime values plus Telegram credentials.
 Example (OpenAI + Telegram):
 
 ```dotenv
+FFT_NANO_RUNTIME_PROVIDER_PRESET=openai
 PI_API=openai
 PI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=replace-me
@@ -98,9 +99,11 @@ TELEGRAM_BOT_TOKEN=replace-me
 TELEGRAM_ADMIN_SECRET=replace-me
 ```
 
-Recommended provider paths (top 4):
+Recommended provider paths:
 
 - OpenAI: `PI_API=openai`, `PI_MODEL=...`, `OPENAI_API_KEY=...`
+- LM Studio (local): `FFT_NANO_RUNTIME_PROVIDER_PRESET=lm-studio`, `PI_API=openai`, `PI_MODEL=...`, `OPENAI_BASE_URL=http://127.0.0.1:1234/v1`, `PI_API_KEY=lm-studio`
+- Ollama (local): `FFT_NANO_RUNTIME_PROVIDER_PRESET=ollama`, `PI_API=ollama`, `PI_MODEL=...`, `OPENAI_BASE_URL=http://localhost:11434/v1`, `PI_API_KEY=ollama`
 - Anthropic: `PI_API=anthropic`, `PI_MODEL=...`, `ANTHROPIC_API_KEY=...`
 - Gemini: `PI_API=gemini`, `PI_MODEL=...`, `GEMINI_API_KEY=...`
 - OpenRouter: `PI_API=openrouter`, `PI_MODEL=...`, `OPENROUTER_API_KEY=...`
@@ -187,7 +190,7 @@ If CLI linking is unavailable/disabled (`FFT_NANO_AUTO_LINK=0`), use `./scripts/
 
 Host CLI:
 
-- `fft onboard [--workspace <dir>] [--env-path <file>] [--operator <name>] [--assistant-name <name>] [--non-interactive --accept-risk] [--flow quickstart|advanced|manual] [--mode local|remote] [--runtime auto|docker|host] [--auth-choice openai|anthropic|gemini|openrouter|zai|skip] [--api-key <token>] [--model <id>] [--remote-url <url>] [--gateway-port <port>] [--telegram-token <token>] [--whatsapp-enabled <0|1>] [--hatch tui|web|later] [--install-daemon|--no-install-daemon] [--skip-channels] [--skip-skills] [--skip-health] [--skip-ui] [--force] [--json]`
+- `fft onboard [--workspace <dir>] [--env-path <file>] [--operator <name>] [--assistant-name <name>] [--non-interactive --accept-risk] [--flow quickstart|advanced|manual] [--mode local|remote] [--runtime auto|docker|host] [--auth-choice openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip] [--api-key <token>] [--model <id>] [--remote-url <url>] [--gateway-port <port>] [--telegram-token <token>] [--whatsapp-enabled <0|1>] [--hatch tui|web|later] [--install-daemon|--no-install-daemon] [--skip-channels] [--skip-skills] [--skip-health] [--skip-ui] [--force] [--json]`
 - `fft profile <status|set|apply> [core|farm]`
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`

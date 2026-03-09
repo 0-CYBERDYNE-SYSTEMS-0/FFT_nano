@@ -160,6 +160,26 @@ test('runOnboarding non-interactive local auth provider writes provider env', as
   assert.match(envBody, /^FFT_NANO_TUI_PORT=29999$/m);
 });
 
+test('runOnboarding local LM Studio choice writes local endpoint defaults without requiring an API key', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    authChoice: 'lm-studio',
+    model: 'qwen2.5-coder-7b-instruct',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.match(envBody, /^FFT_NANO_RUNTIME_PROVIDER_PRESET=lm-studio$/m);
+  assert.match(envBody, /^PI_API=openai$/m);
+  assert.match(envBody, /^PI_MODEL=qwen2.5-coder-7b-instruct$/m);
+  assert.match(envBody, /^OPENAI_BASE_URL=http:\/\/127\.0\.0\.1:1234\/v1$/m);
+  assert.match(envBody, /^PI_BASE_URL=http:\/\/127\.0\.0\.1:1234\/v1$/m);
+  assert.match(envBody, /^PI_API_KEY=lm-studio$/m);
+});
+
 test('runOnboarding defaults local runtime to docker and persists it', async () => {
   const workspace = makeTmpWorkspace();
   const envPath = path.join(workspace, '.env');
@@ -206,4 +226,30 @@ test('parseOnboardArgs parses and validates --runtime', () => {
     () => parseOnboardArgs(['--workspace', '/tmp/ws', '--runtime', 'invalid']),
     /Invalid --runtime/i,
   );
+});
+
+test('parseOnboardArgs accepts local model auth choices', () => {
+  const lmStudio = parseOnboardArgs([
+    '--workspace',
+    '/tmp/ws',
+    '--auth-choice',
+    'lm-studio',
+    '--operator',
+    'A',
+    '--assistant-name',
+    'B',
+  ]);
+  assert.equal(lmStudio.authChoice, 'lm-studio');
+
+  const ollama = parseOnboardArgs([
+    '--workspace',
+    '/tmp/ws',
+    '--auth-choice',
+    'ollama',
+    '--operator',
+    'A',
+    '--assistant-name',
+    'B',
+  ]);
+  assert.equal(ollama.authChoice, 'ollama');
 });

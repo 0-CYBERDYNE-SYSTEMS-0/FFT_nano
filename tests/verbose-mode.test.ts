@@ -29,7 +29,7 @@ test('parseVerboseDirective handles cycle and explicit set forms', () => {
   });
 });
 
-test('cycleVerboseMode matches Hermes cycle ordering', () => {
+test('cycleVerboseMode matches the configured cycle ordering', () => {
   assert.equal(cycleVerboseMode(undefined), 'verbose');
   assert.equal(cycleVerboseMode('off'), 'new');
   assert.equal(cycleVerboseMode('new'), 'all');

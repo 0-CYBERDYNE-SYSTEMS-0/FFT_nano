@@ -18,7 +18,7 @@ Options:
   --flow <flow>             quickstart|advanced|manual
   --mode <mode>             local|remote
   --runtime <runtime>       auto|docker|host
-  --auth-choice <choice>    openai|anthropic|gemini|openrouter|zai|skip
+  --auth-choice <choice>    openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip
   --model <id>              Model id/provider model
   --api-key <token>         Provider API key for selected auth choice
   --remote-url <url>        Remote gateway URL (remote mode)

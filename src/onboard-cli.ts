@@ -6,6 +6,7 @@ import { stdin as input, stdout as output } from 'node:process';
 
 import { ASSISTANT_NAME, MAIN_WORKSPACE_DIR } from './config.js';
 import {
+  buildRuntimeProviderPresetUpdates,
   getDefaultDotEnvPath,
   loadDotEnvMap,
   RUNTIME_PROVIDER_DEFINITIONS,
@@ -18,12 +19,14 @@ export type OnboardMode = 'local' | 'remote';
 export type OnboardRuntime = 'auto' | 'docker' | 'host';
 export type OnboardAuthChoice =
   | 'openai'
+  | 'lm-studio'
   | 'anthropic'
   | 'gemini'
   | 'openrouter'
   | 'zai'
   | 'minimax'
   | 'kimi-coding'
+  | 'ollama'
   | 'skip';
 export type OnboardHatchChoice = 'tui' | 'web' | 'later';
 
@@ -110,7 +113,7 @@ function usage(): string {
     '  --flow <quickstart|advanced|manual>',
     '  --mode <local|remote>',
     '  --runtime <auto|docker|host>',
-    '  --auth-choice <openai|anthropic|gemini|openrouter|zai|minimax|kimi-coding|skip>',
+    '  --auth-choice <openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip>',
     '  --model <provider/model-or-id>',
     '  --api-key <token>            API key for selected auth choice',
     '  --remote-url <url>           Remote gateway URL (remote mode)',
@@ -170,18 +173,20 @@ function parseAuthChoice(raw: string | undefined): OnboardAuthChoice | undefined
   const value = raw.trim().toLowerCase();
   if (
     value === 'openai' ||
+    value === 'lm-studio' ||
     value === 'anthropic' ||
     value === 'gemini' ||
     value === 'openrouter' ||
     value === 'zai' ||
     value === 'minimax' ||
     value === 'kimi-coding' ||
+    value === 'ollama' ||
     value === 'skip'
   ) {
     return value;
   }
   throw new Error(
-    `Invalid --auth-choice (use openai|anthropic|gemini|openrouter|zai|minimax|kimi-coding|skip): ${raw}`,
+    `Invalid --auth-choice (use openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip): ${raw}`,
   );
 }
 
@@ -561,8 +566,8 @@ async function resolveWizardSelections(
       : await askSelect(
           rl,
           'Auth provider',
-          ['openai', 'anthropic', 'gemini', 'openrouter', 'zai', 'minimax', 'kimi-coding', 'skip'],
-          'openai',
+          ['openai', 'lm-studio', 'ollama', 'anthropic', 'gemini', 'openrouter', 'zai', 'minimax', 'kimi-coding', 'skip'],
+          'lm-studio',
         );
     let model = opts.model?.trim();
     let apiKey = opts.apiKey?.trim();
@@ -743,11 +748,22 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<OnboardSum
     if (wizard.authChoice !== 'skip') {
       const provider = wizard.authChoice;
       const keyEnv = ENV_KEY_BY_PROVIDER[provider];
-      updates.PI_API = provider;
-      updates.PI_MODEL = wizard.model?.trim() || DEFAULT_MODEL_BY_PROVIDER[provider];
+      Object.assign(
+        updates,
+        buildRuntimeProviderPresetUpdates({
+          preset: provider,
+          model: wizard.model?.trim() || DEFAULT_MODEL_BY_PROVIDER[provider],
+          source: envMap,
+          applyLocalDefaults: true,
+        }),
+      );
       if (wizard.apiKey?.trim()) {
         updates[keyEnv] = wizard.apiKey.trim();
-      } else if (opts.nonInteractive) {
+      } else if (
+        opts.nonInteractive &&
+        RUNTIME_PROVIDER_DEFINITIONS.find((entry) => entry.id === provider)?.apiKeyRequired !==
+          false
+      ) {
         throw new Error(
           `Non-interactive onboarding requires --api-key for --auth-choice ${provider}`,
         );
