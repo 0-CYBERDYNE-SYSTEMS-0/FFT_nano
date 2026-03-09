@@ -82,6 +82,15 @@ test('buildRuntimeProviderPresetUpdates applies local defaults for ollama and lm
   assert.equal(lmStudioUpdates.PI_API_KEY, 'lm-studio');
 });
 
+test('buildRuntimeProviderPresetUpdates prefers the local preset key over a remote OpenAI key', () => {
+  const lmStudioUpdates = buildRuntimeProviderPresetUpdates({
+    preset: 'lm-studio',
+    source: { OPENAI_API_KEY: 'real-openai-key' },
+    applyLocalDefaults: true,
+  });
+  assert.equal(lmStudioUpdates.PI_API_KEY, 'lm-studio');
+});
+
 test('resolveRuntimeConfigSnapshot falls back to manual provider state', () => {
   const snapshot = resolveRuntimeConfigSnapshot({
     PI_API: 'custom-provider',

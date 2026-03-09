@@ -289,9 +289,7 @@ export function buildRuntimeProviderPresetUpdates(params: {
   if (
     applyLocalDefaults &&
     provider.defaultApiKeyValue &&
-    !hasMeaningfulSecret(source[provider.apiKeyEnv]) &&
-    !hasMeaningfulSecret(source.PI_API_KEY) &&
-    !hasMeaningfulSecret(source.OPENAI_API_KEY)
+    !hasMeaningfulSecret(source[provider.apiKeyEnv])
   ) {
     updates[provider.apiKeyEnv] = provider.defaultApiKeyValue;
   }
