@@ -25,6 +25,7 @@ export interface ActiveHoursWindow {
   startMinute: number;
   endMinute: number;
   raw: string;
+  timezone?: string;
 }
 
 export function isHeartbeatContentEffectivelyEmpty(
@@ -182,9 +183,27 @@ export function parseHeartbeatActiveHours(
 ): ActiveHoursWindow | null {
   const value = raw?.trim();
   if (!value) return null;
-  const [daysPart, timePart] = value.includes('@')
-    ? value.split('@', 2)
-    : [null, value];
+  let daysPart: string | null = null;
+  let timePart = value;
+  let timezonePart: string | null = null;
+
+  const sections = value.split('@').map((part) => part.trim()).filter(Boolean);
+  if (sections.length === 1) {
+    timePart = sections[0];
+  } else if (sections.length === 2) {
+    if (/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(sections[0])) {
+      timePart = sections[0];
+      timezonePart = sections[1];
+    } else {
+      daysPart = sections[0];
+      timePart = sections[1];
+    }
+  } else if (sections.length >= 3) {
+    daysPart = sections[0];
+    timePart = sections[1];
+    timezonePart = sections.slice(2).join('@');
+  }
+
   const [startText, endText] = timePart.split('-', 2).map((part) => part.trim());
   if (!startText || !endText) return null;
   const startMinute = parseTimeToMinute(startText);
@@ -197,7 +216,58 @@ export function parseHeartbeatActiveHours(
     if (!days) return null;
   }
 
-  return { days, startMinute, endMinute, raw: value };
+  return {
+    days,
+    startMinute,
+    endMinute,
+    raw: value,
+    timezone: timezonePart || undefined,
+  };
+}
+
+function getDatePartsForTimezone(
+  now: Date,
+  timezone?: string,
+): { minute: number; day: number } {
+  if (!timezone) {
+    return {
+      minute: now.getHours() * 60 + now.getMinutes(),
+      day: now.getDay(),
+    };
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(now);
+    const weekday = parts.find((part) => part.type === 'weekday')?.value?.toLowerCase() || '';
+    const hour = Number.parseInt(
+      parts.find((part) => part.type === 'hour')?.value || '',
+      10,
+    );
+    const minute = Number.parseInt(
+      parts.find((part) => part.type === 'minute')?.value || '',
+      10,
+    );
+    const day = DAY_INDEX[weekday.slice(0, 3)] ?? now.getDay();
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+      throw new Error('Invalid timezone parts');
+    }
+    return {
+      minute: hour * 60 + minute,
+      day,
+    };
+  } catch {
+    return {
+      minute: now.getHours() * 60 + now.getMinutes(),
+      day: now.getDay(),
+    };
+  }
 }
 
 export function isWithinHeartbeatActiveHours(
@@ -205,8 +275,9 @@ export function isWithinHeartbeatActiveHours(
   now: Date = new Date(),
 ): boolean {
   if (!window) return true;
-  if (window.days && !window.days.has(now.getDay())) return false;
-  const minute = now.getHours() * 60 + now.getMinutes();
+  const current = getDatePartsForTimezone(now, window.timezone);
+  if (window.days && !window.days.has(current.day)) return false;
+  const minute = current.minute;
   if (window.startMinute === window.endMinute) return true;
   if (window.startMinute < window.endMinute) {
     return minute >= window.startMinute && minute < window.endMinute;
@@ -227,4 +298,3 @@ export function shouldSuppressDuplicateHeartbeat(params: {
   if (params.nowMs - params.previousSentAt >= windowMs) return false;
   return params.text.trim() === params.previousText.trim();
 }
-

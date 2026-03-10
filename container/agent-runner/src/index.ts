@@ -9,7 +9,23 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 
 import { runDelegatedCodingWorker } from './coder-worker.js';
-import { parsePiJsonOutput } from './pi-json-parser.js';
+import { parsePiJsonOutput, type PiToolExecution } from './pi-json-parser.js';
+import {
+  createToolTrackerState,
+  extractAssistantTextDeltaFromPiEvent,
+  extractToolDeltaFromPiEvent,
+} from './pi-stream-parser.js';
+import {
+  PI_AGENT_FFT_DIR,
+  PI_ON_PI_EXTENSION_PATH,
+  WORKSPACE_GROUP_DIR,
+  WORKSPACE_IPC_MESSAGES_DIR,
+} from './runtime-paths.js';
+import {
+  deriveTelegramDraftId,
+  normalizeTelegramDraftText,
+  writeIpcTelegramDraftUpdate,
+} from './telegram-draft.js';
 import {
   buildSystemPrompt as buildSystemPromptArchitecture,
   type SystemPromptReport,
@@ -21,10 +37,13 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  assistantName?: string;
+  secrets?: Record<string, string>;
   provider?: string;
   model?: string;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   reasoningLevel?: 'off' | 'on' | 'stream';
+  verboseMode?: 'off' | 'new' | 'all' | 'verbose';
   noContinue?: boolean;
   memoryContext?: string;
   extraSystemPrompt?: string;
@@ -47,6 +66,7 @@ interface NormalizedContainerInput extends Omit<ContainerInput, 'codingHint'> {
   codingHint: CodingHint;
   thinkLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   reasoningLevel?: 'off' | 'on' | 'stream';
+  verboseMode?: 'off' | 'new' | 'all' | 'verbose';
   noContinue?: boolean;
 }
 
@@ -78,7 +98,7 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---FFT_NANO_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---FFT_NANO_OUTPUT_END---';
-const PI_ON_PI_EXTENSION_PATH = '/app/dist/extensions/pi-on-pi.js';
+const RUNTIME_EVENT_PREFIX = '[fft_nano_event]';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -88,6 +108,18 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+function writeRuntimeEvent(event: {
+  kind: 'tool';
+  index: number;
+  toolName: string;
+  status: 'start' | 'ok' | 'error';
+  args?: string;
+  output?: string;
+  error?: string;
+}): void {
+  console.error(`${RUNTIME_EVENT_PREFIX}${JSON.stringify(event)}`);
 }
 
 function normalizeCodingHint(value: ContainerInput['codingHint']): CodingHint {
@@ -128,12 +160,22 @@ function normalizeReasoningLevel(
   return undefined;
 }
 
+function normalizeVerboseMode(
+  value: ContainerInput['verboseMode'],
+): 'off' | 'new' | 'all' | 'verbose' | undefined {
+  if (value === 'off' || value === 'new' || value === 'all' || value === 'verbose') {
+    return value;
+  }
+  return undefined;
+}
+
 function normalizeInput(input: ContainerInput): NormalizedContainerInput {
   return {
     ...input,
     codingHint: normalizeCodingHint(input.codingHint),
     thinkLevel: normalizeThinkLevel(input.thinkLevel),
     reasoningLevel: normalizeReasoningLevel(input.reasoningLevel),
+    verboseMode: normalizeVerboseMode(input.verboseMode),
     noContinue: input.noContinue === true,
   };
 }
@@ -154,7 +196,8 @@ function isTelegramChatJid(chatJid: string): boolean {
 
 function writeIpcMessage(chatJid: string, text: string): boolean {
   try {
-    const dir = '/workspace/ipc/messages';
+    const dir = WORKSPACE_IPC_MESSAGES_DIR;
+    fs.mkdirSync(dir, { recursive: true });
     const ts = Date.now();
     const rand = Math.random().toString(36).slice(2, 8);
     const tmp = `${dir}/.tmp_${ts}_${rand}.json`;
@@ -194,7 +237,8 @@ function getPiArgs(
   if (input.thinkLevel) args.push('--thinking', input.thinkLevel);
   if (apiKey) args.push('--api-key', apiKey);
 
-  if (loadDelegationExtension) {
+  // Always load extension when it exists: registers Ollama provider + delegation tool.
+  if (fs.existsSync(PI_ON_PI_EXTENSION_PATH)) {
     args.push('--extension', PI_ON_PI_EXTENSION_PATH);
   }
 
@@ -205,6 +249,39 @@ function getPiArgs(
   args.push(prompt);
 
   return args;
+}
+
+function appendToolVerboseSection(
+  baseResult: string,
+  mode: 'off' | 'new' | 'all' | 'verbose' | undefined,
+  toolExecutions: PiToolExecution[] | undefined,
+): string {
+  if (mode === 'off' || mode === 'new') return baseResult;
+  if (!toolExecutions || toolExecutions.length === 0) return baseResult;
+
+  const includeAll = mode === 'verbose';
+  const selected = toolExecutions;
+  if (selected.length === 0) return baseResult;
+
+  const maxRows = includeAll ? 60 : 30;
+  const truncated = selected.length > maxRows;
+  const rows = selected.slice(0, maxRows).map((entry) => {
+    const parts = [`#${entry.index}`, entry.toolName, entry.status];
+    if (entry.args) parts.push(`args=${entry.args}`);
+    if (entry.error) parts.push(`error=${entry.error}`);
+    if (includeAll && entry.output) parts.push(`output=${entry.output}`);
+    return `- ${parts.join(' ')}`;
+  });
+  const header = includeAll
+    ? '[verbose:verbose] Tool calls'
+    : '[verbose:all] Tool activity';
+  if (truncated) {
+    rows.push(
+      `- ... ${selected.length - maxRows} additional item(s) omitted`,
+    );
+  }
+  const section = [header, ...rows].join('\n');
+  return baseResult ? `${baseResult}\n\n${section}` : section;
 }
 
 async function runPiAgent(
@@ -227,9 +304,24 @@ async function runPiAgent(
     !input.isScheduledTask &&
     (isForceDelegateHint(input.codingHint) || input.codingHint === 'auto') &&
     fs.existsSync(PI_ON_PI_EXTENSION_PATH);
+  const canStreamTelegramDraft =
+    isTelegramChatJid(input.chatJid) && !input.isScheduledTask;
+  const draftId = deriveTelegramDraftId(
+    `${input.chatJid}:${input.requestId || `run-${Date.now()}`}`,
+  );
+  const draftMinIntervalMs = Math.max(
+    400,
+    Number.parseInt(process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '1000', 10) ||
+      1000,
+  );
 
   const tryRun = (useContinue: boolean) =>
-    new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    new Promise<{
+      code: number | null;
+      stdout: string;
+      stderr: string;
+      streamedDraft: boolean;
+    }>((resolve) => {
       const args = getPiArgs(
         systemPrompt,
         prompt,
@@ -239,7 +331,7 @@ async function runPiAgent(
       );
       const env = {
         ...process.env,
-        PI_CODING_AGENT_DIR: '/home/node/.pi/agent-farmfriend',
+        PI_CODING_AGENT_DIR: PI_AGENT_FFT_DIR,
         FFT_NANO_CHAT_JID: input.chatJid,
         FFT_NANO_REQUEST_ID: input.requestId || '',
         FFT_NANO_CODING_HINT: input.codingHint,
@@ -247,25 +339,102 @@ async function runPiAgent(
       };
 
       const child = spawn('pi', args, {
-        cwd: '/workspace/group',
+        cwd: WORKSPACE_GROUP_DIR,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       let stdout = '';
       let stderr = '';
+      let lineBuffer = '';
+      let assistantSoFar = '';
+      let streamedDraft = false;
+      const toolTracker = createToolTrackerState();
+      let lastDraftSentAt = 0;
+      let lastDraftText = '';
+
+      const maybeSendDraft = (force = false) => {
+        if (!canStreamTelegramDraft) return;
+        if (!assistantSoFar) return;
+        const now = Date.now();
+        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        const nextDraftText = normalizeTelegramDraftText(assistantSoFar);
+        if (nextDraftText === lastDraftText) return;
+        const ok = writeIpcTelegramDraftUpdate({
+          chatJid: input.chatJid,
+          requestId: input.requestId,
+          draftId,
+          text: nextDraftText,
+        });
+        if (!ok) return;
+        streamedDraft = true;
+        lastDraftSentAt = now;
+        lastDraftText = nextDraftText;
+      };
+
+      const applyDelta = (delta: { kind: 'append' | 'replace'; text: string }) => {
+        if (delta.kind === 'append') assistantSoFar += delta.text;
+        else assistantSoFar = delta.text;
+      };
+
+      const processStdoutLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        try {
+          const event = JSON.parse(trimmed) as unknown;
+          const toolDelta = extractToolDeltaFromPiEvent(event, toolTracker);
+          if (toolDelta) {
+            writeRuntimeEvent({
+              kind: 'tool',
+              index: toolDelta.index,
+              toolName: toolDelta.toolName,
+              status: toolDelta.status,
+              ...(toolDelta.args ? { args: toolDelta.args } : {}),
+              ...(toolDelta.output ? { output: toolDelta.output } : {}),
+              ...(toolDelta.error ? { error: toolDelta.error } : {}),
+            });
+          }
+          const delta = extractAssistantTextDeltaFromPiEvent(event);
+          if (!delta) return;
+          applyDelta(delta);
+          maybeSendDraft(false);
+        } catch {
+          // ignore non-json lines
+        }
+      };
+
+      const ticker = canStreamTelegramDraft
+        ? setInterval(() => {
+            maybeSendDraft(false);
+          }, 1000)
+        : null;
 
       child.stdout.on('data', (d) => {
-        stdout += d.toString();
+        const chunk = d.toString();
+        stdout += chunk;
+        lineBuffer += chunk;
+        while (true) {
+          const newlineIdx = lineBuffer.indexOf('\n');
+          if (newlineIdx === -1) break;
+          const line = lineBuffer.slice(0, newlineIdx);
+          lineBuffer = lineBuffer.slice(newlineIdx + 1);
+          processStdoutLine(line);
+        }
       });
       child.stderr.on('data', (d) => {
         stderr += d.toString();
       });
       child.on('close', (code) => {
-        resolve({ code, stdout, stderr });
+        if (ticker) clearInterval(ticker);
+        if (lineBuffer.trim()) {
+          processStdoutLine(lineBuffer);
+        }
+        maybeSendDraft(true);
+        resolve({ code, stdout, stderr, streamedDraft });
       });
       child.on('error', (err) => {
-        resolve({ code: 1, stdout, stderr: String(err) });
+        if (ticker) clearInterval(ticker);
+        resolve({ code: 1, stdout, stderr: String(err), streamedDraft });
       });
     });
 
@@ -280,12 +449,23 @@ async function runPiAgent(
     throw new Error(res.stderr.trim() || `pi exited with code ${res.code}`);
   }
 
+  if (res.streamedDraft) {
+    log(`Sent Telegram draft updates for ${input.chatJid} (draft_id=${draftId})`);
+  }
+
   const parsed = parsePiJsonOutput({
     stdout: res.stdout,
     provider: input.provider,
     model: input.model,
   });
-  return { result: parsed.result, streamed: false, usage: parsed.usage };
+  const result = isTelegramChatJid(input.chatJid)
+    ? parsed.result
+    : appendToolVerboseSection(
+        parsed.result,
+        input.verboseMode,
+        parsed.toolExecutions,
+      );
+  return { result, streamed: false, usage: parsed.usage };
 }
 
 async function main(): Promise<void> {
@@ -304,6 +484,9 @@ async function main(): Promise<void> {
   }
 
   const input = normalizeInput(rawInput);
+  for (const [key, value] of Object.entries(rawInput.secrets || {})) {
+    process.env[key] = value;
+  }
 
   const systemPromptBuild = buildSystemPrompt(input);
   const systemPrompt = systemPromptBuild.text;
@@ -372,7 +555,7 @@ async function main(): Promise<void> {
     // Keep explicit delegation behavior resilient for long outputs by sending
     // through IPC with file fallback, then suppressing the host final send.
     if (isForceDelegateHint(input.codingHint) && !input.isScheduledTask) {
-      const outDir = '/workspace/group/coder_runs';
+      const outDir = `${WORKSPACE_GROUP_DIR}/coder_runs`;
       fs.mkdirSync(outDir, { recursive: true });
       const rid = input.requestId || `coder_${Date.now()}`;
 

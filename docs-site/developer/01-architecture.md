@@ -34,7 +34,7 @@ Container modules:
 Telegram/WhatsApp -> src/index.ts
                    -> src/db.ts
                    -> src/container-runner.ts
-                   -> container runtime (apple|docker)
+                   -> container runtime (docker|host)
                    -> container/agent-runner/src/index.ts -> pi
                    -> src/index.ts sendMessage()
                    -> Telegram/WhatsApp
@@ -80,5 +80,5 @@ From `main()` in `src/index.ts`:
 
 - At-least-once message processing semantics via timestamp progression only after successful processing.
 - Container run timeout guard (`CONTAINER_TIMEOUT`).
-- Optional Apple Container self-heal restart on network timeout-like failures.
+- Optional runtime health check retry when Docker daemon is unavailable.
 - Single-instance lock to prevent parallel polling conflicts.

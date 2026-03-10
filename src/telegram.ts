@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import { renderTelegramHtmlText, splitTelegramText as splitTelegramMarkdownText } from './telegram-format.js';
 import { loadJson, saveJson } from './utils.js';
@@ -9,8 +9,10 @@ import { loadJson, saveJson } from './utils.js';
 export const TELEGRAM_JID_PREFIX = 'telegram:';
 const TELEGRAM_MAX_MESSAGE_LEN = 4096;
 const TELEGRAM_SAFE_MESSAGE_LEN = 4000;
+const TELEGRAM_DRAFT_PREFIX = '...';
 const TELEGRAM_PARSE_ERROR_RE = /can't parse entities|parse entities|find end of the entity/i;
 const TELEGRAM_MESSAGE_TOO_LONG_RE = /message is too long/i;
+const TELEGRAM_MESSAGE_NOT_MODIFIED_RE = /message is not modified/i;
 const TELEGRAM_RETRYABLE_ERROR_RE =
   /timed out|timeout|temporarily unavailable|too many requests|retry after|internal server error|bad gateway|service unavailable/i;
 const TELEGRAM_RETRY_ATTEMPTS = Math.max(
@@ -488,6 +490,22 @@ export function splitTelegramTextForHtmlLimit(
   return output;
 }
 
+export function normalizeTelegramDraftText(text: string): string {
+  const normalized = text.replace(/\r\n/g, '\n');
+  if (!normalized) return '.';
+  if (normalized.length <= TELEGRAM_MAX_MESSAGE_LEN) return normalized;
+  const suffixLen = Math.max(1, TELEGRAM_MAX_MESSAGE_LEN - TELEGRAM_DRAFT_PREFIX.length);
+  return `${TELEGRAM_DRAFT_PREFIX}${normalized.slice(-suffixLen)}`;
+}
+
+export interface TelegramDraftOptions {
+  messageThreadId?: number;
+}
+
+export interface TelegramStreamMessageOptions {
+  messageThreadId?: number;
+}
+
 export interface TelegramBotOptions {
   token: string;
   apiBaseUrl?: string;
@@ -498,14 +516,44 @@ export interface TelegramBotOptions {
 export interface TelegramBot {
   startPolling: (onEvent: (event: TelegramInboundEvent) => Promise<void>) => void;
   sendMessage: (chatJid: string, text: string) => Promise<void>;
+  deleteMessage: (chatJid: string, messageId: number) => Promise<void>;
+  sendMessageDraft: (
+    chatJid: string,
+    draftId: number,
+    text: string,
+    opts?: TelegramDraftOptions,
+  ) => Promise<void>;
+  sendStreamMessage: (
+    chatJid: string,
+    text: string,
+    opts?: TelegramStreamMessageOptions,
+  ) => Promise<number>;
+  editStreamMessage: (
+    chatJid: string,
+    messageId: number,
+    text: string,
+    opts?: TelegramStreamMessageOptions,
+  ) => Promise<void>;
   sendMessageWithKeyboard: (
     chatJid: string,
+    text: string,
+    keyboard: TelegramInlineKeyboard,
+  ) => Promise<void>;
+  editMessageWithKeyboard: (
+    chatJid: string,
+    messageId: number,
     text: string,
     keyboard: TelegramInlineKeyboard,
   ) => Promise<void>;
   sendPhoto: (
     chatJid: string,
     photo: string | Buffer,
+    caption?: string,
+  ) => Promise<void>;
+  sendDocument: (
+    chatJid: string,
+    document: string | Buffer,
+    fileName?: string,
     caption?: string,
   ) => Promise<void>;
   setTyping: (chatJid: string, isTyping: boolean) => Promise<void>;
@@ -555,7 +603,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   const apiBaseUrl = opts.apiBaseUrl || 'https://api.telegram.org';
   const base = `${apiBaseUrl}/bot${opts.token}`;
   const fileBase = `${apiBaseUrl}/file/bot${opts.token}`;
-  const assistantName = opts.assistantName || 'FarmFriend';
+  const assistantName = opts.assistantName || ASSISTANT_NAME;
 
   const statePath = path.join(DATA_DIR, 'telegram_state.json');
   const state = loadJson<{ offset?: number }>(statePath, {});
@@ -790,6 +838,9 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
         for (const u of updates) {
           offset = Math.max(offset, u.update_id + 1);
+          // Persist immediately so commands that intentionally restart the host
+          // do not replay the same Telegram update on the next boot.
+          persistOffset();
 
           if (u.callback_query?.message) {
             const callback = u.callback_query;
@@ -891,6 +942,99 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }
   }
 
+  async function deleteMessage(chatJid: string, messageId: number): Promise<void> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) {
+      throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
+    }
+    if (!Number.isInteger(messageId) || messageId <= 0) {
+      throw new Error(`Invalid Telegram message id: ${messageId}`);
+    }
+    await apiPostWithRetry('deleteMessage', {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  }
+
+  async function sendMessageDraft(
+    chatJid: string,
+    draftId: number,
+    text: string,
+    opts: TelegramDraftOptions = {},
+  ): Promise<void> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) {
+      throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
+    }
+    if (!Number.isInteger(draftId) || draftId <= 0) {
+      throw new Error(`Invalid Telegram draft id: ${draftId}`);
+    }
+
+    await apiPostWithRetry('sendMessageDraft', {
+      chat_id: chatId,
+      draft_id: draftId,
+      text: normalizeTelegramDraftText(text),
+      ...(typeof opts.messageThreadId === 'number' && Number.isFinite(opts.messageThreadId)
+        ? { message_thread_id: Math.trunc(opts.messageThreadId) }
+        : {}),
+    });
+  }
+
+  async function sendStreamMessage(
+    chatJid: string,
+    text: string,
+    opts: TelegramStreamMessageOptions = {},
+  ): Promise<number> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) {
+      throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
+    }
+    const result = await apiPostWithRetry<{ message_id?: number }>('sendMessage', {
+      chat_id: chatId,
+      text: normalizeTelegramDraftText(text),
+      disable_web_page_preview: true,
+      ...(typeof opts.messageThreadId === 'number' && Number.isFinite(opts.messageThreadId)
+        ? { message_thread_id: Math.trunc(opts.messageThreadId) }
+        : {}),
+    });
+    const messageId = Number(result?.message_id);
+    if (!Number.isInteger(messageId) || messageId <= 0) {
+      throw new Error('Telegram stream send did not return a valid message_id');
+    }
+    return messageId;
+  }
+
+  async function editStreamMessage(
+    chatJid: string,
+    messageId: number,
+    text: string,
+    opts: TelegramStreamMessageOptions = {},
+  ): Promise<void> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) {
+      throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
+    }
+    if (!Number.isInteger(messageId) || messageId <= 0) {
+      throw new Error(`Invalid Telegram message id for stream edit: ${messageId}`);
+    }
+    try {
+      await apiPostWithRetry('editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text: normalizeTelegramDraftText(text),
+        disable_web_page_preview: true,
+        ...(typeof opts.messageThreadId === 'number' && Number.isFinite(opts.messageThreadId)
+          ? { message_thread_id: Math.trunc(opts.messageThreadId) }
+          : {}),
+      });
+    } catch (err) {
+      if (err instanceof TelegramApiError && TELEGRAM_MESSAGE_NOT_MODIFIED_RE.test(err.message)) {
+        return;
+      }
+      throw err;
+    }
+  }
+
   async function sendMessageWithKeyboard(
     chatJid: string,
     text: string,
@@ -907,6 +1051,36 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       const chunk = chunks[i];
       if (!chunk || chunk.length > TELEGRAM_MAX_MESSAGE_LEN) continue;
       await sendMessageChunk(chatId, chunk, i === 0 ? replyMarkup : undefined);
+    }
+  }
+
+  async function editMessageWithKeyboard(
+    chatJid: string,
+    messageId: number,
+    text: string,
+    keyboard: TelegramInlineKeyboard,
+  ): Promise<void> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) {
+      throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
+    }
+    if (!Number.isInteger(messageId) || messageId <= 0) {
+      throw new Error(`Invalid Telegram message id for keyboard edit: ${messageId}`);
+    }
+
+    try {
+      await apiPostWithRetry('editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text: normalizeTelegramDraftText(text),
+        disable_web_page_preview: true,
+        reply_markup: buildReplyMarkup(keyboard),
+      });
+    } catch (err) {
+      if (err instanceof TelegramApiError && TELEGRAM_MESSAGE_NOT_MODIFIED_RE.test(err.message)) {
+        return;
+      }
+      throw err;
     }
   }
 
@@ -1070,6 +1244,45 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }
   }
 
+  async function sendDocument(
+    chatId: string,
+    document: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ): Promise<void> {
+    const chatIdParsed = parseTelegramChatId(chatId);
+    if (!chatIdParsed) {
+      throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+    }
+
+    const formData = new FormData();
+    formData.append('chat_id', chatIdParsed);
+    if (typeof document === 'string') {
+      formData.append('document', document);
+    } else {
+      formData.append(
+        'document',
+        new Blob([document]),
+        fileName && fileName.trim() ? fileName.trim() : 'attachment.bin',
+      );
+    }
+    if (caption) {
+      formData.append('caption', caption);
+    }
+
+    const url = new URL(`${base}/sendDocument`);
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      body: formData as any,
+    });
+
+    if (!res.ok) {
+      const body = (await res.json()) as TelegramApiResponse<never>;
+      const description = body?.description || `Telegram API error (status ${res.status})`;
+      throw new Error(description);
+    }
+  }
+
   return {
     startPolling: (onEvent) => {
       startPolling(onEvent).catch((err) =>
@@ -1077,8 +1290,14 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       );
     },
     sendMessage,
+    deleteMessage,
+    sendMessageDraft,
+    sendStreamMessage,
+    editStreamMessage,
     sendMessageWithKeyboard,
+    editMessageWithKeyboard,
     sendPhoto,
+    sendDocument,
     setTyping,
     setCommands,
     deleteCommands,

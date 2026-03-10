@@ -23,5 +23,5 @@ Use the private security reporting path in `.github/SECURITY.md`.
    - `npm test`
 3. Include:
    - version/tag
-   - platform/runtime (Apple Container or Docker)
+   - platform/runtime (Docker or host runtime)
    - minimal reproduction steps

@@ -40,14 +40,27 @@ export interface ChatEventPayload {
   };
 }
 
-export interface AgentEventPayload {
-  runId: string;
-  stream: 'lifecycle';
-  data?: {
-    phase?: 'start' | 'end' | 'error';
-    detail?: string;
-  };
-}
+export type AgentEventPayload =
+  | {
+      runId: string;
+      stream: 'lifecycle';
+      data?: {
+        phase?: 'start' | 'end' | 'error';
+        detail?: string;
+      };
+    }
+  | {
+      runId: string;
+      stream: 'tool';
+      data: {
+        index: number;
+        toolName: string;
+        status: 'start' | 'ok' | 'error';
+        args?: string;
+        output?: string;
+        error?: string;
+      };
+    };
 
 export function isGatewayRequestFrame(value: unknown): value is GatewayRequestFrame {
   if (!value || typeof value !== 'object') return false;

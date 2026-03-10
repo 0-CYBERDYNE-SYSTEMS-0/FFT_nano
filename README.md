@@ -6,13 +6,13 @@
 [![Release Readiness](https://img.shields.io/github/actions/workflow/status/0-CYBERDYNE-SYSTEMS-0/FFT_nano/release-readiness.yml?branch=main&label=release%20readiness)](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/actions/workflows/release-readiness.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-FarmFriend Terminal nano (`FFT_nano`) is a single-process Node.js host that runs an LLM agent inside a Linux container and routes chat I/O through Telegram and/or WhatsApp.
+`FFT_nano` is a single-process Node.js host that runs an LLM agent inside a Linux container and routes chat I/O through Telegram and/or WhatsApp.
 
 ## What It Does
 
 - Receives inbound chat messages
 - Stores chat + scheduling metadata in SQLite
-- Runs the agent in an isolated container (Apple Container on macOS, Docker on Linux)
+- Runs the agent in an isolated Docker container by default (optional host runtime for advanced local use)
 - Uses `~/nano` as the main/admin workspace (configurable via `FFT_NANO_MAIN_WORKSPACE_DIR`)
 - Persists non-main memory per group in `groups/<group>/MEMORY.md` (plus `groups/<group>/memory/*.md`)
 - Sends agent output back to the originating chat
@@ -35,25 +35,54 @@ Project links:
 
 This is the canonical install-and-run flow.
 
-### 1. Clone and bootstrap
+### 1. Clone and run guided onboarding
 
 ```bash
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
 cd FFT_nano
-./scripts/setup.sh
+./scripts/onboard-all.sh
 ```
 
-`./scripts/setup.sh` performs:
+`./scripts/onboard-all.sh` performs:
 
+- safety backup (`~/nano`, `.env`, `data/`, `groups/`)
 - dependency install (`npm ci` when lockfile exists)
 - `npm run typecheck`
 - `npm run build`
-- agent image build (Apple Container or Docker, auto-detected)
+- global CLI link (`npm link`) so `fft ...` commands are available
+- runtime prep:
+  - Docker runtime: build agent image
+  - Host runtime: prepare host `pi` runner deps (no image build)
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
-- host service install/start by default (`FFT_NANO_AUTO_SERVICE=1`)
+- onboarding wizard (`risk gate`, `quickstart|advanced`, `local|remote`, provider/channel/hatch)
+- host service step (`install/start` by default, with `--no-install-daemon` support)
+- workspace onboarding seed (`SOUL.md`, `USER.md`, `IDENTITY.md`; keeps `BOOTSTRAP.md` for first-run ritual)
+- doctor health check
 
-Users only need this repo. Farm dashboard templates are auto-fetched by `farm-bootstrap.sh` from the FFT companion dashboard repository and pinned by commit for reproducible setup.
+Profile defaults:
+- fresh installs default to `core` profile
+- existing farm-oriented installs auto-preserve to `farm` profile when farm signals/artifacts are detected
+
+If you are upgrading an existing install and want to preserve all local state (`~/nano`, `.env`, `data/`, `groups/`) before changes:
+
+```bash
+npm run backup:state
+# dry-run preview:
+npm run backup:state -- --dry-run
+```
+
+Backups are written to `./backups/` by default.
+
+Choose runtime at install time:
+
+```bash
+# default/recommended isolated runtime
+./scripts/onboard-all.sh --runtime docker
+
+# unisolated host runtime (advanced)
+./scripts/onboard-all.sh --runtime host
+```
 
 ### 2. Configure `.env` (minimum required)
 
@@ -62,6 +91,7 @@ At minimum set provider runtime values plus Telegram credentials.
 Example (OpenAI + Telegram):
 
 ```dotenv
+FFT_NANO_RUNTIME_PROVIDER_PRESET=openai
 PI_API=openai
 PI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=replace-me
@@ -69,9 +99,11 @@ TELEGRAM_BOT_TOKEN=replace-me
 TELEGRAM_ADMIN_SECRET=replace-me
 ```
 
-Recommended provider paths (top 4):
+Recommended provider paths:
 
 - OpenAI: `PI_API=openai`, `PI_MODEL=...`, `OPENAI_API_KEY=...`
+- LM Studio (local): `FFT_NANO_RUNTIME_PROVIDER_PRESET=lm-studio`, `PI_API=openai`, `PI_MODEL=...`, `OPENAI_BASE_URL=http://127.0.0.1:1234/v1`, `PI_API_KEY=lm-studio`
+- Ollama (local): `FFT_NANO_RUNTIME_PROVIDER_PRESET=ollama`, `PI_API=ollama`, `PI_MODEL=...`, `OPENAI_BASE_URL=http://localhost:11434/v1`, `PI_API_KEY=ollama`
 - Anthropic: `PI_API=anthropic`, `PI_MODEL=...`, `ANTHROPIC_API_KEY=...`
 - Gemini: `PI_API=gemini`, `PI_MODEL=...`, `GEMINI_API_KEY=...`
 - OpenRouter: `PI_API=openrouter`, `PI_MODEL=...`, `OPENROUTER_API_KEY=...`
@@ -98,9 +130,10 @@ If you disabled auto-service during setup (`FFT_NANO_AUTO_SERVICE=0`), install/s
 # or, after `npm link`: fft service install
 ```
 
-### 4. Attach the TUI and begin onboarding
+### 4. Attach the TUI
 
-Install CLI aliases (optional):
+`fft` CLI should already be linked globally by onboarding setup.
+If needed, relink manually:
 
 ```bash
 npm link
@@ -120,13 +153,22 @@ Important: `fft tui` is an attach client. The host process must already be runni
 fft --repo /absolute/path/to/FFT_nano tui
 ```
 
-Complete workspace identity bootstrap once:
+If you prefer the linked CLI form, use:
 
 ```bash
-./scripts/onboard.sh --operator "Your Name" --assistant-name FarmFriend --non-interactive
+fft onboard
 ```
 
-This writes onboarding values into `USER.md` and `IDENTITY.md`, removes `BOOTSTRAP.md`, and marks onboarding complete in `.fft_nano/workspace-state.json`.
+### 4b. Open FFT CONTROL CENTER (Web UI)
+
+The web dashboard is served by the same running host process.
+
+```bash
+fft web
+# or: ./scripts/web.sh
+```
+
+By default it listens on `http://127.0.0.1:28990`.
 
 ### 5. Claim Telegram as main/admin
 
@@ -134,6 +176,7 @@ In the bot DM:
 
 1. Run `/id` to confirm chat id.
 2. Run `/main <secret>` using `TELEGRAM_ADMIN_SECRET`.
+   - First-claim shortcut: if no main chat exists yet, and `TELEGRAM_ADMIN_SECRET` is unset, a direct Telegram DM can claim main with `/main`. Set `TELEGRAM_ADMIN_SECRET` afterward and restart.
 
 Once claimed:
 
@@ -143,14 +186,30 @@ Once claimed:
 
 ### Unified Command Reference
 
-If you have not run `npm link`, use `./scripts/start.sh ...` and `./scripts/service.sh ...` equivalents.
+If CLI linking is unavailable/disabled (`FFT_NANO_AUTO_LINK=0`), use `./scripts/start.sh ...` and `./scripts/service.sh ...` equivalents.
 
 Host CLI:
 
+- `fft onboard [--workspace <dir>] [--env-path <file>] [--operator <name>] [--assistant-name <name>] [--non-interactive --accept-risk] [--flow quickstart|advanced|manual] [--mode local|remote] [--runtime auto|docker|host] [--auth-choice openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip] [--api-key <token>] [--model <id>] [--remote-url <url>] [--gateway-port <port>] [--telegram-token <token>] [--whatsapp-enabled <0|1>] [--hatch tui|web|later] [--install-daemon|--no-install-daemon] [--skip-channels] [--skip-skills] [--skip-health] [--skip-ui] [--force] [--json]`
+- `fft profile <status|set|apply> [core|farm]`
 - `fft start [telegram-only]`
 - `fft dev [telegram-only]`
 - `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
+- `fft web [--open]`
+- `fft doctor [--json]`
 - `fft service <install|uninstall|start|stop|restart|status|logs>`
+
+Maintenance:
+
+- `./scripts/onboard-all.sh [--workspace /abs/path --env-path /abs/path/.env --runtime docker|host|auto --non-interactive --accept-risk --operator "Name" --assistant-name OpenClaw --skip-setup --skip-restart --skip-doctor --no-backup --skip-channels --skip-skills --skip-health --skip-ui --install-daemon|--no-install-daemon]`
+- `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
+- `npm run restore:state -- --archive /abs/path/to/backup.tar.gz [--workspace-target /abs/path]`
+
+Config edit note:
+
+- There is no separate `fft config` command in this repo.
+- `fft onboard` runs the full guided wrapper (`onboard-all` path).
+- Use `./scripts/onboard.sh` for wizard-only edits.
 
 TUI slash commands:
 
@@ -162,8 +221,9 @@ TUI slash commands:
 - `/model <provider/model|model>`
 - `/think <off|minimal|low|medium|high|xhigh>`
 - `/reasoning <off|on|stream>`
+- `/verbose [off|new|all|verbose]`
 - `/deliver <on|off>`
-- `/gateway <status|restart>`
+- `/gateway <status|restart|doctor>`
 - `/new` (or `/reset`)
 - `/abort`
 - `/exit`
@@ -173,16 +233,25 @@ Telegram commands (main/admin subset):
 - `/help`
 - `/status`
 - `/id`
+- `/models [query]`
 - `/main <secret>`
-- `/gateway <status|restart>`
+- `/gateway <status|restart|doctor>`
+- `/restart` (alias for `/gateway restart`)
 - `/coder <task>`
 - `/coder-plan <task>`
-- `/tasks`
+- `/tasks [list|due|detail <id>|runs <id> [limit]]`
+
+Tool progress notes:
+
+- `/verbose` cycles `off -> new -> all -> verbose`.
+- `/verbose <off|new|all|verbose>` sets the mode explicitly.
+- Telegram uses a separate progress bubble that is edited as tool calls arrive.
 
 Service-control note:
 
 - Linux may require elevated privileges for some service actions.
-- Runtime `/gateway` commands are non-interactive; if privilege escalation is required and not configured, run `./scripts/service.sh ...` (or `fft service ...`) directly in a shell with sufficient permissions.
+- Runtime `/gateway` commands are non-interactive and cannot prompt for sudo/password.
+- If privilege escalation is required, run `./scripts/service.sh ...` (or `fft service ...`) directly in a shell with sufficient permissions.
 
 TUI keybinds:
 
@@ -195,7 +264,17 @@ TUI keybinds:
 TUI gateway env:
 
 - `FFT_NANO_TUI_PORT` (default `28989`)
+- `FFT_NANO_TUI_HOST` (default `127.0.0.1`, uses `0.0.0.0` in LAN/remote web modes)
 - `FFT_NANO_TUI_ENABLED` (`1` default, set `0` to disable)
+- `FFT_NANO_TUI_AUTH_TOKEN` (optional, defaults to `FFT_NANO_WEB_AUTH_TOKEN` when set)
+
+FFT CONTROL CENTER env:
+
+- `FFT_NANO_WEB_ENABLED` (`1` default)
+- `FFT_NANO_WEB_ACCESS_MODE` (`localhost|lan|remote`, default `localhost`)
+- `FFT_NANO_WEB_HOST` (default `127.0.0.1` for localhost mode, else `0.0.0.0`)
+- `FFT_NANO_WEB_PORT` (default `28990`)
+- `FFT_NANO_WEB_AUTH_TOKEN` (required for `lan` and `remote` modes)
 
 TUI troubleshooting:
 
@@ -213,14 +292,17 @@ npm run auth
 
 ### macOS
 
-- Preferred runtime is Apple Container when `container` is installed.
-- If Apple Container is not running: `container system start`
-- If LLM calls timeout on Apple Container networking:
+- Docker is the default runtime.
+- Ensure daemon health before start:
 
 ```bash
-container system stop
-container system start
+docker info
 ```
+
+- Optional advanced mode: unisolated host runtime (explicit opt-in)
+  - `CONTAINER_RUNTIME=host`
+  - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
+  - for production use additionally set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
 
 ### Linux
 
@@ -233,7 +315,7 @@ docker info
 
 ## Raspberry Pi Startup (Raspberry Pi OS 64-bit)
 
-FFT_nano runs on Pi as a Linux Docker deployment (not Apple Container).
+FFT_nano runs on Pi as a Linux Docker deployment.
 
 Canonical Pi guide (full runbook):
 - `docs/RASPBERRY_PI.md`
@@ -318,13 +400,14 @@ Main/admin chat setup:
 1. DM the bot and run `/id`
 2. Set `TELEGRAM_ADMIN_SECRET` on host
 3. Run `/main <secret>` in the bot DM
+   - If no main chat exists yet and `TELEGRAM_ADMIN_SECRET` is unset, direct DM `/main` can first-claim main. Set secret afterward and restart.
 
 Alternative: set `TELEGRAM_MAIN_CHAT_ID` and restart.
 
 Behavior:
 
 - main chat responds to all messages
-- non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@FarmFriend`)
+- non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@OpenClaw` in core profile)
 - admin and coder delegation commands are main-chat only
 - main/admin can query or restart host service with `/gateway status` and `/gateway restart`
 
@@ -346,17 +429,28 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 - Default main memory and context files live outside this git repo (`~/nano`), which helps keep personal notes out of commits.
 - `groups/main/` is intentionally kept as an empty placeholder in-repo; if you point main workspace into the repo, treat it as local-only and never commit personal memory/state files.
 - Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/` + `skills/`.
+- Main chat bootstrap interview is host-enforced by default for fresh installs while `BOOTSTRAP.md` is pending.
+- During enforced bootstrap, normal tasks are redirected into onboarding interview flow and `/coder` commands are blocked until completion.
+- Completion marker token: `ONBOARDING_COMPLETE` (host strips token and finalizes onboarding state).
+- Soft rollout default: existing installs are not retroactively gated unless explicitly enabled.
+- Gate controls:
+  - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE=1|0`
+  - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING=1|0`
+- Optional startup ritual file: `BOOT.md` (enable with `FFT_NANO_WORKSPACE_ENABLE_BOOT_MD=1` or parity config).
 - Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
 - Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
 - If `HEARTBEAT.md` exists but is effectively empty (headers/comments only), heartbeat runs are skipped.
 - Heartbeat acknowledgements are normalized with token stripping and max-ack gating (`FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, default `300`).
 - Optional active-hours gate: `FFT_NANO_HEARTBEAT_ACTIVE_HOURS` (format: `HH:MM-HH:MM` or `Mon-Fri@HH:MM-HH:MM`).
+- Optional parity config file: `config/runtime.parity.json` (override path via `FFT_NANO_PARITY_CONFIG_PATH`).
 
 Onboarding command options:
 
-- `npm run onboard -- --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
-- `./scripts/onboard.sh --workspace /abs/path --operator "Name" --assistant-name FarmFriend --non-interactive`
-- `--force` rewrites `USER.md` and `IDENTITY.md` even when already customized.
+- `fft onboard --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
+- `./scripts/onboard-all.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
+- `npm run onboard -- --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
+- `./scripts/onboard.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
+- `--force` rewrites `SOUL.md`, `USER.md`, and `IDENTITY.md` even when already customized.
 
 ## Pi-Native Project Skills
 
@@ -409,6 +503,7 @@ Common issues:
 - Missing provider key -> Pi reports no models available
 - Wrong provider/model combo -> model/provider not found
 - Multiple bot instances -> Telegram polling conflict
+- Docker daemon `EOF` / `Cannot connect` / `no space left on device` -> run `./scripts/docker-recover.sh` (backs up old `Docker.raw` and rebuilds Docker VM disk when needed)
 
 ## Development Checks
 
@@ -452,7 +547,7 @@ Core files:
 
 ## Q&A
 
-### Why does non-main chat not respond unless I mention `@FarmFriend`?
+### Why does non-main chat not respond unless I mention `@<ASSISTANT_NAME>`?
 
 That is intentional. Only main responds to all messages; non-main requires trigger prefix.
 
@@ -475,9 +570,10 @@ No. Use `skills/setup` and `skills/runtime` in this repo.
 
 ## Security Model
 
-- Agent runs in Linux containers, not directly on host.
+- Default runtime is Linux container isolation.
+- Optional host runtime exists as an explicit unsafe opt-in (`CONTAINER_RUNTIME=host` + allow flags).
 - Mounts define visibility boundaries.
 - Additional mounts are validated against external allowlist at:
   - `~/.config/fft_nano/mount-allowlist.json`
 
-See `docs/SECURITY.md` for full details.
+See `.github/SECURITY.md` and `docs-site/developer/11-security-model.md` for details.

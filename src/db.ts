@@ -335,6 +335,7 @@ export function storeMessage(
     msg.message?.imageMessage?.caption ||
     msg.message?.videoMessage?.caption ||
     '';
+  if (!content) return;
 
   const timestamp = new Date(Number(msg.messageTimestamp) * 1000).toISOString();
   const sender = msg.key.participant || msg.key.remoteJid || '';
@@ -364,7 +365,9 @@ export function getNewMessages(
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
-    WHERE timestamp > ? AND chat_jid IN (${placeholders}) AND content NOT LIKE ? AND sender != ?
+    WHERE timestamp > ? AND chat_jid IN (${placeholders})
+      AND content NOT LIKE ? AND sender != ?
+      AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
 
@@ -389,7 +392,9 @@ export function getMessagesSince(
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
-    WHERE chat_jid = ? AND timestamp > ? AND content NOT LIKE ? AND sender != ?
+    WHERE chat_jid = ? AND timestamp > ?
+      AND content NOT LIKE ? AND sender != ?
+      AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
   return db

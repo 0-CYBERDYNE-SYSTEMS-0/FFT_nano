@@ -1,0 +1,47 @@
+{
+  "memory": {
+    "backend": "lexical",
+    "missingFileBehavior": "empty",
+    "flushBeforeCompaction": {
+      "enabled": false,
+      "softThresholdTokens": 4000,
+      "systemPrompt": "Session nearing compaction. Store durable memories to markdown files before summary rollover.",
+      "prompt": "Write durable updates to MEMORY.md and memory/YYYY-MM-DD.md if needed. Reply NO_REPLY when nothing should be stored."
+    }
+  },
+  "heartbeat": {
+    "enabled": true,
+    "every": "30m",
+    "prompt": "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+    "target": "main",
+    "to": null,
+    "accountId": null,
+    "includeReasoning": false,
+    "ackMaxChars": 300,
+    "activeHours": null,
+    "activeHoursRaw": null,
+    "visibility": {
+      "showOk": false,
+      "showAlerts": true,
+      "useIndicator": true
+    }
+  },
+  "cron": {
+    "isolatedDefaultDelivery": "announce",
+    "deterministicTopOfHourStagger": {
+      "enabled": false,
+      "maxMs": 300000
+    }
+  },
+  "workspace": {
+    "skipBootstrap": false,
+    "enforceBootstrapGate": true,
+    "enforceBootstrapGateForExisting": false,
+    "bootstrapMaxChars": 20000,
+    "bootstrapTotalMaxChars": 150000,
+    "enableBootMd": false
+  },
+  "doctor": {
+    "enabled": true
+  }
+}

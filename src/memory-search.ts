@@ -334,6 +334,7 @@ export function mergeAndRankMemoryHits(
 export function getMemoryDocument(input: {
   groupFolder: string;
   relPath?: string;
+  missingBehavior?: 'error' | 'empty';
 }): MemoryDocument {
   const relPath = (input.relPath || 'MEMORY.md').trim();
   if (!isAllowedMemoryRelativePath(relPath)) {
@@ -342,6 +343,13 @@ export function getMemoryDocument(input: {
 
   const absPath = resolveAllowedMemoryFilePath(input.groupFolder, relPath);
   if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
+    if (input.missingBehavior === 'empty') {
+      return {
+        groupFolder: input.groupFolder,
+        path: relPath.replace(/\\/g, '/'),
+        content: '',
+      };
+    }
     throw new Error(`Memory file not found: ${relPath}`);
   }
 

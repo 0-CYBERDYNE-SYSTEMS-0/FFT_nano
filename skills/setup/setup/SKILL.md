@@ -15,63 +15,60 @@ Run all commands automatically. Only pause when user action is required (scannin
 npm install
 ```
 
-## 2. Install Container Runtime
+## 2. Install Runtime (Docker Default, Host Optional)
 
-First, detect the platform and check what's available:
+First, detect what is available:
 
 ```bash
 echo "Platform: $(uname -s)"
-which container && echo "Apple Container: installed" || echo "Apple Container: not installed"
-which docker && docker info >/dev/null 2>&1 && echo "Docker: installed and running" || echo "Docker: not installed or not running"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  echo "Docker: installed and running"
+else
+  echo "Docker: not installed or not running"
+fi
 ```
 
-### If NOT on macOS (Linux, etc.)
-
-Apple Container is macOS-only. Use Docker instead.
+### Preferred Path: Docker Runtime
 
 Tell the user:
-> You're on Linux, so we'll use Docker for container isolation. Let me set that up now.
+> FFT_nano now defaults to Docker for isolated execution. I'll configure that as the primary runtime.
 
-**Use the `/convert-to-docker` skill** to convert the codebase to Docker, then continue to Section 3.
+If Docker is missing or stopped, guide installation:
 
-### If on macOS
+**macOS**
+1. Install Docker Desktop from https://www.docker.com/products/docker-desktop/
+2. Open Docker Desktop and wait until it reports "Engine running"
 
-**If Apple Container is already installed:** Continue to Section 3.
+**Linux**
+1. Install Docker Engine: `curl -fsSL https://get.docker.com | sh`
+2. Start daemon: `sudo systemctl start docker`
+3. Optional non-root usage: `sudo usermod -aG docker $USER` (then re-login)
 
-**If Apple Container is NOT installed:** Ask the user:
-> FFT_nano needs a container runtime for isolated agent execution. You have two options:
->
-> 1. **Apple Container** (default) - macOS-native, lightweight, designed for Apple silicon
-> 2. **Docker** - Cross-platform, widely used, works on macOS and Linux
->
-> Which would you prefer?
-
-#### Option A: Apple Container
-
-Tell the user:
-> Apple Container is required for running agents in isolated environments.
->
-> 1. Download the latest `.pkg` from https://github.com/apple/container/releases
-> 2. Double-click to install
-> 3. Run `container system start` to start the service
->
-> Let me know when you've completed these steps.
-
-Wait for user confirmation, then verify:
+Verify:
 
 ```bash
-container system start
-container --version
+docker --version
+docker info >/dev/null && echo "Docker ready"
 ```
 
-**Note:** FFT_nano automatically starts the Apple Container system when it launches, so you don't need to start it manually after reboots.
+### Advanced Path: Host Runtime (No Container)
 
-#### Option B: Docker
+Only use if user explicitly wants no-container mode.
 
-Tell the user:
-> You've chosen Docker. Let me set that up now.
+Set:
 
-**Use the `/convert-to-docker` skill** to convert the codebase to Docker, then continue to Section 3.
+```bash
+cat <<'EOF' >> .env
+CONTAINER_RUNTIME=host
+FFT_NANO_ALLOW_HOST_RUNTIME=1
+EOF
+```
+
+For production, require an explicit second opt-in:
+
+```bash
+echo "FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1" >> .env
+```
 
 ## 3. Configure Claude Authentication
 
@@ -117,24 +114,21 @@ KEY=$(grep "^ANTHROPIC_API_KEY=" .env | cut -d= -f2)
 [ -n "$KEY" ] && echo "API key configured: ${KEY:0:10}...${KEY: -4}" || echo "Missing"
 ```
 
-## 4. Build Container Image
+## 4. Build Runtime Artifacts
 
-Build the FFT_nano agent container:
+### Docker mode (default)
 
 ```bash
 ./container/build.sh
+echo '{}' | docker run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK"
 ```
 
-This creates the `fft_nano-agent:latest` image with Node.js, Chromium, Claude Code CLI, and agent-browser.
-
-Verify the build succeeded by running a simple test (this auto-detects which runtime you're using):
+### Host mode (advanced)
 
 ```bash
-if which docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  echo '{}' | docker run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK" || echo "Container build failed"
-else
-  echo '{}' | container run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK" || echo "Container build failed"
-fi
+npm --prefix container/agent-runner install
+npm --prefix container/agent-runner run build
+test -f container/agent-runner/dist/index.js && echo "Host runner OK"
 ```
 
 ## 5. WhatsApp Authentication
@@ -434,11 +428,11 @@ The user should receive a response in WhatsApp.
 
 **Service not starting**: Check `logs/fft_nano.error.log`
 
-**Container agent fails with "Claude Code process exited with code 1"**:
-- Ensure the container runtime is running:
-  - Apple Container: `container system start`
-  - Docker: `docker info` (start Docker Desktop on macOS, or `sudo systemctl start docker` on Linux)
-- Check container logs: `cat groups/main/logs/container-*.log | tail -50`
+**Agent runtime fails with "Claude Code process exited with code 1"**:
+- Ensure runtime is available:
+  - Docker mode: `docker info` (start Docker Desktop on macOS, or `sudo systemctl start docker` on Linux)
+  - Host mode: verify `.env` has `CONTAINER_RUNTIME=host` and `FFT_NANO_ALLOW_HOST_RUNTIME=1`
+- Check per-run logs: `cat groups/main/logs/runtime-*.log | tail -50`
 
 **No response to messages**:
 - Verify the trigger pattern matches (e.g., `@AssistantName` at start of message)

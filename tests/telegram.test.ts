@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   isTelegramJid,
+  normalizeTelegramDraftText,
   parseTelegramChatId,
   splitTelegramText,
   splitTelegramTextForHtmlLimit,
@@ -60,6 +61,18 @@ test('splitTelegramTextForHtmlLimit re-splits chunks that expand after markdown-
     const html = markdownToTelegramHtml(part);
     assert.ok(html.length <= 256);
   }
+});
+
+test('normalizeTelegramDraftText keeps short text unchanged', () => {
+  assert.equal(normalizeTelegramDraftText('hello draft'), 'hello draft');
+});
+
+test('normalizeTelegramDraftText truncates to Telegram limit with prefix', () => {
+  const long = 'a'.repeat(5000);
+  const normalized = normalizeTelegramDraftText(long);
+  assert.equal(normalized.length, 4096);
+  assert.equal(normalized.startsWith('...'), true);
+  assert.equal(normalized.endsWith('a'), true);
 });
 
 test('markdownToTelegramHtml renders fenced code as Telegram pre/code', () => {

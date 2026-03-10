@@ -40,5 +40,5 @@ Use this skill when a user wants first-time farm setup to be frictionless.
 ## Notes
 
 - Home Assistant stack is Docker/Compose-based.
-- FFT_nano agent runtime remains Apple Container/Docker auto detection.
+- FFT_nano agent runtime defaults to Docker (optional explicit host runtime).
 - Browser-assisted token generation is expected.

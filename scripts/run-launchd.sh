@@ -2,15 +2,19 @@
 set -euo pipefail
 
 PROJECT_ROOT="${FFT_NANO_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-NODE_BIN="${NODE_BIN:-$(command -v node)}"
 APP_ENTRY="$PROJECT_ROOT/dist/index.js"
 
-if [[ -z "${NODE_BIN}" ]]; then
-  echo "node binary not found in PATH; set NODE_BIN explicitly" >&2
-  exit 1
-fi
-
 cd "$PROJECT_ROOT"
+
+# launchd starts with a minimal PATH that often omits Docker/Homebrew locations.
+login_shell="${SHELL:-/bin/zsh}"
+if [[ -x "$login_shell" ]]; then
+  login_path="$("$login_shell" -lc 'printf %s "$PATH"' 2>/dev/null || true)"
+  if [[ -n "$login_path" ]]; then
+    export PATH="$login_path:$PATH"
+  fi
+fi
+export PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
 
 # Load .env if present (used for pi runtime config; can also include TELEGRAM_BOT_TOKEN).
 if [[ -f "$PROJECT_ROOT/.env" ]]; then
@@ -18,6 +22,32 @@ if [[ -f "$PROJECT_ROOT/.env" ]]; then
   # shellcheck disable=SC1091
   . "$PROJECT_ROOT/.env"
   set +a
+fi
+
+resolve_node_bin() {
+  if [[ -n "${NODE_BIN:-}" ]]; then
+    printf '%s\n' "$NODE_BIN"
+    return
+  fi
+
+  # launchd does not load interactive shell profiles; resolve node from login shell first.
+  local login_shell login_node
+  login_shell="${SHELL:-/bin/zsh}"
+  if [[ -x "$login_shell" ]]; then
+    login_node="$("$login_shell" -lc 'command -v node' 2>/dev/null || true)"
+    if [[ -n "$login_node" ]]; then
+      printf '%s\n' "$login_node"
+      return
+    fi
+  fi
+
+  command -v node || true
+}
+
+NODE_BIN="$(resolve_node_bin)"
+if [[ -z "${NODE_BIN}" ]]; then
+  echo "node binary not found in PATH/login shell; set NODE_BIN explicitly" >&2
+  exit 1
 fi
 
 # Prefer TELEGRAM_BOT_TOKEN from .env, else fall back to macOS Keychain.
@@ -36,6 +66,11 @@ export TELEGRAM_AUTO_REGISTER="${TELEGRAM_AUTO_REGISTER:-0}"
 
 # Attached TUI gateway defaults (overridable via launchd/env).
 export FFT_NANO_TUI_ENABLED="${FFT_NANO_TUI_ENABLED:-1}"
+export FFT_NANO_TUI_HOST="${FFT_NANO_TUI_HOST:-127.0.0.1}"
 export FFT_NANO_TUI_PORT="${FFT_NANO_TUI_PORT:-28989}"
+export FFT_NANO_WEB_ENABLED="${FFT_NANO_WEB_ENABLED:-1}"
+export FFT_NANO_WEB_ACCESS_MODE="${FFT_NANO_WEB_ACCESS_MODE:-localhost}"
+export FFT_NANO_WEB_HOST="${FFT_NANO_WEB_HOST:-127.0.0.1}"
+export FFT_NANO_WEB_PORT="${FFT_NANO_WEB_PORT:-28990}"
 
 exec "$NODE_BIN" "$APP_ENTRY"
