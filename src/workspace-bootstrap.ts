@@ -67,7 +67,7 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
   'IDENTITY.md': [
     '# IDENTITY',
     '',
-    'Name: OpenClaw',
+    'Name: [set during onboarding]',
     'Role: Main orchestrator + coding-capable assistant',
   ].join('\n'),
   'PRINCIPLES.md': [
