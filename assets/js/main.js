@@ -205,7 +205,7 @@ if (heroBg) {
 
 /* ── Progressive Section Transparency ─────────────────────────────────────── */
 
-const sectionOpacities = [0.88, 0.84, 0.80, 0.76, 0.72, 0.68, 0.68, 0.68, 0.68];
+const sectionOpacities = [0.92, 0.91, 0.90, 0.89, 0.88, 0.87, 0.87, 0.87, 0.87];
 document.querySelectorAll('section:not(.hero)').forEach((section, i) => {
   section.style.background = `rgba(240, 236, 230, ${sectionOpacities[i] ?? 0.68})`;
 });

@@ -1042,7 +1042,7 @@ section > .section-header {
   padding: 0.4rem 0.9rem;
   border-radius: var(--radius-pill);
   font-family: var(--font-body);
-  font-size: 0.82rem;
+  font-size: 0.92rem;
   font-weight: 500;
   white-space: nowrap;
   cursor: default;
