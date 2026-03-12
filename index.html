@@ -21,15 +21,11 @@
       <span>FFT Nano</span>
     </a>
     <ul class="nav-links desktop-nav">
-      <li><a href="#what-is">What is FFT Nano?</a></li>
-      <li><a href="#why-matters">Why This Matters</a></li>
-      <li><a href="#products">Offerings</a></li>
-      <li><a href="#get-started">Get Started</a></li>
-      <li><a href="#technical-presentation">Presentation</a></li>
-      <li><a href="#skills-ecosystem">Skills</a></li>
-      <li><a href="https://farm-friend.com/fft-nano/docs/" target="_blank"><i class="fas fa-book"></i> Docs</a></li>
-      <li><a href="#contact">Contact</a></li>
-      <li><a href="#support" style="color: var(--brand-accent);"><i class="fas fa-heart"></i> Support</a></li>
+      <li><a href="#what-it-does">What It Does</a></li>
+      <li><a href="#why-fft-nano">Why FFT Nano</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="https://farm-friend.com/fft-nano/docs/" target="_blank">Docs</a></li>
+      <li><a href="#contact" class="btn btn-nav-cta">Book a Call</a></li>
     </ul>
     <button class="mobile-menu-btn" onclick="toggleMenu()" type="button" aria-label="Open menu" aria-controls="mobileMenu" aria-expanded="false">
       <i class="fas fa-bars"></i>
@@ -39,790 +35,308 @@
   <!-- Mobile Menu Overlay -->
   <div class="mobile-menu-overlay" onclick="toggleMenu()" id="mobileMenuOverlay"></div>
   <nav class="mobile-menu" id="mobileMenu">
-    <!-- Close Button -->
     <button class="mobile-close-btn" onclick="toggleMenu()" type="button" aria-label="Close menu">
       <i class="fas fa-times"></i>
     </button>
-
     <ul class="nav-links mobile-nav">
-      <li><a href="#what-is">What is FFT Nano?</a></li>
-      <li><a href="#why-matters">Why This Matters</a></li>
-      <li><a href="#products">Offerings</a></li>
-      <li><a href="#get-started">Get Started</a></li>
-      <li><a href="#technical-presentation">Presentation</a></li>
-      <li><a href="#skills-ecosystem">Skills</a></li>
-      <li><a href="https://farm-friend.com/fft-nano/docs/" target="_blank"><i class="fas fa-book"></i> Docs</a></li>
-      <li><a href="#contact">Contact</a></li>
-      <li><a href="#support" style="color: var(--brand-accent);"><i class="fas fa-heart"></i> Support</a></li>
+      <li><a href="#what-it-does" onclick="toggleMenu()">What It Does</a></li>
+      <li><a href="#why-fft-nano" onclick="toggleMenu()">Why FFT Nano</a></li>
+      <li><a href="#pricing" onclick="toggleMenu()">Pricing</a></li>
+      <li><a href="https://farm-friend.com/fft-nano/docs/" target="_blank" onclick="toggleMenu()">Docs</a></li>
+      <li><a href="#contact" class="btn btn-nav-cta" onclick="toggleMenu()">Book a Call</a></li>
     </ul>
   </nav>
 
   <main>
-    <!-- Hero Section -->
-    <section class="hero">
-      <div class="hero-video-bg">
-        <div class="video-overlay"></div>
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="particles" id="particles"></div>
+    <div class="hero-content">
+      <h1>Talk to Your Farm.</h1>
+      <p class="hero-subtitle">Describe what your operation needs in plain English. FFT Nano builds it, deploys it, and runs it &mdash; on your hardware, with your data, under your control.</p>
+      <div class="hero-cta">
+        <a href="https://calendly.com/scrim_wiggins/farm-friend-on-board" target="_blank" rel="noopener" class="btn btn-primary" onclick="return openCalendlyWidget(event)">Book a Free Demo</a>
+        <a href="#demo-video" class="hero-secondary-link">Watch the Demo <i class="fas fa-arrow-down"></i></a>
       </div>
-      <div class="particles" id="particles"></div>
-      <div class="hero-content">
-        <h1>Talk to Your Farm.<br><span>FFT Nano Will Create Entire Systems For You.</span></h1>
-        <p class="hero-sub">The first AI platform that generates its own capabilities. Describe what you want in plain English — FFT Nano writes code, deploys it to edge devices, coordinates an intelligent swarm, and learns from your entire farm.</p>
-        
-        <div class="hero-stats">
-          <div class="stat">1 Platform</div>
-          <div class="stat">∞ Possibilities</div>
-          <div class="stat">0 Gatekeepers</div>
+    </div>
+  </section>
+
+  <!-- Trust Bar -->
+  <div class="trust-bar">
+    <div class="trust-item"><i class="fas fa-lock-open"></i> Open Source</div>
+    <div class="trust-item"><i class="fas fa-shield-alt"></i> MIT Licensed</div>
+    <div class="trust-item"><i class="fas fa-server"></i> Runs on Your Hardware</div>
+    <div class="trust-item"><i class="fas fa-dollar-sign"></i> Free Forever</div>
+  </div>
+
+  <!-- Section 1: Demo Video -->
+  <section id="demo-video" class="demo-video-section">
+    <div class="section-header">
+      <h2>See It In Action</h2>
+      <p>Watch FFT Nano transform farm operations in real time</p>
+    </div>
+    <div class="video-player-wrapper">
+      <video id="demo-player" controls autoplay muted loop playsinline preload="none" poster="assets/backgrounds/hero-bg.jpg">
+        <source data-src="assets/fft_nano-hero-voice.mp4" type="video/mp4">
+      </video>
+    </div>
+  </section>
+
+  <!-- Section 2: What It Does -->
+  <section id="what-it-does">
+    <div class="section-header">
+      <h2>What It Does</h2>
+      <p>One platform that adapts to whatever your farm needs</p>
+    </div>
+
+    <div class="outcome-grid">
+      <div class="outcome-card">
+        <div class="outcome-icon"><i class="fas fa-comments"></i></div>
+        <h3>Describe It, It Gets Built</h3>
+        <p>Need a fertilizer calculator? A frost alert system? An equipment monitor? Just describe what you want in plain English. FFT Nano writes the code, deploys it, and runs it. In minutes, not months.</p>
+      </div>
+
+      <div class="outcome-card">
+        <div class="outcome-icon"><i class="fas fa-plug"></i></div>
+        <h3>Works With Every Piece of Equipment You Own</h3>
+        <p>That 1998 grain elevator talks to your 2024 fleet system. Old equipment, new sensors, cloud services &mdash; FFT Nano bridges them all automatically. No rip-and-replace required.</p>
+      </div>
+
+      <div class="outcome-card">
+        <div class="outcome-icon"><i class="fas fa-brain"></i></div>
+        <h3>Gets Smarter Every Season</h3>
+        <p>FFT Nano learns from your soil, your crops, your equipment, and your decisions. It optimizes workflows over time, spots patterns you'd miss, and remembers everything so you don't have to.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 3: Why FFT Nano -->
+  <section id="why-fft-nano">
+    <div class="section-header">
+      <h2>Why FFT Nano</h2>
+      <p>Built for farmers who want control, not complexity</p>
+    </div>
+
+    <div class="value-grid">
+      <div class="value-card">
+        <div class="value-icon"><i class="fas fa-home"></i></div>
+        <h3>Your Farm, Your Data</h3>
+        <p>FFT Nano runs on your hardware. Your data never leaves your property. No cloud dependency, no subscription fees, no vendor lock-in. You own everything &mdash; the software, the data, and the decisions.</p>
+      </div>
+
+      <div class="value-card">
+        <div class="value-icon"><i class="fas fa-code-branch"></i></div>
+        <h3>Open Source &amp; Free</h3>
+        <p>MIT licensed. Free to use, modify, and share. No usage limits, no feature gates, no surprise bills. If you can run a Raspberry Pi, you can run FFT Nano.</p>
+      </div>
+
+      <div class="value-card">
+        <div class="value-icon"><i class="fas fa-users"></i></div>
+        <h3>You Stay in the Driver's Seat</h3>
+        <p>FFT Nano automates the repetitive work &mdash; checking sensors, logging data, coordinating equipment. You make the strategic decisions. It's your tool, not your replacement.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 4: Skills Ecosystem -->
+  <section id="skills-ecosystem">
+    <div class="section-header">
+      <h2>Growing Skills Ecosystem</h2>
+      <p>Community-built capabilities that extend what FFT Nano can do</p>
+    </div>
+
+    <div class="skills-ticker-wrap">
+      <!-- Row 1: scrolls left -->
+      <div class="skills-ticker-row" aria-hidden="true">
+        <div class="skills-ticker-track track-left">
+          <span class="skill-pill"><i class="fas fa-tint"></i> Irrigation Monitor</span>
+          <span class="skill-pill"><i class="fas fa-thermometer-half"></i> Frost Alert</span>
+          <span class="skill-pill"><i class="fas fa-seedling"></i> Yield Predictor</span>
+          <span class="skill-pill"><i class="fas fa-bug"></i> Pest ID</span>
+          <span class="skill-pill"><i class="fas fa-microchip"></i> Equipment Translator</span>
+          <span class="skill-pill"><i class="fas fa-dollar-sign"></i> Price Oracle</span>
+          <span class="skill-pill"><i class="fas fa-flask"></i> Soil Analyzer</span>
+          <span class="skill-pill"><i class="fas fa-cloud-sun-rain"></i> Weather Scout</span>
+          <span class="skill-pill"><i class="fas fa-leaf"></i> Seed Library</span>
+          <span class="skill-pill"><i class="fas fa-calendar-alt"></i> Harvest Planner</span>
+          <span class="skill-pill"><i class="fas fa-chart-line"></i> Market Tracker</span>
+          <!-- duplicate for seamless loop -->
+          <span class="skill-pill"><i class="fas fa-tint"></i> Irrigation Monitor</span>
+          <span class="skill-pill"><i class="fas fa-thermometer-half"></i> Frost Alert</span>
+          <span class="skill-pill"><i class="fas fa-seedling"></i> Yield Predictor</span>
+          <span class="skill-pill"><i class="fas fa-bug"></i> Pest ID</span>
+          <span class="skill-pill"><i class="fas fa-microchip"></i> Equipment Translator</span>
+          <span class="skill-pill"><i class="fas fa-dollar-sign"></i> Price Oracle</span>
+          <span class="skill-pill"><i class="fas fa-flask"></i> Soil Analyzer</span>
+          <span class="skill-pill"><i class="fas fa-cloud-sun-rain"></i> Weather Scout</span>
+          <span class="skill-pill"><i class="fas fa-leaf"></i> Seed Library</span>
+          <span class="skill-pill"><i class="fas fa-calendar-alt"></i> Harvest Planner</span>
+          <span class="skill-pill"><i class="fas fa-chart-line"></i> Market Tracker</span>
         </div>
-        
-        <div class="hero-cta">
-          <a href="#get-started" class="btn btn-primary">
-            <i class="fas fa-download"></i> Download Free
+      </div>
+
+      <!-- Row 2: scrolls right -->
+      <div class="skills-ticker-row" aria-hidden="true">
+        <div class="skills-ticker-track track-right">
+          <span class="skill-pill"><i class="fas fa-cow"></i> Feed Calculator</span>
+          <span class="skill-pill"><i class="fas fa-vial"></i> Water Quality</span>
+          <span class="skill-pill"><i class="fas fa-tractor"></i> Fleet Coordinator</span>
+          <span class="skill-pill"><i class="fas fa-sun"></i> Solar Monitor</span>
+          <span class="skill-pill"><i class="fas fa-wind"></i> Wind Tracker</span>
+          <span class="skill-pill"><i class="fas fa-dna"></i> Crop Disease Scout</span>
+          <span class="skill-pill"><i class="fas fa-map-marked-alt"></i> Field Mapper</span>
+          <span class="skill-pill"><i class="fas fa-recycle"></i> Compost Tracker</span>
+          <span class="skill-pill"><i class="fas fa-broadcast-tower"></i> Sensor Hub</span>
+          <span class="skill-pill"><i class="fas fa-robot"></i> Drone Coordinator</span>
+          <span class="skill-pill"><i class="fas fa-warehouse"></i> Storage Monitor</span>
+          <!-- duplicate for seamless loop -->
+          <span class="skill-pill"><i class="fas fa-cow"></i> Feed Calculator</span>
+          <span class="skill-pill"><i class="fas fa-vial"></i> Water Quality</span>
+          <span class="skill-pill"><i class="fas fa-tractor"></i> Fleet Coordinator</span>
+          <span class="skill-pill"><i class="fas fa-sun"></i> Solar Monitor</span>
+          <span class="skill-pill"><i class="fas fa-wind"></i> Wind Tracker</span>
+          <span class="skill-pill"><i class="fas fa-dna"></i> Crop Disease Scout</span>
+          <span class="skill-pill"><i class="fas fa-map-marked-alt"></i> Field Mapper</span>
+          <span class="skill-pill"><i class="fas fa-recycle"></i> Compost Tracker</span>
+          <span class="skill-pill"><i class="fas fa-broadcast-tower"></i> Sensor Hub</span>
+          <span class="skill-pill"><i class="fas fa-robot"></i> Drone Coordinator</span>
+          <span class="skill-pill"><i class="fas fa-warehouse"></i> Storage Monitor</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="skills-cta">
+      <a href="https://github.com/farmfriend-labs/agent-skills-farming" target="_blank" rel="noopener" class="btn btn-secondary">
+        <i class="fab fa-github"></i> Explore Skills Repository
+      </a>
+    </div>
+  </section>
+
+  <!-- Section 5: Pricing -->
+  <section id="pricing" class="pricing-section">
+    <div class="section-header">
+      <h2>Simple, Honest Pricing</h2>
+      <p>Start free. Get help when you need it.</p>
+    </div>
+
+    <div class="pricing-grid">
+      <!-- FREE tier -->
+      <div class="pricing-card">
+        <div class="pricing-header">
+          <span class="pricing-badge">FREE</span>
+          <div class="pricing-price">$0</div>
+          <div class="pricing-name">Community</div>
+        </div>
+        <div class="pricing-body">
+          <ul>
+            <li>Full FFT Nano platform</li>
+            <li>All core features included</li>
+            <li>Community Discord support</li>
+            <li>GitHub issue tracking</li>
+            <li>Self-serve documentation</li>
+            <li>MIT licensed, forever free</li>
+          </ul>
+          <a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano" class="btn btn-secondary" target="_blank">
+            <i class="fab fa-github"></i> Get Started Free
           </a>
-          <a href="#demo-video" class="btn btn-secondary">
-            <i class="fas fa-play"></i> See It In Action
+        </div>
+      </div>
+
+      <!-- Farm Setup -->
+      <div class="pricing-card">
+        <div class="pricing-header">
+          <div class="pricing-price">From $1,500</div>
+          <div class="pricing-name">Farm Setup</div>
+        </div>
+        <div class="pricing-body">
+          <ul>
+            <li>Professional installation on your hardware</li>
+            <li>Provider and channel configuration</li>
+            <li>Full farm bootstrap and validation</li>
+            <li>Operator handoff with runbooks</li>
+            <li>1 follow-up optimization session</li>
+            <li>One-time engagement</li>
+          </ul>
+          <a href="#contact" class="btn btn-primary">
+            Book Setup Call
           </a>
-          <a href="#technical-presentation" class="btn btn-secondary">
-            <i class="fas fa-file-powerpoint"></i> View Presentation
+        </div>
+      </div>
+
+      <!-- Monthly Support — FEATURED -->
+      <div class="pricing-card featured">
+        <div class="pricing-header">
+          <span class="pricing-badge">MOST POPULAR</span>
+          <div class="pricing-price">From $750/mo</div>
+          <div class="pricing-name">Managed Support</div>
+        </div>
+        <div class="pricing-body">
+          <ul>
+            <li>SLA-backed priority support</li>
+            <li>Bug triage and incident guidance</li>
+            <li>Release upgrades and rollback support</li>
+            <li>Monthly security and reliability review</li>
+            <li>Operational office hours</li>
+            <li>Month-to-month or annual</li>
+          </ul>
+          <a href="#contact" class="btn btn-primary">
+            Book Support Call
           </a>
         </div>
       </div>
-    </section>
 
-    <!-- Demo Video Section -->
-    <section id="demo-video" class="demo-video-section">
-      <div class="section-header">
-        <h2>See It In Action</h2>
-        <p>Watch FFT Nano transform your farm operations</p>
-      </div>
-      <div class="video-player-wrapper">
-        <video id="demo-player" controls autoplay muted loop playsinline preload="none" poster="assets/backgrounds/hero-bg.jpg">
-          <source data-src="assets/fft_nano-hero-voice.mp4" type="video/mp4">
-          Your browser does not support the video tag.
-        </video>
-      </div>
-    </section>
-
-    <!-- What is FFT Nano Section -->
-    <section id="what-is">
-      <div class="section-header">
-        <span class="ref-number top-right">SEC-01</span>
-        <h2>What is FFT Nano?</h2>
-        <p>Single FFT Nano Instance. Infinite Possibilities.</p>
-      </div>
-      
-      <div class="features-grid">
-        <div class="feature-card" tabindex="0">
-          <span class="ref-number top-right">01</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="feature-icon">
-            <i class="fas fa-code"></i>
-          </div>
-          <h3>Natural Language Code Generation</h3>
-          <p>You speak plain English, FFT Nano writes working code. Python, Bash, Node.js, C, Rust — whatever the task needs. No coding required. No software engineers needed. Just describe what you want, and FFT Nano creates it.</p>
+      <!-- Enterprise -->
+      <div class="pricing-card">
+        <div class="pricing-header">
+          <div class="pricing-price">Custom</div>
+          <div class="pricing-name">Enterprise</div>
         </div>
-        
-        <div class="feature-card" tabindex="0">
-          <span class="ref-number top-right">02</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="feature-icon">
-            <i class="fas fa-exchange-alt"></i>
-          </div>
-          <h3>Universal Protocol Translation</h3>
-          <p>Your 1998 grain elevator (RS232) needs to talk to your 2026 cloud fleet system (REST API)? FFT Nano generates protocol bridges instantly. CAN bus ↔ Modbus ↔ MQTT ↔ REST APIs ↔ RS232. Legacy equipment ↔ Modern systems. One platform, unlimited translation.</p>
-        </div>
-        
-        <div class="feature-card" tabindex="0">
-          <span class="ref-number top-right">03</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="feature-icon">
-            <i class="fas fa-tools"></i>
-          </div>
-          <h3>Instant Tool Creation</h3>
-          <p>Need a fertilizer optimizer? Describe it. Need an equipment monitor? Describe it. Need a safety system? Describe it. FFT Nano creates, deploys, and runs it. In minutes, not months. No expensive software packages. No vendor contracts.</p>
-        </div>
-        
-        <div class="feature-card" tabindex="0">
-          <span class="ref-number top-right">04</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="feature-icon">
-            <i class="fas fa-chart-line"></i>
-          </div>
-          <h3>Self-Improving Workflows</h3>
-          <p>FFT Nano doesn't just run scripts. It learns from them. Soil patterns, crop needs, equipment health, herd behavior. Optimizes workflows over time. Gets smarter every day. Self-improving automation.</p>
-        </div>
-      </div>
-      
-      <!-- Industrial Divider -->
-      <div class="industrial-divider">
-        <span class="tick-left"></span>
-        <span class="tick-right"></span>
-      </div>
-    </section>
-
-    <!-- Why This Matters Section -->
-    <section id="why-matters" class="why-matters">
-      <div class="section-header">
-        <span class="ref-number top-right">SEC-02</span>
-        <h2>Why This Matters</h2>
-        <p>Democratizing Agricultural Intelligence</p>
-      </div>
-      
-      <div class="matters-grid">
-        <div class="matters-card" tabindex="0">
-          <span class="ref-number top-right">M1</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <h3>Democratizing Agriculture</h3>
-          <p>Today's agricultural technology is controlled by a handful of corporations. John Deere, Bayer, Corteva, Climate Corp — they decide what features farmers get, what data farmers can see, and how much farmers pay. Farmers are renters of their own technology, not owners.</p>
-          <p style="margin-top: 1rem;"><strong>FFT Nano is different:</strong></p>
+        <div class="pricing-body">
           <ul>
-            <li>Open source (anyone can use, modify, improve)</li>
-            <li>Runs on YOUR farm (data stays local)</li>
-            <li>Free (no subscriptions, no usage limits)</li>
-            <li>Universal (works with ANY equipment)</li>
-            <li>Farmer-owned (you own everything)</li>
+            <li>Multi-site deployment architecture</li>
+            <li>Custom integrations and protocol bridges</li>
+            <li>Security review and threat modeling</li>
+            <li>Team onboarding and training</li>
+            <li>Phased rollout with milestones</li>
+            <li>Dedicated account management</li>
           </ul>
-        </div>
-        
-        <div class="matters-card" tabindex="0">
-          <span class="ref-number top-right">M2</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <h3>Food & Medicine in Local Hands</h3>
-          <p>When farmers control their own AI and data, communities decide what to grow. Local knowledge is preserved. Traditional varieties are saved. Food systems stay local. Medicine & nutrition knowledge stays in community hands.</p>
-          <ul>
-            <li>Communities decide what to grow (not corporate seed mandates)</li>
-            <li>Local knowledge is preserved (traditional varieties saved)</li>
-            <li>Seed saving is possible (not restricted by IP)</li>
-            <li>Food systems stay local (not corporate-controlled)</li>
-            <li>Medicine & nutrition preserved</li>
-            <li>Resilient, independent agriculture</li>
-          </ul>
-        </div>
-        
-        <div class="matters-card" tabindex="0">
-          <span class="ref-number top-right">M3</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <h3>Don't Fear AI — Own It</h3>
-          <p>FFT Nano AUGMENTS you, doesn't replace you. It's YOUR tool, not YOUR boss. You are in the driver's seat. FFT Nano is your intelligent assistant.</p>
-          <p style="margin-top: 1rem;"><strong>What FFT Nano Does:</strong></p>
-          <ul>
-            <li>Automates repetitive tasks (checking sensors, logging data)</li>
-            <li>Remembers details (maintenance dates, spray records)</li>
-            <li>Coordinates systems (protocol translation, device coordination)</li>
-            <li>Provides insights (patterns, optimizations, predictions)</li>
-          </ul>
-          <p style="margin-top: 1rem;"><strong>What YOU Still Do:</strong></p>
-          <ul>
-            <li>Make strategic decisions (what to grow, when to harvest)</li>
-            <li>Provide expertise (soil science, crop knowledge)</li>
-            <li>Own the farm (land, equipment, livestock)</li>
-          </ul>
-        </div>
-        
-        <div class="matters-card" tabindex="0">
-          <span class="ref-number top-right">M4</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <h3>Sustainable & Regenerative</h3>
-          <p>FFT Nano enables precision agriculture without expensive proprietary systems. Optimize resource use, reduce waste, and improve soil health through data-driven decisions.</p>
-          <ul>
-            <li>Precision irrigation (water only where needed)</li>
-            <li>Targeted fertilization (reduce runoff)</li>
-            <li>Integrated pest management (monitor patterns)</li>
-            <li>Crop rotation planning (soil health data)</li>
-            <li>Yield optimization (historical analysis)</li>
-            <li>Resource efficiency (fuel, seeds, chemicals)</li>
-          </ul>
+          <a href="#contact" class="btn btn-primary">
+            Contact Sales
+          </a>
         </div>
       </div>
-      
-      <!-- Industrial Divider -->
-      <div class="industrial-divider">
-        <span class="tick-left"></span>
-        <span class="tick-right"></span>
-      </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- Real Products Section -->
-    <section id="products" class="products-section">
-      <div class="section-header">
-        <span class="ref-number top-right">SEC-03</span>
-        <h2>Professional Services</h2>
-        <p>Concrete offerings you can book now for setup, support, custom builds, and enterprise rollout.</p>
-      </div>
-      
-      <div class="products-grid">
-        <div class="product-card" tabindex="0">
-          <span class="ref-number top-right">P1</span>
-          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="product-header free">
-            <div class="product-price">FROM $1,500</div>
-            <div class="product-name">Farm Onboarding & Setup Sprint</div>
-          </div>
-          <div class="product-body">
-            <ul>
-              <li>Install and harden FFT Nano on your target environment</li>
-              <li>Configure providers, channels, and secure secrets handling</li>
-              <li>Run full farm bootstrap + validation path</li>
-              <li>Baseline runbooks and operator handoff</li>
-              <li>1 follow-up optimization session included</li>
-              <li>One-time scoped engagement</li>
-            </ul>
-          </div>
-        </div>
-        
-        <div class="product-card" tabindex="0">
-          <span class="ref-number top-right">P2</span>
-          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="product-header">
-            <div class="product-price">FROM $750/MO</div>
-            <div class="product-name">Managed Support Retainer</div>
-          </div>
-          <div class="product-body">
-            <ul>
-              <li>SLA-backed support tiers</li>
-              <li>Priority bug triage and incident guidance</li>
-              <li>Release upgrade planning and rollback support</li>
-              <li>Monthly reliability and security review</li>
-              <li>Operational office hours for your team</li>
-              <li>Best fit for production farm operations</li>
-              <li>Month-to-month or annual plans</li>
-            </ul>
-          </div>
-        </div>
-        
-        <div class="product-card" tabindex="0">
-          <span class="ref-number top-right">P3</span>
-          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="product-header">
-            <div class="product-price">FROM $3,500</div>
-            <div class="product-name">Custom Builds & Integrations</div>
-          </div>
-          <div class="product-body">
-            <ul>
-              <li>Custom agent workflows tailored to your operation</li>
-              <li>Protocol bridges for mixed-vendor equipment stacks</li>
-              <li>Home Assistant automations and data pipelines</li>
-              <li>Alerting, logging, and recovery logic</li>
-              <li>Knowledge transfer plus maintainer docs</li>
-              <li>Fixed-scope sprint delivery</li>
-            </ul>
-          </div>
-        </div>
-        
-        <div class="product-card" tabindex="0">
-          <span class="ref-number top-right">P4</span>
-          <div class="plus-mark" style="top: 70px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 70px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="edge-ticks">
-            <div class="h-tick bottom" style="left: 15%;"></div>
-            <div class="h-tick bottom" style="left: 30%;"></div>
-            <div class="h-tick bottom" style="left: 45%;"></div>
-            <div class="h-tick bottom" style="left: 60%;"></div>
-            <div class="h-tick bottom" style="left: 75%;"></div>
-            <div class="v-tick right" style="top: 15%;"></div>
-            <div class="v-tick right" style="top: 30%;"></div>
-            <div class="v-tick right" style="top: 45%;"></div>
-            <div class="v-tick right" style="top: 60%;"></div>
-            <div class="v-tick right" style="top: 75%;"></div>
-          </div>
-          <div class="product-header">
-            <div class="product-price">CUSTOM QUOTE</div>
-            <div class="product-name">Enterprise Adoption Program</div>
-          </div>
-          <div class="product-body">
-            <ul>
-              <li>Multi-site deployment architecture and governance</li>
-              <li>RBAC policy model and audit trail requirements</li>
-              <li>Security review, threat modeling, and controls</li>
-              <li>Team onboarding for operators and engineering staff</li>
-              <li>Phased rollout plan with measurable milestones</li>
-              <li>Executive reporting and adoption KPI tracking</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Industrial Divider -->
-      <div class="industrial-divider">
-        <span class="tick-left"></span>
-        <span class="tick-right"></span>
-      </div>
-    </section>
+  <!-- Section 6: Contact -->
+  <section id="contact" class="contact-section">
+    <div class="section-header">
+      <h2>Let's Get Your Farm Running</h2>
+      <p>Book a 30-minute call. We'll scope your needs, answer questions, and get you started.</p>
+    </div>
 
-    <!-- Get Started Section -->
-    <section id="get-started" class="get-started">
-      <div class="section-header">
-        <span class="ref-number top-right">SEC-04</span>
-        <h2>Get Started</h2>
-        <p>Five Accurate Steps to Run FFT Nano</p>
-      </div>
-      
-      <div class="steps-container">
-        <div class="step" tabindex="0">
-          <span class="ref-number top-right">S1</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="step-number">1</div>
-          <h3>Clone</h3>
-          <code>git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git</code>
-          <code>cd FFT_nano</code>
-        </div>
-        
-        <div class="step" tabindex="0">
-          <span class="ref-number top-right">S2</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="step-number">2</div>
-          <h3>Setup</h3>
-          <code>./scripts/setup.sh</code>
-          <p style="color: var(--text-muted); margin-top: 0.5rem;">Installs dependencies, typechecks, builds, container image, and scaffolds .env.</p>
-        </div>
-        
-        <div class="step" tabindex="0">
-          <span class="ref-number top-right">S3</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="step-number">3</div>
-          <h3>Configure .env</h3>
-          <code>cp .env.example .env</code>
-          <p style="color: var(--text-muted); margin-top: 0.5rem;">Set provider model/API keys and channel credentials before runtime.</p>
-        </div>
-        
-        <div class="step" tabindex="0">
-          <span class="ref-number top-right">S4</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="step-number">4</div>
-          <h3>Start</h3>
-          <code>./scripts/start.sh telegram-only</code>
-          <p style="color: var(--text-muted); margin-top: 0.5rem;">Recommended runtime. Use <code>./scripts/start.sh start</code> for production-style startup.</p>
-        </div>
-
-        <div class="step" tabindex="0">
-          <span class="ref-number top-right">S5</span>
-          <div class="plus-mark" style="top: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="top: 50px; right: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; left: 50px;"></div>
-          <div class="plus-mark" style="bottom: 50px; right: 50px;"></div>
-          <div class="step-number">5</div>
-          <h3>Optional WhatsApp Auth</h3>
-          <code>npm run auth</code>
-          <p style="color: var(--text-muted); margin-top: 0.5rem;">Run once only if WhatsApp is enabled.</p>
-        </div>
-      </div>
-      
-      <p style="color: var(--text-muted); margin-top: 2rem;">Need production help? Join the waitlist for Pro Support, Onboarding Services, and Enterprise Add-Ons.</p>
-      
-      <div style="margin-top: 3rem;">
-        <p style="color: var(--brand-accent); font-size: 1.2rem; font-weight: 600;">Try It Free</p>
-        <p style="color: var(--text-muted); margin-top: 0.5rem;">No credit card. No subscription. No commitment.<br>Just clone, setup, configure, and run your farm's intelligence.</p>
-      </div>
-      
-      <div class="hero-cta" style="margin-top: 3rem;">
-        <a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano" class="btn btn-primary" target="_blank">
-          <i class="fab fa-github"></i> Download from GitHub
-        </a>
-        <a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#readme" class="btn btn-secondary" target="_blank">
-          <i class="fas fa-book"></i> View Documentation
+    <div class="contact-grid">
+      <div class="contact-card">
+        <h3>Book a Call</h3>
+        <p>Schedule a focused onboarding call. We'll define scope, timeline, and success criteria together.</p>
+        <a href="https://calendly.com/scrim_wiggins/farm-friend-on-board" target="_blank" rel="noopener" class="btn btn-primary" onclick="return openCalendlyWidget(event)">
+          <i class="far fa-calendar-check"></i> Schedule Discovery Call
         </a>
       </div>
-      
-      <!-- Industrial Divider -->
-      <div class="industrial-divider">
-        <span class="tick-left"></span>
-        <span class="tick-right"></span>
-      </div>
-    </section>
 
-    <!-- Technical Presentation Section -->
-    <section class="presentation-section" id="technical-presentation">
-      <div class="section-header">
-        <span class="ref-number top-right">SEC-05</span>
-        <h2>Technical Presentation</h2>
-        <p>Complete 17-slide presentation explaining FFT Nano architecture, skills system, and orchestration layer. Navigate through slides using controls below or use arrow keys.</p>
-      </div>
-
-      <div class="fft-presentation-container">
-        <!-- Slide Viewer -->
-        <div class="fft-slide-viewer">
-          <div class="slide-container">
-            <img
-              src="slides/terminal-pitchdeck/slide-01.png"
-              alt="FFT Nano Technical Architecture - Slide 1"
-              class="fft-slide-image"
-              id="fft-current-slide"
-              loading="lazy"
-            >
-          </div>
-        </div>
-
-        <!-- Slide Controls -->
-        <div class="fft-slide-controls">
-          <div class="slide-info">
-            <span class="fft-slide-counter">Slide <span id="fft-slide-number">1</span> of 17</span>
-          </div>
-          <div class="fft-slide-nav-buttons">
-            <button class="fft-nav-btn" id="fft-prev-btn" disabled>← Previous</button>
-            <button class="fft-nav-btn fft-nav-btn-primary" id="fft-next-btn">Next →</button>
-          </div>
-        </div>
-
-        <!-- Thumbnails -->
-        <div class="fft-thumbnails" id="fft-thumbnails">
-          <!-- Thumbnails generated by JavaScript -->
-        </div>
-      </div>
-
-      <!-- Section Actions -->
-      <div class="presentation-actions">
-        <a href="#products" class="btn btn-secondary">
-          View Products
-        </a>
-        <a href="https://calendly.com/scrim_wiggins/farm-friend-on-board" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
-          Schedule Technical Walkthrough
+      <div class="contact-card">
+        <h3>Email Us</h3>
+        <p>Prefer email? Reach out directly and we'll respond within 24 hours.</p>
+        <a href="mailto:admin@farm-friend.com" class="btn btn-secondary">
+          <i class="fas fa-envelope"></i> admin@farm-friend.com
         </a>
       </div>
-      
-      <!-- Industrial Divider -->
-      <div class="industrial-divider">
-        <span class="tick-left"></span>
-        <span class="tick-right"></span>
-      </div>
-    </section>
-
-    <!-- Support Section -->
-    <section id="support" class="support-section">
-      <div class="section-header">
-        <span class="ref-number top-right">SEC-06</span>
-        <h2>Support FFT Nano</h2>
-        <p>Help democratize agricultural intelligence. FFT Nano is open source, free to use, and owned by the farming community. Your sponsorship helps us develop new features, improve documentation, and keep the project sustainable.</p>
-        <p style="color: var(--brand-accent); font-weight: 600; margin-top: 1rem;"><i class="fas fa-heart"></i> Every contribution matters</p>
-      </div>
-
-      <div class="sponsors-container">
-        <!-- Sponsors Button -->
-        <div class="sponsors-button-wrapper">
-          <p style="color: var(--text-muted); margin-bottom: 1rem;">
-            <i class="fas fa-heart" style="color: var(--brand-accent);"></i>
-            Support Open Source Agriculture
-          </p>
-          <div class="support-actions">
-            <a href="https://github.com/sponsors/0-CYBERDYNE-SYSTEMS-0" target="_blank" rel="noopener" class="btn btn-primary">
-              <i class="fas fa-star"></i> Become a Sponsor
-            </a>
-            <a href="https://github.com/sponsors/0-CYBERDYNE-SYSTEMS-0" target="_blank" rel="noopener" class="btn btn-secondary">
-              <i class="fas fa-heart"></i> Donate
-            </a>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Industrial Divider -->
-      <div class="industrial-divider">
-        <span class="tick-left"></span>
-        <span class="tick-right"></span>
-      </div>
-    </section>
-
-    <!-- Skills Ecosystem Section -->
-    <section id="skills-ecosystem" style="background: rgba(240, 235, 224, 0.6); backdrop-filter: blur(10px); padding: 5rem 2rem;">
-      <div class="section-header" style="margin-bottom: 3rem;">
-        <span class="ref-number top-right">SEC-07</span>
-        <h2>Skills Ecosystem</h2>
-        <p style="color: var(--text-muted);">Extend FFT Nano with open-source skills designed specifically for farmers</p>
-      </div>
-
-      <!-- Skills Ticker -->
-      <div class="skills-ticker-wrap">
-
-        <!-- Row 1: scrolls left -->
-        <div class="skills-ticker-row" aria-hidden="true">
-          <div class="skills-ticker-track track-left">
-            <span class="skill-pill"><i class="fas fa-tint"></i> Irrigation Monitor</span>
-            <span class="skill-pill"><i class="fas fa-thermometer-half"></i> Frost Alert</span>
-            <span class="skill-pill"><i class="fas fa-seedling"></i> Yield Predictor</span>
-            <span class="skill-pill"><i class="fas fa-bug"></i> Pest ID</span>
-            <span class="skill-pill"><i class="fas fa-microchip"></i> Equipment Translator</span>
-            <span class="skill-pill"><i class="fas fa-dollar-sign"></i> Price Oracle</span>
-            <span class="skill-pill"><i class="fas fa-flask"></i> Soil Analyzer</span>
-            <span class="skill-pill"><i class="fas fa-cloud-sun-rain"></i> Weather Scout</span>
-            <span class="skill-pill"><i class="fas fa-leaf"></i> Seed Sovereignty</span>
-            <span class="skill-pill"><i class="fas fa-stethoscope"></i> Emergency Diagnostics</span>
-            <span class="skill-pill"><i class="fas fa-calendar-alt"></i> Harvest Planner</span>
-            <span class="skill-pill"><i class="fas fa-chart-line"></i> Market Tracker</span>
-            <!-- duplicate for seamless loop -->
-            <span class="skill-pill"><i class="fas fa-tint"></i> Irrigation Monitor</span>
-            <span class="skill-pill"><i class="fas fa-thermometer-half"></i> Frost Alert</span>
-            <span class="skill-pill"><i class="fas fa-seedling"></i> Yield Predictor</span>
-            <span class="skill-pill"><i class="fas fa-bug"></i> Pest ID</span>
-            <span class="skill-pill"><i class="fas fa-microchip"></i> Equipment Translator</span>
-            <span class="skill-pill"><i class="fas fa-dollar-sign"></i> Price Oracle</span>
-            <span class="skill-pill"><i class="fas fa-flask"></i> Soil Analyzer</span>
-            <span class="skill-pill"><i class="fas fa-cloud-sun-rain"></i> Weather Scout</span>
-            <span class="skill-pill"><i class="fas fa-leaf"></i> Seed Sovereignty</span>
-            <span class="skill-pill"><i class="fas fa-stethoscope"></i> Emergency Diagnostics</span>
-            <span class="skill-pill"><i class="fas fa-calendar-alt"></i> Harvest Planner</span>
-            <span class="skill-pill"><i class="fas fa-chart-line"></i> Market Tracker</span>
-          </div>
-        </div>
-
-        <!-- Row 2: scrolls right -->
-        <div class="skills-ticker-row" aria-hidden="true">
-          <div class="skills-ticker-track track-right">
-            <span class="skill-pill pill-sage"><i class="fas fa-cow"></i> Feed Calculator</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-vial"></i> Water Quality</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-tractor"></i> Fleet Coordinator</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-sun"></i> Solar Monitor</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-wind"></i> Wind Farm Sync</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-dna"></i> Crop Disease Scout</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-map-marked-alt"></i> Field Mapper</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-recycle"></i> Compost Tracker</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-broadcast-tower"></i> Sensor Hub</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-hand-holding-water"></i> Runoff Alert</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-robot"></i> Drone Coordinator</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-warehouse"></i> Storage Monitor</span>
-            <!-- duplicate for seamless loop -->
-            <span class="skill-pill pill-sage"><i class="fas fa-cow"></i> Feed Calculator</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-vial"></i> Water Quality</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-tractor"></i> Fleet Coordinator</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-sun"></i> Solar Monitor</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-wind"></i> Wind Farm Sync</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-dna"></i> Crop Disease Scout</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-map-marked-alt"></i> Field Mapper</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-recycle"></i> Compost Tracker</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-broadcast-tower"></i> Sensor Hub</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-hand-holding-water"></i> Runoff Alert</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-robot"></i> Drone Coordinator</span>
-            <span class="skill-pill pill-sage"><i class="fas fa-warehouse"></i> Storage Monitor</span>
-          </div>
-        </div>
-
-      </div>
-
-      <div style="text-align: center; margin-top: 4rem;">
-        <a href="https://github.com/farmfriend-labs/agent-skills-farming" target="_blank" rel="noopener" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem;">
-          <i class="fab fa-github"></i>
-          Explore Skills Repository
-        </a>
-      </div>
-    </section>
-
-    <!-- Contact Section -->
-    <section id="contact" class="contact-section">
-      <div class="section-header">
-        <span class="ref-number top-right">SEC-08</span>
-        <h2>Contact & Booking</h2>
-        <p>Book a focused onboarding call to scope setup, support, custom builds, or enterprise adoption.</p>
-      </div>
-
-      <div class="contact-grid">
-        <div class="contact-card">
-          <h3>Book a Call</h3>
-          <p>Use Calendly for direct scheduling. We define scope, timeline, and success criteria on the call.</p>
-          <div class="hero-cta" style="margin-top: 1rem; justify-content: flex-start;">
-            <a href="https://calendly.com/scrim_wiggins/farm-friend-on-board" target="_blank" rel="noopener" class="btn btn-primary" onclick="return openCalendlyWidget(event)">
-              <i class="far fa-calendar-check"></i> Schedule Discovery Call
-            </a>
-          </div>
-        </div>
-
-        <div class="contact-card">
-          <h3>Direct Contact</h3>
-          <p>Email: admin@farm-friend.com</p>
-          <div class="hero-cta" style="margin-top: 0.8rem; justify-content: flex-start;">
-            <a href="mailto:admin@farm-friend.com" class="btn btn-secondary btn-on-light">
-              <i class="fas fa-envelope"></i> Email admin@farm-friend.com
-            </a>
-          </div>
-          <p style="margin-top: 0.6rem;">For enterprise requests, include team size, farm sites, and your target go-live window.</p>
-        </div>
-      </div>
-    </section>
-
+    </div>
+  </section>
   </main>
 
-  <a
-    href="https://calendly.com/scrim_wiggins/farm-friend-on-board"
-    class="calendly-fab"
-    target="_blank"
-    rel="noopener"
-    aria-label="Book onboarding call"
-    onclick="return openCalendlyWidget(event)"
-  >
+  <!-- Calendly FAB -->
+  <a href="https://calendly.com/scrim_wiggins/farm-friend-on-board" class="calendly-fab" target="_blank" rel="noopener" aria-label="Book onboarding call" onclick="return openCalendlyWidget(event)">
     <i class="far fa-calendar-alt"></i>
     <span>Book Call</span>
   </a>
@@ -832,24 +346,20 @@
     <div class="footer-content">
       <div class="footer-section">
         <h4>FFT Nano</h4>
-        <p style="color: var(--text-muted); line-height: 1.7;">Democratizing agricultural intelligence. Keeping food & medicine in local hands. One platform. Infinite possibilities. You control everything.</p>
+        <p>Open-source agricultural intelligence. Your farm, your data, your control.</p>
       </div>
-
       <div class="footer-section">
         <h4>Links</h4>
         <ul>
           <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano"><i class="fab fa-github"></i> GitHub</a></li>
-          <li><a href="https://x.com/" target="_blank"><i class="fab fa-twitter"></i> Twitter</a></li>
           <li><a href="https://discord.gg/ch9GMveDUY" target="_blank" rel="noopener"><i class="fab fa-discord"></i> Discord</a></li>
-          <li><a href="https://calendly.com/scrim_wiggins/farm-friend-on-board" target="_blank" rel="noopener" onclick="return openCalendlyWidget(event)"><i class="far fa-calendar-check"></i> Book a Call</a></li>
+          <li><a href="https://farm-friend.com/fft-nano/docs/" target="_blank"><i class="fas fa-book"></i> Docs</a></li>
           <li><a href="mailto:admin@farm-friend.com"><i class="fas fa-envelope"></i> Contact</a></li>
-          <li><a href="https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano#readme" target="_blank" rel="noopener"><i class="fas fa-book"></i> Documentation</a></li>
         </ul>
       </div>
     </div>
-    
     <div class="footer-bottom">
-      <p>&copy; 2026 FFT Nano. Open Source. MIT License. Democratizing Agricultural Intelligence.</p>
+      <p>&copy; 2026 FFT Nano. Open Source. MIT License.</p>
     </div>
   </footer>
 
