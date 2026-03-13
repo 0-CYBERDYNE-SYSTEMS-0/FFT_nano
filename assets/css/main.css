@@ -537,6 +537,11 @@ section > * {
   max-width: 700px;
   margin-left: auto;
   margin-right: auto;
+  background: rgba(240, 236, 230, 0.55);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  padding: 1.5rem 2rem;
+  border-radius: var(--radius-md);
 }
 
 section > .section-header {
@@ -565,6 +570,13 @@ section > .section-header {
 .demo-video-section {
   padding: clamp(3rem, 5vw, 5rem) clamp(1rem, 3vw, 2rem);
   background: var(--earth-mid);
+}
+
+.demo-video-section .section-header {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  padding: 0;
 }
 
 .video-player-wrapper {
@@ -1067,6 +1079,14 @@ section > .section-header {
 .skills-cta {
   text-align: center;
   margin-top: 2rem;
+  background: rgba(240, 236, 230, 0.5);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  padding: 1.25rem 2rem;
+  border-radius: var(--radius-md);
+  max-width: max-content;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* ── Footer ────────────────────────────────────────────────────── */
