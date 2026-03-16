@@ -1,13 +1,8 @@
 import { z } from 'zod';
 
 import { logger } from './logger.js';
-import {
-  getMemoryDocument,
-  mergeAndRankMemoryHits,
-  searchDocumentMemory,
-  searchTranscriptMemory,
-  type MemorySourceFilter,
-} from './memory-search.js';
+import { getMemoryBackend } from './memory-backend.js';
+import type { MemorySourceFilter } from './memory-search.js';
 import type {
   MemoryActionRequest,
   MemoryActionResult,
@@ -44,15 +39,6 @@ function resolveAuthorizedGroupFolder(input: {
   return requested;
 }
 
-function getChatJidsForGroup(
-  registeredGroups: Record<string, RegisteredGroup>,
-  groupFolder: string,
-): string[] {
-  return Object.entries(registeredGroups)
-    .filter(([, group]) => group.folder === groupFolder)
-    .map(([jid]) => jid);
-}
-
 export async function executeMemoryAction(
   request: MemoryActionRequest,
   context: {
@@ -63,6 +49,7 @@ export async function executeMemoryAction(
 ): Promise<MemoryActionResult> {
   const executedAt = new Date().toISOString();
   try {
+    const backend = getMemoryBackend();
     const parsed = memoryActionSchema.parse(request);
     const targetGroupFolder = resolveAuthorizedGroupFolder({
       sourceGroup: context.sourceGroup,
@@ -71,9 +58,9 @@ export async function executeMemoryAction(
     });
 
     if (parsed.action === 'memory_get') {
-      const doc = getMemoryDocument({
+      const doc = backend.getDocument({
         groupFolder: targetGroupFolder,
-        relPath: parsed.params.path || 'MEMORY.md',
+        relPath: parsed.params.path,
       });
       return {
         requestId: parsed.requestId,
@@ -89,39 +76,21 @@ export async function executeMemoryAction(
 
     const topK = Math.min(64, Math.max(1, parsed.params.topK ?? 8));
     const sources: MemorySourceFilter = parsed.params.sources || 'all';
-    const hits = [];
-
-    if (sources === 'memory' || sources === 'all') {
-      hits.push(
-        ...searchDocumentMemory({
-          groupFolder: targetGroupFolder,
-          query: parsed.params.query,
-          topK,
-          includeGlobal: true,
-        }),
-      );
-    }
-
-    if (sources === 'sessions' || sources === 'all') {
-      const chatJids = getChatJidsForGroup(
-        context.registeredGroups,
-        targetGroupFolder,
-      );
-      hits.push(
-        ...searchTranscriptMemory({
-          groupFolder: targetGroupFolder,
-          query: parsed.params.query,
-          chatJids,
-          topK,
-        }),
-      );
-    }
+    const hits = backend.search({
+      sourceGroup: context.sourceGroup,
+      isMain: context.isMain,
+      registeredGroups: context.registeredGroups,
+      query: parsed.params.query,
+      sources,
+      topK,
+      targetGroupFolder,
+    });
 
     return {
       requestId: parsed.requestId,
       status: 'success',
       result: {
-        hits: mergeAndRankMemoryHits(hits, topK),
+        hits,
       },
       executedAt,
     };

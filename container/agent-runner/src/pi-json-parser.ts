@@ -6,6 +6,15 @@ export interface PiUsage {
   model?: string;
 }
 
+export interface PiToolExecution {
+  index: number;
+  toolName: string;
+  status: 'ok' | 'error';
+  args?: string;
+  output?: string;
+  error?: string;
+}
+
 export interface ParsePiJsonOutputInput {
   stdout: string;
   provider?: string;
@@ -15,6 +24,7 @@ export interface ParsePiJsonOutputInput {
 export interface ParsePiJsonOutputResult {
   result: string;
   usage?: PiUsage;
+  toolExecutions?: PiToolExecution[];
 }
 
 function extractTextFromContent(content: unknown): string {
@@ -50,6 +60,127 @@ function toNumber(value: unknown): number | undefined {
   return value >= 0 ? value : undefined;
 }
 
+function readString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function truncate(value: string, max = 320): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  if (compact.length <= max) return compact;
+  return `${compact.slice(0, max - 3)}...`;
+}
+
+function summarizeValue(value: unknown, max = 320): string | undefined {
+  if (typeof value === 'undefined' || value === null) return undefined;
+  if (typeof value === 'string') {
+    const text = truncate(value, max);
+    return text || undefined;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  try {
+    const encoded = JSON.stringify(value);
+    if (!encoded) return undefined;
+    return truncate(encoded, max);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractToolName(evt: Record<string, unknown>): string | undefined {
+  return readString(evt, [
+    'toolName',
+    'tool_name',
+    'name',
+    'tool',
+  ]);
+}
+
+function extractToolCallId(evt: Record<string, unknown>): string | undefined {
+  return readString(evt, [
+    'toolCallId',
+    'tool_call_id',
+    'toolExecutionId',
+    'tool_execution_id',
+    'callId',
+    'call_id',
+  ]);
+}
+
+function extractToolArgs(evt: Record<string, unknown>): string | undefined {
+  return (
+    summarizeValue(evt.args, 240) ||
+    summarizeValue(evt.arguments, 240) ||
+    summarizeValue(evt.toolArgs, 240) ||
+    summarizeValue(evt.tool_args, 240)
+  );
+}
+
+function extractToolError(evt: Record<string, unknown>): string | undefined {
+  const direct =
+    readString(evt, ['errorMessage', 'error_message', 'errorText', 'message']) ||
+    summarizeValue(evt.error, 320);
+  if (direct) return direct;
+
+  const result = evt.result;
+  if (result && typeof result === 'object') {
+    const nested = result as Record<string, unknown>;
+    return (
+      readString(nested, ['errorMessage', 'error_message', 'errorText', 'message']) ||
+      summarizeValue(nested.error, 320)
+    );
+  }
+  return undefined;
+}
+
+function extractToolOutput(evt: Record<string, unknown>): string | undefined {
+  return (
+    summarizeValue(evt.output, 320) ||
+    summarizeValue(evt.result, 320) ||
+    summarizeValue(evt.response, 320) ||
+    summarizeValue(evt.value, 320)
+  );
+}
+
+function isToolStartEvent(type: string): boolean {
+  return (
+    type === 'tool_execution_start' ||
+    type === 'tool_call_start' ||
+    type === 'tool_start' ||
+    (type.startsWith('tool_') && type.endsWith('_start'))
+  );
+}
+
+function isToolEndEvent(type: string): boolean {
+  return (
+    type === 'tool_execution_end' ||
+    type === 'tool_call_end' ||
+    type === 'tool_end' ||
+    (type.startsWith('tool_') && type.endsWith('_end'))
+  );
+}
+
+function isToolError(evt: Record<string, unknown>): boolean {
+  if (evt.isError === true || evt.is_error === true) return true;
+  const status = readString(evt, ['status']);
+  if (status && ['error', 'failed', 'failure'].includes(status.toLowerCase())) return true;
+  const stopReason = readString(evt, ['stopReason', 'stop_reason']);
+  if (stopReason && stopReason.toLowerCase() === 'error') return true;
+  return false;
+}
+
+interface PendingToolExecution {
+  index: number;
+  toolName: string;
+  args?: string;
+}
+
 export function parsePiJsonOutput(
   input: ParsePiJsonOutputInput,
 ): ParsePiJsonOutputResult {
@@ -58,6 +189,10 @@ export function parsePiJsonOutput(
   let sawJsonEvent = false;
   let sawAssistantMessageEnd = false;
   let usage: PiUsage | undefined;
+  const pendingById = new Map<string, PendingToolExecution>();
+  const pendingQueue: PendingToolExecution[] = [];
+  const toolExecutions: PiToolExecution[] = [];
+  let nextToolIndex = 1;
 
   const extractUsage = (evt: any) => {
     const messageUsage = evt?.message?.usage;
@@ -109,6 +244,54 @@ export function parsePiJsonOutput(
       sawJsonEvent = true;
       extractUsage(evt);
 
+      const evtRecord = evt as Record<string, unknown>;
+      const evtType = typeof evtRecord.type === 'string' ? evtRecord.type : '';
+      if (evtType) {
+        if (isToolStartEvent(evtType)) {
+          const pending: PendingToolExecution = {
+            index: nextToolIndex++,
+            toolName: extractToolName(evtRecord) || 'tool',
+            args: extractToolArgs(evtRecord),
+          };
+          const callId = extractToolCallId(evtRecord);
+          if (callId) pendingById.set(callId, pending);
+          pendingQueue.push(pending);
+        } else if (isToolEndEvent(evtType)) {
+          const callId = extractToolCallId(evtRecord);
+          let pending: PendingToolExecution | undefined;
+          if (callId && pendingById.has(callId)) {
+            pending = pendingById.get(callId);
+            pendingById.delete(callId);
+            if (pending) {
+              const idx = pendingQueue.indexOf(pending);
+              if (idx !== -1) pendingQueue.splice(idx, 1);
+            }
+          } else if (pendingQueue.length > 0) {
+            pending = pendingQueue.shift();
+          }
+
+          const isError = isToolError(evtRecord);
+          const output = extractToolOutput(evtRecord);
+          const error = extractToolError(evtRecord) || (isError ? output : undefined);
+          const toolName = extractToolName(evtRecord) || pending?.toolName || 'tool';
+          const args = extractToolArgs(evtRecord) || pending?.args;
+
+          toolExecutions.push({
+            index: pending?.index || nextToolIndex++,
+            toolName,
+            status: isError ? 'error' : 'ok',
+            ...(args ? { args } : {}),
+            ...(isError
+              ? error
+                ? { error }
+                : {}
+              : output
+                ? { output }
+                : {}),
+          });
+        }
+      }
+
       const stopReason = evt?.message?.stopReason;
       const errorMessage = evt?.message?.errorMessage;
       if (
@@ -137,11 +320,22 @@ export function parsePiJsonOutput(
   if (!lastAssistant) {
     const raw = input.stdout.trim();
     if (sawAssistantMessageEnd || sawJsonEvent) {
-      return { result: '', usage };
+      return {
+        result: '',
+        usage,
+        ...(toolExecutions.length > 0 ? { toolExecutions } : {}),
+      };
     }
-    return { result: raw, usage };
+    return {
+      result: raw,
+      usage,
+      ...(toolExecutions.length > 0 ? { toolExecutions } : {}),
+    };
   }
 
-  return { result: lastAssistant.trim(), usage };
+  return {
+    result: lastAssistant.trim(),
+    usage,
+    ...(toolExecutions.length > 0 ? { toolExecutions } : {}),
+  };
 }
-

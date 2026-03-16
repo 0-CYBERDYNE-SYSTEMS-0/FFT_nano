@@ -1,14 +1,17 @@
 # Dependencies
 node_modules/
+web/control-center/node_modules/
 
 # Build output
 dist/
+dist-web/
 
 # Local data & auth
 store/
 data/
 logs/
 tmp-ipc/
+backups/
 
 # Runtime-generated group folders (keep template groups in repo)
 groups/telegram-*/

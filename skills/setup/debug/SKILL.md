@@ -1,347 +1,156 @@
 ---
 name: debug
-description: Debug container agent issues. Use when things aren't working, container fails, authentication problems, or to understand how the container system works. Covers logs, environment variables, mounts, and common issues.
+description: Debug FFT_nano agent runtime issues (Docker default, host opt-in). Use when agent execution fails, runtime checks fail, or onboarding/startup is blocked.
 ---
 
-# FFT_nano Container Debugging
+# FFT_nano Runtime Debugging
 
-This guide covers debugging the containerized agent execution system.
+This guide covers host-side diagnosis for current runtime modes:
+- Docker (default)
+- Host runtime (advanced, explicit opt-in)
 
-## Architecture Overview
+## Runtime Architecture
 
 ```
-Host (macOS)                          Container (Linux VM)
-─────────────────────────────────────────────────────────────
-src/container-runner.ts               container/agent-runner/
-    │                                      │
-    │ spawns Apple Container               │ runs Claude Agent SDK
-    │ with volume mounts                   │ with MCP servers
-    │                                      │
-    ├── data/env/env ──────────────> /workspace/env-dir/env
-    ├── groups/{folder} ───────────> /workspace/group
-    ├── data/ipc/{folder} ────────> /workspace/ipc
-    ├── data/sessions/{folder}/.claude/ ──> /home/node/.claude/ (isolated per-group)
-    └── (main only) project root ──> /workspace/project
+Host process (src/index.ts)
+  -> runtime selection (src/container-runtime.ts)
+  -> agent execution (src/container-runner.ts)
+     - Docker mode: docker run fft_nano-agent:latest
+     - Host mode: node container/agent-runner/dist/index.js
 ```
 
-**Important:** The container runs as user `node` with `HOME=/home/node`. Session files must be mounted to `/home/node/.claude/` (not `/root/.claude/`) for session resumption to work.
+## Key Log Locations
 
-## Log Locations
+| Log | Location | Purpose |
+|---|---|---|
+| App log | `logs/fft_nano.log` | Router, scheduler, runtime orchestration |
+| App error log | `logs/fft_nano.error.log` | Host process failures |
+| Runtime run log | `groups/<folder>/logs/runtime-*.log` | Per-run stdout/stderr, mounts, env diagnostics |
 
-| Log | Location | Content |
-|-----|----------|---------|
-| **Main app logs** | `logs/fft_nano.log` | Host-side WhatsApp, routing, container spawning |
-| **Main app errors** | `logs/fft_nano.error.log` | Host-side errors |
-| **Container run logs** | `groups/{folder}/logs/container-*.log` | Per-run: input, mounts, stderr, stdout |
-| **Claude sessions** | `~/.claude/projects/` | Claude Code session history |
+## Quick Health Checks
 
-## Enabling Debug Logging
-
-Set `LOG_LEVEL=debug` for verbose output:
+### 1) App build/runtime sanity
 
 ```bash
-# For development
-LOG_LEVEL=debug npm run dev
-
-# For launchd service, add to plist EnvironmentVariables:
-<key>LOG_LEVEL</key>
-<string>debug</string>
-```
-
-Debug level shows:
-- Full mount configurations
-- Container command arguments
-- Real-time container stderr
-
-## Common Issues
-
-### 1. "Claude Code process exited with code 1"
-
-**Check the container log file** in `groups/{folder}/logs/container-*.log`
-
-Common causes:
-
-#### Missing Authentication
-```
-Invalid API key · Please run /login
-```
-**Fix:** Ensure `.env` file exists with either OAuth token or API key:
-```bash
-cat .env  # Should show one of:
-# CLAUDE_CODE_OAUTH_TOKEN=<oauth-token>   (subscription)
-# ANTHROPIC_API_KEY=<anthropic-api-key>   (pay-per-use)
-```
-
-#### Root User Restriction
-```
---dangerously-skip-permissions cannot be used with root/sudo privileges
-```
-**Fix:** Container must run as non-root user. Check Dockerfile has `USER node`.
-
-### 2. Environment Variables Not Passing
-
-**Apple Container Bug:** Environment variables passed via `-e` are lost when using `-i` (interactive/piped stdin).
-
-**Workaround:** The system extracts only authentication variables (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) from `.env` and mounts them for sourcing inside the container. Other env vars are not exposed.
-
-To verify env vars are reaching the container:
-```bash
-echo '{}' | container run -i \
-  --mount type=bind,source=$(pwd)/data/env,target=/workspace/env-dir,readonly \
-  --entrypoint /bin/bash fft_nano-agent:latest \
-  -c 'export $(cat /workspace/env-dir/env | xargs); echo "OAuth: ${#CLAUDE_CODE_OAUTH_TOKEN} chars, API: ${#ANTHROPIC_API_KEY} chars"'
-```
-
-### 3. Mount Issues
-
-**Apple Container quirks:**
-- Only mounts directories, not individual files
-- `-v` syntax does NOT support `:ro` suffix - use `--mount` for readonly:
-  ```bash
-  # Readonly: use --mount
-  --mount "type=bind,source=/path,target=/container/path,readonly"
-
-  # Read-write: use -v
-  -v /path:/container/path
-  ```
-
-To check what's mounted inside a container:
-```bash
-container run --rm --entrypoint /bin/bash fft_nano-agent:latest -c 'ls -la /workspace/'
-```
-
-Expected structure:
-```
-/workspace/
-├── env-dir/env           # Environment file (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)
-├── group/                # Current group folder (cwd)
-├── project/              # Project root (main channel only)
-├── global/               # Global CLAUDE.md (non-main only)
-├── ipc/                  # Inter-process communication
-│   ├── messages/         # Outgoing WhatsApp messages
-│   ├── tasks/            # Scheduled task commands
-│   ├── current_tasks.json    # Read-only: scheduled tasks visible to this group
-│   └── available_groups.json # Read-only: WhatsApp groups for activation (main only)
-└── extra/                # Additional custom mounts
-```
-
-### 4. Permission Issues
-
-The container runs as user `node` (uid 1000). Check ownership:
-```bash
-container run --rm --entrypoint /bin/bash fft_nano-agent:latest -c '
-  whoami
-  ls -la /workspace/
-  ls -la /app/
-'
-```
-
-All of `/workspace/` and `/app/` should be owned by `node`.
-
-### 5. Session Not Resuming / "Claude Code process exited with code 1"
-
-If sessions aren't being resumed (new session ID every time), or Claude Code exits with code 1 when resuming:
-
-**Root cause:** The SDK looks for sessions at `$HOME/.claude/projects/`. Inside the container, `HOME=/home/node`, so it looks at `/home/node/.claude/projects/`.
-
-**Check the mount path:**
-```bash
-# In container-runner.ts, verify mount is to /home/node/.claude/, NOT /root/.claude/
-grep -A3 "Claude sessions" src/container-runner.ts
-```
-
-**Verify sessions are accessible:**
-```bash
-container run --rm --entrypoint /bin/bash \
-  -v ~/.claude:/home/node/.claude \
-  fft_nano-agent:latest -c '
-echo "HOME=$HOME"
-ls -la $HOME/.claude/projects/ 2>&1 | head -5
-'
-```
-
-**Fix:** Ensure `container-runner.ts` mounts to `/home/node/.claude/`:
-```typescript
-mounts.push({
-  hostPath: claudeDir,
-  containerPath: '/home/node/.claude',  // NOT /root/.claude
-  readonly: false
-});
-```
-
-### 6. MCP Server Failures
-
-If an MCP server fails to start, the agent may exit. Check the container logs for MCP initialization errors.
-
-## Manual Container Testing
-
-### Test the full agent flow:
-```bash
-# Set up env file
-mkdir -p data/env groups/test
-cp .env data/env/env
-
-# Run test query
-echo '{"prompt":"What is 2+2?","groupFolder":"test","chatJid":"test@g.us","isMain":false}' | \
-  container run -i \
-  --mount "type=bind,source=$(pwd)/data/env,target=/workspace/env-dir,readonly" \
-  -v $(pwd)/groups/test:/workspace/group \
-  -v $(pwd)/data/ipc:/workspace/ipc \
-  fft_nano-agent:latest
-```
-
-### Test Claude Code directly:
-```bash
-container run --rm --entrypoint /bin/bash \
-  --mount "type=bind,source=$(pwd)/data/env,target=/workspace/env-dir,readonly" \
-  fft_nano-agent:latest -c '
-  export $(cat /workspace/env-dir/env | xargs)
-  claude -p "Say hello" --dangerously-skip-permissions --allowedTools ""
-'
-```
-
-### Interactive shell in container:
-```bash
-container run --rm -it --entrypoint /bin/bash fft_nano-agent:latest
-```
-
-## SDK Options Reference
-
-The agent-runner uses these Claude Agent SDK options:
-
-```typescript
-query({
-  prompt: input.prompt,
-  options: {
-    cwd: '/workspace/group',
-    allowedTools: ['Bash', 'Read', 'Write', ...],
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,  // Required with bypassPermissions
-    settingSources: ['project'],
-    mcpServers: { ... }
-  }
-})
-```
-
-**Important:** `allowDangerouslySkipPermissions: true` is required when using `permissionMode: 'bypassPermissions'`. Without it, Claude Code exits with code 1.
-
-## Rebuilding After Changes
-
-```bash
-# Rebuild main app
+npm run typecheck
 npm run build
-
-# Rebuild container (use --no-cache for clean rebuild)
-./container/build.sh
-
-# Or force full rebuild
-container builder prune -af
-./container/build.sh
 ```
 
-## Checking Container Image
+### 2) Runtime mode resolution
 
 ```bash
-# List images
-container images
-
-# Check what's in the image
-container run --rm --entrypoint /bin/bash fft_nano-agent:latest -c '
-  echo "=== Node version ==="
-  node --version
-
-  echo "=== Claude Code version ==="
-  claude --version
-
-  echo "=== Installed packages ==="
-  ls /app/node_modules/
-'
+node -e "import('./dist/container-runtime.js').then(m=>console.log(m.getContainerRuntime()))"
 ```
 
-## Session Persistence
-
-Claude sessions are stored per-group in `data/sessions/{group}/.claude/` for security isolation. Each group has its own session directory, preventing cross-group access to conversation history.
-
-**Critical:** The mount path must match the container user's HOME directory:
-- Container user: `node`
-- Container HOME: `/home/node`
-- Mount target: `/home/node/.claude/` (NOT `/root/.claude/`)
-
-To clear sessions:
+### 3) Docker availability (default)
 
 ```bash
-# Clear all sessions for all groups
-rm -rf data/sessions/
-
-# Clear sessions for a specific group
-rm -rf data/sessions/{groupFolder}/.claude/
-
-# Also clear the session ID from FFT_nano's tracking
-echo '{}' > data/sessions.json
+docker --version
+docker info >/dev/null && echo "Docker OK" || echo "Docker NOT running"
 ```
 
-To verify session resumption is working, check the logs for the same session ID across messages:
-```bash
-grep "Session initialized" logs/fft_nano.log | tail -5
-# Should show the SAME session ID for consecutive messages in the same group
-```
-
-## IPC Debugging
-
-The container communicates back to the host via files in `/workspace/ipc/`:
+### 4) Host mode gating (advanced)
 
 ```bash
-# Check pending messages
-ls -la data/ipc/messages/
-
-# Check pending task operations
-ls -la data/ipc/tasks/
-
-# Read a specific IPC file
-cat data/ipc/messages/*.json
-
-# Check available groups (main channel only)
-cat data/ipc/main/available_groups.json
-
-# Check current tasks snapshot
-cat data/ipc/{groupFolder}/current_tasks.json
+grep -E '^(CONTAINER_RUNTIME|FFT_NANO_ALLOW_HOST_RUNTIME|FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD)=' .env || true
 ```
 
-**IPC file types:**
-- `messages/*.json` - Agent writes: outgoing WhatsApp messages
-- `tasks/*.json` - Agent writes: task operations (schedule, pause, resume, cancel, refresh_groups)
-- `current_tasks.json` - Host writes: read-only snapshot of scheduled tasks
-- `available_groups.json` - Host writes: read-only list of WhatsApp groups (main only)
+Host mode requires:
+- `CONTAINER_RUNTIME=host`
+- `FFT_NANO_ALLOW_HOST_RUNTIME=1`
 
-## Quick Diagnostic Script
+Production host mode additionally requires:
+- `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
 
-Run this to check common issues:
+## Common Failure Modes
+
+### "Invalid CONTAINER_RUNTIME"
+
+Cause: `.env` contains an unsupported value.
+
+Fix:
+```bash
+sed -i.bak 's/^CONTAINER_RUNTIME=.*/CONTAINER_RUNTIME=auto/' .env
+```
+
+### "No supported runtime found"
+
+Cause: Docker unavailable and host mode not explicitly allowed.
+
+Fix options:
+1. Start Docker Desktop / Docker daemon.
+2. Or explicitly enable host mode in `.env`:
+```bash
+CONTAINER_RUNTIME=host
+FFT_NANO_ALLOW_HOST_RUNTIME=1
+```
+
+### Runtime exits with code 1
+
+Check newest runtime log:
+```bash
+ls -t groups/*/logs/runtime-*.log | head -1 | xargs -I{} sh -lc 'echo "== {} =="; tail -120 "{}"'
+```
+
+Then validate credentials:
+```bash
+grep -E '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|PI_API|PI_MODEL|ZAI_API_KEY)=' .env
+```
+
+### Session resumption problems
+
+Verify per-group session mount path exists:
+```bash
+ls -la data/pi/main/.pi 2>/dev/null || true
+```
+
+Ensure runtime logs show expected mounted session directory and no permission errors.
+
+## Manual Runtime Smoke Tests
+
+### Docker mode smoke
 
 ```bash
-echo "=== Checking FFT_nano Container Setup ==="
-
-echo -e "\n1. Authentication configured?"
-[ -f .env ] && (grep -q "CLAUDE_CODE_OAUTH_TOKEN=sk-" .env || grep -q "ANTHROPIC_API_KEY=sk-" .env) && echo "OK" || echo "MISSING - add CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY to .env"
-
-echo -e "\n2. Env file copied for container?"
-[ -f data/env/env ] && echo "OK" || echo "MISSING - will be created on first run"
-
-echo -e "\n3. Apple Container system running?"
-container system status &>/dev/null && echo "OK" || echo "NOT RUNNING - FFT_nano should auto-start it; check logs"
-
-echo -e "\n4. Container image exists?"
-echo '{}' | container run -i --entrypoint /bin/echo fft_nano-agent:latest "OK" 2>/dev/null || echo "MISSING - run ./container/build.sh"
-
-echo -e "\n5. Session mount path correct?"
-grep -q "/home/node/.claude" src/container-runner.ts 2>/dev/null && echo "OK" || echo "WRONG - should mount to /home/node/.claude/, not /root/.claude/"
-
-echo -e "\n6. Groups directory?"
-ls -la groups/ 2>/dev/null || echo "MISSING - run setup"
-
-echo -e "\n7. Recent container logs?"
-ls -t groups/*/logs/container-*.log 2>/dev/null | head -3 || echo "No container logs yet"
-
-echo -e "\n8. Session continuity working?"
-SESSIONS=$(grep "Session initialized" logs/fft_nano.log 2>/dev/null | tail -5 | awk '{print $NF}' | sort -u | wc -l)
-[ "$SESSIONS" -le 2 ] && echo "OK (recent sessions reusing IDs)" || echo "CHECK - multiple different session IDs, may indicate resumption issues"
+echo '{}' | docker run -i --entrypoint /bin/echo fft_nano-agent:latest "Container OK"
 ```
+
+### Host mode smoke
+
+```bash
+npm --prefix container/agent-runner run build
+CONTAINER_RUNTIME=host FFT_NANO_ALLOW_HOST_RUNTIME=1 FFT_NANO_DRY_RUN=1 npm run dev
+```
+
+## Service-level Checks (launchd)
+
+```bash
+launchctl list | grep fft_nano || true
+launchctl kickstart -k gui/$(id -u)/com.fft_nano
+sleep 2
+tail -80 logs/fft_nano.log
+```
+
+## One-Pass Diagnostics Script
+
+```bash
+echo "1) Node/build"
+node --version
+npm run -s build >/dev/null && echo "build OK" || echo "build FAIL"
+
+echo "\n2) Docker"
+docker info >/dev/null 2>&1 && echo "docker OK" || echo "docker NOT ready"
+
+echo "\n3) Runtime policy"
+grep -E '^(CONTAINER_RUNTIME|FFT_NANO_ALLOW_HOST_RUNTIME|FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD)=' .env || echo "no runtime env overrides"
+
+echo "\n4) Latest runtime logs"
+ls -t groups/*/logs/runtime-*.log 2>/dev/null | head -3 || echo "no runtime logs yet"
+```
+
+## Escalation Data to Capture
+
+If issue persists, capture and share:
+1. `logs/fft_nano.log` tail (last 120 lines)
+2. Latest `groups/<folder>/logs/runtime-*.log`
+3. Output of `docker info` (or host mode env flags)
+4. Current `.env` runtime keys (redact secrets)

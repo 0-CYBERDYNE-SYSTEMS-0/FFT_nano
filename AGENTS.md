@@ -10,32 +10,9 @@ This repo is a single Node.js host process that:
 
 - Canonical memory file is `MEMORY.md` (per-group at `groups/<group>/MEMORY.md`, global at `groups/global/MEMORY.md`).
 - `SOUL.md` is identity/policy context and should stay stable (not used as compaction log storage).
-- Legacy `CLAUDE.md` is supported for backwards compatibility.
 
-## Scripts
 
-- One-time setup: `./scripts/setup.sh`
-- Onboarding (workspace identity/bootstrap completion): `./scripts/onboard.sh [--workspace /abs/path] [--operator "Name"] [--assistant-name FarmFriend] [--non-interactive] [--force]`
-- Start (normal): `./scripts/start.sh [start] [telegram-only]`
-- Start (debug-only): `./scripts/start.sh dev [telegram-only]`
-- Attach TUI client: `./scripts/start.sh tui` (host must already be running)
-- Service lifecycle: `./scripts/service.sh <install|uninstall|start|stop|restart|status|logs>`
-- Preferred CLI aliases (after `npm link`): `fft start`, `fft dev`, `fft tui`, `fft service <...>`
-- Farm bootstrap (demo): `./scripts/farm-bootstrap.sh --mode demo`
-- Farm bootstrap (production): `./scripts/farm-bootstrap.sh --mode production`
-- Canonical operator runbook: `README.md` ("Quickstart (Primary UX Path)")
-
-## Farm Modes (Demo vs Production)
-
-- `demo` mode:
-  - Uses `FFT_demo_dash` dashboard + simulated telemetry flow for showcase.
-  - Fast path for proving end-to-end capabilities.
-- `production` mode:
-  - Runs Home Assistant onboarding with real entity discovery.
-  - Writes `data/farm-profile.json` mappings.
-  - Requires validation pass before host-side control actions are allowed.
-
-Required env for farm flows:
+Optional env for farm profile flows (`FFT_PROFILE=farm`):
 - `FARM_MODE=demo|production`
 - `FARM_PROFILE_PATH` (defaults to `data/farm-profile.json`)
 - `FARM_STATE_ENABLED=true`
@@ -66,6 +43,7 @@ Ways to make your Telegram DM the `main` channel:
 - Or set `TELEGRAM_ADMIN_SECRET` on the host and run `/main <secret>` in the bot DM.
   - `/id` replies with the current chat id.
 - Main/admin service controls from chat: `/gateway status` and `/gateway restart`.
+
 
 ## Z.AI (GLM) Provider For Pi Runtime
 
@@ -127,11 +105,11 @@ Common failure modes:
 - Missing provider key: `pi` reports "No models available" (no API key passed through).
 - Wrong `PI_API`/`PI_MODEL`: `pi` reports "Model '<provider>'/'<model>' not found".
 - Multiple instances: Telegram polling can error with "Conflict: terminated by other getUpdates request". FFT_nano now uses a lock file (`data/fft_nano.lock`) to prevent two instances from running at once.
-- Apple Container networking: if you see `Request timed out.`, restart Apple Container: `container system stop && container system start` (or rely on `FFT_NANO_APPLE_CONTAINER_SELF_HEAL=1` default).
+- Docker daemon unavailable: run `docker info` and start Docker Desktop/daemon if needed.
 
 ---
-
-## 🎯 Figure It Out Directive
+|||<VIP_VIP_VIP>
+## 🎯 Figure It out Directive
 
 You have unrestricted internet access, browser automation, and shell execution. When given a task, "I can't" is not in your vocabulary. If you don't know how, search for it. Read docs. Find tutorials. Reverse engineer it.
 
@@ -145,3 +123,4 @@ Before saying something is impossible, you MUST:
 Your job is to deliver results, not excuses. If Plan A fails, try B through Z. Then invent Plan AA. Assume everything is figureoutable — someone on the internet has done it before. Find them. Learn from them. Adapt it.
 
 You are not a helpdesk. You are an operator. Operators ship.
+</VIP_VIP_VIP>|||

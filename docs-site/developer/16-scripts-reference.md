@@ -8,7 +8,8 @@ This page covers repository scripts under `scripts/` and `container/`.
   - validates node/runtime prerequisites
   - installs deps
   - typecheck + build
-  - builds container image
+  - accepts `--runtime auto|docker|host`
+  - docker runtime builds container image; host runtime prepares host runner deps
   - scaffolds `.env` and mount allowlist if missing
 
 - `scripts/start.sh [start|dev] [telegram-only]`
@@ -50,5 +51,5 @@ This page covers repository scripts under `scripts/` and `container/`.
 
 ## Container image builds
 
-- `container/build.sh [tag]` (Apple Container)
+- `container/build.sh [tag]` (Docker)
 - `container/build-docker.sh [tag]` (Docker)

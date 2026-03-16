@@ -58,7 +58,7 @@ Safety gate:
    - think/reasoning levels
    - continue/new-session mode (`noContinue`)
 4. Call `runContainerAgent`.
-5. Retry once after Apple Container self-heal if applicable.
+5. Retry once after runtime health verification when applicable.
 
 ## Success/Failure Semantics
 

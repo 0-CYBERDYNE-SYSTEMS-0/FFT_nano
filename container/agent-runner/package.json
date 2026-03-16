@@ -2,7 +2,7 @@
   "name": "fft-nano-agent-runner",
   "version": "1.0.0",
   "type": "module",
-  "description": "Container-side agent runner for FFT_nano (FarmFriendTerminal_nano)",
+  "description": "Container-side agent runner for FFT_nano",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

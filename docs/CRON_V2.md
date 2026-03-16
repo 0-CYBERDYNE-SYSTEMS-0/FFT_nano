@@ -64,8 +64,9 @@ Legacy rows remain valid and continue to execute.
 - `context_mode=group` allows session continuation (`noContinue=false`).
 - Repeated task failures apply exponential backoff.
 - `wake_mode=now` requests an immediate heartbeat run after task execution.
+- Isolated tasks default to `delivery.mode=announce` when delivery is omitted.
+- Optional deterministic top-of-hour stagger can be enabled via parity config/env.
 - Delivery modes:
   - `none`: no post-run message
   - `announce`: posts summary to task chat
   - `webhook`: POSTs JSON payload to `delivery_webhook_url`
-

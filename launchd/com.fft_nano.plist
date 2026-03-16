@@ -22,7 +22,7 @@
         <key>HOME</key>
         <string>{{HOME}}</string>
         <key>ASSISTANT_NAME</key>
-        <string>FarmFriend</string>
+        <string>OpenClaw</string>
         <key>FFT_NANO_TUI_ENABLED</key>
         <string>1</string>
         <key>FFT_NANO_TUI_PORT</key>

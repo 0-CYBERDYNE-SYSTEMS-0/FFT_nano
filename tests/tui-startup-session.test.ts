@@ -24,9 +24,17 @@ test('startup resolver skips history load when no sessions are available', () =>
   assert.match(resolved.infoMessage || '', /No sessions are registered yet/);
 });
 
-test('startup resolver falls back to first session if requested key is missing', () => {
+test('startup resolver does not silently fallback when requested main is missing', () => {
   const sessions = [makeSession('group-a'), makeSession('group-b')];
   const resolved = resolveStartupSession('main', sessions);
+  assert.equal(resolved.sessionKey, 'main');
+  assert.equal(resolved.shouldLoadHistory, false);
+  assert.match(resolved.infoMessage || '', /Session "main" is not registered yet/);
+});
+
+test('startup resolver falls back to first session for non-main missing requests', () => {
+  const sessions = [makeSession('group-a'), makeSession('group-b')];
+  const resolved = resolveStartupSession('group-missing', sessions);
   assert.equal(resolved.sessionKey, 'group-a');
   assert.equal(resolved.shouldLoadHistory, true);
   assert.equal(resolved.infoMessage, undefined);

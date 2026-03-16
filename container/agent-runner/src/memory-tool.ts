@@ -1,5 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import {
+  WORKSPACE_IPC_ACTION_RESULTS_DIR,
+  WORKSPACE_IPC_ACTIONS_DIR,
+} from './runtime-paths.js';
 
 type Sources = 'memory' | 'sessions' | 'all';
 
@@ -12,8 +16,8 @@ interface ParsedArgs {
   filePath?: string;
 }
 
-const ACTIONS_DIR = '/workspace/ipc/actions';
-const RESULTS_DIR = '/workspace/ipc/action_results';
+const ACTIONS_DIR = WORKSPACE_IPC_ACTIONS_DIR;
+const RESULTS_DIR = WORKSPACE_IPC_ACTION_RESULTS_DIR;
 
 function parseArgs(argv: string[]): ParsedArgs {
   const [modeRaw, ...rest] = argv;

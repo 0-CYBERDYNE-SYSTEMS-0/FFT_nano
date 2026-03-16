@@ -17,12 +17,14 @@ import type { TuiRuntimeEventHub } from './runtime-events.js';
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
+type VerboseMode = 'off' | 'new' | 'all' | 'verbose';
 
 export interface SessionPrefs {
   provider?: string;
   model?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
+  verboseMode?: VerboseMode;
   noContinueNext?: boolean;
 }
 
@@ -35,6 +37,7 @@ export interface SessionHistoryMessage {
 
 export interface TuiGatewayServer {
   port: number;
+  host: string;
   close: () => Promise<void>;
 }
 
@@ -57,14 +60,21 @@ export interface TuiGatewayAdapters {
     message: string;
     runId: string;
     deliver: boolean;
-  }) => Promise<{ runId: string; status: 'started' | 'already_running' }>;
+  }) => Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }>;
   abortChat: (params: { chatJid: string; runId: string }) => Promise<{ aborted: boolean }>;
   serviceGateway: (params: {
-    action: 'status' | 'restart';
+    action: 'status' | 'restart' | 'doctor';
   }) => Promise<{ ok: boolean; text: string }> | { ok: boolean; text: string };
 }
 
 const DEFAULT_PORT = Number(process.env.FFT_NANO_TUI_PORT || 28989);
+const DEFAULT_HOST = process.env.FFT_NANO_TUI_HOST || '127.0.0.1';
+
+export interface TuiGatewayOptions {
+  port?: number;
+  host?: string;
+  authToken?: string;
+}
 
 function normalizeThinkLevel(raw: unknown): ThinkLevel | undefined {
   const key = String(raw || '')
@@ -88,6 +98,18 @@ function normalizeReasoningLevel(raw: unknown): ReasoningLevel | undefined {
   if (['off', 'false', '0', 'no'].includes(key)) return 'off';
   if (['on', 'true', '1', 'yes'].includes(key)) return 'on';
   if (['stream', 'streaming', 'live'].includes(key)) return 'stream';
+  return undefined;
+}
+
+function normalizeVerboseMode(raw: unknown): VerboseMode | undefined {
+  const key = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (!key) return undefined;
+  if (['off', 'false', '0', 'no'].includes(key)) return 'off';
+  if (key === 'new') return 'new';
+  if (['all', 'on', 'true', '1', 'yes'].includes(key)) return 'all';
+  if (['verbose', 'full', 'max', '2'].includes(key)) return 'verbose';
   return undefined;
 }
 
@@ -153,22 +175,35 @@ function parseMessage(data: WebSocket.RawData): GatewayRequestFrame | null {
 export async function startTuiGatewayServer(
   adapters: TuiGatewayAdapters,
   eventHub: TuiRuntimeEventHub,
-  port = DEFAULT_PORT,
+  options: number | TuiGatewayOptions = {},
 ): Promise<TuiGatewayServer> {
+  const resolvedOptions =
+    typeof options === 'number'
+      ? { port: options }
+      : options;
+  const host = resolvedOptions.host || DEFAULT_HOST;
+  const port = resolvedOptions.port ?? DEFAULT_PORT;
+  const authToken = (resolvedOptions.authToken || '').trim();
+  const authRequired = authToken.length > 0;
+
   const clients = new Set<WebSocket>();
+  const authenticatedClients = new Set<WebSocket>();
   const wss = new WebSocketServer({
     port,
-    host: '127.0.0.1',
+    host,
   });
 
-  logger.info({ port }, 'TUI gateway server listening');
+  logger.info({ host, port, authRequired }, 'TUI gateway server listening');
 
   const unsubscribe = eventHub.subscribe((event) => {
+    const recipients = authRequired
+      ? new Set(Array.from(clients).filter((ws) => authenticatedClients.has(ws)))
+      : clients;
     if (event.kind === 'chat') {
-      broadcast(clients, { event: 'chat_event', payload: event.payload });
+      broadcast(recipients, { event: 'chat_event', payload: event.payload });
       return;
     }
-    broadcast(clients, { event: 'agent_event', payload: event.payload });
+    broadcast(recipients, { event: 'agent_event', payload: event.payload });
   });
 
   wss.on('connection', (ws) => {
@@ -176,6 +211,7 @@ export async function startTuiGatewayServer(
 
     ws.on('close', () => {
       clients.delete(ws);
+      authenticatedClients.delete(ws);
     });
 
     ws.on('message', (payload) => {
@@ -191,9 +227,34 @@ export async function startTuiGatewayServer(
       const params = (frame.params || {}) as Record<string, unknown>;
       const sessionKey = getSessionKey(params);
       const chatJid = adapters.resolveChatJid(sessionKey);
+      const isAuthenticated = !authRequired || authenticatedClients.has(ws);
+
+      if (frame.method !== 'connect' && !isAuthenticated) {
+        sendFrame(
+          ws,
+          failure(frame.id, 'Unauthorized: send connect with a valid gateway token first.'),
+        );
+        return;
+      }
 
       switch (frame.method) {
         case 'connect': {
+          if (authRequired) {
+            const providedToken = asText(params.token).trim();
+            if (providedToken !== authToken) {
+              sendFrame(ws, failure(frame.id, 'Unauthorized: invalid gateway token.'));
+              setTimeout(() => {
+                try {
+                  ws.close(4401, 'Unauthorized');
+                } catch {
+                  // ignore close errors
+                }
+              }, 10);
+              break;
+            }
+            authenticatedClients.add(ws);
+          }
+
           sendFrame(
             ws,
             response(frame.id, {
@@ -201,6 +262,7 @@ export async function startTuiGatewayServer(
               protocol: 'fft_nano.tui.v2',
               serverTime: new Date().toISOString(),
               defaultSessionKey: 'main',
+              authRequired,
             }),
           );
           break;
@@ -270,12 +332,14 @@ export async function startTuiGatewayServer(
           const model = asText(params.model).trim();
           const thinkLevel = normalizeThinkLevel(params.thinkLevel);
           const reasoningLevel = normalizeReasoningLevel(params.reasoningLevel);
+          const verboseMode = normalizeVerboseMode(params.verboseMode);
 
           const patch: SessionPrefs = {};
           if (provider || params.provider === '') patch.provider = provider || undefined;
           if (model || params.model === '') patch.model = model || undefined;
           if (thinkLevel) patch.thinkLevel = thinkLevel;
           if (reasoningLevel) patch.reasoningLevel = reasoningLevel;
+          if (verboseMode) patch.verboseMode = verboseMode;
 
           const next = adapters.patchSessionPrefs(chatJid, patch);
           sendFrame(
@@ -369,11 +433,13 @@ export async function startTuiGatewayServer(
           const action =
             actionRaw === 'restart'
               ? 'restart'
+              : actionRaw === 'doctor'
+                ? 'doctor'
               : actionRaw === 'status'
                 ? 'status'
                 : null;
           if (!action) {
-            sendFrame(ws, failure(frame.id, 'action must be "status" or "restart"'));
+            sendFrame(ws, failure(frame.id, 'action must be "status", "restart", or "doctor"'));
             break;
           }
 
@@ -412,6 +478,7 @@ export async function startTuiGatewayServer(
 
   return {
     port,
+    host,
     close,
   };
 }
