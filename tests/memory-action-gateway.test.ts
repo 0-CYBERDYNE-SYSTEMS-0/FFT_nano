@@ -67,6 +67,35 @@ test('memory_get denies traversal path', async () => {
   assert.match(result.error || '', /not an allowed memory file/i);
 });
 
+test('memory_get returns empty document when allowed file is missing', async () => {
+  const groupFolder = `missing-doc-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  try {
+    fs.mkdirSync(groupDir, { recursive: true });
+    fs.writeFileSync(path.join(groupDir, 'MEMORY.md'), '# MEMORY\n\n', 'utf-8');
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_get',
+        requestId: 'missing-doc',
+        params: { path: 'memory/2099-01-01.md' },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    assert.equal(result.result?.document?.path, 'memory/2099-01-01.md');
+    assert.equal(result.result?.document?.content, '');
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
 test('memory_search sessions returns transcript hits and respects main override', async () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-mem-action-db-'));
   const dbPath = path.join(tmpRoot, 'messages.db');

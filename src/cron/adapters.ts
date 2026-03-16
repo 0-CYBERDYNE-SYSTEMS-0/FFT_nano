@@ -1,6 +1,6 @@
 import { CronExpressionParser } from 'cron-parser';
 
-import { TIMEZONE } from '../config.js';
+import { PARITY_CONFIG, TIMEZONE } from '../config.js';
 import { ScheduledTask } from '../types.js';
 import { CronV2Delivery, CronV2ExecutionPlan, CronV2Policy, CronV2Schedule } from './types.js';
 
@@ -93,6 +93,23 @@ function normalizeDelivery(payload: ScheduleTaskIpcPayload): CronV2Delivery {
   };
 }
 
+function hasExplicitDelivery(payload: ScheduleTaskIpcPayload): boolean {
+  return Boolean(
+    payload.delivery_mode ||
+      payload.delivery_channel ||
+      payload.delivery_to ||
+      payload.delivery_webhook_url ||
+      payload.delivery?.mode ||
+      payload.delivery?.channel ||
+      payload.delivery?.to ||
+      payload.delivery?.webhookUrl,
+  );
+}
+
+function hasTimezoneSuffix(value: string): boolean {
+  return /[Zz]$/.test(value) || /[+-]\d{2}:\d{2}$/.test(value);
+}
+
 export function resolveCronExecutionPlan(
   payload: ScheduleTaskIpcPayload,
   nowMs = Date.now(),
@@ -104,6 +121,9 @@ export function resolveCronExecutionPlan(
   }
   if (scheduleObj) {
     if (scheduleObj.kind === 'at') {
+      if (hasTimezoneSuffix(scheduleObj.at)) {
+        throw new Error('schedule.at must be local time without timezone suffix');
+      }
       const when = new Date(scheduleObj.at);
       if (Number.isNaN(when.getTime())) {
         throw new Error('Invalid schedule.at timestamp');
@@ -162,6 +182,9 @@ export function resolveCronExecutionPlan(
     };
   }
   if (scheduleType === 'once') {
+    if (hasTimezoneSuffix(scheduleValue)) {
+      throw new Error('once schedule must be local time without timezone suffix');
+    }
     const when = new Date(scheduleValue);
     if (Number.isNaN(when.getTime())) {
       throw new Error('Invalid once timestamp');
@@ -180,14 +203,29 @@ export function resolveCronPolicy(payload: ScheduleTaskIpcPayload): CronV2Policy
     ? payload.wake_mode
     : 'next-heartbeat';
   const timeoutSeconds = parseFiniteInt(payload.timeout_seconds);
+  const timeoutMaxSeconds = Math.max(
+    60,
+    parseFiniteInt(process.env.FFT_NANO_TASK_TIMEOUT_MAX_SECONDS) || 24 * 60 * 60,
+  );
   const staggerMs = parseFiniteInt(payload.stagger_ms);
+
+  const delivery = normalizeDelivery(payload);
+  if (
+    sessionTarget === 'isolated' &&
+    !hasExplicitDelivery(payload) &&
+    PARITY_CONFIG.cron.isolatedDefaultDelivery === 'announce'
+  ) {
+    delivery.mode = 'announce';
+  }
 
   return {
     sessionTarget,
     wakeMode,
-    delivery: normalizeDelivery(payload),
+    delivery,
     timeoutSeconds:
-      timeoutSeconds && timeoutSeconds > 0 ? Math.min(timeoutSeconds, 60 * 60) : undefined,
+      timeoutSeconds && timeoutSeconds > 0
+        ? Math.min(timeoutSeconds, timeoutMaxSeconds)
+        : undefined,
     staggerMs: staggerMs && staggerMs > 0 ? staggerMs : undefined,
     deleteAfterRun: parseBool(payload.delete_after_run),
   };

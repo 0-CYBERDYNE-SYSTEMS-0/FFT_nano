@@ -61,6 +61,12 @@ test('parseHeartbeatActiveHours and isWithinHeartbeatActiveHours support day ran
   ); // Sun
 });
 
+test('parseHeartbeatActiveHours supports explicit timezone suffix', () => {
+  const active = parseHeartbeatActiveHours('09:00-17:00@America/New_York');
+  assert.ok(active);
+  assert.equal(active?.timezone, 'America/New_York');
+});
+
 test('shouldSuppressDuplicateHeartbeat applies 24h dedupe window', () => {
   const now = Date.now();
   assert.equal(
@@ -82,4 +88,3 @@ test('shouldSuppressDuplicateHeartbeat applies 24h dedupe window', () => {
     false,
   );
 });
-

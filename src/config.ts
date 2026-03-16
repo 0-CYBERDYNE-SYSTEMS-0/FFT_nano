@@ -1,6 +1,11 @@
+import os from 'os';
 import path from 'path';
+import { PARITY_CONFIG, PARITY_CONFIG_PATH } from './parity-config.js';
+import { FEATURE_FARM, FFT_PROFILE, PROFILE_DETECTION } from './profile.js';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'FarmFriend';
+const DEFAULT_ASSISTANT_NAME = FFT_PROFILE === 'farm' ? 'FarmFriend' : 'fft_nano';
+
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || DEFAULT_ASSISTANT_NAME;
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const SCHEDULER_MODE =
@@ -10,7 +15,7 @@ export const SCHEDULER_MODE =
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
-const HOME_DIR = process.env.HOME || '/Users/user';
+const HOME_DIR = process.env.HOME || os.homedir();
 
 function expandHomePath(input: string): string {
   const trimmed = input.trim();
@@ -34,7 +39,8 @@ export const MAIN_GROUP_FOLDER = 'main';
 export const MAIN_WORKSPACE_DIR = path.resolve(
   expandHomePath(process.env.FFT_NANO_MAIN_WORKSPACE_DIR || '~/nano'),
 );
-export const FARM_STATE_ENABLED = envFlag(process.env.FARM_STATE_ENABLED, false);
+export const FARM_STATE_ENABLED =
+  FEATURE_FARM && envFlag(process.env.FARM_STATE_ENABLED, FFT_PROFILE === 'farm');
 export const FARM_MODE = (process.env.FARM_MODE || 'demo').trim().toLowerCase();
 export const FARM_STATE_DIR = path.resolve(DATA_DIR, 'farm-state');
 export const FARM_PROFILE_PATH = path.resolve(
@@ -68,8 +74,15 @@ export const FFT_DASHBOARD_REPO_PATH = process.env.FFT_DASHBOARD_REPO_PATH || ''
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'fft-nano-agent:latest';
+const DEFAULT_CONTAINER_TIMEOUT_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const CONTAINER_TIMEOUT = parseInt(
-  process.env.CONTAINER_TIMEOUT || '300000',
+  process.env.CONTAINER_TIMEOUT || String(DEFAULT_CONTAINER_TIMEOUT_MS),
+  10,
+);
+export const IDLE_TIMEOUT = parseInt(
+  process.env.IDLE_TIMEOUT ||
+    process.env.CONTAINER_TIMEOUT ||
+    String(DEFAULT_CONTAINER_TIMEOUT_MS),
   10,
 );
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
@@ -81,6 +94,7 @@ export const TELEGRAM_MEDIA_MAX_MB = Math.max(
   1,
   parseInt(process.env.TELEGRAM_MEDIA_MAX_MB || '20', 10),
 );
+export type WebAccessMode = 'localhost' | 'lan' | 'remote';
 
 function envFlag(value: string | undefined, defaultValue: boolean): boolean {
   if (typeof value !== 'string') return defaultValue;
@@ -98,6 +112,27 @@ function envInt(
   const parsed = Number.parseInt(value || '', 10);
   if (!Number.isFinite(parsed)) return defaultValue;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function parseWebAccessMode(value: string | undefined): WebAccessMode {
+  const normalized = (value || 'localhost').trim().toLowerCase();
+  if (normalized === 'lan') return 'lan';
+  if (normalized === 'remote') return 'remote';
+  return 'localhost';
+}
+
+function resolveWebHost(accessMode: WebAccessMode): string {
+  const explicit = (process.env.FFT_NANO_WEB_HOST || '').trim();
+  if (explicit) return explicit;
+  if (accessMode === 'localhost') return '127.0.0.1';
+  return '0.0.0.0';
+}
+
+function resolveTuiHost(accessMode: WebAccessMode): string {
+  const explicit = (process.env.FFT_NANO_TUI_HOST || '').trim();
+  if (explicit) return explicit;
+  if (accessMode === 'localhost') return '127.0.0.1';
+  return '0.0.0.0';
 }
 
 function normalizeUrlCandidate(value: string): string | null {
@@ -131,6 +166,37 @@ export const MEMORY_CONTEXT_CHAR_BUDGET = envInt(
   50000,
 );
 
+export const FFT_NANO_WEB_ACCESS_MODE = parseWebAccessMode(
+  process.env.FFT_NANO_WEB_ACCESS_MODE,
+);
+export const FFT_NANO_WEB_ENABLED = envFlag(process.env.FFT_NANO_WEB_ENABLED, true);
+export const FFT_NANO_WEB_PORT = envInt(
+  process.env.FFT_NANO_WEB_PORT,
+  28990,
+  1,
+  65535,
+);
+export const FFT_NANO_WEB_HOST = resolveWebHost(FFT_NANO_WEB_ACCESS_MODE);
+export const FFT_NANO_WEB_AUTH_TOKEN = (process.env.FFT_NANO_WEB_AUTH_TOKEN || '').trim();
+export const FFT_NANO_WEB_STATIC_DIR = path.resolve(
+  PROJECT_ROOT,
+  'dist-web',
+  'control-center',
+);
+
+export const FFT_NANO_TUI_ENABLED = envFlag(process.env.FFT_NANO_TUI_ENABLED, true);
+export const FFT_NANO_TUI_PORT = envInt(
+  process.env.FFT_NANO_TUI_PORT,
+  28989,
+  1,
+  65535,
+);
+export const FFT_NANO_TUI_HOST = resolveTuiHost(FFT_NANO_WEB_ACCESS_MODE);
+export const FFT_NANO_TUI_AUTH_TOKEN = (
+  process.env.FFT_NANO_TUI_AUTH_TOKEN ||
+  FFT_NANO_WEB_AUTH_TOKEN
+).trim();
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -140,7 +206,7 @@ const parsedAliases = aliasEnv
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
-const defaultAliases = ['F-15'];
+const defaultAliases = FFT_PROFILE === 'farm' ? ['F-15'] : [];
 
 export const ASSISTANT_TRIGGER_ALIASES = Array.from(
   new Set([ASSISTANT_NAME, ...defaultAliases, ...parsedAliases]),
@@ -157,3 +223,6 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+export { PARITY_CONFIG, PARITY_CONFIG_PATH };
+export { FEATURE_FARM, FFT_PROFILE, PROFILE_DETECTION };

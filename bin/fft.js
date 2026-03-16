@@ -6,9 +6,13 @@ import path from 'path';
 
 function printUsage() {
   process.stdout.write(`Usage:
+  fft onboard [--workspace <dir>] [--operator <name>] [--assistant-name <name>] [--runtime auto|docker|host] [--non-interactive] [--force]
+  fft profile <status|set|apply> [core|farm]
   fft start [telegram-only]
   fft dev [telegram-only]
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
+  fft web [--open]
+  fft doctor [--json]
   fft service <install|uninstall|start|stop|restart|status|logs>
 
 Options:
@@ -86,7 +90,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['start', 'dev', 'tui', 'service'].includes(command)) {
+  if (!['onboard', 'profile', 'start', 'dev', 'tui', 'web', 'service', 'doctor'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -105,6 +109,36 @@ function main() {
 
   if (command === 'service') {
     runInRepo(repoRoot, 'scripts/service.sh', commandArgs);
+    return;
+  }
+
+  if (command === 'doctor') {
+    const result = spawnSync('npm', ['run', 'doctor', '--', ...commandArgs], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+  }
+
+  if (command === 'profile') {
+    const result = spawnSync('npm', ['run', 'profile', '--', ...commandArgs], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+  }
+
+  if (command === 'onboard') {
+    runInRepo(repoRoot, 'scripts/onboard-all.sh', commandArgs);
+    return;
+  }
+
+  if (command === 'web') {
+    runInRepo(repoRoot, 'scripts/web.sh', commandArgs);
     return;
   }
 

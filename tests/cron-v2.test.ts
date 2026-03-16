@@ -4,7 +4,11 @@ import os from 'os';
 import path from 'path';
 import test from 'node:test';
 
-import { resolveCronExecutionPlan, resolveNoContinueForTask } from '../src/cron/adapters.ts';
+import {
+  resolveCronExecutionPlan,
+  resolveCronPolicy,
+  resolveNoContinueForTask,
+} from '../src/cron/adapters.ts';
 import {
   computeErrorBackoffMs,
   getTaskDeliveryMode,
@@ -12,6 +16,7 @@ import {
   runScheduledTaskV2,
   shouldTriggerWakeNow,
 } from '../src/cron/service.ts';
+import { PARITY_CONFIG } from '../src/config.ts';
 import { closeDatabase, createTask, getTaskById, initDatabaseAtPath } from '../src/db.ts';
 import type { RegisteredGroup, ScheduledTask } from '../src/types.ts';
 
@@ -88,6 +93,32 @@ test('cron adapter rejects malformed schedule payload when schedule is present',
   );
 });
 
+test('cron adapter rejects timezone-suffixed once/at timestamps', () => {
+  assert.throws(
+    () =>
+      resolveCronExecutionPlan({
+        schedule: { kind: 'at', at: '2026-02-01T15:30:00Z' },
+      }),
+    /local time without timezone suffix/,
+  );
+
+  assert.throws(
+    () =>
+      resolveCronExecutionPlan({
+        schedule_type: 'once',
+        schedule_value: '2026-02-01T15:30:00+02:00',
+      }),
+    /local time without timezone suffix/,
+  );
+});
+
+test('cron policy defaults isolated runs to announce when delivery omitted', () => {
+  const policy = resolveCronPolicy({
+    session_target: 'isolated',
+  });
+  assert.equal(policy.delivery.mode, 'announce');
+});
+
 test('context_mode isolated forces noContinue while group mode reuses session', () => {
   assert.equal(
     resolveNoContinueForTask(makeTask({ context_mode: 'isolated' }) as ScheduledTask),
@@ -117,6 +148,34 @@ test('resolveTaskNextRun applies backoff on errors for recurring tasks', () => {
   assert.ok(nextNormal);
   assert.ok(nextError);
   assert.ok(new Date(nextError!).getTime() - now >= 30000);
+});
+
+test('resolveTaskNextRun applies deterministic top-of-hour stagger when enabled', () => {
+  const originalEnabled = PARITY_CONFIG.cron.deterministicTopOfHourStagger.enabled;
+  const originalMax = PARITY_CONFIG.cron.deterministicTopOfHourStagger.maxMs;
+  PARITY_CONFIG.cron.deterministicTopOfHourStagger.enabled = true;
+  PARITY_CONFIG.cron.deterministicTopOfHourStagger.maxMs = 300000;
+  try {
+    const task = makeTask({
+      id: 'stagger-task',
+      schedule_type: 'cron',
+      schedule_value: '0 * * * *',
+      schedule_json: JSON.stringify({ kind: 'cron', expr: '0 * * * *' }),
+    }) as ScheduledTask;
+    const now = new Date('2026-02-23T10:05:00.000Z').getTime();
+    const nextA = resolveTaskNextRun(task, now, false, 0);
+    const nextB = resolveTaskNextRun(task, now, false, 0);
+    assert.ok(nextA);
+    assert.equal(nextA, nextB);
+
+    const base = new Date('2026-02-23T11:00:00.000Z').getTime();
+    const shifted = new Date(nextA!).getTime();
+    assert.ok(shifted >= base);
+    assert.ok(shifted <= base + 300000);
+  } finally {
+    PARITY_CONFIG.cron.deterministicTopOfHourStagger.enabled = originalEnabled;
+    PARITY_CONFIG.cron.deterministicTopOfHourStagger.maxMs = originalMax;
+  }
 });
 
 test('runScheduledTaskV2 triggers wake_mode=now and announce delivery', async () => {

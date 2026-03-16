@@ -21,7 +21,7 @@ Use this skill when the task is to install, bootstrap, or verify FFT_nano runtim
 
 ## Scope
 
-- Host prerequisites (Node 20+, npm, container runtime)
+- Host prerequisites (Node 20+, npm, runtime mode)
 - First-time bootstrap via project scripts
 - Provider/env setup for Pi runtime inside the container
 - First run validation for Telegram and/or WhatsApp
@@ -37,8 +37,8 @@ Use this skill when the task is to install, bootstrap, or verify FFT_nano runtim
 1. Verify prerequisites:
    - `node -v` (must be v20+)
    - `npm -v`
-   - macOS: `container --version` (Apple Container) or `docker --version`
-   - Linux: `docker --version`
+   - Docker mode: `docker --version`
+   - Host mode (advanced): `CONTAINER_RUNTIME=host` + `FFT_NANO_ALLOW_HOST_RUNTIME=1`
 2. Bootstrap with project script:
    - `./scripts/setup.sh`
 3. Populate `.env` from `.env.example` and fill provider vars.
@@ -70,11 +70,12 @@ ZAI_API_KEY=replace-me
 
 ### macOS
 
-- Runtime auto-prefers Apple Container when available.
-- If Apple Container is installed but stopped, run:
-  - `container system start`
-- If networking stalls/timeouts occur:
-  - `container system stop && container system start`
+- Runtime uses Docker by default.
+- Ensure Docker daemon is running:
+  - `docker info`
+- Optional unisolated host runtime requires explicit opt-in:
+  - `CONTAINER_RUNTIME=host`
+  - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
 
 ### Linux
 

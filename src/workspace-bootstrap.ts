@@ -1,5 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
+
+import { PARITY_CONFIG } from './config.js';
 
 export const WORKSPACE_TEMPLATE_FILENAMES = [
   'AGENTS.md',
@@ -9,6 +12,7 @@ export const WORKSPACE_TEMPLATE_FILENAMES = [
   'PRINCIPLES.md',
   'TOOLS.md',
   'HEARTBEAT.md',
+  'BOOT.md',
   'BOOTSTRAP.md',
   'MEMORY.md',
 ] as const;
@@ -34,6 +38,9 @@ export interface WorkspaceOnboardingState {
   version: number;
   bootstrapSeededAt?: string;
   onboardingCompletedAt?: string;
+  bootstrapGateEligibleAt?: string;
+  bootExecutedAt?: string;
+  bootHash?: string;
 }
 
 const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
@@ -55,14 +62,12 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '- Prefer deterministic, testable changes.',
     '- Keep user-facing updates concise and concrete.',
   ].join('\n'),
-  'SOUL.md': ['# SOUL', '', 'You are FarmFriend: concise, practical, and technically rigorous.'].join(
-    '\n',
-  ),
+  'SOUL.md': ['# SOUL', '', 'You are concise, practical, and technically rigorous.'].join('\n'),
   'USER.md': ['# USER', '', 'Primary operator: [set during onboarding].'].join('\n'),
   'IDENTITY.md': [
     '# IDENTITY',
     '',
-    'Name: FarmFriend',
+    'Name: fft_nano',
     'Role: Main orchestrator + coding-capable assistant',
   ].join('\n'),
   'PRINCIPLES.md': [
@@ -78,11 +83,24 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '',
     '# Keep minimal. Add only periodic checks you actually want.',
   ].join('\n'),
+  'BOOT.md': [
+    '# BOOT',
+    '',
+    'Optional startup checklist.',
+    '- Keep this short.',
+    '- Use only tasks that are safe to run on every gateway restart.',
+  ].join('\n'),
   'BOOTSTRAP.md': [
     '# BOOTSTRAP',
     '',
-    'On first run, ask onboarding questions to populate USER.md and IDENTITY.md.',
-    'After onboarding is complete, either clear this file or mark it complete.',
+    'You just came online in a fresh workspace.',
+    '',
+    'First-run ritual:',
+    '- Start conversationally: "Hey, I just came online. Who am I? Who are you?"',
+    '- Learn and record assistant identity and user identity.',
+    '- Capture preferences and boundaries in SOUL.md.',
+    '- Keep the flow practical and concise.',
+    '- Delete this file after the ritual is complete.',
   ].join('\n'),
   'MEMORY.md': ['# MEMORY', '', 'Durable facts, decisions, and compaction summaries belong here.'].join(
     '\n',
@@ -151,6 +169,18 @@ function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
         typeof parsed.onboardingCompletedAt === 'string'
           ? parsed.onboardingCompletedAt
           : undefined,
+      bootstrapGateEligibleAt:
+        typeof parsed.bootstrapGateEligibleAt === 'string'
+          ? parsed.bootstrapGateEligibleAt
+          : undefined,
+      bootExecutedAt:
+        typeof parsed.bootExecutedAt === 'string'
+          ? parsed.bootExecutedAt
+          : undefined,
+      bootHash:
+        typeof parsed.bootHash === 'string'
+          ? parsed.bootHash
+          : undefined,
     };
   } catch {
     return { version: WORKSPACE_STATE_VERSION };
@@ -163,6 +193,45 @@ function writeWorkspaceState(workspaceDir: string, state: WorkspaceOnboardingSta
   const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now().toString(36)}`;
   fs.writeFileSync(tmpPath, `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
   fs.renameSync(tmpPath, statePath);
+}
+
+export function readMainWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
+  return readWorkspaceState(workspaceDir);
+}
+
+export function writeMainWorkspaceState(
+  workspaceDir: string,
+  state: WorkspaceOnboardingState,
+): void {
+  writeWorkspaceState(workspaceDir, state);
+}
+
+export interface MainWorkspaceOnboardingStatus {
+  state: WorkspaceOnboardingState;
+  bootstrapExists: boolean;
+  pending: boolean;
+  gateEligible: boolean;
+}
+
+export function getMainWorkspaceOnboardingStatus(workspaceDir: string): MainWorkspaceOnboardingStatus {
+  const state = readWorkspaceState(workspaceDir);
+  const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
+  const bootstrapExists = fs.existsSync(bootstrapPath);
+  const pending = bootstrapExists || (!!state.bootstrapSeededAt && !state.onboardingCompletedAt);
+  return {
+    state,
+    bootstrapExists,
+    pending,
+    gateEligible: !!state.bootstrapGateEligibleAt,
+  };
+}
+
+export function isMainWorkspaceOnboardingPending(workspaceDir: string): boolean {
+  return getMainWorkspaceOnboardingStatus(workspaceDir).pending;
+}
+
+export function computeBootFileHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
 }
 
 function writeFileIfMissing(filePath: string, body: string): boolean {
@@ -179,12 +248,29 @@ export function ensureMainWorkspaceBootstrap(params: {
   const workspaceDir = params.workspaceDir;
   const nowIso = () => (params.now ? params.now() : new Date()).toISOString();
   fs.mkdirSync(workspaceDir, { recursive: true });
+  if (PARITY_CONFIG.workspace.skipBootstrap) {
+    const state = readWorkspaceState(workspaceDir);
+    if (state.version !== WORKSPACE_STATE_VERSION) {
+      writeWorkspaceState(workspaceDir, {
+        ...state,
+        version: WORKSPACE_STATE_VERSION,
+      });
+      return {
+        ...state,
+        version: WORKSPACE_STATE_VERSION,
+      };
+    }
+    return state;
+  }
 
   const templates = loadTemplates(params.templateDir);
 
   for (const fileName of REQUIRED_BASE_FILES) {
     const filePath = path.join(workspaceDir, fileName);
     writeFileIfMissing(filePath, templates[fileName]);
+  }
+  if (PARITY_CONFIG.workspace.enableBootMd) {
+    writeFileIfMissing(path.join(workspaceDir, 'BOOT.md'), templates['BOOT.md']);
   }
 
   let state = readWorkspaceState(workspaceDir);
@@ -217,8 +303,11 @@ export function ensureMainWorkspaceBootstrap(params: {
     if (onboardingAlreadyDone) {
       patchState({ onboardingCompletedAt: nowIso() });
     } else {
-      writeFileIfMissing(bootstrapPath, templates['BOOTSTRAP.md']);
+      const createdBootstrap = writeFileIfMissing(bootstrapPath, templates['BOOTSTRAP.md']);
       bootstrapExists = fs.existsSync(bootstrapPath);
+      if (createdBootstrap && !state.bootstrapGateEligibleAt) {
+        patchState({ bootstrapGateEligibleAt: nowIso() });
+      }
       if (bootstrapExists && !state.bootstrapSeededAt) {
         patchState({ bootstrapSeededAt: nowIso() });
       }
@@ -266,5 +355,21 @@ export function completeMainWorkspaceOnboarding(
   }
 
   writeWorkspaceState(workspaceDir, next);
+  return next;
+}
+
+export function markMainWorkspaceBootExecuted(params: {
+  workspaceDir: string;
+  bootHash: string;
+  executedAt?: string;
+}): WorkspaceOnboardingState {
+  const state = readWorkspaceState(params.workspaceDir);
+  const next: WorkspaceOnboardingState = {
+    ...state,
+    version: WORKSPACE_STATE_VERSION,
+    bootExecutedAt: params.executedAt || new Date().toISOString(),
+    bootHash: params.bootHash,
+  };
+  writeWorkspaceState(params.workspaceDir, next);
   return next;
 }

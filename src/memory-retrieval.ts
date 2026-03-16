@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ASSISTANT_NAME,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
@@ -38,6 +39,10 @@ export interface MemoryContextBuildResult {
 
 const MAX_CHUNK_CHARS = 800;
 const CHUNK_CACHE = new Map<string, ChunkCacheEntry>();
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 const STOPWORDS = new Set([
   'a',
@@ -204,6 +209,7 @@ function chunkMemoryText(text: string): string[] {
 }
 
 function extractQueryText(prompt: string): string {
+  const assistantPrefix = new RegExp(`^${escapeRegex(ASSISTANT_NAME)}:\\s*`, 'i');
   const lines = prompt
     .split('\n')
     .map((line) => line.trim())
@@ -214,7 +220,7 @@ function extractQueryText(prompt: string): string {
     const stripped = line.replace(/^\[[^\]]+\]\s*[^:]{1,80}:\s*/, '');
     return stripped
       .replace(/^\[[A-Z _-]+\]\s*/, '')
-      .replace(/^FarmFriend:\s*/i, '');
+      .replace(assistantPrefix, '');
   });
 
   const query = tail.join(' ').trim();

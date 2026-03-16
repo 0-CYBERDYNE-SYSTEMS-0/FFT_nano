@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
 
-export type ContainerRuntime = 'apple' | 'docker';
+export type ContainerRuntime = 'docker' | 'host';
 
 function commandExists(cmd: string): boolean {
   try {
@@ -13,26 +13,33 @@ function commandExists(cmd: string): boolean {
 
 export function getContainerRuntime(): ContainerRuntime {
   const raw = (process.env.CONTAINER_RUNTIME || 'auto').toLowerCase();
+  const hostAllowed = ['1', 'true', 'yes', 'on'].includes(
+    (process.env.FFT_NANO_ALLOW_HOST_RUNTIME || '').toLowerCase(),
+  );
 
-  if (raw === 'apple') return 'apple';
   if (raw === 'docker') return 'docker';
+  if (raw === 'host') {
+    if (!hostAllowed) {
+      throw new Error(
+        'CONTAINER_RUNTIME=host requires FFT_NANO_ALLOW_HOST_RUNTIME=1 (explicit unsafe opt-in)',
+      );
+    }
+    return 'host';
+  }
   if (raw !== 'auto') {
     throw new Error(
-      `Invalid CONTAINER_RUNTIME="${process.env.CONTAINER_RUNTIME}" (expected "auto", "apple", or "docker")`,
+      `Invalid CONTAINER_RUNTIME="${process.env.CONTAINER_RUNTIME}" (expected "auto", "docker", or "host")`,
     );
   }
 
-  // Prefer Apple Container on macOS when available.
-  if (process.platform === 'darwin' && commandExists('container')) return 'apple';
+  // Auto mode defaults to Docker for reproducibility and isolation.
   if (commandExists('docker')) return 'docker';
-  if (commandExists('container')) return 'apple';
 
+  if (hostAllowed) return 'host';
   throw new Error(
-    'No container runtime found. Install Apple Container (macOS) or Docker, or set CONTAINER_RUNTIME explicitly.',
+    [
+      'No supported runtime found.',
+      'Install Docker, or set CONTAINER_RUNTIME=host with FFT_NANO_ALLOW_HOST_RUNTIME=1 for unisolated host execution.',
+    ].join(' '),
   );
 }
-
-export function getRuntimeCommand(runtime: ContainerRuntime): string {
-  return runtime === 'docker' ? 'docker' : 'container';
-}
-

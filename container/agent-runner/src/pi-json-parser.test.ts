@@ -62,3 +62,55 @@ test('non-json stdout falls back to raw text', () => {
   assert.equal(parsed.result, 'plain stdout line');
 });
 
+test('tool execution events are captured', () => {
+  const stdout = [
+    JSON.stringify({
+      type: 'tool_execution_start',
+      toolCallId: 'a1',
+      toolName: 'read',
+      args: { path: 'README.md' },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_end',
+      toolCallId: 'a1',
+      toolName: 'read',
+      isError: false,
+      output: 'ok',
+    }),
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, 'done');
+  assert.equal(parsed.toolExecutions?.length, 1);
+  assert.equal(parsed.toolExecutions?.[0]?.toolName, 'read');
+  assert.equal(parsed.toolExecutions?.[0]?.status, 'ok');
+});
+
+test('tool execution errors include error details', () => {
+  const stdout = [
+    JSON.stringify({
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      args: { cmd: 'exit 1' },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_end',
+      toolName: 'bash',
+      isError: true,
+      errorMessage: 'Command failed with exit code 1',
+    }),
+  ].join('\n');
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, '');
+  assert.equal(parsed.toolExecutions?.length, 1);
+  assert.equal(parsed.toolExecutions?.[0]?.status, 'error');
+  assert.match(parsed.toolExecutions?.[0]?.error || '', /exit code 1/);
+});
