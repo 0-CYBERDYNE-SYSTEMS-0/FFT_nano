@@ -320,6 +320,9 @@ let chatUsageStats: Record<string, ChatUsageStats> = {};
 const activeCoderRuns = new Map<string, ActiveCoderRun>();
 const activeChatRuns = new Map<string, ActiveChatRun>();
 const activeChatRunsById = new Map<string, ActiveChatRun>();
+// In-memory queue for TUI messages sent while a run is active.
+// Dequeued sequentially through runDirectSessionTurn after each run completes.
+const tuiMessageQueue = new Map<string, Array<{ text: string; runId: string; deliver: boolean }>>();
 const telegramDraftDisabledRuns = new TelegramDraftDisableRegistry(
   TELEGRAM_DRAFT_DISABLE_MS,
 );
@@ -4710,16 +4713,12 @@ async function runDirectSessionTurn(params: {
   }
   const existing = activeChatRuns.get(chatJid);
   if (existing) {
-    // Store to queue instead of blocking
-    storeTextMessage({
-      id: `tui-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      chatJid,
-      sender: 'tui',
-      senderName: TUI_SENDER_NAME,
-      content: text,
-      timestamp: new Date().toISOString(),
-      isFromMe: false,
-    });
+    // Queue in-memory so it's processed through the TUI path after the current run completes.
+    // Storing via storeTextMessage with a non-TUI_SENDER_ID would leak into the Telegram
+    // message loop, causing responses to be sent to Telegram instead of the TUI.
+    const queue = tuiMessageQueue.get(chatJid) ?? [];
+    queue.push({ text, runId, deliver });
+    tuiMessageQueue.set(chatJid, queue);
     return { runId: existing.requestId, status: 'queued' };
   }
   const onboardingGate = resolveMainOnboardingGate(chatJid);
@@ -4763,137 +4762,157 @@ async function runDirectSessionTurn(params: {
   activeChatRuns.set(chatJid, activeRun);
   activeChatRunsById.set(runId, activeRun);
 
-  let result: string | null = null;
-  let streamed = false;
-  let ok = false;
-  let usage:
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-        provider?: string;
-        model?: string;
-      }
-    | undefined;
+  // Detach agent execution so RPC response is sent before any events arrive at the client.
+  // This prevents the client from receiving run-complete events before it knows the runId,
+  // which caused the spinner to get stuck in 'running' forever.
+  void (async () => {
+    let result: string | null = null;
+    let streamed = false;
+    let ok = false;
+    let usage:
+      | {
+          inputTokens?: number;
+          outputTokens?: number;
+          totalTokens?: number;
+          provider?: string;
+          model?: string;
+        }
+      | undefined;
 
-  await setTyping(chatJid, true);
-  try {
-    const run = await runAgent(
-      group,
-      prompt,
-      chatJid,
-      'none',
-      runId,
-      runPreferences,
-      {},
-      abortController.signal,
-    );
-    result = run.result;
-    streamed = run.streamed;
-    ok = run.ok;
-    usage = run.usage;
-  } finally {
-    await setTyping(chatJid, false);
-    if (activeChatRuns.get(chatJid) === activeRun) {
-      activeChatRuns.delete(chatJid);
-    }
-    activeChatRunsById.delete(runId);
-  }
-
-  if (!ok) {
-    emitTuiChatEvent({
-      runId,
-      sessionKey,
-      state: 'error',
-      errorMessage: 'Run failed',
-    });
-    emitTuiAgentEvent({
-      runId,
-      sessionKey,
-      phase: 'error',
-      detail: 'run failed',
-    });
-    throw new Error('Run failed');
-  }
-
-  if (onboardingGate.active) {
-    const completion = extractOnboardingCompletion(result);
-    result = completion.text;
-    if (completion.completed) {
-      completeMainWorkspaceOnboarding({ workspaceDir: MAIN_WORKSPACE_DIR });
-      if (!result) {
-        result = 'Onboarding complete.';
-      }
-      logger.info(
-        { chatJid, runId },
-        'Completed main workspace onboarding from direct session run',
+    await setTyping(chatJid, true);
+    try {
+      const run = await runAgent(
+        group,
+        prompt,
+        chatJid,
+        'none',
+        runId,
+        runPreferences,
+        {},
+        abortController.signal,
       );
+      result = run.result;
+      streamed = run.streamed;
+      ok = run.ok;
+      usage = run.usage;
+    } finally {
+      await setTyping(chatJid, false);
+      if (activeChatRuns.get(chatJid) === activeRun) {
+        activeChatRuns.delete(chatJid);
+      }
+      activeChatRunsById.delete(runId);
+
+      // Dequeue the next TUI message (if any) through the TUI path.
+      // Must happen after activeChatRuns is cleared so the next run registers cleanly.
+      const tuiQueue = tuiMessageQueue.get(chatJid);
+      const nextTuiMessage = tuiQueue?.shift();
+      if (nextTuiMessage) {
+        if (tuiQueue?.length === 0) tuiMessageQueue.delete(chatJid);
+        void runDirectSessionTurn({
+          chatJid,
+          text: nextTuiMessage.text,
+          runId: nextTuiMessage.runId,
+          deliver: nextTuiMessage.deliver,
+        });
+      }
     }
-  }
 
-  updateChatUsage(chatJid, usage);
-  const externallyCompleted = isTelegramJid(chatJid)
-    ? consumeTelegramHostCompletedRun(chatJid, runId)
-    : false;
-  const telegramPreviewState = isTelegramJid(chatJid)
-    ? consumeTelegramHostStreamState(chatJid, runId)
-    : null;
-  if (!streamed && (telegramPreviewState || externallyCompleted)) {
-    streamed = true;
-  }
+    if (!ok) {
+      emitTuiChatEvent({
+        runId,
+        sessionKey,
+        state: 'error',
+        errorMessage: 'Run failed',
+      });
+      emitTuiAgentEvent({
+        runId,
+        sessionKey,
+        phase: 'error',
+        detail: 'run failed',
+      });
+      // Error is communicated via events; RPC response already sent successfully.
+      return;
+    }
 
-  if (abortController.signal.aborted) {
-    if (telegramPreviewState) {
+    if (onboardingGate.active) {
+      const completion = extractOnboardingCompletion(result);
+      result = completion.text;
+      if (completion.completed) {
+        completeMainWorkspaceOnboarding({ workspaceDir: MAIN_WORKSPACE_DIR });
+        if (!result) {
+          result = 'Onboarding complete.';
+        }
+        logger.info(
+          { chatJid, runId },
+          'Completed main workspace onboarding from direct session run',
+        );
+      }
+    }
+
+    updateChatUsage(chatJid, usage);
+    const externallyCompleted = isTelegramJid(chatJid)
+      ? consumeTelegramHostCompletedRun(chatJid, runId)
+      : false;
+    const telegramPreviewState = isTelegramJid(chatJid)
+      ? consumeTelegramHostStreamState(chatJid, runId)
+      : null;
+    if (!streamed && (telegramPreviewState || externallyCompleted)) {
+      streamed = true;
+    }
+
+    if (abortController.signal.aborted) {
+      if (telegramPreviewState) {
+        await deleteTelegramPreviewMessage(chatJid, telegramPreviewState.messageId);
+      }
+      emitTuiChatEvent({
+        runId,
+        sessionKey,
+        state: 'aborted',
+      });
+      emitTuiAgentEvent({
+        runId,
+        sessionKey,
+        phase: 'end',
+        detail: 'aborted',
+      });
+      return;
+    }
+
+    if (result) {
+      persistAssistantHistory(chatJid, result, runId);
+      let finalizedPreview = false;
+      if (!externallyCompleted && telegramPreviewState) {
+        finalizedPreview = await finalizeTelegramPreviewMessage(
+          chatJid,
+          telegramPreviewState.messageId,
+          result,
+        );
+      }
+      if (
+        deliver &&
+        !externallyCompleted &&
+        (!streamed || (telegramPreviewState && !finalizedPreview))
+      ) {
+        await sendAgentResultMessage(chatJid, result, { prefixWhatsApp: true });
+      }
+    } else if (telegramPreviewState) {
       await deleteTelegramPreviewMessage(chatJid, telegramPreviewState.messageId);
     }
+
     emitTuiChatEvent({
       runId,
       sessionKey,
-      state: 'aborted',
+      state: 'final',
+      ...(result ? { message: { role: 'assistant' as const, content: result } } : {}),
+      usage,
     });
     emitTuiAgentEvent({
       runId,
       sessionKey,
       phase: 'end',
-      detail: 'aborted',
+      detail: streamed ? 'streamed' : 'complete',
     });
-    return { runId, status: 'started' };
-  }
-
-  if (result) {
-    persistAssistantHistory(chatJid, result, runId);
-    let finalizedPreview = false;
-    if (!externallyCompleted && telegramPreviewState) {
-      finalizedPreview = await finalizeTelegramPreviewMessage(
-        chatJid,
-        telegramPreviewState.messageId,
-        result,
-      );
-    }
-    if (
-      deliver &&
-      !externallyCompleted &&
-      (!streamed || (telegramPreviewState && !finalizedPreview))
-    ) {
-      await sendAgentResultMessage(chatJid, result, { prefixWhatsApp: true });
-    }
-  } else if (telegramPreviewState) {
-    await deleteTelegramPreviewMessage(chatJid, telegramPreviewState.messageId);
-  }
-
-  emitTuiChatEvent({
-    runId,
-    sessionKey,
-    state: 'final',
-    ...(result ? { message: { role: 'assistant' as const, content: result } } : {}),
-    usage,
-  });
-  emitTuiAgentEvent({
-    runId,
-    sessionKey,
-    phase: 'end',
-    detail: streamed ? 'streamed' : 'complete',
-  });
+  })();
 
   return { runId, status: 'started' };
 }
