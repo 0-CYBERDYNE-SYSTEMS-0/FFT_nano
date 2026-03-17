@@ -1,0 +1,20 @@
+title = "FFT_nano Gitleaks Config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+  '''\.env$''',
+  '''\.env\.''',
+  '''tests\/''',
+  '''test\/''',
+  '''\.test\.''',
+  '''\.spec\.''',
+  '''docs\/''',
+  '''docs-site\/''',
+  '''\.claude\/skills\/''',
+  '''skills\/''',
+  '''scripts\/''',
+  '''\.md$'''
+]
