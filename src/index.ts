@@ -5606,6 +5606,10 @@ function buildTelegramToolProgressLine(
   const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '⚙️';
   if (event.status === 'start') {
     if (mode === 'new' && event.toolName === lastToolName) return null;
+    if (mode === 'new') {
+      // For 'new' mode, only show tool name without args
+      return `${emoji} ${event.toolName}`;
+    }
     if (mode === 'verbose' && event.args) {
       let keys = '';
       try {
