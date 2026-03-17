@@ -304,8 +304,9 @@ async function runPiAgent(
     !input.isScheduledTask &&
     (isForceDelegateHint(input.codingHint) || input.codingHint === 'auto') &&
     fs.existsSync(PI_ON_PI_EXTENSION_PATH);
+  const isHeartbeatRun = input.requestId?.startsWith('heartbeat-');
   const canStreamTelegramDraft =
-    isTelegramChatJid(input.chatJid) && !input.isScheduledTask;
+    isTelegramChatJid(input.chatJid) && !input.isScheduledTask && !isHeartbeatRun;
   const draftId = deriveTelegramDraftId(
     `${input.chatJid}:${input.requestId || `run-${Date.now()}`}`,
   );
