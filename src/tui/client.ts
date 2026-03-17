@@ -243,8 +243,8 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         if (activeRunId && evt.runId !== activeRunId) return;
 
         if (evt.stream === 'tool') {
-          if ((sessionPrefs.verboseMode || 'off') === 'off') return;
-          chatLog.upsertToolEvent(evt.runId, evt.data, sessionPrefs.verboseMode || 'off');
+          if ((sessionPrefs.verboseMode || 'all') === 'off') return;
+          chatLog.upsertToolEvent(evt.runId, evt.data, sessionPrefs.verboseMode || 'all');
           tui.requestRender();
           return;
         }
@@ -334,7 +334,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
     const model = sessionPrefs.model || DEFAULT_MODEL;
     const think = sessionPrefs.thinkLevel || 'off';
     const reasoning = sessionPrefs.reasoningLevel || 'off';
-    const verbose = sessionPrefs.verboseMode || 'off';
+    const verbose = sessionPrefs.verboseMode || 'all';
     footer.setText(
       theme.dim(
         [
