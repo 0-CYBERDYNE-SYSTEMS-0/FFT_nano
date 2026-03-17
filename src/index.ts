@@ -1371,7 +1371,7 @@ function formatChatRuntimePreferences(chatJid: string): string[] {
   const prefs = chatRunPreferences[chatJid] || {};
   const think = prefs.thinkLevel || 'off';
   const reasoning = prefs.reasoningLevel || 'off';
-  const verbose = prefs.verboseMode || 'off';
+  const verbose = prefs.verboseMode || 'all';
   const freeChat = prefs.freeChat ? 'yes' : 'no';
   const newPending = prefs.nextRunNoContinue ? 'yes' : 'no';
   const queueMode = prefs.queueMode || 'collect';
@@ -2061,7 +2061,7 @@ function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
     `Model: ${getEffectiveModelLabel(chatJid)}`,
     `Think: ${prefs.thinkLevel || 'off'}`,
     `Reasoning: ${prefs.reasoningLevel || 'off'}`,
-    `Tool progress: ${prefs.verboseMode || 'off'}`,
+    `Tool progress: ${prefs.verboseMode || 'all'}`,
     `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
   ];
 }
@@ -2295,7 +2295,7 @@ function buildReasoningPanel(chatJid: string): {
 }
 
 function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
-  const current = chatRunPreferences[chatJid]?.verboseMode || 'off';
+  const current = chatRunPreferences[chatJid]?.verboseMode || 'all';
   const levels: VerboseMode[] = ['off', 'new', 'all', 'verbose'];
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < levels.length; i += 2) {
@@ -3615,7 +3615,7 @@ async function handleTelegramCommand(m: {
       } else {
         await sendMessage(
           m.chatJid,
-          `Current tool progress mode: ${chatRunPreferences[m.chatJid]?.verboseMode || 'off'}`,
+          `Current tool progress mode: ${chatRunPreferences[m.chatJid]?.verboseMode || 'all'}`,
         );
       }
       return true;
@@ -5606,6 +5606,10 @@ function buildTelegramToolProgressLine(
   const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '⚙️';
   if (event.status === 'start') {
     if (mode === 'new' && event.toolName === lastToolName) return null;
+    if (mode === 'new') {
+      // For 'new' mode, only show tool name without args
+      return `${emoji} ${event.toolName}`;
+    }
     if (mode === 'verbose' && event.args) {
       let keys = '';
       try {
@@ -5645,7 +5649,7 @@ function queueTelegramToolProgressUpdate(
 ): void {
   const bot = telegramBot;
   if (!bot) return;
-  const effectiveMode = mode || 'off';
+  const effectiveMode = mode || 'all';
   if (effectiveMode === 'off') return;
 
   const key = getTelegramToolProgressKey(chatJid, requestId);
