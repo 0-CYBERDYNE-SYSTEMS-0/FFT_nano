@@ -9,7 +9,7 @@ import { resolvePiExecutable } from '../src/pi-executable.js';
 test('resolvePiExecutable prefers repo-local fallback when global pi is absent', () => {
   // Create a real temp tree so fs.existsSync passes on any machine / CI
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-'));
-  const localPiDir = path.join(tmpDir, 'container', 'agent-runner', 'node_modules', '.bin');
+  const localPiDir = path.join(tmpDir, 'node_modules', '.bin');
   const localPiBin = path.join(localPiDir, 'pi');
   fs.mkdirSync(localPiDir, { recursive: true });
   fs.writeFileSync(localPiBin, '#!/bin/sh\necho pi', { mode: 0o755 });

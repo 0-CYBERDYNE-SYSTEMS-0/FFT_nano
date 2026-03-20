@@ -18,14 +18,7 @@ export function resolvePiExecutable(cwd = process.cwd()): string | null {
   const onPath = findExecutableOnPath('pi');
   if (onPath) return onPath;
 
-  const localPi = path.join(
-    cwd,
-    'container',
-    'agent-runner',
-    'node_modules',
-    '.bin',
-    'pi',
-  );
+  const localPi = path.join(cwd, 'node_modules', '.bin', 'pi');
   if (fs.existsSync(localPi)) return localPi;
 
   return null;

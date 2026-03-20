@@ -6,7 +6,7 @@ import {
   SCHEDULER_MODE,
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
-import { runContainerAgent, writeTasksSnapshot } from './container-runner.js';
+import { runContainerAgent, writeTasksSnapshot } from './pi-runner.js';
 import {
   getAllTasks,
   getDueTasks,

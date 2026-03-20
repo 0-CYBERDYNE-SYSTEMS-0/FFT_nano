@@ -5,7 +5,7 @@ import {
   createToolTrackerState,
   extractAssistantTextDeltaFromPiEvent,
   extractToolDeltaFromPiEvent,
-} from './pi-stream-parser.js';
+} from '../src/pi-stream-parser.js';
 
 test('extractAssistantTextDeltaFromPiEvent reads message_update text deltas', () => {
   const delta = extractAssistantTextDeltaFromPiEvent({

@@ -4,7 +4,14 @@ import test from 'node:test';
 import {
   buildSystemPrompt,
   type SystemPromptInput,
-} from '../container/agent-runner/src/system-prompt.ts';
+  type WorkspacePaths,
+} from '../src/system-prompt.js';
+
+const DEFAULT_PATHS: WorkspacePaths = {
+  groupDir: '/workspace/group',
+  globalDir: '/workspace/global',
+  ipcDir: '/workspace/ipc',
+};
 
 function makeInput(overrides: Partial<SystemPromptInput> = {}): SystemPromptInput {
   return {
@@ -36,6 +43,7 @@ test('buildSystemPrompt injects trusted metadata, overlay, and bootstrap context
       requestId: 'req-123',
       extraSystemPrompt: 'Injected host overlay.',
     }),
+    DEFAULT_PATHS,
     {
       delegationExtensionAvailable: true,
       now: () => new Date('2026-02-17T12:00:00.000Z'),
@@ -56,7 +64,7 @@ test('buildSystemPrompt injects trusted metadata, overlay, and bootstrap context
 
 test('buildSystemPrompt enforces per-file and total prompt budgets', () => {
   const giant = 'A'.repeat(10_000);
-  const { text, report } = buildSystemPrompt(makeInput(), {
+  const { text, report } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
     now: () => new Date('2026-02-17T00:00:00.000Z'),
     fileMaxChars: 256,
     totalMaxChars: 600,
@@ -79,6 +87,7 @@ test('buildSystemPrompt uses minimal mode for scheduled runs and truncates retri
       memoryContext: 'x'.repeat(30_000),
       codingHint: 'none',
     }),
+    DEFAULT_PATHS,
     {
       readFileIfExists: () => null,
     },
@@ -103,6 +112,7 @@ test('buildSystemPrompt loads non-main SOUL and MEMORY fallbacks when retrieval 
       groupFolder: 'telegram-123',
       codingHint: 'none',
     }),
+    DEFAULT_PATHS,
     {
       readFileIfExists: (filePath) => files.get(filePath) ?? null,
     },
@@ -129,6 +139,7 @@ test('buildSystemPrompt supports legacy non-main memory.md fallback', () => {
       groupFolder: 'telegram-123',
       codingHint: 'none',
     }),
+    DEFAULT_PATHS,
     {
       readFileIfExists: (filePath) => files.get(filePath) ?? null,
     },
@@ -150,6 +161,7 @@ test('buildSystemPrompt treats empty files as present context, not missing', () 
       groupFolder: 'telegram-123',
       codingHint: 'none',
     }),
+    DEFAULT_PATHS,
     {
       readFileIfExists: (filePath) => files.get(filePath) ?? null,
     },

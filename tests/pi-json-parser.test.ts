@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parsePiJsonOutput } from './pi-json-parser.js';
+import { parsePiJsonOutput } from '../src/pi-json-parser.js';
 
 test('message_end with thinking-only content returns empty text', () => {
   const stdout = JSON.stringify({
