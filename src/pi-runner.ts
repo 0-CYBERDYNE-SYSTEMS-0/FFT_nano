@@ -227,7 +227,7 @@ function resolveWorkspacePaths(group: RegisteredGroup, isMain: boolean): Workspa
   return { groupDir, globalDir, ipcDir, piHomeDir, piAgentDir };
 }
 
-function ensureGroupDirs(wp: ReturnType<typeof resolveWorkspacePaths>, isMain: boolean): void {
+function ensureGroupDirs(wp: ReturnType<typeof resolveWorkspacePaths>, groupFolder: string, isMain: boolean): void {
   fs.mkdirSync(wp.groupDir, { recursive: true });
   fs.mkdirSync(wp.piHomeDir, { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'messages'), { recursive: true });
@@ -235,7 +235,7 @@ function ensureGroupDirs(wp: ReturnType<typeof resolveWorkspacePaths>, isMain: b
   fs.mkdirSync(path.join(wp.ipcDir, 'actions'), { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'action_results'), { recursive: true });
   if (isMain) ensureMainWorkspaceSeed();
-  else ensureMemoryScaffold(GROUPS_DIR.replace(/\/groups$/, '/') + 'groups/' + path.basename(wp.groupDir));
+  else ensureMemoryScaffold(groupFolder);
 }
 
 function syncSkills(
@@ -383,7 +383,7 @@ export async function runContainerAgent(
 
   const isMain = input.isMain;
   const wp = resolveWorkspacePaths(group, isMain);
-  ensureGroupDirs(wp, isMain);
+  ensureGroupDirs(wp, group.folder, isMain);
   syncSkills(group, wp.piHomeDir, isMain);
 
   const secrets = collectRuntimeSecrets(projectRoot);
@@ -431,6 +431,18 @@ export async function runContainerAgent(
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
+  // Hoisted reference so timeout/abort handlers can kill the active child process.
+  let activeChild: import('child_process').ChildProcess | null = null;
+
+  const killActiveChild = () => {
+    if (!activeChild || activeChild.killed) return;
+    activeChild.kill('SIGTERM');
+    const ref = activeChild;
+    setTimeout(() => { if (!ref.killed) ref.kill('SIGKILL'); }, 5_000);
+  };
+
+  const STDERR_MAX_SIZE = 1_048_576; // 1 MB
+
   const runPi = (useContinue: boolean) =>
     new Promise<{
       code: number | null;
@@ -448,13 +460,13 @@ export async function runContainerAgent(
         secrets,
       });
 
-      const sandboxed = wrapWithSandbox('pi', piArgs, {
-        cwd: wp.groupDir,
-        allowedPaths: [wp.groupDir, wp.piHomeDir, wp.ipcDir],
-      });
-
+      const hostPassthrough: Record<string, string> = {};
+      for (const key of ['PATH', 'HOME', 'TZ', 'TERM', 'LANG', 'SHELL', 'USER', 'TMPDIR'] as const) {
+        const v = process.env[key];
+        if (v) hostPassthrough[key] = v;
+      }
       const env: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...hostPassthrough,
         ...secrets,
         PI_CODING_AGENT_DIR: wp.piAgentDir,
         FFT_NANO_CHAT_JID: input.chatJid,
@@ -463,11 +475,18 @@ export async function runContainerAgent(
         FFT_NANO_IS_MAIN: isMain ? '1' : '0',
       };
 
+      const sandboxed = wrapWithSandbox('pi', piArgs, {
+        cwd: wp.groupDir,
+        allowedPaths: [wp.groupDir, wp.piHomeDir, wp.ipcDir],
+        env: env as Record<string, string>,
+      });
+
       const child = spawn(sandboxed.command, sandboxed.args, {
         cwd: wp.groupDir,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      activeChild = child;
 
       let stdout = '';
       let stderr = '';
@@ -573,7 +592,10 @@ export async function runContainerAgent(
       });
 
       child.stderr.on('data', (d: Buffer) => {
-        stderr += d.toString();
+        if (stderr.length < STDERR_MAX_SIZE) {
+          const chunk = d.toString();
+          stderr += chunk.slice(0, STDERR_MAX_SIZE - stderr.length);
+        }
       });
 
       child.on('close', (code) => {
@@ -614,6 +636,7 @@ export async function runContainerAgent(
     let timedOut = false;
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
+      killActiveChild();
       finish({
         status: 'error',
         result: null,
@@ -623,6 +646,7 @@ export async function runContainerAgent(
 
     const onAbort = () => {
       clearTimeout(timeoutHandle);
+      killActiveChild();
       finish({ status: 'error', result: null, error: 'Aborted by user' });
     };
     if (abortSignal) {
