@@ -1,11 +1,11 @@
 import { execFileSync } from 'child_process';
-import { logger } from './logger.js';
 
 export type SandboxMode = 'bwrap' | 'docker' | 'none';
 
 export interface SandboxConfig {
   cwd: string;
   allowedPaths?: string[];
+  env?: Record<string, string>;
 }
 
 interface SandboxResult {
@@ -35,8 +35,10 @@ function wrapWithBwrap(
   config: SandboxConfig,
 ): SandboxResult {
   if (!commandExists('bwrap')) {
-    logger.warn('bwrap not found, falling back to no sandbox');
-    return { command, args };
+    throw new Error(
+      'FFT_NANO_SANDBOX=bwrap but bwrap is not installed. ' +
+      'Install bwrap or set FFT_NANO_SANDBOX=none.',
+    );
   }
 
   const bwrapArgs: string[] = [
@@ -64,8 +66,10 @@ function wrapWithDocker(
   config: SandboxConfig,
 ): SandboxResult {
   if (!commandExists('docker')) {
-    logger.warn('docker not found, falling back to no sandbox');
-    return { command, args };
+    throw new Error(
+      'FFT_NANO_SANDBOX=docker but docker is not installed. ' +
+      'Install docker or set FFT_NANO_SANDBOX=none.',
+    );
   }
 
   const image = process.env.FFT_NANO_SANDBOX_IMAGE || 'fft-nano-pi:latest';
@@ -79,10 +83,8 @@ function wrapWithDocker(
   }
   dockerArgs.push('-v', `${config.cwd}:/workspace`);
 
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith('PI_') || key.startsWith('OPENAI_') ||
-        key.startsWith('ANTHROPIC_') || key.startsWith('FFT_NANO_') ||
-        key === 'TZ' || key === 'HOME') {
+  if (config.env) {
+    for (const [key, value] of Object.entries(config.env)) {
       if (value) dockerArgs.push('-e', `${key}=${value}`);
     }
   }
