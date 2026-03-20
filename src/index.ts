@@ -110,6 +110,7 @@ import type { TelegramCommandName } from './telegram-command-spec.js';
 import {
   TelegramDraftDisableRegistry,
   parseTelegramDraftIpcMessage,
+  resolveTelegramStreamCompletionState,
   sendTelegramDraftWithFallback,
 } from './telegram-draft-ipc.js';
 import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
@@ -4613,13 +4614,17 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
     const externallyCompleted = isTelegramJid(msg.chat_jid)
       ? consumeTelegramHostCompletedRun(msg.chat_jid, requestId)
       : false;
-    const telegramPreviewState =
+    const telegramStreamState =
       isTelegramJid(msg.chat_jid)
         ? consumeTelegramHostStreamState(msg.chat_jid, requestId)
         : null;
-    if (!streamed && (telegramPreviewState || externallyCompleted)) {
-      streamed = true;
-    }
+    const telegramCompletionState = resolveTelegramStreamCompletionState({
+      reportedStreamed: streamed,
+      externallyCompleted,
+      streamState: telegramStreamState,
+    });
+    streamed = telegramCompletionState.effectiveStreamed;
+    const telegramPreviewState = telegramCompletionState.messagePreviewState;
     updateChatUsage(msg.chat_jid, usage);
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
     if (abortController.signal.aborted) {
@@ -4853,12 +4858,16 @@ async function runDirectSessionTurn(params: {
     const externallyCompleted = isTelegramJid(chatJid)
       ? consumeTelegramHostCompletedRun(chatJid, runId)
       : false;
-    const telegramPreviewState = isTelegramJid(chatJid)
+    const telegramStreamState = isTelegramJid(chatJid)
       ? consumeTelegramHostStreamState(chatJid, runId)
       : null;
-    if (!streamed && (telegramPreviewState || externallyCompleted)) {
-      streamed = true;
-    }
+    const telegramCompletionState = resolveTelegramStreamCompletionState({
+      reportedStreamed: streamed,
+      externallyCompleted,
+      streamState: telegramStreamState,
+    });
+    streamed = telegramCompletionState.effectiveStreamed;
+    const telegramPreviewState = telegramCompletionState.messagePreviewState;
 
     if (abortController.signal.aborted) {
       if (telegramPreviewState) {
@@ -5796,17 +5805,14 @@ function consumeTelegramHostCompletedRun(
 function consumeTelegramHostStreamState(
   chatJid: string,
   requestId: string,
-): { messageId: number; lastText: string; updatedAt: number } | null {
+): { mode: 'draft'; lastText: string; updatedAt: number }
+  | { mode: 'message'; messageId: number; lastText: string; updatedAt: number }
+  | null {
   const key = getTelegramHostStreamKey(chatJid, requestId);
   telegramHostStreamedRuns.delete(key);
   const state = telegramDraftDisabledRuns.getStreamState(key);
   telegramDraftDisabledRuns.disable(key);
-  if (!state || state.mode !== 'message') return null;
-  return {
-    messageId: state.messageId,
-    lastText: state.lastText,
-    updatedAt: state.updatedAt,
-  };
+  return state || null;
 }
 
 function pruneTelegramHostStreamedRuns(): void {
@@ -5944,7 +5950,7 @@ function startIpcWatcher(): void {
                       requestId,
                     );
                     noteTelegramHostCompletedRun(data.chatJid, requestId);
-                    if (previewState) {
+                    if (previewState?.mode === 'message') {
                       const finalized = await finalizeTelegramPreviewMessage(
                         data.chatJid,
                         previewState.messageId,

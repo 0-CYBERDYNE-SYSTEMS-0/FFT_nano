@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  resolveTelegramStreamCompletionState,
   TelegramDraftDisableRegistry,
   parseTelegramDraftIpcMessage,
   sendTelegramDraftWithFallback,
@@ -255,4 +256,66 @@ test('sendTelegramDraftWithFallback does not switch to visible stream after draf
   assert.equal(second.disabled, true);
   assert.equal(typeof second.error, 'string');
   assert.equal(sent, 0);
+});
+
+test('resolveTelegramStreamCompletionState keeps final send enabled for draft-only streaming', () => {
+  const resolved = resolveTelegramStreamCompletionState({
+    reportedStreamed: true,
+    externallyCompleted: false,
+    streamState: {
+      mode: 'draft',
+      lastText: 'thinking...',
+      updatedAt: 123,
+    },
+  });
+
+  assert.equal(resolved.effectiveStreamed, false);
+  assert.equal(resolved.messagePreviewState, null);
+  assert.equal(resolved.usedDraftState, true);
+});
+
+test('resolveTelegramStreamCompletionState keeps final send enabled when no preview state was recorded', () => {
+  const resolved = resolveTelegramStreamCompletionState({
+    reportedStreamed: true,
+    externallyCompleted: false,
+    streamState: null,
+  });
+
+  assert.equal(resolved.effectiveStreamed, false);
+  assert.equal(resolved.messagePreviewState, null);
+  assert.equal(resolved.usedDraftState, false);
+});
+
+test('resolveTelegramStreamCompletionState treats visible preview messages as streamed', () => {
+  const resolved = resolveTelegramStreamCompletionState({
+    reportedStreamed: false,
+    externallyCompleted: false,
+    streamState: {
+      mode: 'message',
+      messageId: 77,
+      lastText: 'partial',
+      updatedAt: 456,
+    },
+  });
+
+  assert.equal(resolved.effectiveStreamed, true);
+  assert.equal(resolved.messagePreviewState?.messageId, 77);
+  assert.equal(resolved.usedDraftState, false);
+});
+
+test('resolveTelegramStreamCompletionState suppresses local final delivery after external completion', () => {
+  const resolved = resolveTelegramStreamCompletionState({
+    reportedStreamed: false,
+    externallyCompleted: true,
+    streamState: {
+      mode: 'message',
+      messageId: 88,
+      lastText: 'partial',
+      updatedAt: 789,
+    },
+  });
+
+  assert.equal(resolved.effectiveStreamed, true);
+  assert.equal(resolved.messagePreviewState, null);
+  assert.equal(resolved.usedDraftState, false);
 });
