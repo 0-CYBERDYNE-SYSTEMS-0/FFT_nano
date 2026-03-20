@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, GROUPS_DIR, MAIN_GROUP_FOLDER, PARITY_CONFIG, TIMEZONE } from '../config.js';
-import { runContainerAgent, writeTasksSnapshot } from '../container-runner.js';
+import { runContainerAgent, writeTasksSnapshot } from '../pi-runner.js';
 import {
   deleteTask,
   getAllTasks,

@@ -1,9 +1,5 @@
 import fs from 'fs';
-import {
-  WORKSPACE_GLOBAL_DIR,
-  WORKSPACE_GROUP_DIR,
-  WORKSPACE_IPC_DIR,
-} from './runtime-paths.js';
+import { DESTRUCTIVE_COMMAND_NAMES } from './bash-guard.js';
 
 export type CodingHint =
   | 'none'
@@ -30,6 +26,12 @@ export interface SystemPromptInput {
   codingHint: CodingHint;
   requestId?: string;
   extraSystemPrompt?: string;
+}
+
+export interface WorkspacePaths {
+  groupDir: string;
+  globalDir: string;
+  ipcDir: string;
 }
 
 interface ContextEntry {
@@ -176,6 +178,7 @@ function buildMainContextEntries(params: {
   now: Date;
   fileMaxChars: number;
   totalMaxChars: number;
+  groupDir: string;
 }): {
   entries: ContextEntry[];
   remainingTotalChars: number;
@@ -188,7 +191,7 @@ function buildMainContextEntries(params: {
       entries,
       readFileIfExists: params.readFileIfExists,
       label: name,
-      path: `${WORKSPACE_GROUP_DIR}/${name}`,
+      path: `${params.groupDir}/${name}`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
     });
@@ -207,7 +210,7 @@ function buildMainContextEntries(params: {
       entries,
       readFileIfExists: params.readFileIfExists,
       label: `memory/${dateStr}.md`,
-      path: `${WORKSPACE_GROUP_DIR}/memory/${dateStr}.md`,
+      path: `${params.groupDir}/memory/${dateStr}.md`,
       fileMaxChars: Math.min(params.fileMaxChars, DEFAULT_MEMORY_DAILY_MAX_CHARS),
       remainingTotalChars: remaining,
     });
@@ -221,6 +224,8 @@ function buildNonMainContextEntries(params: {
   fileMaxChars: number;
   totalMaxChars: number;
   includeMemoryFallback: boolean;
+  groupDir: string;
+  globalDir: string;
 }): {
   entries: ContextEntry[];
   remainingTotalChars: number;
@@ -232,7 +237,7 @@ function buildNonMainContextEntries(params: {
     entries,
     readFileIfExists: params.readFileIfExists,
     label: 'global/SOUL.md',
-    path: `${WORKSPACE_GLOBAL_DIR}/SOUL.md`,
+    path: `${params.globalDir}/SOUL.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
   });
@@ -241,15 +246,15 @@ function buildNonMainContextEntries(params: {
       entries,
       readFileIfExists: params.readFileIfExists,
       label: 'group/SOUL.md',
-      path: `${WORKSPACE_GROUP_DIR}/SOUL.md`,
+      path: `${params.groupDir}/SOUL.md`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
     });
   }
 
   if (params.includeMemoryFallback && remaining > 0) {
-    const globalMemoryPrimary = `${WORKSPACE_GLOBAL_DIR}/MEMORY.md`;
-    const globalMemoryLegacy = `${WORKSPACE_GLOBAL_DIR}/memory.md`;
+    const globalMemoryPrimary = `${params.globalDir}/MEMORY.md`;
+    const globalMemoryLegacy = `${params.globalDir}/memory.md`;
     const globalMemoryPath =
       params.readFileIfExists(globalMemoryPrimary) !== null
         ? globalMemoryPrimary
@@ -264,8 +269,8 @@ function buildNonMainContextEntries(params: {
       includeMissing: false,
     });
     if (remaining > 0) {
-      const groupMemoryPrimary = `${WORKSPACE_GROUP_DIR}/MEMORY.md`;
-      const groupMemoryLegacy = `${WORKSPACE_GROUP_DIR}/memory.md`;
+      const groupMemoryPrimary = `${params.groupDir}/MEMORY.md`;
+      const groupMemoryLegacy = `${params.groupDir}/memory.md`;
       const groupMemoryPath =
         params.readFileIfExists(groupMemoryPrimary) !== null
           ? groupMemoryPrimary
@@ -300,6 +305,7 @@ function clampMemoryContext(raw: string): string {
 
 export function buildSystemPrompt(
   input: SystemPromptInput,
+  paths: WorkspacePaths,
   options: BuildSystemPromptOptions = {},
 ): { text: string; report: SystemPromptReport } {
   const readFileIfExists = options.readFileIfExists ?? defaultReadFileIfExists;
@@ -337,7 +343,13 @@ export function buildSystemPrompt(
     'Be truthful about tool usage and results. Never fabricate file edits, command output, or runtime state.',
   );
   lines.push(
-    'For high-impact destructive actions, ask first. Prefer least-risk paths while still completing the user goal.',
+    `BLOCKED COMMANDS: The following are forbidden without explicit user confirmation: ${DESTRUCTIVE_COMMAND_NAMES.join(', ')}.`,
+  );
+  lines.push(
+    'If you need a destructive operation: describe the exact command, explain why, and WAIT for user confirmation.',
+  );
+  lines.push(
+    'Prefer non-destructive alternatives (move to tmp, git stash, etc.) when possible.',
   );
   lines.push('');
 
@@ -388,12 +400,12 @@ export function buildSystemPrompt(
   lines.push('');
 
   lines.push('## Workspace');
-  lines.push(`- ${WORKSPACE_GROUP_DIR} is writable workspace.`);
+  lines.push(`- ${paths.groupDir} is writable workspace.`);
   lines.push(
-    `- ${WORKSPACE_IPC_DIR} is host bridge for outbound messages and scheduler actions.`,
+    `- ${paths.ipcDir} is host bridge for outbound messages and scheduler actions.`,
   );
   lines.push(
-    `- Durable memory belongs in ${WORKSPACE_GROUP_DIR}/MEMORY.md and ${WORKSPACE_GROUP_DIR}/memory/*.md.`,
+    `- Durable memory belongs in ${paths.groupDir}/MEMORY.md and ${paths.groupDir}/memory/*.md.`,
   );
   lines.push('- Keep SOUL.md stable; do not use it as compaction log storage.');
   lines.push('');
@@ -414,7 +426,7 @@ export function buildSystemPrompt(
     lines.push('Do not reveal private chain-of-thought. Provide concise high-level rationale when useful.');
     if (input.reasoningLevel === 'stream') {
       lines.push(
-        `For long tasks, proactively send concise progress updates via ${WORKSPACE_IPC_DIR}/messages.`,
+        `For long tasks, proactively send concise progress updates via ${paths.ipcDir}/messages.`,
       );
     }
     lines.push('');
@@ -449,14 +461,14 @@ export function buildSystemPrompt(
 
   lines.push('## Messaging IPC');
   lines.push(
-    `To proactively message current chat, write JSON into ${WORKSPACE_IPC_DIR}/messages/*.json:`,
+    `To proactively message current chat, write JSON into ${paths.ipcDir}/messages/*.json:`,
   );
   lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
   lines.push('Write atomically (temp file then rename).');
   lines.push('');
 
   lines.push('## Scheduler IPC');
-  lines.push('To manage tasks, write JSON into /workspace/ipc/tasks/*.json with one of:');
+  lines.push(`To manage tasks, write JSON into ${paths.ipcDir}/tasks/*.json with one of:`);
   lines.push(
     '- v2: {"type":"schedule_task","prompt":"...","schedule":{"kind":"cron|every|at",...},"session_target":"main|isolated","wake_mode":"next-heartbeat|now","delivery":{"mode":"none|announce|webhook","to":"<jid?>","webhookUrl":"https://..."},"timeout_seconds":120,"stagger_ms":2500,"delete_after_run":false,"context_mode":"group|isolated","groupFolder":"<folder>"}',
   );
@@ -471,7 +483,7 @@ export function buildSystemPrompt(
   lines.push(
     `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${assistantName}"}`,
   );
-  lines.push(`Read task snapshot from ${WORKSPACE_IPC_DIR}/current_tasks.json when needed.`);
+  lines.push(`Read task snapshot from ${paths.ipcDir}/current_tasks.json when needed.`);
   lines.push('');
 
   lines.push('## Output Style');
@@ -486,6 +498,7 @@ export function buildSystemPrompt(
       now,
       fileMaxChars,
       totalMaxChars,
+      groupDir: paths.groupDir,
     });
   } else {
     contextState = buildNonMainContextEntries({
@@ -493,6 +506,8 @@ export function buildSystemPrompt(
       fileMaxChars,
       totalMaxChars,
       includeMemoryFallback: !providedMemoryContext,
+      groupDir: paths.groupDir,
+      globalDir: paths.globalDir,
     });
   }
 

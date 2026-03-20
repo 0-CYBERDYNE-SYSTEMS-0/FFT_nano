@@ -43,7 +43,7 @@ import {
   runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
-} from './container-runner.js';
+} from './pi-runner.js';
 import {
   getAllChats,
   getAllTasks,
@@ -1498,7 +1498,7 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
     return {
       ok: false,
       text:
-        'Model listing is unavailable: `pi` was not found on PATH and no repo-local fallback exists at container/agent-runner/node_modules/.bin/pi. Run setup or install agent-runner dependencies.',
+        'Model listing is unavailable: `pi` was not found on PATH and no repo-local fallback exists at node_modules/.bin/pi. Run setup or install dependencies.',
     };
   }
 
@@ -6310,7 +6310,7 @@ async function processTaskIpc(
         // Write updated snapshot immediately
         const availableGroups = getAvailableGroups();
         const { writeGroupsSnapshot: writeGroups } =
-          await import('./container-runner.js');
+          await import('./pi-runner.js');
         writeGroups(
           sourceGroup,
           true,

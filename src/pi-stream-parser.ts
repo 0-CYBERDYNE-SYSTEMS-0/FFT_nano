@@ -211,7 +211,6 @@ export function extractAssistantTextDeltaFromPiEvent(event: unknown): TextDelta 
     );
   }
 
-  // Some providers emit direct delta events (not nested under message_update).
   if (
     type === 'text_delta' ||
     type === 'assistant_message_event' ||

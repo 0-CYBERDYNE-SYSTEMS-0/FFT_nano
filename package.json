@@ -22,7 +22,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "node --import tsx --test $(find tests container/agent-runner/src -type f -name '*.test.ts' | tr '\\n' ' ')",
+    "test": "node --import tsx --test $(find tests -type f -name '*.test.ts' | tr '\\n' ' ')",
     "fft": "node ./bin/fft.js",
     "web:install": "npm --prefix web/control-center ci",
     "web:build": "npm --prefix web/control-center run build",

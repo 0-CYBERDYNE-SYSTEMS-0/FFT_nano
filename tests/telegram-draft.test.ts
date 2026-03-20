@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   deriveTelegramDraftId,
   normalizeTelegramDraftText,
-} from './telegram-draft.js';
+} from '../src/pi-runner.js';
 
 test('deriveTelegramDraftId is stable and positive', () => {
   const a = deriveTelegramDraftId('telegram:1:req-1');
