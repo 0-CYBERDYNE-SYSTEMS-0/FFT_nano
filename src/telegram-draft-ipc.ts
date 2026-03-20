@@ -48,13 +48,57 @@ export function getTelegramDraftRunKey(
   return `${chatJid}:draft:${draftId}`;
 }
 
+export type TelegramStreamState =
+  | { mode: 'draft'; lastText: string; updatedAt: number }
+  | { mode: 'message'; messageId: number; lastText: string; updatedAt: number };
+
+export function resolveTelegramStreamCompletionState(params: {
+  reportedStreamed: boolean;
+  externallyCompleted: boolean;
+  streamState: TelegramStreamState | null;
+}): {
+  effectiveStreamed: boolean;
+  messagePreviewState: { messageId: number; lastText: string; updatedAt: number } | null;
+  usedDraftState: boolean;
+} {
+  if (params.externallyCompleted) {
+    return {
+      effectiveStreamed: true,
+      messagePreviewState: null,
+      usedDraftState: false,
+    };
+  }
+
+  if (params.streamState?.mode === 'message') {
+    return {
+      effectiveStreamed: true,
+      messagePreviewState: {
+        messageId: params.streamState.messageId,
+        lastText: params.streamState.lastText,
+        updatedAt: params.streamState.updatedAt,
+      },
+      usedDraftState: false,
+    };
+  }
+
+  if (params.streamState?.mode === 'draft') {
+    return {
+      effectiveStreamed: false,
+      messagePreviewState: null,
+      usedDraftState: true,
+    };
+  }
+
+  return {
+    effectiveStreamed: false,
+    messagePreviewState: null,
+    usedDraftState: false,
+  };
+}
+
 export class TelegramDraftDisableRegistry {
   private disabledUntil = new Map<string, number>();
-  private streamStates = new Map<
-    string,
-    | { mode: 'draft'; lastText: string; updatedAt: number }
-    | { mode: 'message'; messageId: number; lastText: string; updatedAt: number }
-  >();
+  private streamStates = new Map<string, TelegramStreamState>();
   private ttlMs: number;
   private maxStreamStates: number;
 
@@ -100,18 +144,13 @@ export class TelegramDraftDisableRegistry {
 
   getStreamState(
     runKey: string,
-  ):
-    | { mode: 'draft'; lastText: string; updatedAt: number }
-    | { mode: 'message'; messageId: number; lastText: string; updatedAt: number }
-    | undefined {
+  ): TelegramStreamState | undefined {
     return this.streamStates.get(runKey);
   }
 
   setStreamState(
     runKey: string,
-    state:
-      | { mode: 'draft'; lastText: string; updatedAt: number }
-      | { mode: 'message'; messageId: number; lastText: string; updatedAt: number },
+    state: TelegramStreamState,
   ): void {
     this.streamStates.set(runKey, state);
   }
