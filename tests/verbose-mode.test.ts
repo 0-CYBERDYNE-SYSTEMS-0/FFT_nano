@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   cycleVerboseMode,
   describeVerboseMode,
+  getEffectiveVerboseMode,
   normalizeVerboseMode,
   parseVerboseDirective,
 } from '../src/verbose-mode.js';
@@ -35,6 +36,11 @@ test('cycleVerboseMode matches the configured cycle ordering', () => {
   assert.equal(cycleVerboseMode('new'), 'all');
   assert.equal(cycleVerboseMode('all'), 'verbose');
   assert.equal(cycleVerboseMode('verbose'), 'off');
+});
+
+test('getEffectiveVerboseMode defaults unset chats to off', () => {
+  assert.equal(getEffectiveVerboseMode(undefined), 'off');
+  assert.equal(getEffectiveVerboseMode('new'), 'new');
 });
 
 test('parseVerboseDirective accepts bot-suffixed command tokens', () => {

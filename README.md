@@ -539,8 +539,8 @@ Telegram/WhatsApp -> SQLite -> host router/scheduler -> containerized Pi runtime
 Core files:
 
 - `src/index.ts` - channel ingestion, routing, admin command policy
-- `src/container-runner.ts` - container spawn and mount wiring
-- `container/agent-runner/src/index.ts` - in-container Pi execution
+- `src/pi-runner.ts` - Pi subprocess launch, sandbox wiring, snapshots, runtime event emission
+- `src/sandbox.ts` - optional `bwrap`/Docker wrapping for Pi runs
 - `src/task-scheduler.ts` - scheduler mode switch (`v2` default, `legacy` fallback)
 - `src/cron/` - cron v2 adapters and timer-based scheduler service
 - `src/db.ts` - persistence
