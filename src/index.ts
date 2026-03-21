@@ -5,7 +5,6 @@ import path from 'path';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
-  WASocket,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -108,7 +107,6 @@ import type {
 } from './telegram.js';
 import type { TelegramCommandName } from './telegram-command-spec.js';
 import {
-  TelegramDraftDisableRegistry,
   parseTelegramDraftIpcMessage,
   resolveTelegramStreamCompletionState,
   sendTelegramDraftWithFallback,
@@ -118,6 +116,7 @@ import { executeFarmAction } from './farm-action-gateway.js';
 import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
+import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
 import {
   appendCompactionSummaryToMemory,
   migrateCompactionsForGroup,
@@ -126,6 +125,7 @@ import { ensureMemoryScaffold } from './memory-paths.js';
 import {
   cycleVerboseMode,
   describeVerboseMode,
+  getEffectiveVerboseMode,
   normalizeVerboseMode,
   parseVerboseDirective,
   type VerboseMode,
@@ -158,13 +158,53 @@ import {
   type TuiGatewayAdapters,
   type TuiGatewayServer,
 } from './tui/gateway-server.js';
-import { TuiRuntimeEventHub } from './tui/runtime-events.js';
 import type { TuiSessionSummary } from './tui/protocol.js';
 import {
   startWebControlCenterServer,
   type WebControlCenterAdapters,
   type WebControlCenterServer,
 } from './web/control-center-server.js';
+import {
+  state,
+  activeCoderRuns,
+  activeChatRuns,
+  activeChatRunsById,
+  tuiMessageQueue,
+  telegramDraftDisabledRuns,
+  telegramHostStreamedRuns,
+  telegramHostCompletedRuns,
+  heartbeatLastSent,
+  heartbeatLastTargetByChannel,
+  compactionMemoryFlushMarkers,
+  telegramSettingsPanelActions,
+  telegramSetupInputStates,
+  tuiRuntimeEvents,
+  telegramToolProgressRuns,
+  TUI_SENDER_ID,
+  TUI_SENDER_NAME,
+  SERVICE_STARTED_AT,
+  APP_VERSION,
+  TELEGRAM_SETTINGS_PANEL_PREFIX,
+  TELEGRAM_SETTINGS_PANEL_TTL_MS,
+  TELEGRAM_SETUP_INPUT_TTL_MS,
+  TELEGRAM_MODEL_PANEL_PAGE_SIZE,
+  type ActiveCoderRun,
+  type ThinkLevel,
+  type ReasoningLevel,
+  type QueueMode,
+  type QueueDropPolicy,
+  type PanelScope,
+  type ChatRunPreferences,
+  type ChatUsageStats,
+  type PiModelEntry,
+  type TelegramSetupInputKind,
+  type TelegramSetupInputState,
+  type TelegramSettingsPanelAction,
+  type ActiveChatRun,
+  type TelegramAttachmentHint,
+  type TelegramResolvedAttachment,
+  type TelegramToolProgressState,
+} from './app-state.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
   (process.env.WHATSAPP_ENABLED || '1').toLowerCase(),
@@ -197,171 +237,6 @@ const TELEGRAM_ATTACHMENT_HINT_RE = /\[Attachment\b([^\]]*)\]/gi;
 const TELEGRAM_MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(([^)\n]+)\)/g;
 const TELEGRAM_MARKDOWN_LINK_RE = /\[[^\]]+\]\(([^)\n]+)\)/g;
 const TELEGRAM_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
-const TELEGRAM_DRAFT_DISABLE_MS = Math.max(
-  60_000,
-  Number.parseInt(process.env.FFT_NANO_TELEGRAM_DRAFT_DISABLE_MS || '1800000', 10) ||
-    1_800_000,
-);
-
-interface ActiveCoderRun {
-  requestId: string;
-  mode: 'execute' | 'plan';
-  chatJid: string;
-  groupName: string;
-  startedAt: number;
-}
-
-type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-type ReasoningLevel = 'off' | 'on' | 'stream';
-type QueueMode =
-  | 'collect'
-  | 'interrupt'
-  | 'followup'
-  | 'steer'
-  | 'steer-backlog';
-type QueueDropPolicy = 'old' | 'new' | 'summarize';
-type PanelScope = 'home' | 'models' | 'think' | 'reasoning' | 'verbose' | 'queue';
-
-interface ChatRunPreferences {
-  provider?: string;
-  model?: string;
-  thinkLevel?: ThinkLevel;
-  reasoningLevel?: ReasoningLevel;
-  verboseMode?: VerboseMode;
-  queueMode?: QueueMode;
-  queueDebounceMs?: number;
-  queueCap?: number;
-  queueDrop?: QueueDropPolicy;
-  freeChat?: boolean;
-  nextRunNoContinue?: boolean;
-}
-
-interface ChatUsageStats {
-  runs: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  tokenReports: number;
-  lastProvider?: string;
-  lastModel?: string;
-  updatedAt: number;
-}
-
-interface PiModelEntry {
-  provider: string;
-  model: string;
-}
-
-type TelegramSetupInputKind = 'provider' | 'model' | 'endpoint' | 'api-key';
-
-interface TelegramSetupInputState {
-  kind: TelegramSetupInputKind;
-  expiresAt: number;
-}
-
-type TelegramSettingsPanelAction =
-  | { kind: 'show-home' }
-  | { kind: 'show-model-providers' }
-  | { kind: 'show-models-for-provider'; provider: string; page: number }
-  | { kind: 'set-model'; provider: string; model: string; returnTo: PanelScope }
-  | { kind: 'reset-model'; returnTo: PanelScope }
-  | { kind: 'show-think' }
-  | { kind: 'set-think'; value: ThinkLevel }
-  | { kind: 'show-reasoning' }
-  | { kind: 'set-reasoning'; value: ReasoningLevel }
-  | { kind: 'show-verbose' }
-  | { kind: 'set-verbose'; value: VerboseMode }
-  | { kind: 'show-queue' }
-  | { kind: 'set-queue-mode'; value: QueueMode }
-  | { kind: 'show-subagents' }
-  | { kind: 'stop-subagents'; target: 'current' | 'all' }
-  | { kind: 'trigger-new' }
-  | { kind: 'show-setup-home' }
-  | { kind: 'show-setup-providers' }
-  | { kind: 'set-setup-provider'; preset: RuntimeProviderPreset }
-  | { kind: 'show-setup-models'; preset: RuntimeProviderPreset; page: number }
-  | { kind: 'set-setup-model'; preset: RuntimeProviderPreset; model: string }
-  | { kind: 'prompt-setup-provider' }
-  | { kind: 'prompt-setup-model' }
-  | { kind: 'prompt-setup-model-typed' }
-  | { kind: 'show-setup-endpoint' }
-  | { kind: 'prompt-setup-endpoint' }
-  | { kind: 'clear-setup-endpoint' }
-  | { kind: 'show-setup-api-key' }
-  | { kind: 'prompt-setup-api-key' }
-  | { kind: 'clear-setup-api-key' }
-  | { kind: 'restart-gateway' };
-
-interface ActiveChatRun {
-  chatJid: string;
-  startedAt: number;
-  requestId: string;
-  abortController: AbortController;
-}
-
-interface TelegramAttachmentHint {
-  rawPath: string;
-  caption?: string;
-}
-
-interface TelegramResolvedAttachment {
-  hostPath: string;
-  fileName: string;
-  kind: 'photo' | 'document';
-  caption?: string;
-}
-
-let sock: WASocket;
-let telegramBot: TelegramBot | null = null;
-let lastTimestamp = '';
-let registeredGroups: Record<string, RegisteredGroup> = {};
-let lastAgentTimestamp: Record<string, string> = {};
-let chatRunPreferences: Record<string, ChatRunPreferences> = {};
-let chatUsageStats: Record<string, ChatUsageStats> = {};
-const activeCoderRuns = new Map<string, ActiveCoderRun>();
-const activeChatRuns = new Map<string, ActiveChatRun>();
-const activeChatRunsById = new Map<string, ActiveChatRun>();
-// In-memory queue for TUI messages sent while a run is active.
-// Dequeued sequentially through runDirectSessionTurn after each run completes.
-const tuiMessageQueue = new Map<string, Array<{ text: string; runId: string; deliver: boolean }>>();
-const telegramDraftDisabledRuns = new TelegramDraftDisableRegistry(
-  TELEGRAM_DRAFT_DISABLE_MS,
-);
-const telegramHostStreamedRuns = new Map<string, number>();
-const telegramHostCompletedRuns = new Map<string, number>();
-const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
-const heartbeatLastTargetByChannel = new Map<'telegram' | 'whatsapp', string>();
-let heartbeatLastTargetAny: string | null = null;
-const compactionMemoryFlushMarkers = new Map<string, number>();
-const telegramSettingsPanelActions = new Map<
-  string,
-  { chatJid: string; action: TelegramSettingsPanelAction; expiresAt: number }
->();
-const telegramSetupInputStates = new Map<string, TelegramSetupInputState>();
-let bootRunInFlight = false;
-let lastTelegramMenuMainChatId: string | null = null;
-// LID to phone number mapping (WhatsApp now sends LID JIDs for self-chats)
-let lidToPhoneMap: Record<string, string> = {};
-// Guards to prevent duplicate loops on WhatsApp reconnect
-let messageLoopRunning = false;
-let ipcWatcherRunning = false;
-let groupSyncTimerStarted = false;
-let heartbeatLoopStarted = false;
-let shuttingDown = false;
-const tuiRuntimeEvents = new TuiRuntimeEventHub();
-let tuiGatewayServer: TuiGatewayServer | null = null;
-let webControlCenterServer: WebControlCenterServer | null = null;
-
-const TUI_SENDER_ID = '__fft_tui__';
-const TUI_SENDER_NAME = 'FFT_nano TUI';
-const SERVICE_STARTED_AT = new Date().toISOString();
-const APP_VERSION = process.env.npm_package_version || 'unknown';
-const TELEGRAM_SETTINGS_PANEL_PREFIX = 'cfg:';
-const TELEGRAM_SETTINGS_PANEL_TTL_MS = 15 * 60 * 1000;
-const TELEGRAM_SETUP_INPUT_TTL_MS = 15 * 60 * 1000;
-const TELEGRAM_MODEL_PANEL_PAGE_SIZE = 8;
-let piModelsCache: { entries: PiModelEntry[]; loadedAt: number } | null = null;
-
 interface GitInfo {
   branch?: string;
   commit?: string;
@@ -395,7 +270,7 @@ const GIT_INFO = resolveGitInfo();
 function translateJid(jid: string): string {
   if (!jid.endsWith('@lid')) return jid;
   const lidUser = jid.split('@')[0].split(':')[0];
-  const phoneJid = lidToPhoneMap[lidUser];
+  const phoneJid = state.lidToPhoneMap[lidUser];
   if (phoneJid) {
     logger.debug({ lidJid: jid, phoneJid }, 'Translated LID to phone JID');
     return phoneJid;
@@ -405,18 +280,18 @@ function translateJid(jid: string): string {
 
 async function setTyping(jid: string, isTyping: boolean): Promise<void> {
   if (isTelegramJid(jid)) {
-    if (!telegramBot) return;
+    if (!state.telegramBot) return;
     try {
-      await telegramBot.setTyping(jid, isTyping);
+      await state.telegramBot.setTyping(jid, isTyping);
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to update Telegram typing status');
     }
     return;
   }
 
-  if (!sock) return;
+  if (!state.sock) return;
   try {
-    await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
+    await state.sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
   } catch (err) {
     logger.debug({ jid, err }, 'Failed to update typing status');
   }
@@ -424,21 +299,21 @@ async function setTyping(jid: string, isTyping: boolean): Promise<void> {
 
 function loadState(): void {
   const statePath = path.join(DATA_DIR, 'router_state.json');
-  const state = loadJson<{
+  const loaded = loadJson<{
     last_timestamp?: string;
     last_agent_timestamp?: Record<string, string>;
     chat_run_preferences?: Record<string, ChatRunPreferences>;
     chat_usage_stats?: Record<string, ChatUsageStats>;
   }>(statePath, {});
-  lastTimestamp = state.last_timestamp || '';
-  lastAgentTimestamp = state.last_agent_timestamp || {};
-  chatRunPreferences = state.chat_run_preferences || {};
-  chatUsageStats = state.chat_usage_stats || {};
+  state.lastTimestamp = loaded.last_timestamp || '';
+  state.lastAgentTimestamp = loaded.last_agent_timestamp || {};
+  state.chatRunPreferences = loaded.chat_run_preferences || {};
+  state.chatUsageStats = loaded.chat_usage_stats || {};
   const rawRegisteredGroups = loadJson<Record<string, RegisteredGroup>>(
     path.join(DATA_DIR, 'registered_groups.json'),
     {},
   );
-  registeredGroups = {};
+  state.registeredGroups = {};
   for (const [jid, group] of Object.entries(rawRegisteredGroups)) {
     if (!isValidGroupFolder(group.folder)) {
       logger.warn(
@@ -447,20 +322,20 @@ function loadState(): void {
       );
       continue;
     }
-    registeredGroups[jid] = group;
+    state.registeredGroups[jid] = group;
   }
   logger.info(
-    { groupCount: Object.keys(registeredGroups).length },
+    { groupCount: Object.keys(state.registeredGroups).length },
     'State loaded',
   );
 }
 
 function saveState(): void {
   saveJson(path.join(DATA_DIR, 'router_state.json'), {
-    last_timestamp: lastTimestamp,
-    last_agent_timestamp: lastAgentTimestamp,
-    chat_run_preferences: chatRunPreferences,
-    chat_usage_stats: chatUsageStats,
+    last_timestamp: state.lastTimestamp,
+    last_agent_timestamp: state.lastAgentTimestamp,
+    chat_run_preferences: state.chatRunPreferences,
+    chat_usage_stats: state.chatUsageStats,
   });
 }
 
@@ -476,8 +351,8 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     return;
   }
 
-  registeredGroups[jid] = group;
-  saveJson(path.join(DATA_DIR, 'registered_groups.json'), registeredGroups);
+  state.registeredGroups[jid] = group;
+  saveJson(path.join(DATA_DIR, 'registered_groups.json'), state.registeredGroups);
 
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
@@ -521,7 +396,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
 function migrateCompactionSummariesFromSoul(): void {
   const groupFolders = new Set<string>();
-  for (const group of Object.values(registeredGroups)) {
+  for (const group of Object.values(state.registeredGroups)) {
     groupFolders.add(group.folder);
   }
   groupFolders.add(MAIN_GROUP_FOLDER);
@@ -591,10 +466,10 @@ function maybeRegisterWhatsAppMainChat(): void {
   // WhatsApp now sometimes uses LID JIDs for self-chats; we always register the
   // phone JID form (<phone>@s.whatsapp.net) because incoming messages are
   // translated to that form via translateJid().
-  if (!sock?.user?.id) return;
+  if (!state.sock?.user?.id) return;
   if (hasMainGroup()) return;
 
-  const phoneUser = sock.user.id.split(':')[0];
+  const phoneUser = state.sock.user.id.split(':')[0];
   if (!phoneUser) return;
 
   const selfChatJid = `${phoneUser}@s.whatsapp.net`;
@@ -627,7 +502,7 @@ async function syncGroupMetadata(force = false): Promise<void> {
 
   try {
     logger.info('Syncing group metadata from WhatsApp...');
-    const groups = await sock.groupFetchAllParticipating();
+    const groups = await state.sock!.groupFetchAllParticipating();
 
     let count = 0;
     for (const [jid, metadata] of Object.entries(groups)) {
@@ -650,7 +525,7 @@ async function syncGroupMetadata(force = false): Promise<void> {
  */
 function getAvailableGroups(): AvailableGroup[] {
   const chats = getAllChats();
-  const registeredJids = new Set(Object.keys(registeredGroups));
+  const registeredJids = new Set(Object.keys(state.registeredGroups));
 
   return chats
     .filter(
@@ -668,7 +543,7 @@ function getAvailableGroups(): AvailableGroup[] {
 
 function maybeRegisterTelegramChat(chatJid: string, chatName: string): boolean {
   if (!TELEGRAM_AUTO_REGISTER) return false;
-  if (registeredGroups[chatJid]) return false;
+  if (state.registeredGroups[chatJid]) return false;
 
   const chatId = parseTelegramChatId(chatJid);
   if (!chatId) return false;
@@ -686,13 +561,13 @@ function maybeRegisterTelegramChat(chatJid: string, chatName: string): boolean {
 }
 
 function hasMainGroup(): boolean {
-  return Object.values(registeredGroups).some(
+  return Object.values(state.registeredGroups).some(
     (g) => g.folder === MAIN_GROUP_FOLDER,
   );
 }
 
 function promoteChatToMain(chatJid: string, chatName: string): void {
-  const prev = registeredGroups[chatJid];
+  const prev = state.registeredGroups[chatJid];
   if (prev?.folder === MAIN_GROUP_FOLDER) return;
 
   if (hasMainGroup()) {
@@ -733,7 +608,7 @@ function maybePromoteConfiguredTelegramMain(): void {
   // corresponding registered chat to main on startup.
   if (!TELEGRAM_MAIN_CHAT_ID) return;
   const chatJid = `telegram:${TELEGRAM_MAIN_CHAT_ID}`;
-  const prev = registeredGroups[chatJid];
+  const prev = state.registeredGroups[chatJid];
   if (!prev) return;
   if (prev.folder === MAIN_GROUP_FOLDER) return;
 
@@ -741,7 +616,7 @@ function maybePromoteConfiguredTelegramMain(): void {
 }
 
 function isMainChat(chatJid: string): boolean {
-  return registeredGroups[chatJid]?.folder === MAIN_GROUP_FOLDER;
+  return state.registeredGroups[chatJid]?.folder === MAIN_GROUP_FOLDER;
 }
 
 function resolveMainOnboardingGate(chatJid: string): {
@@ -805,7 +680,7 @@ function parseTelegramTargetJid(raw: string): string | null {
 }
 
 function findMainTelegramChatJid(): string | null {
-  for (const [jid, group] of Object.entries(registeredGroups)) {
+  for (const [jid, group] of Object.entries(state.registeredGroups)) {
     if (group.folder === MAIN_GROUP_FOLDER && isTelegramJid(jid)) {
       return jid;
     }
@@ -814,7 +689,7 @@ function findMainTelegramChatJid(): string | null {
 }
 
 function findMainChatJid(): string | null {
-  for (const [jid, group] of Object.entries(registeredGroups)) {
+  for (const [jid, group] of Object.entries(state.registeredGroups)) {
     if (group.folder === MAIN_GROUP_FOLDER) return jid;
   }
   return null;
@@ -827,7 +702,7 @@ function getChannelForJid(jid: string): 'telegram' | 'whatsapp' {
 function rememberHeartbeatTarget(jid: string): void {
   const channel = getChannelForJid(jid);
   heartbeatLastTargetByChannel.set(channel, jid);
-  heartbeatLastTargetAny = jid;
+  state.heartbeatLastTargetAny = jid;
 }
 
 function resolveHeartbeatTargetJid(mainChatJid: string): string | null {
@@ -846,7 +721,7 @@ function resolveHeartbeatTargetJid(mainChatJid: string): string | null {
     return mainChatJid;
   }
   if (explicitTarget === 'last') {
-    return heartbeatLastTargetAny || mainChatJid;
+    return state.heartbeatLastTargetAny || mainChatJid;
   }
   if (explicitTarget === 'telegram') {
     if (HEARTBEAT_TARGET_TO?.trim()) {
@@ -875,7 +750,7 @@ function resolveHeartbeatTargetJid(mainChatJid: string): string | null {
 }
 
 async function maybeRunBootMdOnce(): Promise<void> {
-  if (!PARITY_CONFIG.workspace.enableBootMd || bootRunInFlight) return;
+  if (!PARITY_CONFIG.workspace.enableBootMd || state.bootRunInFlight) return;
   const bootPath = path.join(MAIN_WORKSPACE_DIR, 'BOOT.md');
   let bootBody = '';
   try {
@@ -888,8 +763,8 @@ async function maybeRunBootMdOnce(): Promise<void> {
   if (!bootBody) return;
 
   const bootHash = computeBootFileHash(bootBody);
-  const state = readMainWorkspaceState(MAIN_WORKSPACE_DIR);
-  if (state.bootHash === bootHash && state.bootExecutedAt) {
+  const wsState = readMainWorkspaceState(MAIN_WORKSPACE_DIR);
+  if (wsState.bootHash === bootHash && wsState.bootExecutedAt) {
     return;
   }
 
@@ -898,12 +773,12 @@ async function maybeRunBootMdOnce(): Promise<void> {
     logger.debug('Skipping BOOT.md run: main chat not registered yet');
     return;
   }
-  const group = registeredGroups[mainChatJid];
+  const group = state.registeredGroups[mainChatJid];
   if (!group || group.folder !== MAIN_GROUP_FOLDER) {
     return;
   }
 
-  bootRunInFlight = true;
+  state.bootRunInFlight = true;
   const requestId = `boot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   try {
     const run = await runAgent(
@@ -928,7 +803,7 @@ async function maybeRunBootMdOnce(): Promise<void> {
   } catch (err) {
     logger.warn({ err, requestId }, 'BOOT.md startup run failed');
   } finally {
-    bootRunInFlight = false;
+    state.bootRunInFlight = false;
   }
 }
 
@@ -940,14 +815,14 @@ function resolveChatJidForSessionKey(sessionKey: string): string | null {
   const trimmed = sessionKey.trim();
   if (!trimmed) return null;
   if (trimmed === 'main') return findMainChatJid();
-  return registeredGroups[trimmed] ? trimmed : null;
+  return state.registeredGroups[trimmed] ? trimmed : null;
 }
 
 function buildTuiSessionList(): TuiSessionSummary[] {
   const chatByJid = new Map(getAllChats().map((chat) => [chat.jid, chat] as const));
   const sessions: TuiSessionSummary[] = [];
 
-  for (const [jid, group] of Object.entries(registeredGroups)) {
+  for (const [jid, group] of Object.entries(state.registeredGroups)) {
     const chat = chatByJid.get(jid);
     sessions.push({
       sessionKey: getSessionKeyForChat(jid),
@@ -1066,7 +941,7 @@ function makeRunId(prefix = 'run'): string {
 }
 
 function persistAssistantHistory(chatJid: string, text: string, runId?: string): string {
-  if (!registeredGroups[chatJid]) return '';
+  if (!state.registeredGroups[chatJid]) return '';
   const timestamp = new Date().toISOString();
   const content = text.startsWith(`${ASSISTANT_NAME}:`)
     ? text
@@ -1086,7 +961,7 @@ function persistAssistantHistory(chatJid: string, text: string, runId?: string):
 
 function persistTuiUserHistory(chatJid: string, text: string, runId: string): string {
   const timestamp = new Date().toISOString();
-  if (registeredGroups[chatJid]) {
+  if (state.registeredGroups[chatJid]) {
     storeHostMessage({
       id: `${runId}:user`,
       chatJid,
@@ -1275,20 +1150,20 @@ function updateChatRunPreferences(
   chatJid: string,
   updater: (current: ChatRunPreferences) => ChatRunPreferences,
 ): ChatRunPreferences {
-  const current = chatRunPreferences[chatJid] || {};
+  const current = state.chatRunPreferences[chatJid] || {};
   const updated = updater({ ...current });
   const compacted = compactChatRunPreferences(updated);
   if (compacted) {
-    chatRunPreferences[chatJid] = compacted;
+    state.chatRunPreferences[chatJid] = compacted;
   } else {
-    delete chatRunPreferences[chatJid];
+    delete state.chatRunPreferences[chatJid];
   }
   saveState();
-  return chatRunPreferences[chatJid] || {};
+  return state.chatRunPreferences[chatJid] || {};
 }
 
 function getTuiSessionPrefs(chatJid: string): TuiSessionPrefs {
-  const prefs = chatRunPreferences[chatJid] || {};
+  const prefs = state.chatRunPreferences[chatJid] || {};
   return {
     provider: prefs.provider,
     model: prefs.model,
@@ -1352,7 +1227,7 @@ function resetTuiSession(chatJid: string, reason: string): { ok: boolean; reason
 }
 
 function consumeNextRunNoContinue(chatJid: string): boolean {
-  const current = chatRunPreferences[chatJid];
+  const current = state.chatRunPreferences[chatJid];
   if (!current?.nextRunNoContinue) return false;
   updateChatRunPreferences(chatJid, (prefs) => {
     delete prefs.nextRunNoContinue;
@@ -1362,17 +1237,17 @@ function consumeNextRunNoContinue(chatJid: string): boolean {
 }
 
 function getEffectiveModelLabel(chatJid: string): string {
-  const prefs = chatRunPreferences[chatJid] || {};
+  const prefs = state.chatRunPreferences[chatJid] || {};
   const provider = prefs.provider || process.env.PI_API || '(default-provider)';
   const model = prefs.model || process.env.PI_MODEL || '(default-model)';
   return `${provider}/${model}`;
 }
 
 function formatChatRuntimePreferences(chatJid: string): string[] {
-  const prefs = chatRunPreferences[chatJid] || {};
+  const prefs = state.chatRunPreferences[chatJid] || {};
   const think = prefs.thinkLevel || 'off';
   const reasoning = prefs.reasoningLevel || 'off';
-  const verbose = prefs.verboseMode || 'all';
+  const verbose = getEffectiveVerboseMode(prefs.verboseMode);
   const freeChat = prefs.freeChat ? 'yes' : 'no';
   const newPending = prefs.nextRunNoContinue ? 'yes' : 'no';
   const queueMode = prefs.queueMode || 'collect';
@@ -1397,7 +1272,7 @@ function updateChatUsage(chatJid: string, usage?: {
   provider?: string;
   model?: string;
 }): void {
-  const current = chatUsageStats[chatJid] || {
+  const current = state.chatUsageStats[chatJid] || {
     runs: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -1431,13 +1306,13 @@ function updateChatUsage(chatJid: string, usage?: {
     if (usage.model) current.lastModel = usage.model;
   }
   current.updatedAt = Date.now();
-  chatUsageStats[chatJid] = current;
+  state.chatUsageStats[chatJid] = current;
   saveState();
 }
 
 function formatUsageText(chatJid: string, scope: 'chat' | 'all' = 'chat'): string {
   if (scope === 'all') {
-    const rows = Object.entries(chatUsageStats);
+    const rows = Object.entries(state.chatUsageStats);
     if (rows.length === 0) return 'No usage data collected yet.';
     let runs = 0;
     let reports = 0;
@@ -1462,7 +1337,7 @@ function formatUsageText(chatJid: string, scope: 'chat' | 'all' = 'chat'): strin
     ].join('\n');
   }
 
-  const stats = chatUsageStats[chatJid];
+  const stats = state.chatUsageStats[chatJid];
   if (!stats) {
     return [
       'Usage (this chat):',
@@ -1564,11 +1439,11 @@ function parsePiModelListOutput(output: string): PiModelEntry[] {
 function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
   if (
     !forceRefresh &&
-    piModelsCache &&
-    Date.now() - piModelsCache.loadedAt < 60_000 &&
-    piModelsCache.entries.length > 0
+    state.piModelsCache &&
+    Date.now() - state.piModelsCache.loadedAt < 60_000 &&
+    state.piModelsCache.entries.length > 0
   ) {
-    return { ok: true, entries: piModelsCache.entries };
+    return { ok: true, entries: state.piModelsCache.entries };
   }
 
   const piExecutable = resolvePiExecutable();
@@ -1614,7 +1489,7 @@ function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[]
     };
   }
 
-  piModelsCache = { entries, loadedAt: Date.now() };
+  state.piModelsCache = { entries, loadedAt: Date.now() };
   return { ok: true, entries };
 }
 
@@ -1643,7 +1518,7 @@ function persistRuntimeConfigUpdates(updates: Record<string, string | undefined>
   const envPath = getDefaultDotEnvPath(process.cwd());
   upsertDotEnv(envPath, updates);
   applyProcessEnvUpdates(updates);
-  piModelsCache = null;
+  state.piModelsCache = null;
 }
 
 function setTelegramSetupInputState(chatJid: string, kind: TelegramSetupInputKind): void {
@@ -2057,12 +1932,12 @@ function truncateButtonLabel(text: string, max = 28): string {
 }
 
 function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
-  const prefs = chatRunPreferences[chatJid] || {};
+  const prefs = state.chatRunPreferences[chatJid] || {};
   return [
     `Model: ${getEffectiveModelLabel(chatJid)}`,
     `Think: ${prefs.thinkLevel || 'off'}`,
     `Reasoning: ${prefs.reasoningLevel || 'off'}`,
-    `Tool progress: ${prefs.verboseMode || 'all'}`,
+    `Tool progress: ${getEffectiveVerboseMode(prefs.verboseMode)}`,
     `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
   ];
 }
@@ -2256,7 +2131,7 @@ function buildTelegramProviderModelPanel(
 }
 
 function buildThinkPanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
-  const current = chatRunPreferences[chatJid]?.thinkLevel || 'off';
+  const current = state.chatRunPreferences[chatJid]?.thinkLevel || 'off';
   const levels: ThinkLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < levels.length; i += 2) {
@@ -2278,7 +2153,7 @@ function buildReasoningPanel(chatJid: string): {
   text: string;
   keyboard: TelegramInlineKeyboard;
 } {
-  const current = chatRunPreferences[chatJid]?.reasoningLevel || 'off';
+  const current = state.chatRunPreferences[chatJid]?.reasoningLevel || 'off';
   const levels: ReasoningLevel[] = ['off', 'on', 'stream'];
   return {
     text: `Select reasoning mode:\nCurrent: ${current}`,
@@ -2296,7 +2171,7 @@ function buildReasoningPanel(chatJid: string): {
 }
 
 function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
-  const current = chatRunPreferences[chatJid]?.verboseMode || 'all';
+  const current = getEffectiveVerboseMode(state.chatRunPreferences[chatJid]?.verboseMode);
   const levels: VerboseMode[] = ['off', 'new', 'all', 'verbose'];
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < levels.length; i += 2) {
@@ -2327,7 +2202,7 @@ function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramI
 }
 
 function buildQueuePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
-  const prefs = chatRunPreferences[chatJid] || {};
+  const prefs = state.chatRunPreferences[chatJid] || {};
   const current = prefs.queueMode || 'collect';
   const modes: QueueMode[] = ['collect', 'followup', 'interrupt', 'steer', 'steer-backlog'];
   const rows: TelegramInlineKeyboard = [];
@@ -2500,7 +2375,7 @@ function runGatewayServiceCommand(
 
 function formatStatusText(chatJid?: string): string {
   const runtime = getContainerRuntime();
-  const mainGroup = Object.values(registeredGroups).find(
+  const mainGroup = Object.values(state.registeredGroups).find(
     (group) => group.folder === MAIN_GROUP_FOLDER,
   );
   const tasks = getAllTasks();
@@ -2517,8 +2392,8 @@ function formatStatusText(chatJid?: string): string {
     `- container_runtime: ${runtime}`,
     `- telegram_enabled: ${TELEGRAM_BOT_TOKEN ? 'yes' : 'no'}`,
     `- whatsapp_enabled: ${WHATSAPP_ENABLED ? 'yes' : 'no'}`,
-    `- whatsapp_connected: ${sock?.user ? 'yes' : 'no'}`,
-    `- registered_groups: ${Object.keys(registeredGroups).length}`,
+    `- whatsapp_connected: ${state.sock?.user ? 'yes' : 'no'}`,
+    `- registered_groups: ${Object.keys(state.registeredGroups).length}`,
     `- main_group: ${mainGroup ? mainGroup.name : 'none'}`,
     `- tasks_active: ${active}`,
     `- tasks_paused: ${paused}`,
@@ -2528,7 +2403,7 @@ function formatStatusText(chatJid?: string): string {
 
   if (chatJid) {
     lines.push(...formatChatRuntimePreferences(chatJid));
-    const usage = chatUsageStats[chatJid];
+    const usage = state.chatUsageStats[chatJid];
     if (usage) {
       lines.push(
         `- usage_runs: ${usage.runs}`,
@@ -2615,7 +2490,7 @@ function formatTasksText(mode: 'list' | 'due' = 'list'): string {
 }
 
 function formatGroupsText(): string {
-  const groups = Object.entries(registeredGroups);
+  const groups = Object.entries(state.registeredGroups);
   if (groups.length === 0) {
     return 'No groups are registered.';
   }
@@ -2679,9 +2554,9 @@ async function sendTelegramSettingsPanel(
   chatJid: string,
   action: TelegramSettingsPanelAction = { kind: 'show-home' },
 ): Promise<void> {
-  if (!telegramBot) return;
+  if (!state.telegramBot) return;
   const panel = resolveTelegramSettingsPanel(chatJid, action);
-  await telegramBot.sendMessageWithKeyboard(chatJid, panel.text, panel.keyboard);
+  await state.telegramBot.sendMessageWithKeyboard(chatJid, panel.text, panel.keyboard);
 }
 
 async function editTelegramSettingsPanel(
@@ -2689,9 +2564,9 @@ async function editTelegramSettingsPanel(
   messageId: number,
   action: TelegramSettingsPanelAction,
 ): Promise<void> {
-  if (!telegramBot) return;
+  if (!state.telegramBot) return;
   const panel = resolveTelegramSettingsPanel(chatJid, action);
-  await telegramBot.editMessageWithKeyboard(chatJid, messageId, panel.text, panel.keyboard);
+  await state.telegramBot.editMessageWithKeyboard(chatJid, messageId, panel.text, panel.keyboard);
 }
 
 async function promptTelegramSetupInput(
@@ -2724,7 +2599,7 @@ async function maybeRunCompactionMemoryFlush(
   const flushCfg = PARITY_CONFIG.memory.flushBeforeCompaction;
   if (!flushCfg.enabled) return;
 
-  const usage = chatUsageStats[chatJid];
+  const usage = state.chatUsageStats[chatJid];
   const currentTokens = usage?.totalTokens || 0;
   if (currentTokens <= 0 || currentTokens < flushCfg.softThresholdTokens) {
     logger.debug(
@@ -2749,7 +2624,7 @@ async function maybeRunCompactionMemoryFlush(
     flushCfg.systemPrompt,
     flushCfg.prompt,
   ].join('\n');
-  const prefs: ChatRunPreferences = { ...(chatRunPreferences[chatJid] || {}) };
+  const prefs: ChatRunPreferences = { ...(state.chatRunPreferences[chatJid] || {}) };
   delete prefs.nextRunNoContinue;
 
   const run = await runAgent(
@@ -2780,7 +2655,7 @@ async function runCompactionForChat(
   chatJid: string,
   instructions: string,
 ): Promise<string> {
-  const group = registeredGroups[chatJid];
+  const group = state.registeredGroups[chatJid];
   if (!group) return 'Cannot compact: chat is not registered.';
   if (activeChatRuns.has(chatJid)) {
     return 'Cannot compact while a run is active. Use /stop first, then retry /compact.';
@@ -2800,7 +2675,7 @@ async function runCompactionForChat(
     .filter(Boolean)
     .join('\n');
 
-  const prefs: ChatRunPreferences = { ...(chatRunPreferences[chatJid] || {}) };
+  const prefs: ChatRunPreferences = { ...(state.chatRunPreferences[chatJid] || {}) };
   delete prefs.nextRunNoContinue;
   const abortController = new AbortController();
   const activeRun: ActiveChatRun = {
@@ -2887,11 +2762,11 @@ function defaultExtensionForMedia(message: TelegramInboundMessage): string {
 async function persistTelegramMedia(
   message: TelegramInboundMessage,
 ): Promise<string> {
-  if (!message.media || !telegramBot) {
+  if (!message.media || !state.telegramBot) {
     return message.content;
   }
 
-  const group = registeredGroups[message.chatJid];
+  const group = state.registeredGroups[message.chatJid];
   if (!group) {
     return message.content;
   }
@@ -2912,7 +2787,7 @@ async function persistTelegramMedia(
   }
 
   try {
-    const downloaded = await telegramBot.downloadFile(message.media.fileId);
+    const downloaded = await state.telegramBot.downloadFile(message.media.fileId);
     if (downloaded.data.length > TELEGRAM_MEDIA_MAX_BYTES) {
       const mb = (downloaded.data.length / (1024 * 1024)).toFixed(1);
       const maxMb = TELEGRAM_MEDIA_MAX_MB.toFixed(0);
@@ -2977,7 +2852,7 @@ async function persistTelegramMedia(
 }
 
 async function refreshTelegramCommandMenus(): Promise<void> {
-  if (!telegramBot) return;
+  if (!state.telegramBot) return;
 
   try {
     const common = TELEGRAM_COMMON_COMMANDS.map((command) => ({
@@ -2993,13 +2868,13 @@ async function refreshTelegramCommandMenus(): Promise<void> {
     const mainChatId = mainTelegramJid ? parseTelegramChatId(mainTelegramJid) : null;
 
     try {
-      await telegramBot.deleteCommands({ type: 'default' });
+      await state.telegramBot.deleteCommands({ type: 'default' });
     } catch (err) {
       logger.debug({ err }, 'Failed deleting default Telegram commands');
     }
 
     try {
-      await telegramBot.setCommands(common, { type: 'default' });
+      await state.telegramBot.setCommands(common, { type: 'default' });
     } catch (err) {
       logger.warn(
         { err },
@@ -3007,11 +2882,11 @@ async function refreshTelegramCommandMenus(): Promise<void> {
       );
     }
 
-    if (lastTelegramMenuMainChatId && lastTelegramMenuMainChatId !== mainChatId) {
+    if (state.lastTelegramMenuMainChatId && state.lastTelegramMenuMainChatId !== mainChatId) {
       try {
-        await telegramBot.setCommands(common, {
+        await state.telegramBot.setCommands(common, {
           type: 'chat',
-          chatId: lastTelegramMenuMainChatId,
+          chatId: state.lastTelegramMenuMainChatId,
         });
       } catch (err) {
         logger.debug({ err }, 'Failed resetting previous main Telegram command scope');
@@ -3020,7 +2895,7 @@ async function refreshTelegramCommandMenus(): Promise<void> {
 
     if (mainChatId) {
       try {
-        await telegramBot.setCommands(admin, { type: 'chat', chatId: mainChatId });
+        await state.telegramBot.setCommands(admin, { type: 'chat', chatId: mainChatId });
       } catch (err) {
         logger.warn(
           { err, mainChatId },
@@ -3029,10 +2904,10 @@ async function refreshTelegramCommandMenus(): Promise<void> {
       }
     }
 
-    lastTelegramMenuMainChatId = mainChatId;
+    state.lastTelegramMenuMainChatId = mainChatId;
 
     try {
-      await telegramBot.setDescription(
+      await state.telegramBot.setDescription(
         `${ASSISTANT_NAME}: secure containerized assistant`,
         'Use /help for commands',
       );
@@ -3062,10 +2937,10 @@ function logTelegramCommandAudit(
 async function handleTelegramCallbackQuery(
   q: TelegramInboundCallbackQuery,
 ): Promise<void> {
-  if (!telegramBot) return;
+  if (!state.telegramBot) return;
 
   try {
-    await telegramBot.answerCallbackQuery(q.id);
+    await state.telegramBot.answerCallbackQuery(q.id);
   } catch (err) {
     logger.debug({ err, callbackId: q.id }, 'Failed answering callback query');
   }
@@ -3434,8 +3309,8 @@ async function handleTelegramCommand(m: {
     logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
     const searchText = rest.join(' ');
     const listed = runPiListModels(searchText);
-    if (!searchText && telegramBot) {
-      await telegramBot.sendMessageWithKeyboard(m.chatJid, listed.text, [[
+    if (!searchText && state.telegramBot) {
+      await state.telegramBot.sendMessageWithKeyboard(m.chatJid, listed.text, [[
         {
           text: 'Open Model Picker',
           callbackData: registerTelegramSettingsPanelAction(m.chatJid, {
@@ -3453,10 +3328,10 @@ async function handleTelegramCommand(m: {
     const argText = rest.join(' ').trim();
     if (!argText) {
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (telegramBot) {
+      if (state.telegramBot) {
         await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-model-providers' });
       } else {
-        const prefs = chatRunPreferences[m.chatJid] || {};
+        const prefs = state.chatRunPreferences[m.chatJid] || {};
         const override = prefs.provider || prefs.model;
         await sendMessage(
           m.chatJid,
@@ -3523,9 +3398,9 @@ async function handleTelegramCommand(m: {
   if (cmd === '/think' || cmd === '/thinking' || cmd === '/t') {
     const argText = rest.join(' ').trim();
     if (!argText) {
-      const current = chatRunPreferences[m.chatJid]?.thinkLevel || 'off';
+      const current = state.chatRunPreferences[m.chatJid]?.thinkLevel || 'off';
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (telegramBot) {
+      if (state.telegramBot) {
         await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-think' });
       } else {
         await sendMessage(m.chatJid, `Current thinking level: ${current}`);
@@ -3561,9 +3436,9 @@ async function handleTelegramCommand(m: {
   if (cmd === '/reasoning' || cmd === '/reason') {
     const argText = rest.join(' ').trim();
     if (!argText) {
-      const current = chatRunPreferences[m.chatJid]?.reasoningLevel || 'off';
+      const current = state.chatRunPreferences[m.chatJid]?.reasoningLevel || 'off';
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (telegramBot) {
+      if (state.telegramBot) {
         await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-reasoning' });
       } else {
         await sendMessage(m.chatJid, `Current reasoning level: ${current}`);
@@ -3611,12 +3486,14 @@ async function handleTelegramCommand(m: {
 
     if (parsed.kind === 'cycle') {
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (telegramBot) {
+      if (state.telegramBot) {
         await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-verbose' });
       } else {
         await sendMessage(
           m.chatJid,
-          `Current tool progress mode: ${chatRunPreferences[m.chatJid]?.verboseMode || 'all'}`,
+          `Current tool progress mode: ${getEffectiveVerboseMode(
+            state.chatRunPreferences[m.chatJid]?.verboseMode,
+          )}`,
         );
       }
       return true;
@@ -3665,7 +3542,7 @@ async function handleTelegramCommand(m: {
   if (cmd === '/usage') {
     const arg = rest.join(' ').trim().toLowerCase();
     if (arg === 'reset' || arg === 'clear') {
-      delete chatUsageStats[m.chatJid];
+      delete state.chatUsageStats[m.chatJid];
       saveState();
       logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
       await sendMessage(m.chatJid, 'Usage counters reset for this chat.');
@@ -3684,13 +3561,13 @@ async function handleTelegramCommand(m: {
   if (cmd === '/queue') {
     const argText = rest.join(' ').trim();
     if (!argText) {
-      const prefs = chatRunPreferences[m.chatJid] || {};
+      const prefs = state.chatRunPreferences[m.chatJid] || {};
       const mode = prefs.queueMode || 'collect';
       const debounce = prefs.queueDebounceMs || 0;
       const cap = prefs.queueCap || 0;
       const drop = prefs.queueDrop || 'old';
       logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (telegramBot) {
+      if (state.telegramBot) {
         await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-queue' });
       } else {
         await sendMessage(
@@ -3744,7 +3621,7 @@ async function handleTelegramCommand(m: {
       if (parsed.drop) prefs.queueDrop = parsed.drop;
       return prefs;
     });
-    const prefs = chatRunPreferences[m.chatJid] || {};
+    const prefs = state.chatRunPreferences[m.chatJid] || {};
     logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
     await sendMessage(
       m.chatJid,
@@ -3799,7 +3676,7 @@ async function handleTelegramCommand(m: {
     // If main is already configured, don't let random chats steal it.
     const existingMain = hasMainGroup();
     const alreadyMain =
-      registeredGroups[m.chatJid]?.folder === MAIN_GROUP_FOLDER;
+      state.registeredGroups[m.chatJid]?.folder === MAIN_GROUP_FOLDER;
     if (existingMain && !alreadyMain) {
       logTelegramCommandAudit(m.chatJid, cmd, false, 'main already configured');
       await sendMessage(
@@ -3949,10 +3826,10 @@ async function handleTelegramCommand(m: {
     }
 
     if (action === 'list') {
-      const entries = Object.entries(chatRunPreferences)
+      const entries = Object.entries(state.chatRunPreferences)
         .filter(([, prefs]) => prefs.freeChat === true)
         .map(([jid]) => {
-          const group = registeredGroups[jid];
+          const group = state.registeredGroups[jid];
           const name = group?.name || '(unregistered)';
           const mainTag = group?.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
           return `- ${jid} -> ${name}${mainTag}`;
@@ -3989,7 +3866,7 @@ async function handleTelegramCommand(m: {
       return true;
     }
 
-    const targetGroup = registeredGroups[targetJid];
+    const targetGroup = state.registeredGroups[targetJid];
     if (targetGroup?.folder === MAIN_GROUP_FOLDER) {
       logTelegramCommandAudit(m.chatJid, cmd, false, 'target is main');
       await sendMessage(
@@ -4104,7 +3981,7 @@ async function handleTelegramCommand(m: {
 
   if (cmd === '/reload') {
     logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    if (WHATSAPP_ENABLED && sock) {
+    if (WHATSAPP_ENABLED && state.sock) {
       await syncGroupMetadata(true);
     }
     await refreshTelegramCommandMenus();
@@ -4114,8 +3991,8 @@ async function handleTelegramCommand(m: {
 
   if (cmd === '/panel') {
     logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    if (!telegramBot) return true;
-    await telegramBot.sendMessageWithKeyboard(
+    if (!state.telegramBot) return true;
+    await state.telegramBot.sendMessageWithKeyboard(
       m.chatJid,
       'Admin panel:',
       buildAdminPanelKeyboard(),
@@ -4125,7 +4002,7 @@ async function handleTelegramCommand(m: {
 
   if (cmd === '/subagents') {
     const action = (rest[0] || 'list').toLowerCase();
-    if (!rest[0] && telegramBot) {
+    if (!rest[0] && state.telegramBot) {
       logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
       await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-subagents' });
       return true;
@@ -4179,7 +4056,7 @@ async function handleTelegramCommand(m: {
         return true;
       }
 
-      const group = registeredGroups[m.chatJid];
+      const group = state.registeredGroups[m.chatJid];
       if (!group) {
         await sendMessage(m.chatJid, 'Chat is not registered.');
         return true;
@@ -4232,7 +4109,7 @@ async function handleTelegramCommand(m: {
           m.chatJid,
           'force_delegate_execute',
           requestId,
-          chatRunPreferences[m.chatJid] || {},
+          state.chatRunPreferences[m.chatJid] || {},
           {},
           abortController.signal,
         );
@@ -4299,16 +4176,16 @@ async function handleTelegramCommand(m: {
 
 async function startTelegram(): Promise<void> {
   if (!TELEGRAM_BOT_TOKEN) return;
-  if (telegramBot) return;
+  if (state.telegramBot) return;
 
-  telegramBot = createTelegramBot({
+  state.telegramBot = createTelegramBot({
     token: TELEGRAM_BOT_TOKEN,
     apiBaseUrl: TELEGRAM_API_BASE_URL,
     assistantName: ASSISTANT_NAME,
     triggerPattern: TRIGGER_PATTERN,
   });
 
-  telegramBot.startPolling(async (event) => {
+  state.telegramBot.startPolling(async (event) => {
     if (event.kind === 'callback_query') {
       await handleTelegramCallbackQuery(event);
       return;
@@ -4326,7 +4203,7 @@ async function startTelegram(): Promise<void> {
     // Handle lightweight admin commands without invoking the agent.
     if (await handleTelegramCommand(m)) return;
 
-    if (registeredGroups[m.chatJid]) {
+    if (state.registeredGroups[m.chatJid]) {
       const finalContent = m.media
         ? await persistTelegramMedia(m)
         : m.content;
@@ -4347,12 +4224,12 @@ async function startTelegram(): Promise<void> {
 }
 
 async function processMessage(msg: NewMessage): Promise<boolean> {
-  const group = registeredGroups[msg.chat_jid];
+  const group = state.registeredGroups[msg.chat_jid];
   if (!group) return true;
 
   const content = msg.content.trim();
   const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
-  const queuePrefs = chatRunPreferences[msg.chat_jid] || {};
+  const queuePrefs = state.chatRunPreferences[msg.chat_jid] || {};
   const queueMode: QueueMode = queuePrefs.queueMode || 'collect';
   const queueDrop: QueueDropPolicy = queuePrefs.queueDrop || 'old';
   const queueCap =
@@ -4425,7 +4302,7 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   }
 
   // Get all messages since last agent interaction so the session has full context
-  const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || '';
+  const sinceTimestamp = state.lastAgentTimestamp[msg.chat_jid] || '';
   const missedMessages = getMessagesSince(
     msg.chat_jid,
     sinceTimestamp,
@@ -4529,7 +4406,7 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
   }
 
   const runPreferences: ChatRunPreferences = {
-    ...(chatRunPreferences[msg.chat_jid] || {}),
+    ...(state.chatRunPreferences[msg.chat_jid] || {}),
   };
   if (consumeNextRunNoContinue(msg.chat_jid)) {
     runPreferences.nextRunNoContinue = true;
@@ -4626,7 +4503,7 @@ async function processMessage(msg: NewMessage): Promise<boolean> {
     streamed = telegramCompletionState.effectiveStreamed;
     const telegramPreviewState = telegramCompletionState.messagePreviewState;
     updateChatUsage(msg.chat_jid, usage);
-    lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
+    state.lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
     if (abortController.signal.aborted) {
       if (telegramPreviewState) {
         await deleteTelegramPreviewMessage(
@@ -4712,7 +4589,7 @@ async function runDirectSessionTurn(params: {
   deliver: boolean;
 }): Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }> {
   const { chatJid, text, runId, deliver } = params;
-  const group = registeredGroups[chatJid];
+  const group = state.registeredGroups[chatJid];
   if (!group) {
     throw new Error(`Chat is not registered: ${chatJid}`);
   }
@@ -4744,7 +4621,7 @@ async function runDirectSessionTurn(params: {
   });
 
   const runPreferences: ChatRunPreferences = {
-    ...(chatRunPreferences[chatJid] || {}),
+    ...(state.chatRunPreferences[chatJid] || {}),
   };
   if (consumeNextRunNoContinue(chatJid)) {
     runPreferences.nextRunNoContinue = true;
@@ -4976,7 +4853,7 @@ async function runAgent(
     group.folder,
     isMain,
     availableGroups,
-    new Set(Object.keys(registeredGroups)),
+    new Set(Object.keys(state.registeredGroups)),
   );
 
   try {
@@ -5032,28 +4909,53 @@ async function runAgent(
     };
 
     const sessionKey = getSessionKeyForChat(chatJid);
-    const output = await runContainerAgent(group, input, abortSignal, (event) => {
-      if (event.kind !== 'tool' || !requestId) return;
-      if (isTelegramJid(chatJid)) {
-        queueTelegramToolProgressUpdate(chatJid, requestId, runtimePrefs.verboseMode, {
+    const executeRun = async (
+      runPrefs: ChatRunPreferences,
+    ): Promise<{
+      status: 'success' | 'error';
+      result: string | null;
+      error?: string;
+      streamed?: boolean;
+      usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        provider?: string;
+        model?: string;
+      };
+    }> => runContainerAgent(
+      group,
+      {
+        ...input,
+        verboseMode: runPrefs.verboseMode,
+        noContinue: runPrefs.nextRunNoContinue === true,
+      },
+      abortSignal,
+      (event) => {
+        if (event.kind !== 'tool' || !requestId) return;
+        if (isTelegramJid(chatJid)) {
+          queueTelegramToolProgressUpdate(chatJid, requestId, runPrefs.verboseMode, {
+            toolName: event.toolName,
+            status: event.status,
+            ...(event.args ? { args: event.args } : {}),
+            ...(event.output ? { output: event.output } : {}),
+            ...(event.error ? { error: event.error } : {}),
+          });
+        }
+        emitTuiToolEvent({
+          runId: requestId,
+          sessionKey,
+          index: event.index,
           toolName: event.toolName,
           status: event.status,
           ...(event.args ? { args: event.args } : {}),
           ...(event.output ? { output: event.output } : {}),
           ...(event.error ? { error: event.error } : {}),
         });
-      }
-      emitTuiToolEvent({
-        runId: requestId,
-        sessionKey,
-        index: event.index,
-        toolName: event.toolName,
-        status: event.status,
-        ...(event.args ? { args: event.args } : {}),
-        ...(event.output ? { output: event.output } : {}),
-        ...(event.error ? { error: event.error } : {}),
-      });
-    });
+      },
+    );
+
+    let output = await executeRun(runtimePrefs);
 
     if (output.status === 'error') {
       if (typeof output.error === 'string' && /aborted by user/i.test(output.error)) {
@@ -5078,11 +4980,53 @@ async function runAgent(
       return { result: msg, streamed: false, ok: true };
     }
 
+    const isHeartbeatRun = requestId?.startsWith('heartbeat-') === true;
+    const emptyOutputPolicy = await applyNonHeartbeatEmptyOutputPolicy({
+      isHeartbeatRun,
+      firstRun: {
+        result: output.result,
+        streamed: !!output.streamed,
+        ok: true,
+        usage: output.usage,
+      },
+      retryRun: async () => {
+        const retryOutput = await executeRun({
+          ...runtimePrefs,
+          nextRunNoContinue: true,
+        });
+        if (retryOutput.status === 'error') {
+          if (
+            typeof retryOutput.error === 'string' &&
+            /aborted by user/i.test(retryOutput.error)
+          ) {
+            return { result: null, streamed: false, ok: true };
+          }
+          logger.error(
+            { group: group.name, error: retryOutput.error },
+            'Container agent retry error after empty output',
+          );
+          return {
+            result: retryOutput.error
+              ? `LLM error: ${retryOutput.error}`
+              : 'LLM error: agent runner failed (no details).',
+            streamed: false,
+            ok: true,
+          };
+        }
+        return {
+          result: retryOutput.result,
+          streamed: !!retryOutput.streamed,
+          ok: true,
+          usage: retryOutput.usage,
+        };
+      },
+    });
+
     return {
-      result: output.result,
-      streamed: !!output.streamed,
-      ok: true,
-      usage: output.usage,
+      result: emptyOutputPolicy.finalRun.result,
+      streamed: emptyOutputPolicy.finalRun.streamed,
+      ok: emptyOutputPolicy.finalRun.ok,
+      usage: emptyOutputPolicy.finalRun.usage,
     };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
@@ -5155,13 +5099,13 @@ function createWebControlCenterAdapters(): WebControlCenterAdapters {
 }
 
 async function startTuiGatewayService(): Promise<void> {
-  if (tuiGatewayServer) return;
+  if (state.tuiGatewayServer) return;
   if (!FFT_NANO_TUI_ENABLED) {
     logger.info('TUI gateway disabled via FFT_NANO_TUI_ENABLED');
     return;
   }
   try {
-    tuiGatewayServer = await startTuiGatewayServer(
+    state.tuiGatewayServer = await startTuiGatewayServer(
       createTuiGatewayAdapters(),
       tuiRuntimeEvents,
       {
@@ -5177,9 +5121,9 @@ async function startTuiGatewayService(): Promise<void> {
 }
 
 async function stopTuiGatewayService(): Promise<void> {
-  if (!tuiGatewayServer) return;
-  const server = tuiGatewayServer;
-  tuiGatewayServer = null;
+  if (!state.tuiGatewayServer) return;
+  const server = state.tuiGatewayServer;
+  state.tuiGatewayServer = null;
   try {
     await server.close();
     logger.info('TUI gateway server stopped');
@@ -5189,7 +5133,7 @@ async function stopTuiGatewayService(): Promise<void> {
 }
 
 async function startWebControlCenterService(): Promise<void> {
-  if (webControlCenterServer) return;
+  if (state.webControlCenterServer) return;
   if (!FFT_NANO_WEB_ENABLED) {
     logger.info('FFT Control Center disabled via FFT_NANO_WEB_ENABLED');
     return;
@@ -5203,7 +5147,7 @@ async function startWebControlCenterService(): Promise<void> {
   }
 
   try {
-    webControlCenterServer = await startWebControlCenterServer(
+    state.webControlCenterServer = await startWebControlCenterServer(
       createWebControlCenterAdapters(),
       {
         host: FFT_NANO_WEB_HOST,
@@ -5241,9 +5185,9 @@ async function startWebControlCenterService(): Promise<void> {
 }
 
 async function stopWebControlCenterService(): Promise<void> {
-  if (!webControlCenterServer) return;
-  const server = webControlCenterServer;
-  webControlCenterServer = null;
+  if (!state.webControlCenterServer) return;
+  const server = state.webControlCenterServer;
+  state.webControlCenterServer = null;
   try {
     await server.close();
     logger.info('FFT Control Center server stopped');
@@ -5348,7 +5292,7 @@ function isPathWithinBase(baseDir: string, targetPath: string): boolean {
 }
 
 function resolveTelegramAttachmentHostPath(chatJid: string, rawPath: string): string | null {
-  const group = registeredGroups[chatJid];
+  const group = state.registeredGroups[chatJid];
   if (!group) return null;
 
   const groupRoot =
@@ -5451,7 +5395,7 @@ function resolveTelegramAttachments(
 }
 
 async function sendTelegramAgentReply(chatJid: string, text: string): Promise<void> {
-  if (!telegramBot) {
+  if (!state.telegramBot) {
     await sendMessage(chatJid, text);
     return;
   }
@@ -5477,9 +5421,9 @@ async function sendTelegramAgentReply(chatJid: string, text: string): Promise<vo
     try {
       const data = fs.readFileSync(attachment.hostPath);
       if (attachment.kind === 'photo') {
-        await telegramBot.sendPhoto(chatJid, data, attachment.caption);
+        await state.telegramBot.sendPhoto(chatJid, data, attachment.caption);
       } else {
-        await telegramBot.sendDocument(
+        await state.telegramBot.sendDocument(
           chatJid,
           data,
           attachment.fileName,
@@ -5524,12 +5468,12 @@ async function sendAgentResultMessage(
 
 async function sendMessage(jid: string, text: string): Promise<void> {
   if (isTelegramJid(jid)) {
-    if (!telegramBot) {
+    if (!state.telegramBot) {
       logger.error({ jid }, 'Telegram message send requested but Telegram is not configured');
       return;
     }
     try {
-      await telegramBot.sendMessage(jid, text);
+      await state.telegramBot.sendMessage(jid, text);
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
@@ -5537,26 +5481,17 @@ async function sendMessage(jid: string, text: string): Promise<void> {
     return;
   }
 
-  if (!sock) {
+  if (!state.sock) {
     logger.error({ jid }, 'WhatsApp message send requested but WhatsApp is not connected');
     return;
   }
   try {
-    await sock.sendMessage(jid, { text });
+    await state.sock.sendMessage(jid, { text });
     logger.info({ jid, length: text.length }, 'Message sent');
   } catch (err) {
     logger.error({ jid, err }, 'Failed to send message');
   }
 }
-
-interface TelegramToolProgressState {
-  messageId?: number;
-  lines: string[];
-  lastToolName?: string;
-  chain: Promise<void>;
-}
-
-const telegramToolProgressRuns = new Map<string, TelegramToolProgressState>();
 
 const TELEGRAM_TOOL_EMOJIS: Record<string, string> = {
   bash: '💻',
@@ -5656,32 +5591,32 @@ function queueTelegramToolProgressUpdate(
     error?: string;
   },
 ): void {
-  const bot = telegramBot;
+  const bot = state.telegramBot;
   if (!bot) return;
-  const effectiveMode = mode || 'all';
+  const effectiveMode = getEffectiveVerboseMode(mode);
   if (effectiveMode === 'off') return;
 
   const key = getTelegramToolProgressKey(chatJid, requestId);
-  const state = telegramToolProgressRuns.get(key) || {
+  const progress = telegramToolProgressRuns.get(key) || {
     lines: [],
     chain: Promise.resolve(),
   };
-  telegramToolProgressRuns.set(key, state);
+  telegramToolProgressRuns.set(key, progress);
 
-  state.chain = state.chain
+  progress.chain = progress.chain
     .then(async () => {
-      const line = buildTelegramToolProgressLine(event, effectiveMode, state.lastToolName);
+      const line = buildTelegramToolProgressLine(event, effectiveMode, progress.lastToolName);
       if (!line) return;
       if (event.status === 'start') {
-        state.lastToolName = event.toolName;
+        progress.lastToolName = event.toolName;
       }
-      state.lines.push(line);
-      const text = state.lines.join('\n');
-      if (!state.messageId) {
-        state.messageId = await bot.sendStreamMessage(chatJid, text);
+      progress.lines.push(line);
+      const text = progress.lines.join('\n');
+      if (!progress.messageId) {
+        progress.messageId = await bot.sendStreamMessage(chatJid, text);
         return;
       }
-      await bot.editStreamMessage(chatJid, state.messageId, text);
+      await bot.editStreamMessage(chatJid, progress.messageId, text);
     })
     .catch((err) => {
       logger.warn({ chatJid, requestId, err }, 'Failed to update Telegram tool progress');
@@ -5693,11 +5628,11 @@ async function finalizeTelegramToolProgress(
   requestId: string,
 ): Promise<void> {
   const key = getTelegramToolProgressKey(chatJid, requestId);
-  const state = telegramToolProgressRuns.get(key);
-  if (!state) return;
+  const progress = telegramToolProgressRuns.get(key);
+  if (!progress) return;
   telegramToolProgressRuns.delete(key);
   try {
-    await state.chain;
+    await progress.chain;
   } catch {
     // best-effort cleanup
   }
@@ -5707,9 +5642,9 @@ async function deleteTelegramPreviewMessage(
   chatJid: string,
   messageId: number,
 ): Promise<void> {
-  if (!telegramBot) return;
+  if (!state.telegramBot) return;
   try {
-    await telegramBot.deleteMessage(chatJid, messageId);
+    await state.telegramBot.deleteMessage(chatJid, messageId);
     logger.info({ chatJid, messageId }, 'Telegram streaming preview deleted');
   } catch (err) {
     logger.warn(
@@ -5724,7 +5659,7 @@ async function finalizeTelegramPreviewMessage(
   messageId: number,
   text: string,
 ): Promise<boolean> {
-  if (!telegramBot) return false;
+  if (!state.telegramBot) return false;
 
   const extracted = extractTelegramAttachmentHints(text);
   if (extracted.hints.length > 0) {
@@ -5748,7 +5683,7 @@ async function finalizeTelegramPreviewMessage(
   }
 
   try {
-    await telegramBot.editStreamMessage(chatJid, messageId, chunks[0]);
+    await state.telegramBot.editStreamMessage(chatJid, messageId, chunks[0]);
   } catch (err) {
     logger.warn(
       { chatJid, messageId, err },
@@ -5759,7 +5694,7 @@ async function finalizeTelegramPreviewMessage(
   }
 
   for (const chunk of chunks.slice(1)) {
-    await telegramBot.sendMessage(chatJid, chunk);
+    await state.telegramBot.sendMessage(chatJid, chunk);
   }
 
   logger.info(
@@ -5826,11 +5761,11 @@ function pruneTelegramHostStreamedRuns(): void {
 }
 
 function startIpcWatcher(): void {
-  if (ipcWatcherRunning) {
+  if (state.ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
     return;
   }
-  ipcWatcherRunning = true;
+  state.ipcWatcherRunning = true;
 
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true });
@@ -5868,7 +5803,7 @@ function startIpcWatcher(): void {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               const draftUpdate = parseTelegramDraftIpcMessage(data);
               if (draftUpdate) {
-                const targetGroup = registeredGroups[draftUpdate.chatJid];
+                const targetGroup = state.registeredGroups[draftUpdate.chatJid];
                 if (!isMain && (!targetGroup || targetGroup.folder !== sourceGroup)) {
                   logger.warn(
                     { chatJid: draftUpdate.chatJid, sourceGroup },
@@ -5879,14 +5814,14 @@ function startIpcWatcher(): void {
                     { chatJid: draftUpdate.chatJid, sourceGroup },
                     'Ignoring IPC Telegram draft update for non-Telegram chat',
                   );
-                } else if (!telegramBot) {
+                } else if (!state.telegramBot) {
                   logger.debug(
                     { chatJid: draftUpdate.chatJid, sourceGroup },
                     'Ignoring IPC Telegram draft update while Telegram is disabled',
                   );
                 } else {
                   const sendResult = await sendTelegramDraftWithFallback({
-                    bot: telegramBot,
+                    bot: state.telegramBot,
                     draft: draftUpdate,
                     registry: telegramDraftDisabledRuns,
                   });
@@ -5935,7 +5870,7 @@ function startIpcWatcher(): void {
                 }
               } else if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
+                const targetGroup = state.registeredGroups[data.chatJid];
                 const requestId =
                   typeof data.requestId === 'string' && data.requestId.trim()
                     ? data.requestId.trim()
@@ -6073,7 +6008,7 @@ function startIpcWatcher(): void {
                 const result = await executeMemoryAction(request, {
                   sourceGroup,
                   isMain,
-                  registeredGroups,
+                  registeredGroups: state.registeredGroups,
                 });
                 const resultPath = path.join(
                   resultDir,
@@ -6179,7 +6114,7 @@ async function processTaskIpc(
         }
 
         // Resolve the correct JID for the target group (don't trust IPC payload)
-        const targetJid = Object.entries(registeredGroups).find(
+        const targetJid = Object.entries(state.registeredGroups).find(
           ([, group]) => group.folder === targetGroup,
         )?.[0];
 
@@ -6321,7 +6256,7 @@ async function processTaskIpc(
           sourceGroup,
           true,
           availableGroups,
-          new Set(Object.keys(registeredGroups)),
+          new Set(Object.keys(state.registeredGroups)),
         );
       } else {
         logger.warn(
@@ -6365,19 +6300,19 @@ async function connectWhatsApp(): Promise<void> {
   const authDir = path.join(STORE_DIR, 'auth');
   fs.mkdirSync(authDir, { recursive: true });
 
-  const { state, saveCreds } = await useMultiFileAuthState(authDir);
+  const { state: authState, saveCreds } = await useMultiFileAuthState(authDir);
 
-  sock = makeWASocket({
+  state.sock = makeWASocket({
     auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger),
+      creds: authState.creds,
+      keys: makeCacheableSignalKeyStore(authState.keys, logger),
     },
     printQRInTerminal: false,
     logger,
     browser: Browsers.macOS('Chrome'),
   });
 
-  sock.ev.on('connection.update', (update) => {
+  state.sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -6410,16 +6345,16 @@ async function connectWhatsApp(): Promise<void> {
       logger.info('Connected to WhatsApp');
 
       // Keep presence in an active state so per-chat typing updates remain reliable.
-      sock.sendPresenceUpdate('available').catch((err) => {
+      state.sock!.sendPresenceUpdate('available').catch((err) => {
         logger.debug({ err }, 'Failed to set initial available presence');
       });
-      
+
       // Build LID to phone mapping from auth state for self-chat translation
-      if (sock.user) {
-        const phoneUser = sock.user.id.split(':')[0];
-        const lidUser = sock.user.lid?.split(':')[0];
+      if (state.sock!.user) {
+        const phoneUser = state.sock!.user.id.split(':')[0];
+        const lidUser = state.sock!.user.lid?.split(':')[0];
         if (lidUser && phoneUser) {
-          lidToPhoneMap[lidUser] = `${phoneUser}@s.whatsapp.net`;
+          state.lidToPhoneMap[lidUser] = `${phoneUser}@s.whatsapp.net`;
           logger.debug({ lidUser, phoneUser }, 'LID to phone mapping set');
         }
       }
@@ -6431,8 +6366,8 @@ async function connectWhatsApp(): Promise<void> {
         logger.error({ err }, 'Initial group sync failed'),
       );
       // Set up daily sync timer (only once)
-      if (!groupSyncTimerStarted) {
-        groupSyncTimerStarted = true;
+      if (!state.groupSyncTimerStarted) {
+        state.groupSyncTimerStarted = true;
         setInterval(() => {
           syncGroupMetadata().catch((err) =>
             logger.error({ err }, 'Periodic group sync failed'),
@@ -6441,7 +6376,7 @@ async function connectWhatsApp(): Promise<void> {
       }
       startSchedulerLoop({
         sendMessage,
-        registeredGroups: () => registeredGroups,
+        registeredGroups: () => state.registeredGroups,
         requestHeartbeatNow,
       });
       startIpcWatcher();
@@ -6451,9 +6386,9 @@ async function connectWhatsApp(): Promise<void> {
     }
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  state.sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('messages.upsert', ({ messages }) => {
+  state.sock.ev.on('messages.upsert', ({ messages }) => {
     for (const msg of messages) {
       if (!msg.message) continue;
       const rawJid = msg.key.remoteJid;
@@ -6470,7 +6405,7 @@ async function connectWhatsApp(): Promise<void> {
       storeChatMetadata(chatJid, timestamp);
 
       // Only store full message content for registered groups
-      if (registeredGroups[chatJid]) {
+      if (state.registeredGroups[chatJid]) {
         storeMessage(
           msg,
           chatJid,
@@ -6483,17 +6418,17 @@ async function connectWhatsApp(): Promise<void> {
 }
 
 async function startMessageLoop(): Promise<void> {
-  if (messageLoopRunning) {
+  if (state.messageLoopRunning) {
     logger.debug('Message loop already running, skipping duplicate start');
     return;
   }
-  messageLoopRunning = true;
+  state.messageLoopRunning = true;
   logger.info(`FFT_nano running (trigger: @${ASSISTANT_NAME})`);
 
   while (true) {
     try {
-      const jids = Object.keys(registeredGroups);
-      const { messages } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME);
+      const jids = Object.keys(state.registeredGroups);
+      const { messages } = getNewMessages(jids, state.lastTimestamp, ASSISTANT_NAME);
 
       if (messages.length > 0)
         logger.info({ count: messages.length }, 'New messages');
@@ -6508,7 +6443,7 @@ async function startMessageLoop(): Promise<void> {
             break;
           }
           // Only advance timestamp after successful processing for at-least-once delivery
-          lastTimestamp = msg.timestamp;
+          state.lastTimestamp = msg.timestamp;
           saveState();
         } catch (err) {
           logger.error(
@@ -6561,7 +6496,7 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     return;
   }
 
-  const group = registeredGroups[mainChatJid];
+  const group = state.registeredGroups[mainChatJid];
   if (!group || group.folder !== MAIN_GROUP_FOLDER) {
     logHeartbeatSkip('main-group-not-registered', { chatJid: mainChatJid, reason });
     return;
@@ -6592,7 +6527,7 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       mainChatJid,
       'auto',
       requestId,
-      chatRunPreferences[mainChatJid] || {},
+      state.chatRunPreferences[mainChatJid] || {},
       { suppressErrorReply: true },
       abortController.signal,
     );
@@ -6678,17 +6613,17 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
 }
 
 function startHeartbeatLoop(): void {
-  if (!HEARTBEAT_ENABLED || heartbeatLoopStarted) return;
-  heartbeatLoopStarted = true;
+  if (!HEARTBEAT_ENABLED || state.heartbeatLoopStarted) return;
+  state.heartbeatLoopStarted = true;
   setInterval(() => {
-    if (shuttingDown) return;
+    if (state.shuttingDown) return;
     void runHeartbeatTurn('interval');
   }, HEARTBEAT_INTERVAL_MS);
   logger.info({ everyMs: HEARTBEAT_INTERVAL_MS }, 'Heartbeat loop started');
 }
 
 function requestHeartbeatNow(reason = 'manual'): void {
-  if (shuttingDown) return;
+  if (state.shuttingDown) return;
   void runHeartbeatTurn(reason);
 }
 
@@ -6766,8 +6701,8 @@ function ensureContainerSystemRunning(): void {
 }
 
 function stopFarmServicesForShutdown(signal: string): void {
-  if (shuttingDown) return;
-  shuttingDown = true;
+  if (state.shuttingDown) return;
+  state.shuttingDown = true;
   logger.info({ signal }, 'Shutting down FFT_nano services');
 
   if (FEATURE_FARM && FARM_STATE_ENABLED) {
@@ -6843,7 +6778,7 @@ async function main(): Promise<void> {
   if (telegramEnabled || !WHATSAPP_ENABLED) {
     startSchedulerLoop({
       sendMessage,
-      registeredGroups: () => registeredGroups,
+      registeredGroups: () => state.registeredGroups,
       requestHeartbeatNow,
     });
     startIpcWatcher();
