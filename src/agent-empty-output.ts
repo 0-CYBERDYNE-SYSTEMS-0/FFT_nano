@@ -5,6 +5,7 @@ export interface AgentRunResult {
   result: string | null;
   streamed: boolean;
   ok: boolean;
+  hadToolSideEffects?: boolean;
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
@@ -28,6 +29,18 @@ export async function applyNonHeartbeatEmptyOutputPolicy(params: {
     return { finalRun: firstRun, retried: false };
   }
 
+  if (firstRun.hadToolSideEffects) {
+    return {
+      finalRun: {
+        ...firstRun,
+        result: EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE,
+        streamed: false,
+        ok: true,
+      },
+      retried: false,
+    };
+  }
+
   const secondRun = await retryRun();
   if (
     secondRun.ok &&
@@ -47,4 +60,3 @@ export async function applyNonHeartbeatEmptyOutputPolicy(params: {
 
   return { finalRun: secondRun, retried: true };
 }
-

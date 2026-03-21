@@ -18,6 +18,11 @@ Error quarantine:
 Writer: in-container agent
 Reader: host `startIpcWatcher()`
 
+Note:
+- Host-generated Telegram preview updates and some host-generated final deliveries no longer go through `messages/*.json`.
+- Those host-local notifications now use an in-memory runtime event hub.
+- `messages/*.json` remains the contract for sandbox-authored proactive chat messages across the sandbox boundary.
+
 Payload:
 ```json
 {

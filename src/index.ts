@@ -107,10 +107,19 @@ import type {
 } from './telegram.js';
 import type { TelegramCommandName } from './telegram-command-spec.js';
 import {
-  parseTelegramDraftIpcMessage,
-  resolveTelegramStreamCompletionState,
-  sendTelegramDraftWithFallback,
-} from './telegram-draft-ipc.js';
+  consumeNextRunNoContinue as consumeNextRunNoContinueCore,
+  formatChatRuntimePreferences as formatChatRuntimePreferencesCore,
+  formatUsageText as formatUsageTextCore,
+  getEffectiveModelLabel as getEffectiveModelLabelCore,
+  getTuiSessionPrefs as getTuiSessionPrefsCore,
+  normalizeReasoningLevel,
+  normalizeThinkLevel,
+  parseDurationMs,
+  parseQueueArgs,
+  patchTuiSessionPrefs as patchTuiSessionPrefsCore,
+  updateChatRunPreferences as updateChatRunPreferencesCore,
+  updateChatUsage as updateChatUsageCore,
+} from './chat-preferences.js';
 import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
 import { executeFarmAction } from './farm-action-gateway.js';
 import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
@@ -126,7 +135,6 @@ import {
   cycleVerboseMode,
   describeVerboseMode,
   getEffectiveVerboseMode,
-  normalizeVerboseMode,
   parseVerboseDirective,
   type VerboseMode,
 } from './verbose-mode.js';
@@ -165,19 +173,32 @@ import {
   type WebControlCenterServer,
 } from './web/control-center-server.js';
 import {
+  getTelegramPreviewRunKey,
+  resolveTelegramStreamCompletionState,
+  type TelegramMessagePreviewState,
+  updateTelegramPreview,
+} from './telegram-streaming.js';
+import {
+  createOrderedPiRuntimeEventProcessor,
+  invokePiRuntimeEventHandlerSafely,
+  type PiRuntimeEvent,
+} from './pi-runtime-events.js';
+import { createAppRuntime } from './app.js';
+import { createMessageDispatcher, finalizeCompletedRun } from './message-dispatch.js';
+import { createTelegramCommandHandlers } from './telegram-commands.js';
+import {
   state,
   activeCoderRuns,
   activeChatRuns,
   activeChatRunsById,
   tuiMessageQueue,
-  telegramDraftDisabledRuns,
-  telegramHostStreamedRuns,
-  telegramHostCompletedRuns,
+  telegramPreviewRegistry,
   heartbeatLastSent,
   heartbeatLastTargetByChannel,
   compactionMemoryFlushMarkers,
   telegramSettingsPanelActions,
   telegramSetupInputStates,
+  piRuntimeEvents,
   tuiRuntimeEvents,
   telegramToolProgressRuns,
   TUI_SENDER_ID,
@@ -203,7 +224,6 @@ import {
   type ActiveChatRun,
   type TelegramAttachmentHint,
   type TelegramResolvedAttachment,
-  type TelegramToolProgressState,
 } from './app-state.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
@@ -262,6 +282,61 @@ function resolveGitInfo(): GitInfo {
 }
 
 const GIT_INFO = resolveGitInfo();
+
+function getChatPrefsRuntime() {
+  return {
+    chatRunPreferences: state.chatRunPreferences,
+    chatUsageStats: state.chatUsageStats,
+    saveState,
+    defaultProvider: process.env.PI_API,
+    defaultModel: process.env.PI_MODEL,
+    getEffectiveVerboseMode,
+  };
+}
+
+function updateChatRunPreferences(
+  chatJid: string,
+  updater: (current: ChatRunPreferences) => ChatRunPreferences,
+): ChatRunPreferences {
+  return updateChatRunPreferencesCore(getChatPrefsRuntime(), chatJid, updater);
+}
+
+function getTuiSessionPrefs(chatJid: string): TuiSessionPrefs {
+  return getTuiSessionPrefsCore(getChatPrefsRuntime(), chatJid);
+}
+
+function patchTuiSessionPrefs(chatJid: string, patch: TuiSessionPrefs): TuiSessionPrefs {
+  return patchTuiSessionPrefsCore(getChatPrefsRuntime(), chatJid, patch);
+}
+
+function consumeNextRunNoContinue(chatJid: string): boolean {
+  return consumeNextRunNoContinueCore(getChatPrefsRuntime(), chatJid);
+}
+
+function getEffectiveModelLabel(chatJid: string): string {
+  return getEffectiveModelLabelCore(getChatPrefsRuntime(), chatJid);
+}
+
+function formatChatRuntimePreferences(chatJid: string): string[] {
+  return formatChatRuntimePreferencesCore(getChatPrefsRuntime(), chatJid);
+}
+
+function updateChatUsage(
+  chatJid: string,
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    provider?: string;
+    model?: string;
+  },
+): void {
+  updateChatUsageCore(getChatPrefsRuntime(), chatJid, usage);
+}
+
+function formatUsageText(chatJid: string, scope: 'chat' | 'all' = 'chat'): string {
+  return formatUsageTextCore(getChatPrefsRuntime(), chatJid, scope);
+}
 
 /**
  * Translate a JID from LID format to phone format if we have a mapping.
@@ -975,48 +1050,6 @@ function persistTuiUserHistory(chatJid: string, text: string, runId: string): st
   return timestamp;
 }
 
-function normalizeThinkLevel(raw: string): ThinkLevel | undefined {
-  const key = raw.trim().toLowerCase();
-  if (!key) return undefined;
-  if (key === 'off') return 'off';
-  if (['on', 'enable', 'enabled'].includes(key)) return 'low';
-  if (['min', 'minimal'].includes(key)) return 'minimal';
-  if (['low'].includes(key)) return 'low';
-  if (['mid', 'med', 'medium'].includes(key)) return 'medium';
-  if (['high', 'max', 'ultra'].includes(key)) return 'high';
-  if (['xhigh', 'x-high', 'x_high'].includes(key)) return 'xhigh';
-  return undefined;
-}
-
-function normalizeReasoningLevel(raw: string): ReasoningLevel | undefined {
-  const key = raw.trim().toLowerCase();
-  if (!key) return undefined;
-  if (['off', 'false', 'no', '0'].includes(key)) return 'off';
-  if (['on', 'true', 'yes', '1'].includes(key)) return 'on';
-  if (['stream', 'streaming', 'live'].includes(key)) return 'stream';
-  return undefined;
-}
-
-function normalizeQueueMode(raw: string): QueueMode | undefined {
-  const key = raw.trim().toLowerCase();
-  if (
-    key === 'collect' ||
-    key === 'interrupt' ||
-    key === 'followup' ||
-    key === 'steer' ||
-    key === 'steer-backlog'
-  ) {
-    return key;
-  }
-  return undefined;
-}
-
-function normalizeQueueDrop(raw: string): QueueDropPolicy | undefined {
-  const key = raw.trim().toLowerCase();
-  if (key === 'old' || key === 'new' || key === 'summarize') return key;
-  return undefined;
-}
-
 function resolveHeartbeatTimezoneLabel(raw: string | undefined): string {
   const value = (raw || '').trim();
   if (!value) return TIMEZONE;
@@ -1042,330 +1075,9 @@ function resolveHeartbeatActiveHoursRaw(): string | undefined {
   return `${cfg.activeHours.start}-${cfg.activeHours.end}@${timezone}`;
 }
 
-function parseDurationMs(raw: string): number | undefined {
-  const value = raw.trim().toLowerCase();
-  if (!value) return undefined;
-  if (/^\d+$/.test(value)) {
-    const ms = Number.parseInt(value, 10);
-    return Number.isFinite(ms) && ms >= 0 ? ms : undefined;
-  }
-  const match = value.match(/^(\d+)(ms|s|m|h)$/);
-  if (!match) return undefined;
-  const amount = Number.parseInt(match[1] || '0', 10);
-  const unit = match[2];
-  if (!Number.isFinite(amount) || amount < 0) return undefined;
-  if (unit === 'ms') return amount;
-  if (unit === 's') return amount * 1000;
-  if (unit === 'm') return amount * 60_000;
-  if (unit === 'h') return amount * 60 * 60_000;
-  return undefined;
-}
-
-function parseQueueArgs(argText: string): {
-  mode?: QueueMode;
-  debounceMs?: number;
-  cap?: number;
-  drop?: QueueDropPolicy;
-  reset?: boolean;
-} {
-  const trimmed = argText.trim();
-  if (!trimmed) return {};
-
-  const tokens = trimmed.split(/\s+/).filter(Boolean);
-  let mode: QueueMode | undefined;
-  let debounceMs: number | undefined;
-  let cap: number | undefined;
-  let drop: QueueDropPolicy | undefined;
-  let reset = false;
-
-  for (const token of tokens) {
-    const lower = token.toLowerCase();
-    if (['reset', 'default', 'clear'].includes(lower)) {
-      reset = true;
-      continue;
-    }
-    const modeValue = normalizeQueueMode(lower);
-    if (modeValue) {
-      mode = modeValue;
-      continue;
-    }
-    if (lower.startsWith('mode=')) {
-      const value = normalizeQueueMode(lower.slice('mode='.length));
-      if (value) mode = value;
-      continue;
-    }
-    if (lower.startsWith('debounce=')) {
-      const parsed = parseDurationMs(lower.slice('debounce='.length));
-      if (typeof parsed === 'number') debounceMs = parsed;
-      continue;
-    }
-    if (lower.startsWith('cap=')) {
-      const parsed = Number.parseInt(lower.slice('cap='.length), 10);
-      if (Number.isFinite(parsed) && parsed > 0) cap = parsed;
-      continue;
-    }
-    if (lower.startsWith('drop=')) {
-      const parsed = normalizeQueueDrop(lower.slice('drop='.length));
-      if (parsed) drop = parsed;
-      continue;
-    }
-  }
-
-  return { mode, debounceMs, cap, drop, reset };
-}
-
-function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPreferences | null {
-  const next: ChatRunPreferences = {};
-  if (prefs.provider?.trim()) next.provider = prefs.provider.trim();
-  if (prefs.model?.trim()) next.model = prefs.model.trim();
-  if (prefs.thinkLevel && prefs.thinkLevel !== 'off') next.thinkLevel = prefs.thinkLevel;
-  if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
-    next.reasoningLevel = prefs.reasoningLevel;
-  }
-  if (prefs.verboseMode && prefs.verboseMode !== 'off') {
-    next.verboseMode = prefs.verboseMode;
-  }
-  if (prefs.queueMode && prefs.queueMode !== 'collect') next.queueMode = prefs.queueMode;
-  if (
-    typeof prefs.queueDebounceMs === 'number' &&
-    Number.isFinite(prefs.queueDebounceMs) &&
-    prefs.queueDebounceMs > 0
-  ) {
-    next.queueDebounceMs = Math.floor(prefs.queueDebounceMs);
-  }
-  if (
-    typeof prefs.queueCap === 'number' &&
-    Number.isFinite(prefs.queueCap) &&
-    prefs.queueCap > 0
-  ) {
-    next.queueCap = Math.floor(prefs.queueCap);
-  }
-  if (prefs.queueDrop && prefs.queueDrop !== 'old') next.queueDrop = prefs.queueDrop;
-  if (prefs.freeChat === true) next.freeChat = true;
-  if (prefs.nextRunNoContinue) next.nextRunNoContinue = true;
-  return Object.keys(next).length > 0 ? next : null;
-}
-
-function updateChatRunPreferences(
-  chatJid: string,
-  updater: (current: ChatRunPreferences) => ChatRunPreferences,
-): ChatRunPreferences {
-  const current = state.chatRunPreferences[chatJid] || {};
-  const updated = updater({ ...current });
-  const compacted = compactChatRunPreferences(updated);
-  if (compacted) {
-    state.chatRunPreferences[chatJid] = compacted;
-  } else {
-    delete state.chatRunPreferences[chatJid];
-  }
-  saveState();
-  return state.chatRunPreferences[chatJid] || {};
-}
-
-function getTuiSessionPrefs(chatJid: string): TuiSessionPrefs {
-  const prefs = state.chatRunPreferences[chatJid] || {};
-  return {
-    provider: prefs.provider,
-    model: prefs.model,
-    thinkLevel: prefs.thinkLevel,
-    reasoningLevel: prefs.reasoningLevel,
-    verboseMode: prefs.verboseMode,
-    noContinueNext: prefs.nextRunNoContinue === true,
-  };
-}
-
-function patchTuiSessionPrefs(chatJid: string, patch: TuiSessionPrefs): TuiSessionPrefs {
-  const next = updateChatRunPreferences(chatJid, (prefs) => {
-    if (Object.prototype.hasOwnProperty.call(patch, 'provider')) {
-      if (patch.provider?.trim()) prefs.provider = patch.provider.trim();
-      else delete prefs.provider;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
-      if (patch.model?.trim()) prefs.model = patch.model.trim();
-      else delete prefs.model;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'thinkLevel')) {
-      if (patch.thinkLevel && patch.thinkLevel !== 'off') {
-        prefs.thinkLevel = patch.thinkLevel;
-      } else {
-        delete prefs.thinkLevel;
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'reasoningLevel')) {
-      if (patch.reasoningLevel && patch.reasoningLevel !== 'off') {
-        prefs.reasoningLevel = patch.reasoningLevel;
-      } else {
-        delete prefs.reasoningLevel;
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'verboseMode')) {
-      if (patch.verboseMode && patch.verboseMode !== 'off') {
-        prefs.verboseMode = patch.verboseMode;
-      } else {
-        delete prefs.verboseMode;
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'noContinueNext')) {
-      if (patch.noContinueNext) prefs.nextRunNoContinue = true;
-      else delete prefs.nextRunNoContinue;
-    }
-    return prefs;
-  });
-  return {
-    provider: next.provider,
-    model: next.model,
-    thinkLevel: next.thinkLevel,
-    reasoningLevel: next.reasoningLevel,
-    verboseMode: next.verboseMode,
-    noContinueNext: next.nextRunNoContinue === true,
-  };
-}
-
 function resetTuiSession(chatJid: string, reason: string): { ok: boolean; reason: string } {
   patchTuiSessionPrefs(chatJid, { noContinueNext: true });
   return { ok: true, reason };
-}
-
-function consumeNextRunNoContinue(chatJid: string): boolean {
-  const current = state.chatRunPreferences[chatJid];
-  if (!current?.nextRunNoContinue) return false;
-  updateChatRunPreferences(chatJid, (prefs) => {
-    delete prefs.nextRunNoContinue;
-    return prefs;
-  });
-  return true;
-}
-
-function getEffectiveModelLabel(chatJid: string): string {
-  const prefs = state.chatRunPreferences[chatJid] || {};
-  const provider = prefs.provider || process.env.PI_API || '(default-provider)';
-  const model = prefs.model || process.env.PI_MODEL || '(default-model)';
-  return `${provider}/${model}`;
-}
-
-function formatChatRuntimePreferences(chatJid: string): string[] {
-  const prefs = state.chatRunPreferences[chatJid] || {};
-  const think = prefs.thinkLevel || 'off';
-  const reasoning = prefs.reasoningLevel || 'off';
-  const verbose = getEffectiveVerboseMode(prefs.verboseMode);
-  const freeChat = prefs.freeChat ? 'yes' : 'no';
-  const newPending = prefs.nextRunNoContinue ? 'yes' : 'no';
-  const queueMode = prefs.queueMode || 'collect';
-  const queueDebounce = prefs.queueDebounceMs || 0;
-  const queueCap = prefs.queueCap || 0;
-  const queueDrop = prefs.queueDrop || 'old';
-  return [
-    `- chat_model: ${getEffectiveModelLabel(chatJid)}`,
-    `- chat_think: ${think}`,
-    `- chat_reasoning: ${reasoning}`,
-    `- chat_tool_progress: ${verbose}`,
-    `- chat_free_chat: ${freeChat}`,
-    `- chat_queue: mode=${queueMode} debounce_ms=${queueDebounce} cap=${queueCap} drop=${queueDrop}`,
-    `- chat_new_pending: ${newPending}`,
-  ];
-}
-
-function updateChatUsage(chatJid: string, usage?: {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  provider?: string;
-  model?: string;
-}): void {
-  const current = state.chatUsageStats[chatJid] || {
-    runs: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-    tokenReports: 0,
-    updatedAt: 0,
-  };
-
-  current.runs += 1;
-  if (usage) {
-    const inTokens =
-      typeof usage.inputTokens === 'number' && Number.isFinite(usage.inputTokens)
-        ? Math.max(0, Math.floor(usage.inputTokens))
-        : 0;
-    const outTokens =
-      typeof usage.outputTokens === 'number' && Number.isFinite(usage.outputTokens)
-        ? Math.max(0, Math.floor(usage.outputTokens))
-        : 0;
-    const totalTokens =
-      typeof usage.totalTokens === 'number' && Number.isFinite(usage.totalTokens)
-        ? Math.max(0, Math.floor(usage.totalTokens))
-        : inTokens + outTokens;
-
-    if (inTokens > 0 || outTokens > 0 || totalTokens > 0) {
-      current.tokenReports += 1;
-      current.inputTokens += inTokens;
-      current.outputTokens += outTokens;
-      current.totalTokens += totalTokens;
-    }
-    if (usage.provider) current.lastProvider = usage.provider;
-    if (usage.model) current.lastModel = usage.model;
-  }
-  current.updatedAt = Date.now();
-  state.chatUsageStats[chatJid] = current;
-  saveState();
-}
-
-function formatUsageText(chatJid: string, scope: 'chat' | 'all' = 'chat'): string {
-  if (scope === 'all') {
-    const rows = Object.entries(state.chatUsageStats);
-    if (rows.length === 0) return 'No usage data collected yet.';
-    let runs = 0;
-    let reports = 0;
-    let input = 0;
-    let output = 0;
-    let total = 0;
-    for (const [, stats] of rows) {
-      runs += stats.runs;
-      reports += stats.tokenReports;
-      input += stats.inputTokens;
-      output += stats.outputTokens;
-      total += stats.totalTokens;
-    }
-    return [
-      'Usage (all chats):',
-      `- chats: ${rows.length}`,
-      `- runs: ${runs}`,
-      `- token_reports: ${reports}`,
-      `- input_tokens: ${input}`,
-      `- output_tokens: ${output}`,
-      `- total_tokens: ${total}`,
-    ].join('\n');
-  }
-
-  const stats = state.chatUsageStats[chatJid];
-  if (!stats) {
-    return [
-      'Usage (this chat):',
-      '- runs: 0',
-      '- token_reports: 0',
-      '- input_tokens: 0',
-      '- output_tokens: 0',
-      '- total_tokens: 0',
-      '',
-      'Token usage appears after provider returns usage fields.',
-    ].join('\n');
-  }
-
-  const lastModel =
-    stats.lastProvider && stats.lastModel
-      ? `${stats.lastProvider}/${stats.lastModel}`
-      : stats.lastModel || getEffectiveModelLabel(chatJid);
-  const updated = new Date(stats.updatedAt || Date.now()).toISOString();
-  return [
-    'Usage (this chat):',
-    `- runs: ${stats.runs}`,
-    `- token_reports: ${stats.tokenReports}`,
-    `- input_tokens: ${stats.inputTokens}`,
-    `- output_tokens: ${stats.outputTokens}`,
-    `- total_tokens: ${stats.totalTokens}`,
-    `- last_model: ${lastModel}`,
-    `- updated_at: ${updated}`,
-  ].join('\n');
 }
 
 function runPiListModels(searchText: string): { ok: boolean; text: string } {
@@ -2934,277 +2646,81 @@ function logTelegramCommandAudit(
   );
 }
 
+const telegramCommandHandlers = createTelegramCommandHandlers({
+  state,
+  constants: {
+    assistantName: ASSISTANT_NAME,
+    mainGroupFolder: MAIN_GROUP_FOLDER,
+    telegramAdminSecret: TELEGRAM_ADMIN_SECRET,
+    telegramSettingsPanelPrefix: TELEGRAM_SETTINGS_PANEL_PREFIX,
+    runtimeProviderPresetEnv: RUNTIME_PROVIDER_PRESET_ENV,
+  },
+  activeChatRuns,
+  activeChatRunsById,
+  activeCoderRuns,
+  sendMessage,
+  sendTelegramSettingsPanel,
+  editTelegramSettingsPanel,
+  promptTelegramSetupInput,
+  clearTelegramSetupInputState,
+  getTelegramSetupInputState,
+  getTelegramSettingsPanelAction,
+  updateChatRunPreferences,
+  isMainChat,
+  formatTasksText,
+  formatGroupsText,
+  formatStatusText,
+  formatHelpText,
+  formatUsageText,
+  formatActiveSubagentsText,
+  summarizeTask,
+  formatTaskRunsText,
+  runPiListModels,
+  normalizeThinkLevel,
+  normalizeReasoningLevel,
+  parseQueueArgs,
+  parseVerboseDirective,
+  describeVerboseMode,
+  getEffectiveVerboseMode,
+  getEffectiveModelLabel,
+  resolveMainOnboardingGate,
+  onboardingCommandBlockedText,
+  runCompactionForChat,
+  parseTelegramChatId,
+  parseTelegramTargetJid,
+  normalizeTelegramCommandToken,
+  promoteChatToMain,
+  refreshTelegramCommandMenus,
+  hasMainGroup,
+  runGatewayServiceCommand,
+  buildRuntimeProviderPresetUpdates,
+  getRuntimeConfigEnv,
+  persistRuntimeConfigUpdates,
+  resolveRuntimeConfigSnapshot,
+  registerTelegramSettingsPanelAction,
+  buildAdminPanelKeyboard,
+  getTaskById,
+  updateTask,
+  deleteTask,
+  emitTuiChatEvent,
+  emitTuiAgentEvent,
+  getSessionKeyForChat,
+  runAgent,
+  setTyping,
+  persistAssistantHistory,
+  sendAgentResultMessage,
+  updateChatUsage,
+  logTelegramCommandAudit,
+  whatsappEnabled: WHATSAPP_ENABLED,
+  hasWhatsAppSocket: () => !!state.sock,
+  syncGroupMetadata,
+  saveState,
+});
+
 async function handleTelegramCallbackQuery(
   q: TelegramInboundCallbackQuery,
 ): Promise<void> {
-  if (!state.telegramBot) return;
-
-  try {
-    await state.telegramBot.answerCallbackQuery(q.id);
-  } catch (err) {
-    logger.debug({ err, callbackId: q.id }, 'Failed answering callback query');
-  }
-
-  const settingsAction = getTelegramSettingsPanelAction(q.chatJid, q.data);
-  if (settingsAction) {
-    switch (settingsAction.kind) {
-      case 'show-home':
-      case 'show-model-providers':
-      case 'show-models-for-provider':
-      case 'show-think':
-      case 'show-reasoning':
-      case 'show-verbose':
-      case 'show-queue':
-      case 'show-subagents':
-      case 'show-setup-home':
-      case 'show-setup-providers':
-      case 'show-setup-models':
-      case 'show-setup-endpoint':
-      case 'show-setup-api-key':
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, settingsAction);
-        return;
-      case 'set-model':
-        updateChatRunPreferences(q.chatJid, (prefs) => {
-          prefs.provider = settingsAction.provider;
-          prefs.model = settingsAction.model;
-          return prefs;
-        });
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, {
-          kind: 'show-models-for-provider',
-          provider: settingsAction.provider,
-          page: 0,
-        });
-        return;
-      case 'reset-model':
-        updateChatRunPreferences(q.chatJid, (prefs) => {
-          delete prefs.provider;
-          delete prefs.model;
-          return prefs;
-        });
-        await editTelegramSettingsPanel(
-          q.chatJid,
-          q.messageId,
-          settingsAction.returnTo === 'models'
-            ? { kind: 'show-model-providers' }
-            : { kind: 'show-home' },
-        );
-        return;
-      case 'set-think':
-        updateChatRunPreferences(q.chatJid, (prefs) => {
-          if (settingsAction.value === 'off') delete prefs.thinkLevel;
-          else prefs.thinkLevel = settingsAction.value;
-          return prefs;
-        });
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-think' });
-        return;
-      case 'set-reasoning':
-        updateChatRunPreferences(q.chatJid, (prefs) => {
-          if (settingsAction.value === 'off') delete prefs.reasoningLevel;
-          else prefs.reasoningLevel = settingsAction.value;
-          return prefs;
-        });
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-reasoning' });
-        return;
-      case 'set-verbose':
-        updateChatRunPreferences(q.chatJid, (prefs) => {
-          if (settingsAction.value === 'off') delete prefs.verboseMode;
-          else prefs.verboseMode = settingsAction.value;
-          return prefs;
-        });
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-verbose' });
-        return;
-      case 'set-queue-mode':
-        updateChatRunPreferences(q.chatJid, (prefs) => {
-          if (settingsAction.value === 'collect') delete prefs.queueMode;
-          else prefs.queueMode = settingsAction.value;
-          return prefs;
-        });
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-queue' });
-        return;
-      case 'stop-subagents':
-        if (!isMainChat(q.chatJid)) {
-          await sendMessage(
-            q.chatJid,
-            `${ASSISTANT_NAME}: subagent controls are only available in the main/admin chat.`,
-          );
-          return;
-        }
-        if (settingsAction.target === 'all') {
-          for (const run of activeChatRuns.values()) {
-            run.abortController.abort(new Error('Stopped via Telegram panel (all)'));
-          }
-        } else {
-          const run = activeChatRuns.get(q.chatJid);
-          if (run) {
-            run.abortController.abort(new Error('Stopped via Telegram panel (current)'));
-          }
-        }
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-subagents' });
-        return;
-      case 'trigger-new':
-        updateChatRunPreferences(q.chatJid, (prefs) => {
-          prefs.nextRunNoContinue = true;
-          return prefs;
-        });
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-home' });
-        return;
-      case 'set-setup-provider': {
-        persistRuntimeConfigUpdates(
-          buildRuntimeProviderPresetUpdates({
-            preset: settingsAction.preset,
-            source: getRuntimeConfigEnv(),
-            applyLocalDefaults: true,
-          }),
-        );
-        clearTelegramSetupInputState(q.chatJid);
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, {
-          kind: 'show-setup-models',
-          preset: settingsAction.preset,
-          page: 0,
-        });
-        return;
-      }
-      case 'set-setup-model':
-        persistRuntimeConfigUpdates(
-          buildRuntimeProviderPresetUpdates({
-            preset: settingsAction.preset,
-            model: settingsAction.model,
-            source: getRuntimeConfigEnv(),
-          }),
-        );
-        clearTelegramSetupInputState(q.chatJid);
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, {
-          kind: 'show-setup-home',
-        });
-        return;
-      case 'prompt-setup-provider':
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
-        await promptTelegramSetupInput(
-          q.chatJid,
-          'provider',
-          'Send the raw provider id to save into PI_API. Example: minimax, kimi-coding, openai, ollama, or another pi-supported provider.',
-        );
-        return;
-      case 'prompt-setup-model': {
-        const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
-        if (snapshot.providerPreset !== 'manual') {
-          await editTelegramSettingsPanel(q.chatJid, q.messageId, {
-            kind: 'show-setup-models',
-            preset: snapshot.providerPreset,
-            page: 0,
-          });
-          return;
-        }
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
-        await promptTelegramSetupInput(
-          q.chatJid,
-          'model',
-          'Send the raw model id to save into PI_MODEL.',
-        );
-        return;
-      }
-      case 'prompt-setup-model-typed':
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
-        await promptTelegramSetupInput(
-          q.chatJid,
-          'model',
-          'Send the raw model id to save into PI_MODEL.',
-        );
-        return;
-      case 'prompt-setup-endpoint':
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-endpoint' });
-        await promptTelegramSetupInput(
-          q.chatJid,
-          'endpoint',
-          'Send the openai-compatible base URL to save. Example: http://localhost:11434/v1 (Ollama) or http://127.0.0.1:1234/v1 (LM Studio)',
-        );
-        return;
-      case 'clear-setup-endpoint':
-        persistRuntimeConfigUpdates({
-          PI_BASE_URL: undefined,
-          OPENAI_BASE_URL: undefined,
-        });
-        clearTelegramSetupInputState(q.chatJid);
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-endpoint' });
-        return;
-      case 'prompt-setup-api-key':
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-api-key' });
-        await promptTelegramSetupInput(
-          q.chatJid,
-          'api-key',
-          `Send the API key for ${resolveRuntimeConfigSnapshot(getRuntimeConfigEnv()).apiKeyEnv}.`,
-        );
-        return;
-      case 'clear-setup-api-key': {
-        const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
-        persistRuntimeConfigUpdates({ [snapshot.apiKeyEnv]: undefined });
-        clearTelegramSetupInputState(q.chatJid);
-        await editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-api-key' });
-        return;
-      }
-      case 'restart-gateway': {
-        await sendMessage(
-          q.chatJid,
-          'Restarting gateway service. Expect a brief disconnect while the host restarts.',
-        );
-        const result = runGatewayServiceCommand('restart');
-        if (!result.ok) {
-          await sendMessage(q.chatJid, `Gateway restart failed:\n${result.text}`);
-        }
-        return;
-      }
-    }
-  }
-
-  if (q.data.startsWith(TELEGRAM_SETTINGS_PANEL_PREFIX)) {
-    await sendMessage(
-      q.chatJid,
-      'That panel expired. Run /model, /think, /reasoning, /verbose, /queue, or /subagents again.',
-    );
-    return;
-  }
-
-  if (!q.data.startsWith('panel:')) {
-    return;
-  }
-
-  if (!isMainChat(q.chatJid)) {
-    logTelegramCommandAudit(q.chatJid, q.data, false, 'non-main chat');
-    await sendMessage(
-      q.chatJid,
-      `${ASSISTANT_NAME}: admin panel actions are only available in the main/admin chat.`,
-    );
-    return;
-  }
-
-  switch (q.data) {
-    case 'panel:tasks':
-      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
-      await sendMessage(q.chatJid, formatTasksText());
-      return;
-    case 'panel:coder':
-      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
-      await sendMessage(
-        q.chatJid,
-        [
-          'Coder delegation:',
-          '- /coder <task> to execute',
-          '- /coder-plan <task> for read-only plan',
-          '- use coding agent',
-        ].join('\n'),
-      );
-      return;
-    case 'panel:groups':
-      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
-      await sendMessage(q.chatJid, formatGroupsText());
-      return;
-    case 'panel:health':
-      logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
-      await sendMessage(q.chatJid, formatStatusText(q.chatJid));
-      return;
-    default:
-      return;
-  }
+  await telegramCommandHandlers.handleTelegramCallbackQuery(q);
 }
 
 async function handleTelegramSetupInput(
@@ -3213,51 +2729,7 @@ async function handleTelegramSetupInput(
     content: string;
   },
 ): Promise<boolean> {
-  const pending = getTelegramSetupInputState(m.chatJid);
-  if (!pending) return false;
-
-  const content = m.content.trim();
-  if (!content || content.startsWith('/')) return false;
-
-  switch (pending.kind) {
-    case 'provider':
-      persistRuntimeConfigUpdates({
-        [RUNTIME_PROVIDER_PRESET_ENV]: undefined,
-        PI_API: content,
-      });
-      clearTelegramSetupInputState(m.chatJid);
-      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
-      await sendMessage(
-        m.chatJid,
-        `Saved provider: ${content}\nUse /setup -> Model next if you need to change PI_MODEL.`,
-      );
-      return true;
-    case 'model':
-      persistRuntimeConfigUpdates({ PI_MODEL: content });
-      clearTelegramSetupInputState(m.chatJid);
-      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
-      await sendMessage(m.chatJid, `Saved model: ${content}`);
-      return true;
-    case 'endpoint':
-      persistRuntimeConfigUpdates({
-        PI_BASE_URL: content,
-        OPENAI_BASE_URL: content,
-      });
-      clearTelegramSetupInputState(m.chatJid);
-      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
-      await sendMessage(m.chatJid, `Saved openai-compatible endpoint: ${content}`);
-      return true;
-    case 'api-key': {
-      const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
-      persistRuntimeConfigUpdates({ [snapshot.apiKeyEnv]: content });
-      clearTelegramSetupInputState(m.chatJid);
-      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
-      await sendMessage(m.chatJid, `Saved API key in ${snapshot.apiKeyEnv}.`);
-      return true;
-    }
-    default:
-      return false;
-  }
+  return telegramCommandHandlers.handleTelegramSetupInput(m);
 }
 
 async function handleTelegramCommand(m: {
@@ -3265,1321 +2737,130 @@ async function handleTelegramCommand(m: {
   chatName: string;
   content: string;
 }): Promise<boolean> {
-  const content = m.content.trim();
-  if (!content.startsWith('/')) return false;
-
-  const [rawCmd, ...restTokens] = content.split(/\s+/);
-  const cmd = normalizeTelegramCommandToken(rawCmd);
-  if (!cmd) return false;
-  const colonArg = (() => {
-    const atSplit = rawCmd.split('@')[0] || rawCmd;
-    const colonIndex = atSplit.indexOf(':');
-    if (colonIndex === -1) return null;
-    const value = atSplit.slice(colonIndex + 1).trim();
-    return value || null;
-  })();
-  const rest = colonArg ? [colonArg, ...restTokens] : restTokens;
-  const isMainGroup = isMainChat(m.chatJid);
-
-  if (cmd === '/id') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    const chatId = parseTelegramChatId(m.chatJid);
-    await sendMessage(
-      m.chatJid,
-      chatId
-        ? `Chat id: ${chatId}`
-        : 'Could not parse chat id for this chat.',
-    );
-    return true;
-  }
-
-  if (cmd === '/help') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    await sendMessage(m.chatJid, formatHelpText(isMainGroup));
-    return true;
-  }
-
-  if (cmd === '/status') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    await sendMessage(m.chatJid, formatStatusText(m.chatJid));
-    return true;
-  }
-
-  if (cmd === '/models') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    const searchText = rest.join(' ');
-    const listed = runPiListModels(searchText);
-    if (!searchText && state.telegramBot) {
-      await state.telegramBot.sendMessageWithKeyboard(m.chatJid, listed.text, [[
-        {
-          text: 'Open Model Picker',
-          callbackData: registerTelegramSettingsPanelAction(m.chatJid, {
-            kind: 'show-model-providers',
-          }),
-        },
-      ]]);
-    } else {
-      await sendMessage(m.chatJid, listed.text);
-    }
-    return true;
-  }
-
-  if (cmd === '/model') {
-    const argText = rest.join(' ').trim();
-    if (!argText) {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (state.telegramBot) {
-        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-model-providers' });
-      } else {
-        const prefs = state.chatRunPreferences[m.chatJid] || {};
-        const override = prefs.provider || prefs.model;
-        await sendMessage(
-          m.chatJid,
-          override
-            ? `Current model override: ${getEffectiveModelLabel(m.chatJid)}`
-            : `Current model: ${getEffectiveModelLabel(m.chatJid)}\n(no override set; using env defaults)`,
-        );
-      }
-      return true;
-    }
-
-    const lowered = argText.toLowerCase();
-    if (['reset', 'default', 'clear', 'off'].includes(lowered)) {
-      updateChatRunPreferences(m.chatJid, (prefs) => {
-        delete prefs.provider;
-        delete prefs.model;
-        return prefs;
-      });
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
-      await sendMessage(
-        m.chatJid,
-        `Model override cleared. Active model: ${getEffectiveModelLabel(m.chatJid)}`,
-      );
-      return true;
-    }
-
-    let nextProvider: string | undefined;
-    let nextModel: string | undefined;
-    if (argText.includes('/')) {
-      const slash = argText.indexOf('/');
-      const provider = argText.slice(0, slash).trim();
-      const model = argText.slice(slash + 1).trim();
-      if (!provider || !model) {
-        logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid model ref');
-        await sendMessage(m.chatJid, 'Usage: /model <provider/model> or /model reset');
-        return true;
-      }
-      nextProvider = provider;
-      nextModel = model;
-    } else {
-      nextModel = argText;
-    }
-
-    updateChatRunPreferences(m.chatJid, (prefs) => {
-      if (nextProvider) {
-        prefs.provider = nextProvider;
-      } else {
-        delete prefs.provider;
-      }
-      if (nextModel) {
-        prefs.model = nextModel;
-      }
-      return prefs;
-    });
-
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
-    await sendMessage(
-      m.chatJid,
-      `Model set for this chat: ${getEffectiveModelLabel(m.chatJid)}`,
-    );
-    return true;
-  }
-
-  if (cmd === '/think' || cmd === '/thinking' || cmd === '/t') {
-    const argText = rest.join(' ').trim();
-    if (!argText) {
-      const current = state.chatRunPreferences[m.chatJid]?.thinkLevel || 'off';
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (state.telegramBot) {
-        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-think' });
-      } else {
-        await sendMessage(m.chatJid, `Current thinking level: ${current}`);
-      }
-      return true;
-    }
-
-    const normalized = normalizeThinkLevel(argText);
-    if (!normalized) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid think level');
-      await sendMessage(
-        m.chatJid,
-        'Unrecognized thinking level. Valid: off, minimal, low, medium, high, xhigh',
-      );
-      return true;
-    }
-
-    updateChatRunPreferences(m.chatJid, (prefs) => {
-      if (normalized === 'off') delete prefs.thinkLevel;
-      else prefs.thinkLevel = normalized;
-      return prefs;
-    });
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
-    await sendMessage(
-      m.chatJid,
-      normalized === 'off'
-        ? 'Thinking disabled for this chat.'
-        : `Thinking level set to ${normalized}.`,
-    );
-    return true;
-  }
-
-  if (cmd === '/reasoning' || cmd === '/reason') {
-    const argText = rest.join(' ').trim();
-    if (!argText) {
-      const current = state.chatRunPreferences[m.chatJid]?.reasoningLevel || 'off';
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (state.telegramBot) {
-        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-reasoning' });
-      } else {
-        await sendMessage(m.chatJid, `Current reasoning level: ${current}`);
-      }
-      return true;
-    }
-
-    const normalized = normalizeReasoningLevel(argText);
-    if (!normalized) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid reasoning level');
-      await sendMessage(
-        m.chatJid,
-        'Unrecognized reasoning level. Valid: off, on, stream',
-      );
-      return true;
-    }
-
-    updateChatRunPreferences(m.chatJid, (prefs) => {
-      if (normalized === 'off') delete prefs.reasoningLevel;
-      else prefs.reasoningLevel = normalized;
-      return prefs;
-    });
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
-    await sendMessage(
-      m.chatJid,
-      normalized === 'off'
-        ? 'Reasoning visibility disabled.'
-        : normalized === 'stream'
-          ? 'Reasoning stream enabled for this chat.'
-          : 'Reasoning visibility enabled for this chat.',
-    );
-    return true;
-  }
-
-  if (cmd === '/verbose' || cmd === '/v') {
-    const parsed = parseVerboseDirective(m.content);
-    if (parsed.kind === 'invalid' || parsed.kind === 'none') {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid verbose mode');
-      await sendMessage(
-        m.chatJid,
-        'Unrecognized tool progress mode. Valid: off, new, all, verbose. `/verbose` cycles modes.',
-      );
-      return true;
-    }
-
-    if (parsed.kind === 'cycle') {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (state.telegramBot) {
-        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-verbose' });
-      } else {
-        await sendMessage(
-          m.chatJid,
-          `Current tool progress mode: ${getEffectiveVerboseMode(
-            state.chatRunPreferences[m.chatJid]?.verboseMode,
-          )}`,
-        );
-      }
-      return true;
-    }
-
-    const normalized = parsed.mode;
-    updateChatRunPreferences(m.chatJid, (prefs) => {
-      if (normalized === 'off') delete prefs.verboseMode;
-      else prefs.verboseMode = normalized;
-      return prefs;
-    });
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
-    await sendMessage(m.chatJid, describeVerboseMode(normalized));
-    return true;
-  }
-
-  if (cmd === '/new' || cmd === '/reset') {
-    updateChatRunPreferences(m.chatJid, (prefs) => {
-      prefs.nextRunNoContinue = true;
-      return prefs;
-    });
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    await sendMessage(
-      m.chatJid,
-      'New session requested. The next model run will start fresh (no /continue).',
-    );
-    return true;
-  }
-
-  if (cmd === '/stop') {
-    const activeRun = activeChatRuns.get(m.chatJid);
-    if (!activeRun) {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'no active run');
-      await sendMessage(m.chatJid, 'No active run to stop.');
-      return true;
-    }
-
-    activeRun.abortController.abort(
-      new Error('Stopped by user via /stop'),
-    );
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'aborted');
-    await sendMessage(m.chatJid, 'Stopping current run...');
-    return true;
-  }
-
-  if (cmd === '/usage') {
-    const arg = rest.join(' ').trim().toLowerCase();
-    if (arg === 'reset' || arg === 'clear') {
-      delete state.chatUsageStats[m.chatJid];
-      saveState();
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
-      await sendMessage(m.chatJid, 'Usage counters reset for this chat.');
-      return true;
-    }
-    if (arg === 'all') {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'all');
-      await sendMessage(m.chatJid, formatUsageText(m.chatJid, 'all'));
-      return true;
-    }
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-    await sendMessage(m.chatJid, formatUsageText(m.chatJid, 'chat'));
-    return true;
-  }
-
-  if (cmd === '/queue') {
-    const argText = rest.join(' ').trim();
-    if (!argText) {
-      const prefs = state.chatRunPreferences[m.chatJid] || {};
-      const mode = prefs.queueMode || 'collect';
-      const debounce = prefs.queueDebounceMs || 0;
-      const cap = prefs.queueCap || 0;
-      const drop = prefs.queueDrop || 'old';
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      if (state.telegramBot) {
-        await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-queue' });
-      } else {
-        await sendMessage(
-          m.chatJid,
-          [
-            'Queue settings (this chat):',
-            `- mode: ${mode}`,
-            `- debounce_ms: ${debounce}`,
-            `- cap: ${cap}`,
-            `- drop: ${drop}`,
-            '',
-            'Usage: /queue mode=<collect|interrupt|followup|steer|steer-backlog> debounce=<500ms|2s|1m> cap=<n> drop=<old|new|summarize>',
-          ].join('\n'),
-        );
-      }
-      return true;
-    }
-
-    const parsed = parseQueueArgs(argText);
-    if (parsed.reset) {
-      updateChatRunPreferences(m.chatJid, (prefs) => {
-        delete prefs.queueMode;
-        delete prefs.queueDebounceMs;
-        delete prefs.queueCap;
-        delete prefs.queueDrop;
-        return prefs;
-      });
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
-      await sendMessage(m.chatJid, 'Queue settings reset to defaults.');
-      return true;
-    }
-
-    if (
-      parsed.mode === undefined &&
-      parsed.debounceMs === undefined &&
-      parsed.cap === undefined &&
-      parsed.drop === undefined
-    ) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid args');
-      await sendMessage(
-        m.chatJid,
-        'Invalid /queue args. Example: /queue mode=followup debounce=2s cap=20 drop=old',
-      );
-      return true;
-    }
-
-    updateChatRunPreferences(m.chatJid, (prefs) => {
-      if (parsed.mode) prefs.queueMode = parsed.mode;
-      if (typeof parsed.debounceMs === 'number') prefs.queueDebounceMs = parsed.debounceMs;
-      if (typeof parsed.cap === 'number') prefs.queueCap = parsed.cap;
-      if (parsed.drop) prefs.queueDrop = parsed.drop;
-      return prefs;
-    });
-    const prefs = state.chatRunPreferences[m.chatJid] || {};
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
-    await sendMessage(
-      m.chatJid,
-      [
-        'Queue settings updated:',
-        `- mode: ${prefs.queueMode || 'collect'}`,
-        `- debounce_ms: ${prefs.queueDebounceMs || 0}`,
-        `- cap: ${prefs.queueCap || 0}`,
-        `- drop: ${prefs.queueDrop || 'old'}`,
-      ].join('\n'),
-    );
-    return true;
-  }
-
-  if (cmd === '/compact') {
-    const instructions = rest.join(' ').trim();
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'run');
-    const response = await runCompactionForChat(m.chatJid, instructions);
-    await sendMessage(m.chatJid, response);
-    return true;
-  }
-
-  if (cmd === '/coder' || cmd === '/coder-plan' || cmd === '/coder_plan') {
-    if (!isMainGroup) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
-      await sendMessage(
-        m.chatJid,
-        `${ASSISTANT_NAME}: coder delegation is only available in the main/admin chat for safety.`,
-      );
-      return true;
-    }
-    const onboardingGate = resolveMainOnboardingGate(m.chatJid);
-    if (onboardingGate.active) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'blocked by onboarding gate');
-      await sendMessage(m.chatJid, onboardingCommandBlockedText());
-      return true;
-    }
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'pass-through');
-    // Let the normal agent path process /coder and /coder-plan.
-    return false;
-  }
-
-  if (cmd === '/main') {
-    const chatId = parseTelegramChatId(m.chatJid);
-    if (!chatId) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id');
-      await sendMessage(m.chatJid, 'Could not parse chat id for this chat.');
-      return true;
-    }
-    const isDirectTelegramDm = !chatId.startsWith('-');
-
-    // If main is already configured, don't let random chats steal it.
-    const existingMain = hasMainGroup();
-    const alreadyMain =
-      state.registeredGroups[m.chatJid]?.folder === MAIN_GROUP_FOLDER;
-    if (existingMain && !alreadyMain) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'main already configured');
-      await sendMessage(
-        m.chatJid,
-        'Main chat is already set. If you want to change it, edit data/registered_groups.json (or delete it to re-bootstrap).',
-      );
-      return true;
-    }
-
-    if (!existingMain && isDirectTelegramDm && !TELEGRAM_ADMIN_SECRET) {
-      promoteChatToMain(m.chatJid, m.chatName || `${ASSISTANT_NAME} (main)`);
-      await refreshTelegramCommandMenus();
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'first-claim without secret');
-      await sendMessage(
-        m.chatJid,
-        [
-          'This chat is now the main/admin channel.',
-          'Note: TELEGRAM_ADMIN_SECRET is not set yet; set it in .env and restart to lock future re-claim actions.',
-        ].join('\n'),
-      );
-      return true;
-    }
-
-    if (!TELEGRAM_ADMIN_SECRET) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'missing TELEGRAM_ADMIN_SECRET');
-      await sendMessage(
-        m.chatJid,
-        'TELEGRAM_ADMIN_SECRET is not set on the host. Set it, restart, then run: /main <secret>',
-      );
-      return true;
-    }
-
-    const provided = rest.join(' ');
-    if (!provided || provided !== TELEGRAM_ADMIN_SECRET) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid admin secret');
-      await sendMessage(
-        m.chatJid,
-        'Unauthorized. Usage: /main <secret>',
-      );
-      return true;
-    }
-
-    promoteChatToMain(m.chatJid, m.chatName || `${ASSISTANT_NAME} (main)`);
-    await refreshTelegramCommandMenus();
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-
-    await sendMessage(
-      m.chatJid,
-      'This chat is now the main/admin channel.',
-    );
-    return true;
-  }
-
-  if (!isMainGroup) {
-    logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
-    await sendMessage(
-      m.chatJid,
-      `${ASSISTANT_NAME}: this command is only available in the main/admin chat.`,
-    );
-    return true;
-  }
-
-  if (cmd === '/restart') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested');
-    await sendMessage(
-      m.chatJid,
-      'Restarting gateway service. Expect a brief disconnect while the host restarts.',
-    );
-    const result = runGatewayServiceCommand('restart');
-    if (!result.ok) {
-      await sendMessage(m.chatJid, `Gateway restart failed:\n${result.text}`);
-    }
-    return true;
-  }
-
-  if (cmd === '/gateway') {
-    const actionRaw = (rest[0] || 'status').trim().toLowerCase();
-    const action =
-      actionRaw === 'restart'
-        ? 'restart'
-        : actionRaw === 'status'
-          ? 'status'
-          : actionRaw === 'doctor'
-            ? 'doctor'
-          : null;
-    if (!action) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
-      await sendMessage(m.chatJid, 'Usage: /gateway <status|restart|doctor>');
-      return true;
-    }
-
-    if (action === 'restart') {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested');
-      await sendMessage(
-        m.chatJid,
-        'Restarting gateway service. Expect a brief disconnect while the host restarts.',
-      );
-      const result = runGatewayServiceCommand(action);
-      if (!result.ok) {
-        await sendMessage(m.chatJid, `Gateway restart failed:\n${result.text}`);
-      }
-      return true;
-    }
-
-    const result = runGatewayServiceCommand(action);
-    logTelegramCommandAudit(
-      m.chatJid,
-      cmd,
-      result.ok,
-      result.ok ? action : `${action} failed`,
-    );
-    await sendMessage(
-      m.chatJid,
-      result.ok ? `Gateway ${action}:\n${result.text}` : `Gateway ${action} failed:\n${result.text}`,
-    );
-    return true;
-  }
-
-  if (cmd === '/setup') {
-    const arg = rest.join(' ').trim().toLowerCase();
-    if (arg === 'cancel') {
-      clearTelegramSetupInputState(m.chatJid);
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'cancel');
-      await sendMessage(m.chatJid, 'Setup prompt cancelled.');
-      return true;
-    }
-
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
-    await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
-    return true;
-  }
-
-  if (cmd === '/freechat') {
-    const action = (rest[0] || '').toLowerCase();
-    if (!action || action === 'help') {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
-      await sendMessage(
-        m.chatJid,
-        [
-          'Free chat admin (main only):',
-          '- /freechat list',
-          '- /freechat add <chatId|telegram:<chatId>>',
-          '- /freechat remove <chatId|telegram:<chatId>>',
-        ].join('\n'),
-      );
-      return true;
-    }
-
-    if (action === 'list') {
-      const entries = Object.entries(state.chatRunPreferences)
-        .filter(([, prefs]) => prefs.freeChat === true)
-        .map(([jid]) => {
-          const group = state.registeredGroups[jid];
-          const name = group?.name || '(unregistered)';
-          const mainTag = group?.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
-          return `- ${jid} -> ${name}${mainTag}`;
-        })
-        .sort();
-
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
-      await sendMessage(
-        m.chatJid,
-        entries.length > 0
-          ? ['Free chat enabled for:', ...entries].join('\n')
-          : 'No chats currently have free chat enabled.',
-      );
-      return true;
-    }
-
-    if (action !== 'add' && action !== 'remove') {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
-      await sendMessage(
-        m.chatJid,
-        'Usage: /freechat add <chatId> | /freechat remove <chatId> | /freechat list',
-      );
-      return true;
-    }
-
-    const targetRaw = rest[1] || '';
-    const targetJid = parseTelegramTargetJid(targetRaw);
-    if (!targetJid) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id');
-      await sendMessage(
-        m.chatJid,
-        'Invalid chat id. Use /id in that chat, then pass the numeric id (or telegram:<id>).',
-      );
-      return true;
-    }
-
-    const targetGroup = state.registeredGroups[targetJid];
-    if (targetGroup?.folder === MAIN_GROUP_FOLDER) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'target is main');
-      await sendMessage(
-        m.chatJid,
-        'Main chat already runs without trigger prefix; free chat setting is unnecessary there.',
-      );
-      return true;
-    }
-
-    if (action === 'add') {
-      updateChatRunPreferences(targetJid, (prefs) => {
-        prefs.freeChat = true;
-        return prefs;
-      });
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'add');
-      await sendMessage(
-        m.chatJid,
-        `Free chat enabled for ${targetJid}${targetGroup ? ` (${targetGroup.name})` : ''}.`,
-      );
-      return true;
-    }
-
-    updateChatRunPreferences(targetJid, (prefs) => {
-      delete prefs.freeChat;
-      return prefs;
-    });
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'remove');
-    await sendMessage(
-      m.chatJid,
-      `Free chat disabled for ${targetJid}${targetGroup ? ` (${targetGroup.name})` : ''}.`,
-    );
-    return true;
-  }
-
-  if (cmd === '/tasks') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    const sub = (rest[0] || '').toLowerCase();
-    if (!sub || sub === 'list') {
-      await sendMessage(m.chatJid, formatTasksText('list'));
-      return true;
-    }
-    if (sub === 'due') {
-      await sendMessage(m.chatJid, formatTasksText('due'));
-      return true;
-    }
-    if (sub === 'detail') {
-      const taskId = rest[1];
-      if (!taskId) {
-        await sendMessage(m.chatJid, 'Usage: /tasks detail <taskId>');
-        return true;
-      }
-      await sendMessage(m.chatJid, summarizeTask(taskId));
-      return true;
-    }
-    if (sub === 'runs') {
-      const taskId = rest[1];
-      if (!taskId) {
-        await sendMessage(m.chatJid, 'Usage: /tasks runs <taskId> [limit]');
-        return true;
-      }
-      const limitRaw = Number.parseInt(rest[2] || '10', 10);
-      const limit = Number.isFinite(limitRaw) ? limitRaw : 10;
-      await sendMessage(m.chatJid, formatTaskRunsText(taskId, limit));
-      return true;
-    }
-    await sendMessage(
-      m.chatJid,
-      'Usage: /tasks [list|due|detail <taskId>|runs <taskId> [limit]]',
-    );
-    return true;
-  }
-
-  if (cmd === '/task_pause' || cmd === '/task_resume' || cmd === '/task_cancel') {
-    const taskId = rest[0];
-    if (!taskId) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'missing task id');
-      await sendMessage(m.chatJid, `Usage: ${cmd} <taskId>`);
-      return true;
-    }
-
-    const task = getTaskById(taskId);
-    if (!task) {
-      logTelegramCommandAudit(m.chatJid, cmd, false, 'task not found');
-      await sendMessage(m.chatJid, `Task not found: ${taskId}`);
-      return true;
-    }
-
-    if (cmd === '/task_pause') {
-      updateTask(taskId, { status: 'paused' });
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      await sendMessage(m.chatJid, `Paused task: ${taskId}`);
-      return true;
-    }
-    if (cmd === '/task_resume') {
-      updateTask(taskId, { status: 'active' });
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      await sendMessage(m.chatJid, `Resumed task: ${taskId}`);
-      return true;
-    }
-
-    deleteTask(taskId);
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    await sendMessage(m.chatJid, `Canceled task: ${taskId}`);
-    return true;
-  }
-
-  if (cmd === '/groups') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    await sendMessage(m.chatJid, formatGroupsText());
-    return true;
-  }
-
-  if (cmd === '/reload') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    if (WHATSAPP_ENABLED && state.sock) {
-      await syncGroupMetadata(true);
-    }
-    await refreshTelegramCommandMenus();
-    await sendMessage(m.chatJid, 'Command menus and metadata refreshed.');
-    return true;
-  }
-
-  if (cmd === '/panel') {
-    logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-    if (!state.telegramBot) return true;
-    await state.telegramBot.sendMessageWithKeyboard(
-      m.chatJid,
-      'Admin panel:',
-      buildAdminPanelKeyboard(),
-    );
-    return true;
-  }
-
-  if (cmd === '/subagents') {
-    const action = (rest[0] || 'list').toLowerCase();
-    if (!rest[0] && state.telegramBot) {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
-      await sendTelegramSettingsPanel(m.chatJid, { kind: 'show-subagents' });
-      return true;
-    }
-    if (action === 'list') {
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
-      await sendMessage(m.chatJid, formatActiveSubagentsText());
-      return true;
-    }
-    if (action === 'stop') {
-      const target = (rest[1] || 'current').toLowerCase();
-      if (target === 'all') {
-        for (const run of activeChatRuns.values()) {
-          run.abortController.abort(new Error('Stopped via /subagents stop all'));
-        }
-        logTelegramCommandAudit(m.chatJid, cmd, true, 'stop all');
-        await sendMessage(m.chatJid, 'Stopping all active subagent runs...');
-        return true;
-      }
-      if (target === 'current') {
-        const run = activeChatRuns.get(m.chatJid);
-        if (!run) {
-          await sendMessage(m.chatJid, 'No active run in this chat.');
-          return true;
-        }
-        run.abortController.abort(new Error('Stopped via /subagents stop current'));
-        logTelegramCommandAudit(m.chatJid, cmd, true, 'stop current');
-        await sendMessage(m.chatJid, 'Stopping current chat run...');
-        return true;
-      }
-
-      const matched = Array.from(activeChatRuns.values()).find(
-        (run) => run.requestId === target,
-      );
-      if (!matched) {
-        await sendMessage(m.chatJid, `No active subagent run found for: ${target}`);
-        return true;
-      }
-      matched.abortController.abort(new Error('Stopped via /subagents stop <id>'));
-      logTelegramCommandAudit(m.chatJid, cmd, true, 'stop id');
-      await sendMessage(m.chatJid, `Stopping run ${target}...`);
-      return true;
-    }
-    if (action === 'spawn' || action === 'run' || action === 'start') {
-      const task = rest.slice(1).join(' ').trim();
-      if (!task) {
-        await sendMessage(
-          m.chatJid,
-          'Usage: /subagents spawn <task>',
-        );
-        return true;
-      }
-
-      const group = state.registeredGroups[m.chatJid];
-      if (!group) {
-        await sendMessage(m.chatJid, 'Chat is not registered.');
-        return true;
-      }
-      const existingRun = activeChatRuns.get(m.chatJid);
-      if (existingRun) {
-        logTelegramCommandAudit(m.chatJid, cmd, false, 'spawn blocked: active run');
-        await sendMessage(
-          m.chatJid,
-          `Cannot spawn while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
-        );
-        return true;
-      }
-
-      const requestId = `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      activeCoderRuns.set(requestId, {
-        requestId,
-        mode: 'execute',
-        chatJid: m.chatJid,
-        groupName: group.name,
-        startedAt: Date.now(),
-      });
-      const abortController = new AbortController();
-      const activeRun: ActiveChatRun = {
-        chatJid: m.chatJid,
-        startedAt: Date.now(),
-        requestId,
-        abortController,
-      };
-      activeChatRuns.set(m.chatJid, activeRun);
-      activeChatRunsById.set(requestId, activeRun);
-      emitTuiChatEvent({
-        runId: requestId,
-        sessionKey: getSessionKeyForChat(m.chatJid),
-        state: 'message',
-        message: { role: 'system', content: `Starting subagent run (${requestId})...` },
-      });
-      emitTuiAgentEvent({
-        runId: requestId,
-        sessionKey: getSessionKeyForChat(m.chatJid),
-        phase: 'start',
-        detail: 'running',
-      });
-      await sendMessage(m.chatJid, `Starting subagent run (${requestId})...`);
-      await setTyping(m.chatJid, true);
-      try {
-        const run = await runAgent(
-          group,
-          `[SUBAGENT EXECUTE REQUEST]\n${task}`,
-          m.chatJid,
-          'force_delegate_execute',
-          requestId,
-          state.chatRunPreferences[m.chatJid] || {},
-          {},
-          abortController.signal,
-        );
-        updateChatUsage(m.chatJid, run.usage);
-        if (!run.ok) {
-          emitTuiChatEvent({
-            runId: requestId,
-            sessionKey: getSessionKeyForChat(m.chatJid),
-            state: 'error',
-            errorMessage: 'Subagent run failed',
-          });
-          emitTuiAgentEvent({
-            runId: requestId,
-            sessionKey: getSessionKeyForChat(m.chatJid),
-            phase: 'error',
-            detail: 'subagent run failed',
-          });
-        } else if (run.result) {
-          persistAssistantHistory(m.chatJid, run.result, requestId);
-          if (!run.streamed) {
-            await sendAgentResultMessage(m.chatJid, run.result);
-          }
-          emitTuiChatEvent({
-            runId: requestId,
-            sessionKey: getSessionKeyForChat(m.chatJid),
-            state: 'final',
-            message: { role: 'assistant', content: run.result },
-            usage: run.usage,
-          });
-          emitTuiAgentEvent({
-            runId: requestId,
-            sessionKey: getSessionKeyForChat(m.chatJid),
-            phase: 'end',
-            detail: run.streamed ? 'streamed' : 'complete',
-          });
-        } else {
-          emitTuiAgentEvent({
-            runId: requestId,
-            sessionKey: getSessionKeyForChat(m.chatJid),
-            phase: 'end',
-            detail: run.streamed ? 'streamed' : 'complete',
-          });
-        }
-      } finally {
-        if (activeChatRuns.get(m.chatJid) === activeRun) {
-          activeChatRuns.delete(m.chatJid);
-        }
-        activeChatRunsById.delete(requestId);
-        activeCoderRuns.delete(requestId);
-        await setTyping(m.chatJid, false);
-      }
-      return true;
-    }
-
-    await sendMessage(
-      m.chatJid,
-      'Usage: /subagents list | /subagents stop <current|all|requestId> | /subagents spawn <task>',
-    );
-    return true;
-  }
-
-  return false;
+  return telegramCommandHandlers.handleTelegramCommand(m);
 }
 
-async function startTelegram(): Promise<void> {
-  if (!TELEGRAM_BOT_TOKEN) return;
-  if (state.telegramBot) return;
+const messageDispatcher = createMessageDispatcher({
+  state,
+  constants: {
+    assistantName: ASSISTANT_NAME,
+    mainGroupFolder: MAIN_GROUP_FOLDER,
+    triggerPattern: TRIGGER_PATTERN,
+    tuiSenderName: TUI_SENDER_NAME,
+    mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+  },
+  activeChatRuns,
+  activeChatRunsById,
+  activeCoderRuns,
+  tuiMessageQueue,
+  sendMessage,
+  setTyping,
+  getMessagesSince,
+  getSessionKeyForChat,
+  resolveMainOnboardingGate,
+  buildOnboardingInterviewPrompt,
+  extractOnboardingCompletion,
+  completeMainWorkspaceOnboarding,
+  rememberHeartbeatTarget,
+  runAgent,
+  consumeNextRunNoContinue,
+  updateChatUsage,
+  persistAssistantHistory,
+  deleteTelegramPreviewMessage,
+  finalizeTelegramPreviewMessage,
+  sendAgentResultMessage,
+  emitTuiChatEvent,
+  emitTuiAgentEvent,
+  isTelegramJid,
+  consumeTelegramHostCompletedRun,
+  consumeTelegramHostStreamState,
+  resolveTelegramStreamCompletionState,
+  finalizeCompletedRun,
+  parseDelegationTrigger,
+  isCoderDelegationCommand,
+  onboardingCommandBlockedText,
+  makeRunId,
+  logger,
+  persistTuiUserHistory,
+});
 
-  state.telegramBot = createTelegramBot({
-    token: TELEGRAM_BOT_TOKEN,
-    apiBaseUrl: TELEGRAM_API_BASE_URL,
+const appRuntime = createAppRuntime({
+  state,
+  constants: {
+    telegramBotToken: TELEGRAM_BOT_TOKEN,
+    telegramApiBaseUrl: TELEGRAM_API_BASE_URL,
     assistantName: ASSISTANT_NAME,
     triggerPattern: TRIGGER_PATTERN,
-  });
+    storeDir: STORE_DIR,
+    groupSyncIntervalMs: GROUP_SYNC_INTERVAL_MS,
+    pollInterval: POLL_INTERVAL,
+    heartbeatActiveHoursRaw: HEARTBEAT_ACTIVE_HOURS_RAW,
+    heartbeatActiveHours: HEARTBEAT_ACTIVE_HOURS,
+    dataDir: DATA_DIR,
+    fftProfile: FFT_PROFILE,
+    featureFarm: FEATURE_FARM,
+    farmStateEnabled: FARM_STATE_ENABLED,
+    profileDetection: PROFILE_DETECTION,
+    whatsappEnabled: WHATSAPP_ENABLED,
+    mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+  },
+  createTelegramBot,
+  refreshTelegramCommandMenus,
+  handleTelegramCallbackQuery,
+  handleTelegramSetupInput,
+  handleTelegramCommand,
+  storeChatMetadata,
+  maybeRegisterTelegramChat,
+  isMainChat,
+  persistTelegramMedia,
+  storeTextMessage,
+  logger,
+  useMultiFileAuthState,
+  makeWASocket,
+  makeCacheableSignalKeyStore,
+  browsers: Browsers,
+  disconnectReason: DisconnectReason,
+  sendMessage,
+  maybeRegisterWhatsAppMainChat,
+  syncGroupMetadata,
+  startSchedulerLoop,
+  startIpcWatcher,
+  startMessageLoop: () => appRuntime.startMessageLoop(),
+  requestHeartbeatNow,
+  storeMessage,
+  translateJid,
+  processMessage: (msg) => messageDispatcher.processMessage(msg),
+  getNewMessages,
+  lastTimestamp: () => state.lastTimestamp,
+  setLastTimestamp: (value) => {
+    state.lastTimestamp = value;
+  },
+  saveState,
+  isWithinHeartbeatActiveHoursInvalid: !!(HEARTBEAT_ACTIVE_HOURS_RAW?.trim() && !HEARTBEAT_ACTIVE_HOURS),
+  acquireSingletonLock,
+  ensureContainerSystemRunning: () => appRuntime.ensureContainerSystemRunning(),
+  initDatabase,
+  loadState,
+  migrateLegacyClaudeMemoryFiles,
+  migrateCompactionSummariesFromSoul,
+  maybePromoteConfiguredTelegramMain,
+  startTuiGatewayService,
+  startWebControlCenterService,
+  stopTuiGatewayService,
+  stopWebControlCenterService,
+  startFarmStateCollector,
+  stopFarmStateCollector,
+  startHeartbeatLoop,
+  maybeRunBootMdOnce,
+  getContainerRuntime,
+});
 
-  state.telegramBot.startPolling(async (event) => {
-    if (event.kind === 'callback_query') {
-      await handleTelegramCallbackQuery(event);
-      return;
-    }
-
-    const m = event;
-    storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
-    const didRegister = maybeRegisterTelegramChat(m.chatJid, m.chatName);
-    if (didRegister && isMainChat(m.chatJid)) {
-      await refreshTelegramCommandMenus();
-    }
-
-    if (await handleTelegramSetupInput(m)) return;
-
-    // Handle lightweight admin commands without invoking the agent.
-    if (await handleTelegramCommand(m)) return;
-
-    if (state.registeredGroups[m.chatJid]) {
-      const finalContent = m.media
-        ? await persistTelegramMedia(m)
-        : m.content;
-      storeTextMessage({
-        id: m.id,
-        chatJid: m.chatJid,
-        sender: m.sender,
-        senderName: m.senderName,
-        content: finalContent,
-        timestamp: m.timestamp,
-        isFromMe: false,
-      });
-    }
-  });
-
-  logger.info('Telegram polling started');
-  void refreshTelegramCommandMenus();
+async function startTelegram(): Promise<void> {
+  await appRuntime.startTelegram();
 }
 
 async function processMessage(msg: NewMessage): Promise<boolean> {
-  const group = state.registeredGroups[msg.chat_jid];
-  if (!group) return true;
-
-  const content = msg.content.trim();
-  const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
-  const queuePrefs = state.chatRunPreferences[msg.chat_jid] || {};
-  const queueMode: QueueMode = queuePrefs.queueMode || 'collect';
-  const queueDrop: QueueDropPolicy = queuePrefs.queueDrop || 'old';
-  const queueCap =
-    typeof queuePrefs.queueCap === 'number' && queuePrefs.queueCap > 0
-      ? Math.floor(queuePrefs.queueCap)
-      : undefined;
-  const queueDebounceMs =
-    typeof queuePrefs.queueDebounceMs === 'number' && queuePrefs.queueDebounceMs > 0
-      ? Math.floor(queuePrefs.queueDebounceMs)
-      : 0;
-  const freeChatEnabled = queuePrefs.freeChat === true;
-
-  // Main group responds to all messages; other groups require trigger prefix
-  if (!isMainGroup && !freeChatEnabled && !TRIGGER_PATTERN.test(content)) return true;
-  const onboardingGate = resolveMainOnboardingGate(msg.chat_jid);
-
-  if (onboardingGate.active && isCoderDelegationCommand(content)) {
-    await sendMessage(msg.chat_jid, onboardingCommandBlockedText());
-    return true;
-  }
-
-  if (queueDebounceMs > 0) {
-    logger.debug(
-      { chatJid: msg.chat_jid, queueDebounceMs },
-      'Queue debounce configured; applied as prompt-steering hint in this runtime',
-    );
-  }
-
-  // Deterministic two-lane model:
-  // - default: orchestrator handles message directly
-  // - explicit triggers (/coder, /coder-plan, alias phrases) force delegation
-  let codingHint: CodingHint = isMainGroup ? 'auto' : 'none';
-  let requestId = makeRunId('chat');
-  let delegationInstruction: string | null = null;
-  let delegationMarker: string | null = null;
-
-  // In main, allow "/coder...", "/coder-plan...", or explicit alias phrases.
-  // In non-main, trigger prefix is required (checked above) and delegation is blocked.
-  const stripped = content.replace(TRIGGER_PATTERN, '').trimStart();
-  const parsedTrigger = onboardingGate.active
-    ? { hint: 'none' as CodingHint, instruction: null }
-    : parseDelegationTrigger(stripped);
-  const wantsDelegation = parsedTrigger.hint !== 'none';
-
-  if (wantsDelegation && !isMainGroup) {
-    await sendMessage(
-      msg.chat_jid,
-      `${ASSISTANT_NAME}: coder delegation is only available in the main/admin chat for safety.`,
-    );
-    return true;
-  }
-
-  if (wantsDelegation) {
-    codingHint = parsedTrigger.hint;
-    delegationInstruction = parsedTrigger.instruction;
-    delegationMarker =
-      codingHint === 'force_delegate_plan'
-        ? '[CODER PLAN REQUEST]'
-        : '[CODER EXECUTE REQUEST]';
-    requestId = `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    const startMessageBody =
-      codingHint === 'force_delegate_plan'
-        ? `Starting coder plan run (${requestId})...`
-        : `Starting coder run (${requestId})...`;
-    const startMessage = isTelegramJid(msg.chat_jid)
-      ? startMessageBody
-      : `${ASSISTANT_NAME}: ${startMessageBody}`;
-    await sendMessage(msg.chat_jid, startMessage);
-  }
-
-  // Get all messages since last agent interaction so the session has full context
-  const sinceTimestamp = state.lastAgentTimestamp[msg.chat_jid] || '';
-  const missedMessages = getMessagesSince(
-    msg.chat_jid,
-    sinceTimestamp,
-    ASSISTANT_NAME,
-  );
-
-  let selectedMessages = [...missedMessages];
-  let droppedCount = 0;
-  if (queueCap && selectedMessages.length > queueCap) {
-    droppedCount = selectedMessages.length - queueCap;
-    if (queueDrop === 'new') {
-      selectedMessages = selectedMessages.slice(0, queueCap);
-    } else {
-      // 'old' and 'summarize' keep newest messages in-window.
-      selectedMessages = selectedMessages.slice(-queueCap);
-    }
-  }
-
-  if (queueMode === 'followup' || queueMode === 'interrupt') {
-    selectedMessages = selectedMessages.length
-      ? [selectedMessages[selectedMessages.length - 1] as NewMessage]
-      : [];
-  }
-
-  const lines = selectedMessages.map((m) => {
-    return `[${m.timestamp}] ${m.sender_name}: ${m.content}`;
-  });
-  const prompt = lines.join('\n');
-
-  if (!prompt) return true;
-  if (group.folder === MAIN_GROUP_FOLDER) {
-    rememberHeartbeatTarget(msg.chat_jid);
-  }
-  const sessionKey = getSessionKeyForChat(msg.chat_jid);
-  const latestUserText = selectedMessages[selectedMessages.length - 1]?.content || content;
-
-  let finalPrompt =
-    codingHint !== 'none' && delegationMarker
-      ? delegationInstruction
-        ? `${prompt}\n\n${delegationMarker}\n${delegationInstruction}`
-        : `${prompt}\n\n${delegationMarker}`
-      : prompt;
-
-  if (queueMode === 'interrupt') {
-    finalPrompt =
-      `${finalPrompt}\n\n[QUEUE MODE: interrupt]\n` +
-      'Prioritize the latest message and ignore stale unresolved asks unless explicitly requested.';
-  } else if (queueMode === 'steer') {
-    finalPrompt =
-      `${finalPrompt}\n\n[QUEUE MODE: steer]\n` +
-      'Respect full context, but prioritize the user’s newest intent and provide concise steering updates.';
-  } else if (queueMode === 'steer-backlog') {
-    finalPrompt =
-      `${finalPrompt}\n\n[QUEUE MODE: steer-backlog]\n` +
-      'Process backlog context and prioritize the newest request first.';
-  }
-  if (queueDrop === 'summarize' && droppedCount > 0) {
-    finalPrompt =
-      `${finalPrompt}\n\n[QUEUE NOTE]\n` +
-      `Older backlog truncated by queue cap (${droppedCount} message(s) dropped); summarize assumptions before acting.`;
-  }
-  if (queueDebounceMs > 0) {
-    finalPrompt =
-      `${finalPrompt}\n\n[QUEUE NOTE]\n` +
-      `Debounce preference is ${queueDebounceMs}ms; keep responses concise and account for rapid bursts.`;
-  }
-
-  if (onboardingGate.active) {
-    codingHint = 'none';
-    requestId = makeRunId('onboarding');
-    finalPrompt = buildOnboardingInterviewPrompt({
-      prompt,
-      latestUserText,
-    });
-  }
-
-  logger.info(
-    {
-      group: group.name,
-      messageCount: missedMessages.length,
-      selectedMessageCount: selectedMessages.length,
-      queueMode,
-      queueCap: queueCap || 0,
-      queueDrop,
-      onboardingGate: onboardingGate.active,
-    },
-    'Processing message',
-  );
-
-  if (
-    (codingHint === 'force_delegate_execute' || codingHint === 'force_delegate_plan') &&
-    requestId
-  ) {
-    activeCoderRuns.set(requestId, {
-      requestId,
-      mode: codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
-      chatJid: msg.chat_jid,
-      groupName: group.name,
-      startedAt: Date.now(),
-    });
-  }
-
-  const runPreferences: ChatRunPreferences = {
-    ...(state.chatRunPreferences[msg.chat_jid] || {}),
-  };
-  if (consumeNextRunNoContinue(msg.chat_jid)) {
-    runPreferences.nextRunNoContinue = true;
-  }
-
-  let result: string | null = null;
-  let streamed = false;
-  let ok = false;
-  let usage:
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-        provider?: string;
-        model?: string;
-      }
-    | undefined;
-  const abortController = new AbortController();
-  const activeRun: ActiveChatRun = {
-    chatJid: msg.chat_jid,
-    startedAt: Date.now(),
-    requestId,
-    abortController,
-  };
-  activeChatRuns.set(msg.chat_jid, activeRun);
-  activeChatRunsById.set(requestId, activeRun);
-  emitTuiChatEvent({
-    runId: requestId,
-    sessionKey,
-    state: 'message',
-    message: { role: 'user', content: latestUserText },
-  });
-  emitTuiAgentEvent({
-    runId: requestId,
-    sessionKey,
-    phase: 'start',
-    detail: 'running',
-  });
-  await setTyping(msg.chat_jid, true);
-  try {
-    const run = await runAgent(
-      group,
-      finalPrompt,
-      msg.chat_jid,
-      codingHint,
-      requestId,
-      runPreferences,
-      {},
-      abortController.signal,
-    );
-    result = run.result;
-    streamed = run.streamed;
-    ok = run.ok;
-    usage = run.usage;
-  } finally {
-    await setTyping(msg.chat_jid, false);
-    if (activeChatRuns.get(msg.chat_jid) === activeRun) {
-      activeChatRuns.delete(msg.chat_jid);
-    }
-    activeChatRunsById.delete(requestId);
-    activeCoderRuns.delete(requestId);
-  }
-
-  if (ok && onboardingGate.active) {
-    const completion = extractOnboardingCompletion(result);
-    result = completion.text;
-    if (completion.completed) {
-      completeMainWorkspaceOnboarding({ workspaceDir: MAIN_WORKSPACE_DIR });
-      if (!result) {
-        result = 'Onboarding complete.';
-      }
-      logger.info(
-        { chatJid: msg.chat_jid, requestId },
-        'Completed main workspace onboarding from gated interview run',
-      );
-    }
-  }
-
-  // Only advance last-agent timestamp after a successful run; otherwise the
-  // next loop should retry with the same context window.
-  if (ok) {
-    const externallyCompleted = isTelegramJid(msg.chat_jid)
-      ? consumeTelegramHostCompletedRun(msg.chat_jid, requestId)
-      : false;
-    const telegramStreamState =
-      isTelegramJid(msg.chat_jid)
-        ? consumeTelegramHostStreamState(msg.chat_jid, requestId)
-        : null;
-    const telegramCompletionState = resolveTelegramStreamCompletionState({
-      reportedStreamed: streamed,
-      externallyCompleted,
-      streamState: telegramStreamState,
-    });
-    streamed = telegramCompletionState.effectiveStreamed;
-    const telegramPreviewState = telegramCompletionState.messagePreviewState;
-    updateChatUsage(msg.chat_jid, usage);
-    state.lastAgentTimestamp[msg.chat_jid] = msg.timestamp;
-    if (abortController.signal.aborted) {
-      if (telegramPreviewState) {
-        await deleteTelegramPreviewMessage(
-          msg.chat_jid,
-          telegramPreviewState.messageId,
-        );
-      }
-      emitTuiChatEvent({
-        runId: requestId,
-        sessionKey,
-        state: 'aborted',
-      });
-      emitTuiAgentEvent({
-        runId: requestId,
-        sessionKey,
-        phase: 'end',
-        detail: 'aborted',
-      });
-    } else if (result) {
-      persistAssistantHistory(msg.chat_jid, result, requestId);
-      let finalizedPreview = false;
-      if (!externallyCompleted && telegramPreviewState) {
-        finalizedPreview = await finalizeTelegramPreviewMessage(
-          msg.chat_jid,
-          telegramPreviewState.messageId,
-          result,
-        );
-      }
-      if (
-        !externallyCompleted &&
-        (!streamed || (telegramPreviewState && !finalizedPreview))
-      ) {
-        await sendAgentResultMessage(msg.chat_jid, result, { prefixWhatsApp: true });
-      }
-      emitTuiChatEvent({
-        runId: requestId,
-        sessionKey,
-        state: 'final',
-        message: { role: 'assistant', content: result },
-        usage,
-      });
-      emitTuiAgentEvent({
-        runId: requestId,
-        sessionKey,
-        phase: 'end',
-        detail: streamed ? 'streamed' : 'complete',
-      });
-    } else {
-      if (telegramPreviewState) {
-        await deleteTelegramPreviewMessage(
-          msg.chat_jid,
-          telegramPreviewState.messageId,
-        );
-      }
-      emitTuiAgentEvent({
-        runId: requestId,
-        sessionKey,
-        phase: 'end',
-        detail: streamed ? 'streamed' : 'complete',
-      });
-    }
-  } else {
-    emitTuiChatEvent({
-      runId: requestId,
-      sessionKey,
-      state: 'error',
-      errorMessage: 'Run failed',
-    });
-    emitTuiAgentEvent({
-      runId: requestId,
-      sessionKey,
-      phase: 'error',
-      detail: 'run failed',
-    });
-  }
-  return true;
+  return messageDispatcher.processMessage(msg);
 }
 
 async function runDirectSessionTurn(params: {
@@ -4588,219 +2869,7 @@ async function runDirectSessionTurn(params: {
   runId: string;
   deliver: boolean;
 }): Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }> {
-  const { chatJid, text, runId, deliver } = params;
-  const group = state.registeredGroups[chatJid];
-  if (!group) {
-    throw new Error(`Chat is not registered: ${chatJid}`);
-  }
-  const existing = activeChatRuns.get(chatJid);
-  if (existing) {
-    // Queue in-memory so it's processed through the TUI path after the current run completes.
-    // Storing via storeTextMessage with a non-TUI_SENDER_ID would leak into the Telegram
-    // message loop, causing responses to be sent to Telegram instead of the TUI.
-    const queue = tuiMessageQueue.get(chatJid) ?? [];
-    queue.push({ text, runId, deliver });
-    tuiMessageQueue.set(chatJid, queue);
-    return { runId: existing.requestId, status: 'queued' };
-  }
-  const onboardingGate = resolveMainOnboardingGate(chatJid);
-
-  const sessionKey = getSessionKeyForChat(chatJid);
-  persistTuiUserHistory(chatJid, text, runId);
-  emitTuiChatEvent({
-    runId,
-    sessionKey,
-    state: 'message',
-    message: { role: 'user', content: text },
-  });
-  emitTuiAgentEvent({
-    runId,
-    sessionKey,
-    phase: 'start',
-    detail: 'running',
-  });
-
-  const runPreferences: ChatRunPreferences = {
-    ...(state.chatRunPreferences[chatJid] || {}),
-  };
-  if (consumeNextRunNoContinue(chatJid)) {
-    runPreferences.nextRunNoContinue = true;
-  }
-
-  const directPrompt = `[${new Date().toISOString()}] ${TUI_SENDER_NAME}: ${text}`;
-  const prompt = onboardingGate.active
-    ? buildOnboardingInterviewPrompt({
-        prompt: directPrompt,
-        latestUserText: text,
-      })
-    : directPrompt;
-  const abortController = new AbortController();
-  const activeRun: ActiveChatRun = {
-    chatJid,
-    startedAt: Date.now(),
-    requestId: runId,
-    abortController,
-  };
-  activeChatRuns.set(chatJid, activeRun);
-  activeChatRunsById.set(runId, activeRun);
-
-  // Detach agent execution so RPC response is sent before any events arrive at the client.
-  // This prevents the client from receiving run-complete events before it knows the runId,
-  // which caused the spinner to get stuck in 'running' forever.
-  void (async () => {
-    let result: string | null = null;
-    let streamed = false;
-    let ok = false;
-    let usage:
-      | {
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-          provider?: string;
-          model?: string;
-        }
-      | undefined;
-
-    await setTyping(chatJid, true);
-    try {
-      const run = await runAgent(
-        group,
-        prompt,
-        chatJid,
-        'none',
-        runId,
-        runPreferences,
-        {},
-        abortController.signal,
-      );
-      result = run.result;
-      streamed = run.streamed;
-      ok = run.ok;
-      usage = run.usage;
-    } finally {
-      await setTyping(chatJid, false);
-      if (activeChatRuns.get(chatJid) === activeRun) {
-        activeChatRuns.delete(chatJid);
-      }
-      activeChatRunsById.delete(runId);
-
-      // Dequeue the next TUI message (if any) through the TUI path.
-      // Must happen after activeChatRuns is cleared so the next run registers cleanly.
-      const tuiQueue = tuiMessageQueue.get(chatJid);
-      const nextTuiMessage = tuiQueue?.shift();
-      if (nextTuiMessage) {
-        if (tuiQueue?.length === 0) tuiMessageQueue.delete(chatJid);
-        void runDirectSessionTurn({
-          chatJid,
-          text: nextTuiMessage.text,
-          runId: nextTuiMessage.runId,
-          deliver: nextTuiMessage.deliver,
-        });
-      }
-    }
-
-    if (!ok) {
-      emitTuiChatEvent({
-        runId,
-        sessionKey,
-        state: 'error',
-        errorMessage: 'Run failed',
-      });
-      emitTuiAgentEvent({
-        runId,
-        sessionKey,
-        phase: 'error',
-        detail: 'run failed',
-      });
-      // Error is communicated via events; RPC response already sent successfully.
-      return;
-    }
-
-    if (onboardingGate.active) {
-      const completion = extractOnboardingCompletion(result);
-      result = completion.text;
-      if (completion.completed) {
-        completeMainWorkspaceOnboarding({ workspaceDir: MAIN_WORKSPACE_DIR });
-        if (!result) {
-          result = 'Onboarding complete.';
-        }
-        logger.info(
-          { chatJid, runId },
-          'Completed main workspace onboarding from direct session run',
-        );
-      }
-    }
-
-    updateChatUsage(chatJid, usage);
-    const externallyCompleted = isTelegramJid(chatJid)
-      ? consumeTelegramHostCompletedRun(chatJid, runId)
-      : false;
-    const telegramStreamState = isTelegramJid(chatJid)
-      ? consumeTelegramHostStreamState(chatJid, runId)
-      : null;
-    const telegramCompletionState = resolveTelegramStreamCompletionState({
-      reportedStreamed: streamed,
-      externallyCompleted,
-      streamState: telegramStreamState,
-    });
-    streamed = telegramCompletionState.effectiveStreamed;
-    const telegramPreviewState = telegramCompletionState.messagePreviewState;
-
-    if (abortController.signal.aborted) {
-      if (telegramPreviewState) {
-        await deleteTelegramPreviewMessage(chatJid, telegramPreviewState.messageId);
-      }
-      emitTuiChatEvent({
-        runId,
-        sessionKey,
-        state: 'aborted',
-      });
-      emitTuiAgentEvent({
-        runId,
-        sessionKey,
-        phase: 'end',
-        detail: 'aborted',
-      });
-      return;
-    }
-
-    if (result) {
-      persistAssistantHistory(chatJid, result, runId);
-      let finalizedPreview = false;
-      if (!externallyCompleted && telegramPreviewState) {
-        finalizedPreview = await finalizeTelegramPreviewMessage(
-          chatJid,
-          telegramPreviewState.messageId,
-          result,
-        );
-      }
-      if (
-        deliver &&
-        !externallyCompleted &&
-        (!streamed || (telegramPreviewState && !finalizedPreview))
-      ) {
-        await sendAgentResultMessage(chatJid, result, { prefixWhatsApp: true });
-      }
-    } else if (telegramPreviewState) {
-      await deleteTelegramPreviewMessage(chatJid, telegramPreviewState.messageId);
-    }
-
-    emitTuiChatEvent({
-      runId,
-      sessionKey,
-      state: 'final',
-      ...(result ? { message: { role: 'assistant' as const, content: result } } : {}),
-      usage,
-    });
-    emitTuiAgentEvent({
-      runId,
-      sessionKey,
-      phase: 'end',
-      detail: streamed ? 'streamed' : 'complete',
-    });
-  })();
-
-  return { runId, status: 'started' };
+  return messageDispatcher.runDirectSessionTurn(params);
 }
 
 async function runAgent(
@@ -4916,6 +2985,7 @@ async function runAgent(
       result: string | null;
       error?: string;
       streamed?: boolean;
+      hadToolSideEffects?: boolean;
       usage?: {
         inputTokens?: number;
         outputTokens?: number;
@@ -4923,37 +2993,45 @@ async function runAgent(
         provider?: string;
         model?: string;
       };
-    }> => runContainerAgent(
-      group,
-      {
-        ...input,
-        verboseMode: runPrefs.verboseMode,
-        noContinue: runPrefs.nextRunNoContinue === true,
-      },
-      abortSignal,
-      (event) => {
-        if (event.kind !== 'tool' || !requestId) return;
-        if (isTelegramJid(chatJid)) {
-          queueTelegramToolProgressUpdate(chatJid, requestId, runPrefs.verboseMode, {
+    }> => {
+      let hadToolSideEffects = false;
+      const output = await runContainerAgent(
+        group,
+        {
+          ...input,
+          verboseMode: runPrefs.verboseMode,
+          noContinue: runPrefs.nextRunNoContinue === true,
+        },
+        abortSignal,
+        (event) => {
+          if (event.kind !== 'tool' || !requestId) return;
+          hadToolSideEffects = true;
+          if (isTelegramJid(chatJid)) {
+            queueTelegramToolProgressUpdate(chatJid, requestId, runPrefs.verboseMode, {
+              toolName: event.toolName,
+              status: event.status,
+              ...(event.args ? { args: event.args } : {}),
+              ...(event.output ? { output: event.output } : {}),
+              ...(event.error ? { error: event.error } : {}),
+            });
+          }
+          emitTuiToolEvent({
+            runId: requestId,
+            sessionKey,
+            index: event.index,
             toolName: event.toolName,
             status: event.status,
             ...(event.args ? { args: event.args } : {}),
             ...(event.output ? { output: event.output } : {}),
             ...(event.error ? { error: event.error } : {}),
           });
-        }
-        emitTuiToolEvent({
-          runId: requestId,
-          sessionKey,
-          index: event.index,
-          toolName: event.toolName,
-          status: event.status,
-          ...(event.args ? { args: event.args } : {}),
-          ...(event.output ? { output: event.output } : {}),
-          ...(event.error ? { error: event.error } : {}),
-        });
-      },
-    );
+        },
+      );
+      return {
+        ...output,
+        hadToolSideEffects,
+      };
+    };
 
     let output = await executeRun(runtimePrefs);
 
@@ -4987,6 +3065,7 @@ async function runAgent(
         result: output.result,
         streamed: !!output.streamed,
         ok: true,
+        hadToolSideEffects: output.hadToolSideEffects,
         usage: output.usage,
       },
       retryRun: async () => {
@@ -5011,12 +3090,14 @@ async function runAgent(
               : 'LLM error: agent runner failed (no details).',
             streamed: false,
             ok: true,
+            hadToolSideEffects: retryOutput.hadToolSideEffects,
           };
         }
         return {
           result: retryOutput.result,
           streamed: !!retryOutput.streamed,
           ok: true,
+          hadToolSideEffects: retryOutput.hadToolSideEffects,
           usage: retryOutput.usage,
         };
       },
@@ -5710,53 +3791,93 @@ async function finalizeTelegramPreviewMessage(
 }
 
 function getTelegramHostStreamKey(chatJid: string, requestId: string): string {
-  return `${chatJid}:${requestId}`;
-}
-
-function noteTelegramHostStreamedRun(chatJid: string, requestId: string): boolean {
-  const key = getTelegramHostStreamKey(chatJid, requestId);
-  const had = telegramHostStreamedRuns.has(key);
-  telegramHostStreamedRuns.set(key, Date.now());
-  return !had;
+  return getTelegramPreviewRunKey(chatJid, requestId);
 }
 
 function noteTelegramHostCompletedRun(chatJid: string, requestId: string): void {
-  telegramHostCompletedRuns.set(
-    getTelegramHostStreamKey(chatJid, requestId),
-    Date.now(),
-  );
+  telegramPreviewRegistry.noteCompleted(getTelegramHostStreamKey(chatJid, requestId));
 }
 
 function consumeTelegramHostCompletedRun(
   chatJid: string,
   requestId: string,
 ): boolean {
-  const key = getTelegramHostStreamKey(chatJid, requestId);
-  const had = telegramHostCompletedRuns.has(key);
-  if (had) telegramHostCompletedRuns.delete(key);
-  return had;
+  return telegramPreviewRegistry.consumeCompleted(getTelegramHostStreamKey(chatJid, requestId));
 }
 
 function consumeTelegramHostStreamState(
   chatJid: string,
   requestId: string,
-): { mode: 'draft'; lastText: string; updatedAt: number }
-  | { mode: 'message'; messageId: number; lastText: string; updatedAt: number }
-  | null {
-  const key = getTelegramHostStreamKey(chatJid, requestId);
-  telegramHostStreamedRuns.delete(key);
-  const state = telegramDraftDisabledRuns.getStreamState(key);
-  telegramDraftDisabledRuns.disable(key);
-  return state || null;
+): TelegramMessagePreviewState | null {
+  return telegramPreviewRegistry.consumePreviewState(getTelegramHostStreamKey(chatJid, requestId));
 }
 
 function pruneTelegramHostStreamedRuns(): void {
-  const cutoff = Date.now() - 60 * 60 * 1000;
-  for (const [key, ts] of telegramHostStreamedRuns.entries()) {
-    if (ts <= cutoff) telegramHostStreamedRuns.delete(key);
+  telegramPreviewRegistry.prune();
+}
+
+async function deliverRuntimeAgentMessage(params: {
+  chatJid: string;
+  text: string;
+  requestId?: string;
+  prefixWhatsApp?: boolean;
+}): Promise<void> {
+  const requestId =
+    typeof params.requestId === 'string' && params.requestId.trim()
+      ? params.requestId.trim()
+      : undefined;
+
+  if (isTelegramJid(params.chatJid) && requestId) {
+    const previewState = consumeTelegramHostStreamState(params.chatJid, requestId);
+    noteTelegramHostCompletedRun(params.chatJid, requestId);
+    if (previewState) {
+      const finalized = await finalizeTelegramPreviewMessage(
+        params.chatJid,
+        previewState.messageId,
+        params.text,
+      );
+      if (!finalized) {
+        await sendTelegramAgentReply(params.chatJid, params.text);
+      }
+      return;
+    }
   }
-  for (const [key, ts] of telegramHostCompletedRuns.entries()) {
-    if (ts <= cutoff) telegramHostCompletedRuns.delete(key);
+
+  await sendAgentResultMessage(params.chatJid, params.text, {
+    prefixWhatsApp: params.prefixWhatsApp,
+  });
+}
+
+async function processPiRuntimeEvent(event: PiRuntimeEvent): Promise<void> {
+  switch (event.kind) {
+    case 'telegram_preview_update': {
+      if (!state.telegramBot) return;
+      if (!isTelegramJid(event.payload.chatJid)) return;
+      if (!state.registeredGroups[event.payload.chatJid]) return;
+
+      const sendResult = await updateTelegramPreview({
+        bot: state.telegramBot,
+        registry: telegramPreviewRegistry,
+        chatJid: event.payload.chatJid,
+        requestId: event.payload.requestId,
+        text: event.payload.text,
+      });
+      if (sendResult.error) {
+        logger.warn(
+          {
+            chatJid: event.payload.chatJid,
+            requestId: event.payload.requestId,
+            runKey: sendResult.runKey,
+            err: sendResult.error,
+          },
+          'Telegram preview update failed; disabling preview updates for this run',
+        );
+      }
+      return;
+    }
+    case 'agent_message':
+      await deliverRuntimeAgentMessage(event.payload);
+      return;
   }
 }
 
@@ -5769,6 +3890,15 @@ function startIpcWatcher(): void {
 
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true });
+  const processPiRuntimeEventOrdered = createOrderedPiRuntimeEventProcessor(
+    processPiRuntimeEvent,
+    (err, event) => {
+      logger.error({ err, kind: event.kind }, 'Unhandled Pi runtime event delivery failure');
+    },
+  );
+  piRuntimeEvents.subscribe((event) => {
+    processPiRuntimeEventOrdered(event);
+  });
 
   const processIpcFiles = async () => {
     // Scan all group IPC directories (identity determined by directory)
@@ -5783,7 +3913,6 @@ function startIpcWatcher(): void {
       setTimeout(processIpcFiles, IPC_POLL_INTERVAL);
       return;
     }
-    telegramDraftDisabledRuns.prune();
     pruneTelegramHostStreamedRuns();
 
     for (const sourceGroup of groupFolders) {
@@ -5801,73 +3930,8 @@ function startIpcWatcher(): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              const draftUpdate = parseTelegramDraftIpcMessage(data);
-              if (draftUpdate) {
-                const targetGroup = state.registeredGroups[draftUpdate.chatJid];
-                if (!isMain && (!targetGroup || targetGroup.folder !== sourceGroup)) {
-                  logger.warn(
-                    { chatJid: draftUpdate.chatJid, sourceGroup },
-                    'Unauthorized IPC Telegram draft update blocked',
-                  );
-                } else if (!isTelegramJid(draftUpdate.chatJid)) {
-                  logger.debug(
-                    { chatJid: draftUpdate.chatJid, sourceGroup },
-                    'Ignoring IPC Telegram draft update for non-Telegram chat',
-                  );
-                } else if (!state.telegramBot) {
-                  logger.debug(
-                    { chatJid: draftUpdate.chatJid, sourceGroup },
-                    'Ignoring IPC Telegram draft update while Telegram is disabled',
-                  );
-                } else {
-                  const sendResult = await sendTelegramDraftWithFallback({
-                    bot: state.telegramBot,
-                    draft: draftUpdate,
-                    registry: telegramDraftDisabledRuns,
-                  });
-                  if (
-                    sendResult.sent &&
-                    draftUpdate.requestId &&
-                    telegramDraftDisabledRuns.getStreamState(sendResult.runKey)?.mode ===
-                      'message'
-                  ) {
-                    const firstStreamForRun = noteTelegramHostStreamedRun(
-                      draftUpdate.chatJid,
-                      draftUpdate.requestId,
-                    );
-                    if (firstStreamForRun) {
-                      logger.info(
-                        {
-                          chatJid: draftUpdate.chatJid,
-                          sourceGroup,
-                          requestId: draftUpdate.requestId,
-                          runKey: sendResult.runKey,
-                        },
-                        'Telegram streaming preview active for run',
-                      );
-                    }
-                  }
-                  if (!sendResult.sent && sendResult.disabled && !sendResult.error) {
-                    logger.debug(
-                      {
-                        chatJid: draftUpdate.chatJid,
-                        sourceGroup,
-                        runKey: sendResult.runKey,
-                      },
-                      'Skipping Telegram draft update for disabled run',
-                    );
-                  } else if (sendResult.error) {
-                    logger.warn(
-                      {
-                        chatJid: draftUpdate.chatJid,
-                        sourceGroup,
-                        runKey: sendResult.runKey,
-                        err: sendResult.error,
-                      },
-                      'Telegram draft update failed; disabling draft updates for this run',
-                    );
-                  }
-                }
+              if (data.type === 'telegram_draft_update') {
+                logger.debug({ file, sourceGroup }, 'Ignoring legacy draft IPC file');
               } else if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = state.registeredGroups[data.chatJid];
@@ -5879,30 +3943,12 @@ function startIpcWatcher(): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  if (isTelegramJid(data.chatJid) && requestId) {
-                    const previewState = consumeTelegramHostStreamState(
-                      data.chatJid,
-                      requestId,
-                    );
-                    noteTelegramHostCompletedRun(data.chatJid, requestId);
-                    if (previewState?.mode === 'message') {
-                      const finalized = await finalizeTelegramPreviewMessage(
-                        data.chatJid,
-                        previewState.messageId,
-                        data.text,
-                      );
-                      if (!finalized) {
-                        await sendTelegramAgentReply(data.chatJid, data.text);
-                      }
-                    } else {
-                      await sendTelegramAgentReply(data.chatJid, data.text);
-                    }
-                  } else {
-                    await sendMessage(
-                      data.chatJid,
-                      `${ASSISTANT_NAME}: ${data.text}`,
-                    );
-                  }
+                  await deliverRuntimeAgentMessage({
+                    chatJid: data.chatJid,
+                    text: data.text,
+                    requestId,
+                    prefixWhatsApp: true,
+                  });
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup, requestId },
                     'IPC message sent',
@@ -6297,168 +4343,11 @@ async function processTaskIpc(
 }
 
 async function connectWhatsApp(): Promise<void> {
-  const authDir = path.join(STORE_DIR, 'auth');
-  fs.mkdirSync(authDir, { recursive: true });
-
-  const { state: authState, saveCreds } = await useMultiFileAuthState(authDir);
-
-  state.sock = makeWASocket({
-    auth: {
-      creds: authState.creds,
-      keys: makeCacheableSignalKeyStore(authState.keys, logger),
-    },
-    printQRInTerminal: false,
-    logger,
-    browser: Browsers.macOS('Chrome'),
-  });
-
-  state.sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      const msg =
-        'WhatsApp authentication required. Run: npm run auth';
-      logger.error(msg);
-      if (process.platform === 'darwin') {
-        exec(
-          `osascript -e 'display notification "${msg}" with title "FFT_nano" sound name "Basso"'`,
-        );
-      }
-      setTimeout(() => process.exit(1), 1000);
-    }
-
-    if (connection === 'close') {
-      const reason = (
-        lastDisconnect?.error as { output?: { statusCode?: number } } | undefined
-      )?.output?.statusCode;
-      const shouldReconnect = reason !== DisconnectReason.loggedOut;
-      logger.info({ reason, shouldReconnect }, 'Connection closed');
-
-      if (shouldReconnect) {
-        logger.info('Reconnecting...');
-        connectWhatsApp();
-      } else {
-        logger.info('Logged out. Run /setup to re-authenticate.');
-        process.exit(0);
-      }
-    } else if (connection === 'open') {
-      logger.info('Connected to WhatsApp');
-
-      // Keep presence in an active state so per-chat typing updates remain reliable.
-      state.sock!.sendPresenceUpdate('available').catch((err) => {
-        logger.debug({ err }, 'Failed to set initial available presence');
-      });
-
-      // Build LID to phone mapping from auth state for self-chat translation
-      if (state.sock!.user) {
-        const phoneUser = state.sock!.user.id.split(':')[0];
-        const lidUser = state.sock!.user.lid?.split(':')[0];
-        if (lidUser && phoneUser) {
-          state.lidToPhoneMap[lidUser] = `${phoneUser}@s.whatsapp.net`;
-          logger.debug({ lidUser, phoneUser }, 'LID to phone mapping set');
-        }
-      }
-
-      maybeRegisterWhatsAppMainChat();
-      
-      // Sync group metadata on startup (respects 24h cache)
-      syncGroupMetadata().catch((err) =>
-        logger.error({ err }, 'Initial group sync failed'),
-      );
-      // Set up daily sync timer (only once)
-      if (!state.groupSyncTimerStarted) {
-        state.groupSyncTimerStarted = true;
-        setInterval(() => {
-          syncGroupMetadata().catch((err) =>
-            logger.error({ err }, 'Periodic group sync failed'),
-          );
-        }, GROUP_SYNC_INTERVAL_MS);
-      }
-      startSchedulerLoop({
-        sendMessage,
-        registeredGroups: () => state.registeredGroups,
-        requestHeartbeatNow,
-      });
-      startIpcWatcher();
-      void startMessageLoop().catch((err) =>
-        logger.fatal({ err }, 'Message loop crashed unexpectedly'),
-      );
-    }
-  });
-
-  state.sock.ev.on('creds.update', saveCreds);
-
-  state.sock.ev.on('messages.upsert', ({ messages }) => {
-    for (const msg of messages) {
-      if (!msg.message) continue;
-      const rawJid = msg.key.remoteJid;
-      if (!rawJid || rawJid === 'status@broadcast') continue;
-
-      // Translate LID JID to phone JID if applicable
-      const chatJid = translateJid(rawJid);
-      
-      const timestamp = new Date(
-        Number(msg.messageTimestamp) * 1000,
-      ).toISOString();
-
-      // Always store chat metadata for group discovery
-      storeChatMetadata(chatJid, timestamp);
-
-      // Only store full message content for registered groups
-      if (state.registeredGroups[chatJid]) {
-        storeMessage(
-          msg,
-          chatJid,
-          msg.key.fromMe || false,
-          msg.pushName || undefined,
-        );
-      }
-    }
-  });
+  await appRuntime.connectWhatsApp();
 }
 
 async function startMessageLoop(): Promise<void> {
-  if (state.messageLoopRunning) {
-    logger.debug('Message loop already running, skipping duplicate start');
-    return;
-  }
-  state.messageLoopRunning = true;
-  logger.info(`FFT_nano running (trigger: @${ASSISTANT_NAME})`);
-
-  while (true) {
-    try {
-      const jids = Object.keys(state.registeredGroups);
-      const { messages } = getNewMessages(jids, state.lastTimestamp, ASSISTANT_NAME);
-
-      if (messages.length > 0)
-        logger.info({ count: messages.length }, 'New messages');
-      for (const msg of messages) {
-        try {
-          const processed = await processMessage(msg);
-          if (!processed) {
-            logger.debug(
-              { msgId: msg.id, chatJid: msg.chat_jid },
-              'Message processing deferred; retrying on next poll loop',
-            );
-            break;
-          }
-          // Only advance timestamp after successful processing for at-least-once delivery
-          state.lastTimestamp = msg.timestamp;
-          saveState();
-        } catch (err) {
-          logger.error(
-            { err, msg: msg.id },
-            'Error processing message, will retry',
-          );
-          // Stop processing this batch - failed message will be retried next loop
-          break;
-        }
-      }
-    } catch (err) {
-      logger.error({ err }, 'Error in message loop');
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
-  }
+  await appRuntime.startMessageLoop();
 }
 
 function logHeartbeatSkip(
@@ -6628,176 +4517,23 @@ function requestHeartbeatNow(reason = 'manual'): void {
 }
 
 function ensureContainerSystemRunning(): void {
-  const runtime = getContainerRuntime();
-  if (runtime === 'host') {
-    if (
-      (process.env.NODE_ENV || '').toLowerCase() === 'production' &&
-      !['1', 'true', 'yes', 'on'].includes(
-        (process.env.FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD || '').toLowerCase(),
-      )
-    ) {
-      throw new Error(
-        'Host runtime is blocked in production unless FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1',
-      );
-    }
-    logger.warn(
-      'Running in host runtime mode (no container isolation). This should only be used for trusted local workflows.',
-    );
-    return;
-  }
-
-  try {
-    // Verifies Docker is installed and the daemon is reachable.
-    execSync('docker info', { stdio: 'pipe' });
-    logger.debug('Docker runtime available');
-  } catch (err) {
-    logger.error({ err }, 'Docker runtime not available');
-    console.error(
-      '\n╔════════════════════════════════════════════════════════════════╗',
-    );
-    console.error(
-      '║  FATAL: Docker is required but is not available               ║',
-    );
-    console.error(
-      '║                                                                ║',
-    );
-    console.error(
-      '║  To fix:                                                       ║',
-    );
-    console.error(
-      '║  1. Install Docker (Desktop on macOS, engine on Linux/RPi)     ║',
-    );
-    console.error(
-      '║  2. Start the Docker daemon                                    ║',
-    );
-    console.error(
-      '║  3. Restart FFT_nano                                          ║',
-    );
-    console.error(
-      '╚════════════════════════════════════════════════════════════════╝\n',
-    );
-    throw new Error('Docker is required but not available');
-  }
-
-  try {
-    const output = execSync(
-      "docker ps -a --filter status=exited --filter name=nanoclaw- --format '{{.Names}}'",
-      {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        encoding: 'utf-8',
-      },
-    );
-    const stale = output
-      .split('\n')
-      .map((n) => n.trim())
-      .filter((n) => n.startsWith('nanoclaw-'));
-    if (stale.length > 0) {
-      execSync(`docker rm ${stale.join(' ')}`, { stdio: 'pipe' });
-      logger.info({ runtime, count: stale.length }, 'Cleaned up stale containers');
-    }
-  } catch {
-    // Ignore cleanup failures (unsupported flags/no stale containers/runtime quirks).
-  }
+  appRuntime.ensureContainerSystemRunning();
 }
 
 function stopFarmServicesForShutdown(signal: string): void {
-  if (state.shuttingDown) return;
-  state.shuttingDown = true;
-  logger.info({ signal }, 'Shutting down FFT_nano services');
-
-  if (FEATURE_FARM && FARM_STATE_ENABLED) {
-    stopFarmStateCollector();
-  }
+  appRuntime.stopFarmServicesForShutdown(signal);
 }
 
 async function shutdownAndExit(signal: string, exitCode: number): Promise<void> {
-  stopFarmServicesForShutdown(signal);
-  await stopWebControlCenterService();
-  await stopTuiGatewayService();
-  process.exit(exitCode);
+  await appRuntime.shutdownAndExit(signal, exitCode);
 }
 
 function registerShutdownHandlers(): void {
-  process.on('SIGINT', () => {
-    void shutdownAndExit('SIGINT', 0);
-  });
-
-  process.on('SIGTERM', () => {
-    void shutdownAndExit('SIGTERM', 0);
-  });
+  appRuntime.registerShutdownHandlers();
 }
 
 async function main(): Promise<void> {
-  registerShutdownHandlers();
-  if (HEARTBEAT_ACTIVE_HOURS_RAW?.trim() && !HEARTBEAT_ACTIVE_HOURS) {
-    logger.warn(
-      { value: HEARTBEAT_ACTIVE_HOURS_RAW },
-      'Ignoring invalid heartbeat active-hours format; expected HH:MM-HH:MM, Mon-Fri@HH:MM-HH:MM, or HH:MM-HH:MM@America/New_York',
-    );
-  }
-  acquireSingletonLock(path.join(DATA_DIR, 'fft_nano.lock'));
-  ensureContainerSystemRunning();
-  initDatabase();
-  logger.info('Database initialized');
-  loadState();
-  migrateLegacyClaudeMemoryFiles();
-  migrateCompactionSummariesFromSoul();
-  maybePromoteConfiguredTelegramMain();
-  await startTuiGatewayService();
-  await startWebControlCenterService();
-  logger.info(
-    {
-      profile: FFT_PROFILE,
-      featureFarm: FEATURE_FARM,
-      profileDetection: PROFILE_DETECTION,
-    },
-    'Runtime profile resolved',
-  );
-
-  if (FEATURE_FARM && FARM_STATE_ENABLED) {
-    startFarmStateCollector();
-  }
-
-  const telegramEnabled = !!TELEGRAM_BOT_TOKEN;
-  const farmOnlyMode =
-    FEATURE_FARM && FARM_STATE_ENABLED && !WHATSAPP_ENABLED && !telegramEnabled;
-  
-  if (!WHATSAPP_ENABLED && !telegramEnabled && !farmOnlyMode) {
-    throw new Error(
-      'No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.',
-    );
-  }
-
-  if (telegramEnabled) {
-    await startTelegram();
-  }
-
-  // If Telegram is enabled we start the loops immediately so Telegram messages
-  // can be processed even before WhatsApp connects.
-  // Also start in farm-state-only mode for integration testing.
-  if (telegramEnabled || !WHATSAPP_ENABLED) {
-    startSchedulerLoop({
-      sendMessage,
-      registeredGroups: () => state.registeredGroups,
-      requestHeartbeatNow,
-    });
-    startIpcWatcher();
-    startHeartbeatLoop();
-    void startMessageLoop().catch((err) =>
-      logger.fatal({ err }, 'Message loop crashed unexpectedly'),
-    );
-  }
-
-  if (farmOnlyMode) {
-    logger.info('Running in farm-state-only mode (no channels enabled)');
-  } else if (WHATSAPP_ENABLED) {
-    await connectWhatsApp();
-    startHeartbeatLoop();
-  } else {
-    logger.info('WhatsApp disabled (WHATSAPP_ENABLED=0)');
-  }
-
-  void maybeRunBootMdOnce();
+  await appRuntime.main();
 }
 
 main().catch(async (err) => {

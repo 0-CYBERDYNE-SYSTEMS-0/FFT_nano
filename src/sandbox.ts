@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import path from 'path';
 
 export type SandboxMode = 'bwrap' | 'docker' | 'none';
 
@@ -89,8 +90,16 @@ function wrapWithDocker(
     }
   }
 
-  dockerArgs.push(image, command, ...args);
+  dockerArgs.push(image, resolveDockerVisibleCommand(command), ...args);
   return { command: 'docker', args: dockerArgs };
+}
+
+export function resolveDockerVisibleCommand(command: string): string {
+  const base = path.basename(command);
+  if (base === 'pi' && path.isAbsolute(command)) {
+    return 'pi';
+  }
+  return command;
 }
 
 export function wrapWithSandbox(

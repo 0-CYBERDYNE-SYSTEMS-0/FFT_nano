@@ -14,8 +14,9 @@ Primary orchestrator: `src/index.ts`.
 ## Core Runtime Components
 
 Host modules:
-- `src/index.ts`: lifecycle, message loops, Telegram commands, IPC watcher, scheduler startup, heartbeat, delegation routing.
-- `src/container-runner.ts`: mounts, env passthrough, container command args, output parsing, error/timeout handling.
+- `src/index.ts`: lifecycle, message loops, Telegram commands, host runtime-event handling, filesystem IPC watcher, scheduler startup, heartbeat, delegation routing.
+- `src/pi-runner.ts`: prompt assembly handoff, Pi subprocess spawning, sandbox wrapping, output parsing, host-local runtime event emission.
+- `src/sandbox.ts`: optional `none|bwrap|docker` isolation wrapper for Pi runs.
 - `src/db.ts`: SQLite schema + query helpers + transcript FTS.
 - `src/task-scheduler.ts`: due-task polling + task execution loop.
 - `src/telegram.ts`: Telegram Bot API poll/send/download abstraction.
@@ -23,19 +24,18 @@ Host modules:
 - `src/farm-action-gateway.ts`: allowlisted farm action dispatcher with production gates.
 - `src/memory-*.ts`: retrieval, search, paths, maintenance, IPC memory actions.
 
-Container modules:
-- `container/agent-runner/src/index.ts`: reads JSON stdin, assembles system prompt, runs `pi`, emits JSON output markers.
-- `container/agent-runner/src/coder-worker.ts`: delegated coding worker flow.
-- `container/agent-runner/src/memory-tool.ts`: IPC helper CLI for memory search/get.
+Sandbox/runtime boundary:
+- sandboxed `pi` process receives prompt/system context and emits stdout event stream
+- host retains responsibility for scheduler execution, Telegram/WhatsApp transport delivery, and IPC file processing across the sandbox boundary
 
 ## Runtime Topology
 
 ```text
 Telegram/WhatsApp -> src/index.ts
                    -> src/db.ts
-                   -> src/container-runner.ts
-                   -> container runtime (docker|host)
-                   -> container/agent-runner/src/index.ts -> pi
+                   -> src/pi-runner.ts
+                   -> src/sandbox.ts (optional)
+                   -> pi
                    -> src/index.ts sendMessage()
                    -> Telegram/WhatsApp
 ```

@@ -1,7 +1,8 @@
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { TelegramBot, TelegramInlineKeyboard } from './telegram.js';
 import type { RegisteredGroup } from './types.js';
-import { TelegramDraftDisableRegistry } from './telegram-draft-ipc.js';
+import { PiRuntimeEventHub } from './pi-runtime-events.js';
+import { TelegramPreviewRegistry } from './telegram-streaming.js';
 import { TuiRuntimeEventHub } from './tui/runtime-events.js';
 import type { TuiGatewayServer } from './tui/gateway-server.js';
 import type { WebControlCenterServer } from './web/control-center-server.js';
@@ -173,11 +174,9 @@ export const activeCoderRuns = new Map<string, ActiveCoderRun>();
 export const activeChatRuns = new Map<string, ActiveChatRun>();
 export const activeChatRunsById = new Map<string, ActiveChatRun>();
 export const tuiMessageQueue = new Map<string, Array<{ text: string; runId: string; deliver: boolean }>>();
-export const telegramDraftDisabledRuns = new TelegramDraftDisableRegistry(
+export const telegramPreviewRegistry = new TelegramPreviewRegistry(
   TELEGRAM_DRAFT_DISABLE_MS,
 );
-export const telegramHostStreamedRuns = new Map<string, number>();
-export const telegramHostCompletedRuns = new Map<string, number>();
 export const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
 export const heartbeatLastTargetByChannel = new Map<'telegram' | 'whatsapp', string>();
 export const compactionMemoryFlushMarkers = new Map<string, number>();
@@ -186,6 +185,7 @@ export const telegramSettingsPanelActions = new Map<
   { chatJid: string; action: TelegramSettingsPanelAction; expiresAt: number }
 >();
 export const telegramSetupInputStates = new Map<string, TelegramSetupInputState>();
+export const piRuntimeEvents = new PiRuntimeEventHub();
 export const tuiRuntimeEvents = new TuiRuntimeEventHub();
 export const telegramToolProgressRuns = new Map<string, TelegramToolProgressState>();
 

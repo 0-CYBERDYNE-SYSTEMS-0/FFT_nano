@@ -50,3 +50,24 @@ test('heartbeat runs stay silent and do not trigger empty-output retry policy', 
   assert.equal(outcome.finalRun.result, '');
 });
 
+test('non-heartbeat empty output with tool side effects skips retry and returns fallback once', async () => {
+  let retries = 0;
+  const outcome = await applyNonHeartbeatEmptyOutputPolicy({
+    isHeartbeatRun: false,
+    firstRun: {
+      result: '',
+      streamed: false,
+      ok: true,
+      hadToolSideEffects: true,
+    },
+    retryRun: async () => {
+      retries += 1;
+      return { result: 'should not run', streamed: false, ok: true };
+    },
+  });
+
+  assert.equal(retries, 0);
+  assert.equal(outcome.retried, false);
+  assert.equal(outcome.finalRun.result, EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE);
+  assert.equal(outcome.finalRun.ok, true);
+});

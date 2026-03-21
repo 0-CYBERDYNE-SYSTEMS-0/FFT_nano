@@ -33,8 +33,10 @@ import {
 } from './pi-stream-parser.js';
 import { getPiApiKeyOverride } from './provider-auth.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
+import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox } from './sandbox.js';
 import type { RegisteredGroup } from './types.js';
+import { piRuntimeEvents } from './app-state.js';
 
 export interface ContainerInput {
   prompt: string;
@@ -443,6 +445,15 @@ export async function runContainerAgent(
 
   const STDERR_MAX_SIZE = 1_048_576; // 1 MB
 
+  const piExecutable = resolvePiExecutable();
+  if (!piExecutable) {
+    return {
+      status: 'error',
+      result: null,
+      error: 'pi binary not found on PATH and no repo-local fallback exists. Set PI_PATH or install pi globally.',
+    };
+  }
+
   const runPi = (useContinue: boolean) =>
     new Promise<{
       code: number | null;
@@ -475,7 +486,7 @@ export async function runContainerAgent(
         FFT_NANO_IS_MAIN: isMain ? '1' : '0',
       };
 
-      const sandboxed = wrapWithSandbox('pi', piArgs, {
+      const sandboxed = wrapWithSandbox(piExecutable, piArgs, {
         cwd: wp.groupDir,
         allowedPaths: [wp.groupDir, wp.piHomeDir, wp.ipcDir],
         env: env as Record<string, string>,
@@ -508,22 +519,22 @@ export async function runContainerAgent(
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
-      const ipcMessagesDir = path.join(wp.ipcDir, 'messages');
-
       const maybeSendDraft = (force = false) => {
         if (!canStreamTelegramDraft || !assistantSoFar) return;
         const now = Date.now();
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
         const nextDraftText = normalizeTelegramDraftText(assistantSoFar);
         if (nextDraftText === lastDraftText) return;
-        const ok = writeIpcFile(ipcMessagesDir, 'draft', {
-          type: 'telegram_draft_update',
-          chatJid: input.chatJid,
-          requestId: (input.requestId || '').trim(),
-          draftId,
-          text: nextDraftText,
+        const requestId = (input.requestId || '').trim();
+        if (!requestId) return;
+        piRuntimeEvents.emit({
+          kind: 'telegram_preview_update',
+          payload: {
+            chatJid: input.chatJid,
+            requestId,
+            text: nextDraftText,
+          },
         });
-        if (!ok) return;
         streamedDraft = true;
         lastDraftSentAt = now;
         lastDraftText = nextDraftText;
@@ -697,23 +708,31 @@ export async function runContainerAgent(
           fs.mkdirSync(outDir, { recursive: true });
           const rid = input.requestId || `coder_${Date.now()}`;
           const maxInline = isTelegramChatJid(input.chatJid) ? 8000 : 3000;
-          const ipcMessagesDir = path.join(wp.ipcDir, 'messages');
           let sent = false;
 
           if (result.length <= maxInline) {
-            sent = writeIpcFile(ipcMessagesDir, 'msg', {
-              type: 'message', chatJid: input.chatJid, text: result,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
+            piRuntimeEvents.emit({
+              kind: 'agent_message',
+              payload: {
+                chatJid: input.chatJid,
+                text: result,
+                ...(input.requestId ? { requestId: input.requestId } : {}),
+              },
             });
+            sent = true;
           } else {
             const filePath = path.join(outDir, `${rid}.md`);
             try { fs.writeFileSync(filePath, result); } catch { /* ignore */ }
             const preview = result.slice(0, Math.min(1200, result.length));
-            sent = writeIpcFile(ipcMessagesDir, 'msg', {
-              type: 'message', chatJid: input.chatJid,
-              text: `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
+            piRuntimeEvents.emit({
+              kind: 'agent_message',
+              payload: {
+                chatJid: input.chatJid,
+                text: `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
+                ...(input.requestId ? { requestId: input.requestId } : {}),
+              },
             });
+            sent = true;
           }
 
           if (sent) {

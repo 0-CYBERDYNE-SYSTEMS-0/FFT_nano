@@ -16,6 +16,10 @@ export function normalizeVerboseMode(raw: string): VerboseMode | undefined {
   return undefined;
 }
 
+export function getEffectiveVerboseMode(mode: VerboseMode | undefined): VerboseMode {
+  return mode ?? 'off';
+}
+
 export function describeVerboseMode(mode: VerboseMode): string {
   if (mode === 'off') return 'Tool progress: OFF — silent mode, just the final response.';
   if (mode === 'new') return 'Tool progress: NEW — show each new tool and skip repeats.';

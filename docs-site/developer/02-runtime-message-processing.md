@@ -57,7 +57,7 @@ Safety gate:
    - provider/model
    - think/reasoning levels
    - continue/new-session mode (`noContinue`)
-4. Call `runContainerAgent`.
+4. Call `runContainerAgent` in `src/pi-runner.ts`, which launches `pi` directly and optionally wraps it in the configured sandbox.
 5. Retry once after runtime health verification when applicable.
 
 ## Success/Failure Semantics
@@ -65,7 +65,7 @@ Safety gate:
 On successful run (`ok`):
 - update usage counters
 - advance `lastAgentTimestamp` for chat
-- send final result if not already streamed
+- finalize Telegram preview in place when host-local preview streaming was active, otherwise send final result normally
 
 On failure:
 - no timestamp advance (message retried next loop)
