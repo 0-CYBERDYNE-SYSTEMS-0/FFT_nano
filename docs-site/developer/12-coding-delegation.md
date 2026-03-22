@@ -2,67 +2,88 @@
 
 Primary files:
 - `src/coding-delegation.ts`
-- delegation routing in `src/index.ts`
-- delegated worker in `container/agent-runner/src/coder-worker.ts`
+- `src/coding-orchestrator.ts`
+- routing in `src/message-dispatch.ts`
+- command handling in `src/telegram-commands.ts`
 
-## Delegation Trigger Parser
+## Trigger Parsing
 
 `parseDelegationTrigger(text)` supports:
-- `/coder ...` -> execute delegation
-- `/coder-plan ...` -> plan delegation
-- `/coder_plan ...` -> plan delegation
+- `/coder ...` -> execute worker
+- `/coding ...` -> execute worker alias
+- `/coder-plan ...` -> plan worker
+- `/coder_plan ...` -> plan worker
 - exact alias phrase `use coding agent`
 - exact alias phrase `use your coding agent skill`
 
-Natural-language coding requests without explicit triggers do not force delegation.
+`isSubstantialCodingTask(text)` is the host-side heuristic for auto-routing substantial main-chat software-engineering asks to the execute worker.
 
 ## Main-Only Constraint
 
-Delegation is blocked for non-main chats.
+Coder orchestration is main-chat-only.
 
-When blocked, host replies with safety message and does not delegate.
+When blocked, the host replies with a safety message and does not start a worker.
 
-## Runtime Hints
+## Host-Side Orchestration
 
-Per run, host passes `codingHint` into container input:
-- `none`
-- `auto`
-- `force_delegate_execute`
-- `force_delegate_plan`
+`createCodingOrchestrator(...)` owns real coding worker lifecycle on the host.
 
-Container agent-runner uses this to decide whether to instruct extension-based delegation.
+Worker request contract includes:
+- `requestId`
+- `parentRequestId?`
+- `mode=plan|execute`
+- `route`
+- `originChatJid`
+- `originGroupFolder`
+- `taskText`
+- `workspaceMode`
+- `timeoutSeconds`
+- `allowFanout`
+- `sessionContext`
 
-## Delegation Extension Conditions
+Worker result contract includes:
+- `status`
+- `summary`
+- `finalMessage`
+- `changedFiles`
+- `commandsRun`
+- `testsRun`
+- `artifacts`
+- `childRunIds`
+- `startedAt`
+- `finishedAt`
+- `diffSummary?`
+- `worktreePath?`
+- `error?`
 
-In-container extension loading requires all:
-- run is main chat
-- run is not scheduled task
-- delegation extension file exists (`/app/dist/extensions/pi-on-pi.js`)
+## Plan vs Execute
 
-If explicit delegation requested but extension unavailable, system falls back to direct handling with explicit status in system prompt.
+Plan mode:
+- runs `pi` with read-only tools
+- does not create a worktree
+- returns a concrete plan result
 
-## Subagent Management Commands
+Execute mode:
+- creates a host-managed isolated git worktree
+- syncs the current workspace snapshot into that worktree
+- runs `pi` there with full coding tools
+- reports changed files, diff summary, worktree path, and test commands
+
+If worktree creation fails, the run fails closed and does not mutate the live workspace.
+
+## Subagent Commands
 
 Main chat command family:
 - `/subagents list`
 - `/subagents stop current|all|<requestId>`
 - `/subagents spawn <task>`
 
-Host tracks active runs in-memory (`activeChatRuns`, `activeCoderRuns`) and supports abort through `AbortController`.
+The host tracks active worker runs in `activeCoderRuns` and aborts them through `AbortController`.
 
-## Delegated Worker Execution
+## Request IDs
 
-`runDelegatedCodingWorker(...)` in container worker:
-- supports `mode=plan|execute`
-- plan mode: no file mutation expected
-- execute mode: performs file edits/checks as requested
-- streams progress to chat via IPC messages when allowed
-- tracks tool execution stats and changed file sets
-
-## Auditable Request IDs
-
-Delegated runs use request ids such as:
+Worker runs use ids such as:
 - `coder-<timestamp>-<rand>`
 - `subagent-<timestamp>-<rand>`
 
-These ids are included in status text and can be used for stop/list operations.
+These ids are shown in status/list output and can be used with `/subagents stop <requestId>`.

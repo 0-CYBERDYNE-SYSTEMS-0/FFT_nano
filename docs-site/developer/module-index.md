@@ -4,8 +4,8 @@ Generated from src/*.ts in this repository.
 
 - [coding-delegation](modules/coding-delegation.md)
 - [config](modules/config.md)
-- [container-runner](modules/container-runner.md)
 - [container-runtime](modules/container-runtime.md)
+- [coding-orchestrator](modules/coding-orchestrator.md)
 - [db](modules/db.md)
 - [farm-action-gateway](modules/farm-action-gateway.md)
 - [farm-state-collector](modules/farm-state-collector.md)
@@ -18,6 +18,7 @@ Generated from src/*.ts in this repository.
 - [memory-retrieval](modules/memory-retrieval.md)
 - [memory-search](modules/memory-search.md)
 - [mount-security](modules/mount-security.md)
+- [pi-runner](modules/pi-runner.md)
 - [pi-skills](modules/pi-skills.md)
 - [singleton-lock](modules/singleton-lock.md)
 - [task-scheduler](modules/task-scheduler.md)

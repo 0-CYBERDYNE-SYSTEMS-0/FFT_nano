@@ -2,75 +2,69 @@
 
 Primary files:
 - `src/container-runtime.ts`
-- `src/container-runner.ts`
-- `container/agent-runner/src/index.ts`
+- `src/pi-runner.ts`
+- `src/coding-orchestrator.ts`
 
 ## Runtime Selection
 
-From `getContainerRuntime()`:
+`getContainerRuntime()` resolves:
 - `CONTAINER_RUNTIME=auto|docker|host`
-- `auto` behavior:
-  - `docker` if Docker CLI is available
-  - otherwise `host` only when `FFT_NANO_ALLOW_HOST_RUNTIME=1`
-  - otherwise startup error
-- `CONTAINER_RUNTIME=host` always requires `FFT_NANO_ALLOW_HOST_RUNTIME=1`
+- `docker` when explicitly requested
+- `host` only when `FFT_NANO_ALLOW_HOST_RUNTIME=1`
+- `auto` prefers Docker when available, otherwise host only with explicit opt-in
 
-## Mount Model (`buildVolumeMounts`)
+This module only decides runtime mode. It does not launch the coding worker itself.
 
-Main group:
-- repo root -> `/workspace/project` (**read-only**)
-- main workspace (`~/nano` default) -> `/workspace/group` (read-write)
+## Actual Execution Path
 
-Non-main group:
-- `groups/<group-folder>` -> `/workspace/group` (read-write)
-- `groups/global` -> `/workspace/global` (read-only, if present)
+The execution split is:
+- `src/container-runtime.ts`: choose `docker` vs `host`
+- `src/pi-runner.ts`: launch `pi`, build system prompt, stream events, parse output
+- `src/coding-orchestrator.ts`: create real coding worker runs, isolated worktrees, and structured worker results
 
-Common mounts:
-- per-group Pi home: `data/pi/<group>/.pi` -> `/home/node/.pi` (rw)
-- per-group Codex home: `data/codex/<group>/.codex` -> `/home/node/.codex` (rw)
-- per-group IPC: `data/ipc/<group>` -> `/workspace/ipc` (rw)
-- agent-runner source copy: `data/sessions/<group>/agent-runner-src` -> `/app/src` (rw)
-- optional farm mounts (`/workspace/farm-state`, `/workspace/dashboard`, `/workspace/dashboard-templates`)
+## Workspace Model
 
-## Env Passthrough Policy
+`runContainerAgent(...)` in `src/pi-runner.ts` runs `pi` in:
+- main workspace for main-chat direct runs
+- group folder for non-main direct runs
+- `workspaceDirOverride` when the host coding orchestrator assigns an isolated worktree
 
-Runtime secrets are collected from host `.env` and process env using an explicit allowlist in `collectRuntimeSecrets(...)`.
+That means execute-mode coder runs are isolated from the live workspace by default.
 
-Key allowlisted vars include:
-- provider/runtime: `PI_API`, `PI_MODEL`, `PI_BASE_URL`, `PI_API_KEY`
-- provider keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `ZAI_API_KEY`
-- bridge/debug: `HA_URL`, `HA_TOKEN`, `FFT_NANO_DRY_RUN`
+## Input / Tool Controls
 
-Compatibility behavior:
-- if `PI_BASE_URL` is set and `OPENAI_BASE_URL` is unset, host injects `OPENAI_BASE_URL=PI_BASE_URL`.
+`ContainerInput` supports:
+- provider/model overrides
+- think/reasoning/verbose modes
+- `codingHint`
+- `toolMode=default|read_only|full`
+- `workspaceDirOverride`
+- `noContinue`
 
-## Additional Mount Security
+`toolMode` is what the host uses to enforce plan-only vs execute worker behavior:
+- `read_only` -> inspection tools only
+- `full` -> coding tools enabled
 
-`containerConfig.additionalMounts` is validated by `validateAdditionalMounts(...)` against:
-- external allowlist file: `~/.config/fft_nano/mount-allowlist.json`
-- blocked path patterns (`.ssh`, `.env`, key material, credentials)
-- containment under allowlisted roots
-- non-main read-only enforcement when configured
-- target path policy under `/workspace/extra/...`
+## Secrets / Env Passthrough
 
-## Execution Path (`runContainerAgent`)
+Runtime secrets are collected from host `.env` and process env through an allowlist in `collectRuntimeSecrets(...)`.
 
-1. Build snapshots (`tasks`, available groups) for the group.
-2. Resolve runtime (`docker` or `host`).
-3. Build mounts, runtime secrets, and input payload.
-4. Start runtime process (`docker run ...` or host runner entrypoint).
-5. Stream/capture stdout+stderr with `CONTAINER_MAX_OUTPUT_SIZE` cap.
-6. Apply timeout with guard rails:
-   - baseline `CONTAINER_TIMEOUT` (default 6h)
-   - per-group timeout only increases baseline (stale low values are ignored)
-   - idle guard floor `IDLE_TIMEOUT + 30000`
-7. Parse structured output and return result/usage/streaming flags.
-8. Persist per-run logs under `groups/<group>/logs/runtime-*.log`.
+Important vars include:
+- `PI_API`, `PI_MODEL`, `PI_BASE_URL`, `PI_API_KEY`
+- provider keys such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ZAI_API_KEY`, `KIMI_API_KEY`
+- `HA_URL`, `HA_TOKEN`
+- `FFT_NANO_DRY_RUN`
 
-Abort behavior:
-- user/system abort sends `SIGTERM`
-- escalates to `SIGKILL` when needed
+## Execute Worker Isolation
+
+Execute-mode coder runs:
+1. Create an isolated git worktree on the host.
+2. Sync the current workspace snapshot into it.
+3. Run `pi` in that isolated workspace.
+4. Return changed files, diff summary, worktree path, commands, and tests.
+
+If worktree creation fails, the run fails closed and does not fall back to mutating the live workspace.
 
 ## Host Runtime Note
 
-`host` runtime means no Docker isolation. It does not imply Linux root user by itself; service account is controlled by system service config.
+`host` runtime means FFT_nano runs `pi` directly on the host without Docker isolation. It is explicitly opt-in and is less isolated than Docker mode.

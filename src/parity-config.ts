@@ -75,12 +75,23 @@ export interface DoctorParityConfig {
   enabled: boolean;
 }
 
+export interface PromptParityConfig {
+  cacheEnabled: boolean;
+  persistLatestManifest: boolean;
+  manifestPerRequestInDebugOnly: boolean;
+  preflightRebaseEnabled: boolean;
+  softTokenThreshold: number;
+  hardTokenThreshold: number;
+  skillCatalogMaxChars: number;
+}
+
 export interface ParityConfig {
   memory: MemoryParityConfig;
   heartbeat: HeartbeatParityConfig;
   cron: CronParityConfig;
   workspace: WorkspaceParityConfig;
   doctor: DoctorParityConfig;
+  prompt: PromptParityConfig;
 }
 
 const DEFAULT_PARITY_CONFIG: ParityConfig = {
@@ -131,6 +142,15 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
   },
   doctor: {
     enabled: true,
+  },
+  prompt: {
+    cacheEnabled: true,
+    persistLatestManifest: true,
+    manifestPerRequestInDebugOnly: true,
+    preflightRebaseEnabled: true,
+    softTokenThreshold: 48_000,
+    hardTokenThreshold: 64_000,
+    skillCatalogMaxChars: 6_000,
   },
 };
 
@@ -245,6 +265,10 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
       ...DEFAULT_PARITY_CONFIG.doctor,
       ...(fileConfig.doctor || {}),
     },
+    prompt: {
+      ...DEFAULT_PARITY_CONFIG.prompt,
+      ...(fileConfig.prompt || {}),
+    },
   };
 
   merged.memory.backend = sanitizeBackend(merged.memory.backend, 'lexical');
@@ -266,6 +290,18 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
   merged.workspace.bootstrapTotalMaxChars = Math.max(
     merged.workspace.bootstrapMaxChars,
     Number(merged.workspace.bootstrapTotalMaxChars) || 150000,
+  );
+  merged.prompt.softTokenThreshold = Math.max(
+    1,
+    Number(merged.prompt.softTokenThreshold) || 48_000,
+  );
+  merged.prompt.hardTokenThreshold = Math.max(
+    merged.prompt.softTokenThreshold,
+    Number(merged.prompt.hardTokenThreshold) || 64_000,
+  );
+  merged.prompt.skillCatalogMaxChars = Math.max(
+    500,
+    Number(merged.prompt.skillCatalogMaxChars) || 6_000,
   );
 
   return merged;
@@ -396,6 +432,40 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
   );
 
   next.doctor.enabled = envBool(process.env.FFT_NANO_DOCTOR_ENABLED, next.doctor.enabled);
+  next.prompt.cacheEnabled = envBool(
+    process.env.FFT_NANO_PROMPT_CACHE_ENABLED,
+    next.prompt.cacheEnabled,
+  );
+  next.prompt.persistLatestManifest = envBool(
+    process.env.FFT_NANO_PROMPT_PERSIST_LATEST_MANIFEST,
+    next.prompt.persistLatestManifest,
+  );
+  next.prompt.manifestPerRequestInDebugOnly = envBool(
+    process.env.FFT_NANO_PROMPT_MANIFEST_DEBUG_ONLY,
+    next.prompt.manifestPerRequestInDebugOnly,
+  );
+  next.prompt.preflightRebaseEnabled = envBool(
+    process.env.FFT_NANO_PROMPT_PREFLIGHT_REBASE_ENABLED,
+    next.prompt.preflightRebaseEnabled,
+  );
+  next.prompt.softTokenThreshold = envInt(
+    process.env.FFT_NANO_PROMPT_SOFT_TOKEN_THRESHOLD,
+    next.prompt.softTokenThreshold,
+    1,
+    2_000_000,
+  );
+  next.prompt.hardTokenThreshold = envInt(
+    process.env.FFT_NANO_PROMPT_HARD_TOKEN_THRESHOLD,
+    next.prompt.hardTokenThreshold,
+    next.prompt.softTokenThreshold,
+    2_000_000,
+  );
+  next.prompt.skillCatalogMaxChars = envInt(
+    process.env.FFT_NANO_SKILL_CATALOG_MAX_CHARS,
+    next.prompt.skillCatalogMaxChars,
+    500,
+    200_000,
+  );
   return next;
 }
 

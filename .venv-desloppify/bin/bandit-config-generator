@@ -1,0 +1,6 @@
+#!/Users/scrimwiggins/fft_nano/.venv-desloppify/bin/python3.11
+import sys
+from bandit.cli.config_generator import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())

@@ -126,7 +126,15 @@ import {
   updateChatRunPreferences as updateChatRunPreferencesCore,
   updateChatUsage as updateChatUsageCore,
 } from './chat-preferences.js';
-import { parseDelegationTrigger, type CodingHint } from './coding-delegation.js';
+import {
+  isSubstantialCodingTask,
+  parseDelegationTrigger,
+  type CodingHint,
+} from './coding-delegation.js';
+import {
+  createCodingOrchestrator,
+  type CodingWorkerRequest,
+} from './coding-orchestrator.js';
 import { executeFarmAction } from './farm-action-gateway.js';
 import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
@@ -185,10 +193,16 @@ import {
   updateTelegramPreview,
 } from './telegram-streaming.js';
 import {
-  createOrderedPiRuntimeEventProcessor,
-  invokePiRuntimeEventHandlerSafely,
-  type PiRuntimeEvent,
-} from './pi-runtime-events.js';
+  createHostEventId,
+  createOrderedHostEventProcessor,
+  type HostEvent,
+} from './runtime/host-events.js';
+import {
+  dispatchLegacyMessageEnvelope,
+  wrapLegacyActionEnvelope,
+  wrapLegacyMessageEnvelope,
+  wrapLegacyTaskEnvelope,
+} from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
 import { createMessageDispatcher, finalizeCompletedRun } from './message-dispatch.js';
 import { createTelegramCommandHandlers } from './telegram-commands.js';
@@ -204,8 +218,7 @@ import {
   compactionMemoryFlushMarkers,
   telegramSettingsPanelActions,
   telegramSetupInputStates,
-  piRuntimeEvents,
-  tuiRuntimeEvents,
+  hostEventBus,
   telegramToolProgressRuns,
   TUI_SENDER_ID,
   TUI_SENDER_NAME,
@@ -715,7 +728,7 @@ function resolveMainOnboardingGate(chatJid: string): {
 }
 
 function isCoderDelegationCommand(content: string): boolean {
-  return /^\/(?:coder|coder-plan|coder_plan)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(content.trim());
+  return /^\/(?:coder|coding|coder-plan|coder_plan)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(content.trim());
 }
 
 function onboardingCommandBlockedText(): string {
@@ -949,16 +962,22 @@ function emitTuiChatEvent(payload: {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
-    provider?: string;
-    model?: string;
+      provider?: string;
+      model?: string;
   };
 }): void {
-  tuiRuntimeEvents.emit({
-    kind: 'chat',
-    payload: {
-      ...payload,
-      timestamp: new Date().toISOString(),
-    },
+  const createdAt = new Date().toISOString();
+  hostEventBus.publish({
+    kind: 'chat_state_changed',
+    id: createHostEventId('chat'),
+    createdAt,
+    source: 'index',
+    runId: payload.runId,
+    sessionKey: payload.sessionKey,
+    state: payload.state,
+    ...(payload.message ? { message: payload.message } : {}),
+    ...(payload.errorMessage ? { errorMessage: payload.errorMessage } : {}),
+    ...(payload.usage ? { usage: payload.usage } : {}),
   });
 }
 
@@ -968,17 +987,15 @@ function emitTuiAgentEvent(payload: {
   phase: 'start' | 'end' | 'error';
   detail?: string;
 }): void {
-  tuiRuntimeEvents.emit({
-    kind: 'agent',
-    payload: {
-      runId: payload.runId,
-      stream: 'lifecycle',
-      sessionKey: payload.sessionKey,
-      data: {
-        phase: payload.phase,
-        detail: payload.detail,
-      },
-    },
+  hostEventBus.publish({
+    kind: 'run_lifecycle_changed',
+    id: createHostEventId('run'),
+    createdAt: new Date().toISOString(),
+    source: 'index',
+    runId: payload.runId,
+    sessionKey: payload.sessionKey,
+    phase: payload.phase,
+    detail: payload.detail,
   });
 }
 
@@ -992,21 +1009,19 @@ function emitTuiToolEvent(payload: {
   output?: string;
   error?: string;
 }): void {
-  tuiRuntimeEvents.emit({
-    kind: 'agent',
-    payload: {
-      runId: payload.runId,
-      stream: 'tool',
-      sessionKey: payload.sessionKey,
-      data: {
-        index: payload.index,
-        toolName: payload.toolName,
-        status: payload.status,
-        ...(payload.args ? { args: payload.args } : {}),
-        ...(payload.output ? { output: payload.output } : {}),
-        ...(payload.error ? { error: payload.error } : {}),
-      },
-    },
+  hostEventBus.publish({
+    kind: 'tool_progress',
+    id: createHostEventId('tool'),
+    createdAt: new Date().toISOString(),
+    source: 'index',
+    runId: payload.runId,
+    sessionKey: payload.sessionKey,
+    index: payload.index,
+    toolName: payload.toolName,
+    status: payload.status,
+    ...(payload.args ? { args: payload.args } : {}),
+    ...(payload.output ? { output: payload.output } : {}),
+    ...(payload.error ? { error: payload.error } : {}),
   });
 }
 
@@ -2133,7 +2148,7 @@ function formatStatusText(chatJid?: string): string {
   for (const run of coderRuns) {
     const ageSeconds = Math.max(0, Math.floor((now - run.startedAt) / 1000));
     lines.push(
-      `- coder_run: ${run.requestId} mode=${run.mode} age=${ageSeconds}s chat=${run.chatJid} group=${run.groupName}`,
+      `- coder_run: ${run.requestId} mode=${run.mode} state=${run.state || 'running'} backend=${run.backend || 'pi'} age=${ageSeconds}s chat=${run.chatJid} group=${run.groupName}${run.parentRequestId ? ` parent=${run.parentRequestId}` : ''}${run.worktreePath ? ` worktree=${run.worktreePath}` : ''}`,
     );
   }
 
@@ -2293,14 +2308,43 @@ async function promptTelegramSetupInput(
 function formatActiveSubagentsText(): string {
   const runs: string[] = [];
   const now = Date.now();
-  for (const [chatJid, run] of activeChatRuns.entries()) {
+  for (const run of Array.from(activeCoderRuns.values()).sort((a, b) => a.startedAt - b.startedAt)) {
     const age = Math.max(0, Math.floor((now - run.startedAt) / 1000));
     runs.push(
-      `- chat=${chatJid} request=${run.requestId || 'none'} age=${age}s`,
+      `- request=${run.requestId} mode=${run.mode} state=${run.state || 'running'} backend=${run.backend || 'pi'} age=${age}s chat=${run.chatJid}${run.parentRequestId ? ` parent=${run.parentRequestId}` : ''}${run.worktreePath ? ` worktree=${run.worktreePath}` : ''}`,
     );
   }
   if (runs.length === 0) return 'No active subagent runs.';
   return ['Active subagent runs:', ...runs].join('\n');
+}
+
+let codingOrchestrator: ReturnType<typeof createCodingOrchestrator> | null = null;
+
+function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
+  if (!codingOrchestrator) {
+    codingOrchestrator = createCodingOrchestrator({
+      activeRuns: activeCoderRuns,
+      runContainerAgent,
+      publishEvent: (event) => {
+        hostEventBus.publish(event);
+      },
+    });
+  }
+  return codingOrchestrator;
+}
+
+async function runCodingTask(
+  params: Omit<CodingWorkerRequest, 'workspaceRoot'> & { workspaceRoot?: string },
+) {
+  const workspaceRoot = params.workspaceRoot || (
+    params.group.folder === MAIN_GROUP_FOLDER
+      ? MAIN_WORKSPACE_DIR
+      : resolveGroupFolderPath(params.group.folder)
+  );
+  return getCodingOrchestrator().runTask({
+    ...params,
+    workspaceRoot,
+  });
 }
 
 async function maybeRunCompactionMemoryFlush(
@@ -2701,6 +2745,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   emitTuiAgentEvent,
   getSessionKeyForChat,
   runAgent,
+  runCodingTask,
   setTyping,
   persistAssistantHistory,
   sendAgentResultMessage,
@@ -2758,6 +2803,7 @@ const messageDispatcher = createMessageDispatcher({
   completeMainWorkspaceOnboarding,
   rememberHeartbeatTarget,
   runAgent,
+  runCodingTask,
   consumeNextRunNoContinue,
   updateChatUsage,
   persistAssistantHistory,
@@ -2772,6 +2818,7 @@ const messageDispatcher = createMessageDispatcher({
   resolveTelegramStreamCompletionState,
   finalizeCompletedRun,
   parseDelegationTrigger,
+  isSubstantialCodingTask,
   isCoderDelegationCommand,
   onboardingCommandBlockedText,
   makeRunId,
@@ -2970,6 +3017,8 @@ async function runAgent(
       reasoningLevel: runtimePrefs.reasoningLevel,
       verboseMode: runtimePrefs.verboseMode,
       noContinue: runtimePrefs.nextRunNoContinue === true,
+      showReasoning:
+        runtimePrefs.showReasoning === true || runtimePrefs.reasoningLevel === 'stream',
     };
 
     const sessionKey = getSessionKeyForChat(chatJid);
@@ -3183,7 +3232,7 @@ async function startTuiGatewayService(): Promise<void> {
   try {
     state.tuiGatewayServer = await startTuiGatewayServer(
       createTuiGatewayAdapters(),
-      tuiRuntimeEvents,
+      hostEventBus,
       {
         host: FFT_NANO_TUI_HOST,
         port: FFT_NANO_TUI_PORT,
@@ -3396,16 +3445,14 @@ async function sendMessage(jid: string, text: string): Promise<void> {
 }
 
 const TELEGRAM_TOOL_EMOJIS: Record<string, string> = {
-  bash: '💻',
-  read: '📖',
+  bash: '⚡',
+  read: '👀',
   write: '✍️',
-  edit: '🔧',
-  grep: '🔎',
-  find: '🔎',
-  ls: '📂',
-  web: '🌐',
-  fetch: '📄',
-  search: '🔍',
+  edit: '✍️',
+  grep: '🤓',
+  find: '🤓',
+  ls: '👀',
+  search: '🤓',
 };
 
 function getTelegramToolProgressKey(chatJid: string, requestId: string): string {
@@ -3449,7 +3496,7 @@ function buildTelegramToolProgressLine(
   mode: VerboseMode,
   lastToolName?: string,
 ): string | null {
-  const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '⚙️';
+  const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
   if (event.status === 'start') {
     if (mode === 'new' && event.toolName === lastToolName) return null;
     if (mode === 'new') {
@@ -3481,6 +3528,40 @@ function buildTelegramToolProgressLine(
   return null;
 }
 
+function queueTelegramToolProgressReaction(
+  chatJid: string,
+  requestId: string,
+  event: { toolName: string; status: 'start' | 'ok' | 'error' },
+): void {
+  const bot = state.telegramBot;
+  if (!bot) return;
+
+  const streamKey = getTelegramHostStreamKey(chatJid, requestId);
+  const preview = telegramPreviewRegistry.getPreviewState(streamKey);
+
+  const emoji =
+    event.status === 'start' ? (TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥')
+    : event.status === 'error' ? '💔'
+    : null;
+
+  if (!preview) {
+    logger.debug(
+      { chatJid, requestId, streamKey, toolName: event.toolName, emoji },
+      'No preview yet — queuing pending reaction',
+    );
+    telegramPreviewRegistry.setPendingReaction(streamKey, emoji);
+    return;
+  }
+
+  logger.debug(
+    { chatJid, requestId, messageId: preview.messageId, emoji },
+    'Applying tool reaction to preview message',
+  );
+  bot.setMessageReaction(chatJid, preview.messageId, emoji).catch((err) => {
+    logger.warn({ chatJid, messageId: preview.messageId, emoji, err }, 'setMessageReaction failed');
+  });
+}
+
 function queueTelegramToolProgressUpdate(
   chatJid: string,
   requestId: string,
@@ -3496,33 +3577,53 @@ function queueTelegramToolProgressUpdate(
   const bot = state.telegramBot;
   if (!bot) return;
   const effectiveMode = getEffectiveVerboseMode(mode);
+
   if (effectiveMode === 'off') return;
 
-  const key = getTelegramToolProgressKey(chatJid, requestId);
-  const progress = telegramToolProgressRuns.get(key) || {
-    lines: [],
-    chain: Promise.resolve(),
-  };
-  telegramToolProgressRuns.set(key, progress);
+  if (effectiveMode === 'verbose') {
+    const key = getTelegramToolProgressKey(chatJid, requestId);
+    const progress = telegramToolProgressRuns.get(key) || {
+      lines: [],
+      chain: Promise.resolve(),
+    };
+    telegramToolProgressRuns.set(key, progress);
 
-  progress.chain = progress.chain
-    .then(async () => {
-      const line = buildTelegramToolProgressLine(event, effectiveMode, progress.lastToolName);
-      if (!line) return;
-      if (event.status === 'start') {
-        progress.lastToolName = event.toolName;
+    progress.chain = progress.chain
+      .then(async () => {
+        const line = buildTelegramToolProgressLine(event, effectiveMode, progress.lastToolName);
+        if (!line) return;
+        if (event.status === 'start') {
+          progress.lastToolName = event.toolName;
+        }
+        progress.lines.push(line);
+        const text = progress.lines.join('\n');
+        if (!progress.messageId) {
+          progress.messageId = await bot.sendStreamMessage(chatJid, text);
+          return;
+        }
+        await bot.editStreamMessage(chatJid, progress.messageId, text);
+      })
+      .catch((err) => {
+        logger.warn({ chatJid, requestId, err }, 'Failed to update Telegram tool progress');
+      });
+    return;
+  }
+
+  queueTelegramToolProgressReaction(chatJid, requestId, event);
+
+  if (effectiveMode === 'all' && event.status === 'start') {
+    const streamKey = getTelegramHostStreamKey(chatJid, requestId);
+    const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
+    telegramPreviewRegistry.appendToolTrail(streamKey, `${emoji}${event.toolName}`);
+    const preview = telegramPreviewRegistry.getPreviewState(streamKey);
+    if (preview) {
+      const footer = telegramPreviewRegistry.getToolTrailFooter(streamKey);
+      if (footer) {
+        bot.editStreamMessage(chatJid, preview.messageId, `${preview.lastText}\n\n${footer}`)
+          .catch(() => {});
       }
-      progress.lines.push(line);
-      const text = progress.lines.join('\n');
-      if (!progress.messageId) {
-        progress.messageId = await bot.sendStreamMessage(chatJid, text);
-        return;
-      }
-      await bot.editStreamMessage(chatJid, progress.messageId, text);
-    })
-    .catch((err) => {
-      logger.warn({ chatJid, requestId, err }, 'Failed to update Telegram tool progress');
-    });
+    }
+  }
 }
 
 async function finalizeTelegramToolProgress(
@@ -3669,35 +3770,94 @@ async function deliverRuntimeAgentMessage(params: {
   });
 }
 
-async function processPiRuntimeEvent(event: PiRuntimeEvent): Promise<void> {
+async function processHostEvent(event: HostEvent): Promise<void> {
   switch (event.kind) {
-    case 'telegram_preview_update': {
+    case 'telegram_preview_requested': {
       if (!state.telegramBot) return;
-      if (!isTelegramJid(event.payload.chatJid)) return;
-      if (!state.registeredGroups[event.payload.chatJid]) return;
+      if (!isTelegramJid(event.chatJid)) return;
+      if (!state.registeredGroups[event.chatJid]) return;
 
+      const streamKey = getTelegramPreviewRunKey(event.chatJid, event.requestId);
+      const toolTrailFooter = telegramPreviewRegistry.getToolTrailFooter(streamKey);
       const sendResult = await updateTelegramPreview({
         bot: state.telegramBot,
         registry: telegramPreviewRegistry,
-        chatJid: event.payload.chatJid,
-        requestId: event.payload.requestId,
-        text: event.payload.text,
+        chatJid: event.chatJid,
+        requestId: event.requestId,
+        text: event.text,
+        toolTrailFooter,
       });
       if (sendResult.error) {
         logger.warn(
           {
-            chatJid: event.payload.chatJid,
-            requestId: event.payload.requestId,
+            chatJid: event.chatJid,
+            requestId: event.requestId,
             runKey: sendResult.runKey,
             err: sendResult.error,
           },
           'Telegram preview update failed; disabling preview updates for this run',
         );
       }
+      if (sendResult.pendingReaction !== undefined && sendResult.messageId) {
+        state.telegramBot.setMessageReaction(
+          event.chatJid,
+          sendResult.messageId,
+          sendResult.pendingReaction,
+        ).catch(() => {});
+      }
       return;
     }
-    case 'agent_message':
-      await deliverRuntimeAgentMessage(event.payload);
+    case 'chat_delivery_requested':
+      await deliverRuntimeAgentMessage({
+        chatJid: event.chatJid,
+        text: event.text,
+        requestId: event.requestId,
+        prefixWhatsApp: event.prefixWhatsApp,
+      });
+      return;
+    case 'task_requested':
+      await processTaskIpc(
+        event.request as Parameters<typeof processTaskIpc>[0],
+        event.sourceGroup,
+        event.isMain,
+      );
+      return;
+    case 'action_requested': {
+      const result =
+        event.request.type === 'farm_action'
+          ? FEATURE_FARM
+            ? await executeFarmAction(event.request, event.isMain)
+            : {
+                requestId: event.request.requestId,
+                status: 'error' as const,
+                error:
+                  'farm_action is disabled in core profile (set FFT_PROFILE=farm or FEATURE_FARM=1)',
+                executedAt: new Date().toISOString(),
+              }
+          : await executeMemoryAction(event.request, {
+              sourceGroup: event.sourceGroup,
+              isMain: event.isMain,
+              registeredGroups: state.registeredGroups,
+            });
+      fs.writeFileSync(event.resultPath, JSON.stringify(result, null, 2));
+      return;
+    }
+    case 'action_result_ready':
+      fs.writeFileSync(event.resultPath, JSON.stringify(event.result, null, 2));
+      return;
+    case 'host_error':
+      logger.warn(
+        {
+          scope: event.scope,
+          detail: event.detail,
+          sourceGroup: event.sourceGroup,
+          requestId: event.requestId,
+          err: event.errorMessage,
+        },
+        'Host event reported error',
+      );
+      return;
+    default:
       return;
   }
 }
@@ -3711,14 +3871,14 @@ function startIpcWatcher(): void {
 
   const ipcBaseDir = path.join(DATA_DIR, 'ipc');
   fs.mkdirSync(ipcBaseDir, { recursive: true });
-  const processPiRuntimeEventOrdered = createOrderedPiRuntimeEventProcessor(
-    processPiRuntimeEvent,
+  const processHostEventOrdered = createOrderedHostEventProcessor(
+    processHostEvent,
     (err, event) => {
-      logger.error({ err, kind: event.kind }, 'Unhandled Pi runtime event delivery failure');
+      logger.error({ err, kind: event.kind }, 'Unhandled host event delivery failure');
     },
   );
-  piRuntimeEvents.subscribe((event) => {
-    processPiRuntimeEventOrdered(event);
+  hostEventBus.subscribe((event) => {
+    processHostEventOrdered(event);
   });
 
   const processIpcFiles = async () => {
@@ -3751,33 +3911,25 @@ function startIpcWatcher(): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'telegram_draft_update') {
-                logger.debug({ file, sourceGroup }, 'Ignoring legacy draft IPC file');
-              } else if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = state.registeredGroups[data.chatJid];
-                const requestId =
-                  typeof data.requestId === 'string' && data.requestId.trim()
-                    ? data.requestId.trim()
-                    : undefined;
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await deliverRuntimeAgentMessage({
-                    chatJid: data.chatJid,
-                    text: data.text,
-                    requestId,
-                    prefixWhatsApp: true,
-                  });
+              const envelope = wrapLegacyMessageEnvelope(data, sourceGroup);
+              if (envelope) {
+                const outcome = await dispatchLegacyMessageEnvelope(
+                  envelope,
+                  state.registeredGroups,
+                  isMain,
+                  processHostEventOrdered,
+                );
+                if (outcome === 'delivered') {
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup, requestId },
-                    'IPC message sent',
+                    { sourceGroup, requestId: envelope.requestId },
+                    'IPC message translated to host event',
                   );
+                } else if (outcome === 'ignored_draft') {
+                  logger.debug({ file, sourceGroup }, 'Ignoring legacy draft IPC file');
                 } else {
                   logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
+                    { sourceGroup, file },
+                    'Ignoring unauthorized or invalid IPC message envelope',
                   );
                 }
               }
@@ -3813,8 +3965,18 @@ function startIpcWatcher(): void {
             const filePath = path.join(tasksDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain);
+              const envelope = wrapLegacyTaskEnvelope(data, sourceGroup);
+              if (envelope) {
+                await processHostEventOrdered({
+                  kind: 'task_requested',
+                  id: envelope.id,
+                  createdAt: envelope.createdAt,
+                  source: 'ipc-boundary',
+                  sourceGroup,
+                  isMain,
+                  request: envelope.payload,
+                });
+              }
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
@@ -3856,32 +4018,26 @@ function startIpcWatcher(): void {
               );
               fs.mkdirSync(resultDir, { recursive: true });
 
-              if (request.type === 'farm_action') {
-                const result = FEATURE_FARM
-                  ? await executeFarmAction(request, isMain)
-                  : {
-                      requestId: request.requestId,
-                      status: 'error' as const,
-                      error:
-                        'farm_action is disabled in core profile (set FFT_PROFILE=farm or FEATURE_FARM=1)',
-                      executedAt: new Date().toISOString(),
-                    };
+              if (request.type === 'farm_action' || request.type === 'memory_action') {
                 const resultPath = path.join(
                   resultDir,
                   `${request.requestId}.json`,
                 );
-                fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
-              } else if (request.type === 'memory_action') {
-                const result = await executeMemoryAction(request, {
+                const envelope = wrapLegacyActionEnvelope(
+                  request,
+                  sourceGroup,
+                  resultPath,
+                );
+                await processHostEventOrdered({
+                  kind: 'action_requested',
+                  id: envelope.id,
+                  createdAt: envelope.createdAt,
+                  source: 'ipc-boundary',
                   sourceGroup,
                   isMain,
-                  registeredGroups: state.registeredGroups,
+                  request,
+                  resultPath: envelope.resultPath,
                 });
-                const resultPath = path.join(
-                  resultDir,
-                  `${request.requestId}.json`,
-                );
-                fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
               } else {
                 logger.warn(
                   { sourceGroup, file },

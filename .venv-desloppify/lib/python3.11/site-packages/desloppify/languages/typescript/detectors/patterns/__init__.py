@@ -1,0 +1,1 @@
+"""TypeScript pattern detector package."""

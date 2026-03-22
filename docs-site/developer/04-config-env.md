@@ -2,7 +2,7 @@
 
 Primary source of truth:
 - `src/config.ts`
-- direct env reads in `src/index.ts`, `src/telegram.ts`, `src/container-runner.ts`, and scripts
+- direct env reads in `src/index.ts`, `src/telegram.ts`, `src/pi-runner.ts`, and scripts
 
 ## Core Runtime Defaults (`src/config.ts`)
 
@@ -99,7 +99,7 @@ Primary source of truth:
 
 ## Container Env Allowlist (Host -> Runtime)
 
-Allowlisted pass-through in `src/container-runner.ts`:
+Allowlisted pass-through in `src/pi-runner.ts`:
 - `PI_BASE_URL`, `PI_API_KEY`, `PI_MODEL`, `PI_API`
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 - `ANTHROPIC_API_KEY`

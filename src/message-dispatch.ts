@@ -73,6 +73,28 @@ type RunUsage = {
   model?: string;
 };
 
+type CodingRunResult = {
+  ok: boolean;
+  result: string | null;
+  streamed: boolean;
+  usage?: RunUsage;
+  workerResult?: {
+    status: 'success' | 'error' | 'aborted';
+    summary: string;
+    finalMessage: string;
+    changedFiles: string[];
+    commandsRun: string[];
+    testsRun: string[];
+    artifacts: string[];
+    childRunIds: string[];
+    startedAt: string;
+    finishedAt: string;
+    diffSummary?: string;
+    worktreePath?: string;
+    error?: string;
+  };
+};
+
 export interface MessageDispatcherDeps {
   state: {
     registeredGroups: Record<string, any>;
@@ -112,6 +134,13 @@ export interface MessageDispatcherDeps {
       chatJid: string;
       groupName: string;
       startedAt: number;
+      parentRequestId?: string;
+      backend?: 'pi';
+      route?: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+      state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
+      worktreePath?: string;
+      childRunIds?: string[];
+      abortController?: AbortController;
     }
   >;
   tuiMessageQueue: Map<string, Array<{ text: string; runId: string; deliver: boolean }>>;
@@ -134,6 +163,24 @@ export interface MessageDispatcherDeps {
     options: Record<string, unknown>,
     abortSignal: AbortSignal,
   ) => Promise<{ result: string | null; streamed: boolean; ok: boolean; usage?: RunUsage }>;
+  runCodingTask?: (params: {
+    requestId: string;
+    parentRequestId?: string;
+    mode: 'plan' | 'execute';
+    route: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+    originChatJid: string;
+    originGroupFolder: string;
+    taskText: string;
+    workspaceMode: 'ephemeral_worktree' | 'read_only';
+    timeoutSeconds: number;
+    allowFanout: boolean;
+    sessionContext: string;
+    assistantName: string;
+    sessionKey: string;
+    group: any;
+    runtimePrefs?: Record<string, any>;
+    abortController?: AbortController;
+  }) => Promise<CodingRunResult>;
   consumeNextRunNoContinue: (chatJid: string) => boolean;
   updateChatUsage: (chatJid: string, usage?: RunUsage) => void;
   persistAssistantHistory: (chatJid: string, text: string, runId?: string) => string | void;
@@ -162,6 +209,7 @@ export interface MessageDispatcherDeps {
   };
   finalizeCompletedRun: (params: FinalizeCompletedRunParams) => Promise<void>;
   parseDelegationTrigger?: (text: string) => { hint: string; instruction: string | null };
+  isSubstantialCodingTask?: (text: string) => boolean;
   isCoderDelegationCommand?: (content: string) => boolean;
   onboardingCommandBlockedText?: () => string;
   makeRunId?: (prefix: string) => string;
@@ -287,7 +335,6 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       : 'none';
     let requestId = deps.makeRunId ? deps.makeRunId('chat') : `chat-${Date.now()}`;
     let delegationInstruction: string | null = null;
-    let delegationMarker: string | null = null;
 
     const stripped = content.replace(deps.constants.triggerPattern, '').trimStart();
     const parsedTrigger = onboardingGate.active || !deps.parseDelegationTrigger
@@ -306,10 +353,6 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     if (wantsDelegation) {
       codingHint = parsedTrigger.hint;
       delegationInstruction = parsedTrigger.instruction;
-      delegationMarker =
-        codingHint === 'force_delegate_plan'
-          ? '[CODER PLAN REQUEST]'
-          : '[CODER EXECUTE REQUEST]';
       requestId = `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const startMessageBody =
         codingHint === 'force_delegate_plan'
@@ -325,7 +368,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       deps.constants.assistantName,
     );
 
-    let selectedMessages = [...missedMessages];
+    let selectedMessages = missedMessages.length > 0
+      ? [...missedMessages]
+      : [msg];
     let droppedCount = 0;
     if (queueCap && selectedMessages.length > queueCap) {
       droppedCount = selectedMessages.length - queueCap;
@@ -343,12 +388,14 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     }
     const sessionKey = deps.getSessionKeyForChat(msg.chat_jid);
     const latestUserText = selectedMessages[selectedMessages.length - 1]?.content || content;
-    let finalPrompt =
-      codingHint !== 'none' && delegationMarker
-        ? delegationInstruction
-          ? `${prompt}\n\n${delegationMarker}\n${delegationInstruction}`
-          : `${prompt}\n\n${delegationMarker}`
-        : prompt;
+    const shouldAutoRouteCoding =
+      !wantsDelegation &&
+      isMainGroup &&
+      !onboardingGate.active &&
+      deps.isSubstantialCodingTask?.(latestUserText) === true;
+    const shouldUseCodingWorker = wantsDelegation || shouldAutoRouteCoding;
+
+    let finalPrompt = prompt;
     if (queueMode === 'interrupt') {
       finalPrompt =
         `${finalPrompt}\n\n[QUEUE MODE: interrupt]\n` +
@@ -392,18 +439,6 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       },
       'Processing message',
     );
-    if (
-      (codingHint === 'force_delegate_execute' || codingHint === 'force_delegate_plan') &&
-      requestId
-    ) {
-      deps.activeCoderRuns.set(requestId, {
-        requestId,
-        mode: codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
-        chatJid: msg.chat_jid,
-        groupName: group.name,
-        startedAt: Date.now(),
-      });
-    }
     const runPreferences: Record<string, any> = {
       ...(deps.state.chatRunPreferences[msg.chat_jid] || {}),
     };
@@ -437,16 +472,43 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     });
     await deps.setTyping(msg.chat_jid, true);
     try {
-      const run = await deps.runAgent(
-        group,
-        finalPrompt,
-        msg.chat_jid,
-        codingHint,
-        requestId,
-        runPreferences,
-        {},
-        abortController.signal,
-      );
+      const run = shouldUseCodingWorker && deps.runCodingTask
+        ? await deps.runCodingTask({
+            requestId,
+            mode: codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
+            route: codingHint === 'force_delegate_plan'
+              ? 'coder_plan'
+              : wantsDelegation
+                ? 'coder_execute'
+                : 'auto_execute',
+            originChatJid: msg.chat_jid,
+            originGroupFolder: group.folder,
+            taskText: delegationInstruction || latestUserText,
+            workspaceMode:
+              codingHint === 'force_delegate_plan'
+                ? 'read_only'
+                : 'ephemeral_worktree',
+            timeoutSeconds: 1800,
+            allowFanout:
+              (codingHint === 'force_delegate_execute' || shouldAutoRouteCoding) &&
+              !onboardingGate.active,
+            sessionContext: finalPrompt,
+            assistantName: deps.constants.assistantName,
+            sessionKey,
+            group,
+            runtimePrefs: runPreferences,
+            abortController,
+          })
+        : await deps.runAgent(
+            group,
+            finalPrompt,
+            msg.chat_jid,
+            codingHint,
+            requestId,
+            runPreferences,
+            {},
+            abortController.signal,
+          );
       result = run.result;
       streamed = run.streamed;
       ok = run.ok;
@@ -457,7 +519,6 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         deps.activeChatRuns.delete(msg.chat_jid);
       }
       deps.activeChatRunsById.delete(requestId);
-      deps.activeCoderRuns.delete(requestId);
     }
     if (ok && onboardingGate.active) {
       const completion = deps.extractOnboardingCompletion(result);

@@ -6,6 +6,13 @@ export interface TelegramMessagePreviewState {
   updatedAt: number;
 }
 
+export interface TelegramStreamState {
+  mode: 'message';
+  messageId: number;
+  lastText: string;
+  updatedAt: number;
+}
+
 export function getTelegramPreviewRunKey(chatJid: string, requestId: string): string {
   return `${chatJid}:${requestId}`;
 }
@@ -18,63 +25,127 @@ export function resolveTelegramStreamCompletionState(params: {
   messagePreviewState: TelegramMessagePreviewState | null;
 } {
   if (params.externallyCompleted) {
-    return {
-      effectiveStreamed: true,
-      messagePreviewState: null,
-    };
+    return { effectiveStreamed: true, messagePreviewState: null };
   }
   if (params.previewState) {
-    return {
-      effectiveStreamed: true,
-      messagePreviewState: params.previewState,
-    };
+    return { effectiveStreamed: true, messagePreviewState: params.previewState };
   }
-  return {
-    effectiveStreamed: false,
-    messagePreviewState: null,
-  };
+  return { effectiveStreamed: false, messagePreviewState: null };
 }
 
-export class TelegramPreviewRegistry {
+const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
+const MAX_FAILURES_BEFORE_DISABLE = 4;
+const DISABLE_TTL_MS = 120_000;
+const MIN_PREVIEW_CHARS = 20;
+
+class BaseTelegramStreamRegistry {
   private readonly disabledUntil = new Map<string, number>();
-  private readonly previewStates = new Map<string, TelegramMessagePreviewState>();
+  private readonly streamStates = new Map<string, TelegramStreamState>();
   private readonly completedRuns = new Map<string, number>();
+  private readonly failureCounts = new Map<string, { count: number; retryAfter: number }>();
+  private readonly pendingReactions = new Map<string, string | null>();
+  private readonly toolTrails = new Map<string, string[]>();
 
   constructor(
-    private readonly ttlMs: number,
-    private readonly maxStates = 2000,
+    protected readonly ttlMs: number,
+    protected readonly maxStates = 2000,
   ) {}
 
   isDisabled(runKey: string, now = Date.now()): boolean {
     const until = this.disabledUntil.get(runKey);
-    if (!until) return false;
-    if (until <= now) {
-      this.disabledUntil.delete(runKey);
-      return false;
-    }
-    return true;
+    if (until && until > now) return true;
+    if (until && until <= now) this.disabledUntil.delete(runKey);
+
+    const failure = this.failureCounts.get(runKey);
+    if (failure && failure.retryAfter > now) return true;
+    return false;
   }
 
   disable(runKey: string, now = Date.now()): void {
-    this.disabledUntil.set(runKey, now + this.ttlMs);
+    this.disabledUntil.set(runKey, now + DISABLE_TTL_MS);
+  }
+
+  recordFailure(runKey: string, now = Date.now()): { count: number; disabled: boolean } {
+    const existing = this.failureCounts.get(runKey);
+    const count = (existing?.count ?? 0) + 1;
+    if (count >= MAX_FAILURES_BEFORE_DISABLE) {
+      this.failureCounts.delete(runKey);
+      this.disable(runKey, now);
+      return { count, disabled: true };
+    }
+    const backoffMs = BACKOFF_STEPS_MS[Math.min(count - 1, BACKOFF_STEPS_MS.length - 1)];
+    this.failureCounts.set(runKey, { count, retryAfter: now + backoffMs });
+    return { count, disabled: false };
+  }
+
+  clearFailures(runKey: string): void {
+    this.failureCounts.delete(runKey);
+  }
+
+  setPendingReaction(runKey: string, emoji: string | null): void {
+    this.pendingReactions.set(runKey, emoji);
+  }
+
+  consumePendingReaction(runKey: string): string | null | undefined {
+    const emoji = this.pendingReactions.get(runKey);
+    if (emoji !== undefined) this.pendingReactions.delete(runKey);
+    return emoji;
+  }
+
+  appendToolTrail(runKey: string, entry: string): void {
+    const trail = this.toolTrails.get(runKey) || [];
+    trail.push(entry);
+    this.toolTrails.set(runKey, trail);
+  }
+
+  getToolTrailFooter(runKey: string): string | undefined {
+    const trail = this.toolTrails.get(runKey);
+    if (!trail || trail.length === 0) return undefined;
+    return trail.join(' → ');
+  }
+
+  clearToolTrail(runKey: string): void {
+    this.toolTrails.delete(runKey);
+  }
+
+  getStreamState(runKey: string): TelegramStreamState | undefined {
+    return this.streamStates.get(runKey);
+  }
+
+  setStreamState(runKey: string, state: TelegramStreamState): void {
+    this.streamStates.set(runKey, state);
+  }
+
+  clearStreamState(runKey: string): void {
+    this.streamStates.delete(runKey);
   }
 
   getPreviewState(runKey: string): TelegramMessagePreviewState | undefined {
-    return this.previewStates.get(runKey);
+    const state = this.streamStates.get(runKey);
+    return state
+      ? { messageId: state.messageId, lastText: state.lastText, updatedAt: state.updatedAt }
+      : undefined;
   }
 
   setPreviewState(runKey: string, state: TelegramMessagePreviewState): void {
-    this.previewStates.set(runKey, state);
+    this.streamStates.set(runKey, {
+      mode: 'message',
+      messageId: state.messageId,
+      lastText: state.lastText,
+      updatedAt: state.updatedAt,
+    });
   }
 
   consumePreviewState(runKey: string): TelegramMessagePreviewState | null {
-    const state = this.previewStates.get(runKey) || null;
-    this.previewStates.delete(runKey);
-    return state;
+    const state = this.streamStates.get(runKey);
+    this.streamStates.delete(runKey);
+    return state
+      ? { messageId: state.messageId, lastText: state.lastText, updatedAt: state.updatedAt }
+      : null;
   }
 
   clearPreviewState(runKey: string): void {
-    this.previewStates.delete(runKey);
+    this.streamStates.delete(runKey);
   }
 
   noteCompleted(runKey: string, now = Date.now()): void {
@@ -92,32 +163,46 @@ export class TelegramPreviewRegistry {
       if (until <= now) this.disabledUntil.delete(runKey);
     }
     const staleCutoff = now - this.ttlMs * 4;
-    for (const [runKey, state] of this.previewStates.entries()) {
-      if (state.updatedAt <= staleCutoff) this.previewStates.delete(runKey);
+    for (const [runKey, state] of this.streamStates.entries()) {
+      if (state.updatedAt <= staleCutoff) this.streamStates.delete(runKey);
     }
     for (const [runKey, completedAt] of this.completedRuns.entries()) {
       if (completedAt <= staleCutoff) this.completedRuns.delete(runKey);
     }
-    while (this.previewStates.size > this.maxStates) {
-      const oldestKey = this.previewStates.keys().next().value as string | undefined;
+    for (const [runKey, failure] of this.failureCounts.entries()) {
+      if (failure.retryAfter <= now) this.failureCounts.delete(runKey);
+    }
+    for (const runKey of this.toolTrails.keys()) {
+      if (!this.streamStates.has(runKey) && !this.completedRuns.has(runKey)) {
+        this.toolTrails.delete(runKey);
+      }
+    }
+    while (this.streamStates.size > this.maxStates) {
+      const oldestKey = this.streamStates.keys().next().value as string | undefined;
       if (!oldestKey) break;
-      this.previewStates.delete(oldestKey);
+      this.streamStates.delete(oldestKey);
     }
   }
 }
 
+export class TelegramStreamRegistry extends BaseTelegramStreamRegistry {}
+
+export class TelegramPreviewRegistry extends TelegramStreamRegistry {}
+
 export async function updateTelegramPreview(params: {
   bot: Pick<TelegramBot, 'sendStreamMessage' | 'editStreamMessage'>;
-  registry: TelegramPreviewRegistry;
+  registry: TelegramStreamRegistry;
   chatJid: string;
   requestId: string;
   text: string;
+  toolTrailFooter?: string;
 }): Promise<{
   runKey: string;
   sent: boolean;
   disabled: boolean;
   error?: string;
   messageId?: number;
+  pendingReaction?: string | null;
 }> {
   const runKey = getTelegramPreviewRunKey(params.chatJid, params.requestId);
   params.registry.prune();
@@ -127,37 +212,56 @@ export async function updateTelegramPreview(params: {
 
   try {
     const now = Date.now();
-    const nextText = normalizeTelegramDraftText(params.text);
-    const state = params.registry.getPreviewState(runKey);
+    const baseText = normalizeTelegramDraftText(params.text);
+    const nextText = params.toolTrailFooter
+      ? `${baseText}\n\n${params.toolTrailFooter}`
+      : baseText;
+    const state = params.registry.getStreamState(runKey);
+
+    if (!state && nextText.length < MIN_PREVIEW_CHARS) {
+      return { runKey, sent: false, disabled: false };
+    }
+
     if (state && state.lastText === nextText) {
-      params.registry.setPreviewState(runKey, { ...state, updatedAt: now });
-      return { runKey, sent: false, disabled: false, messageId: state.messageId };
+      params.registry.setStreamState(runKey, { ...state, updatedAt: now });
+      return {
+        runKey,
+        sent: false,
+        disabled: false,
+        messageId: state.messageId,
+      };
     }
 
     if (state) {
       await params.bot.editStreamMessage(params.chatJid, state.messageId, nextText);
-      params.registry.setPreviewState(runKey, {
+      params.registry.setStreamState(runKey, {
+        mode: 'message',
         messageId: state.messageId,
         lastText: nextText,
         updatedAt: now,
       });
+      params.registry.clearFailures(runKey);
       return { runKey, sent: true, disabled: false, messageId: state.messageId };
     }
 
     const messageId = await params.bot.sendStreamMessage(params.chatJid, nextText);
-    params.registry.setPreviewState(runKey, {
+    params.registry.setStreamState(runKey, {
+      mode: 'message',
       messageId,
       lastText: nextText,
       updatedAt: now,
     });
-    return { runKey, sent: true, disabled: false, messageId };
+    params.registry.clearFailures(runKey);
+    const pendingReaction = params.registry.consumePendingReaction(runKey);
+    return { runKey, sent: true, disabled: false, messageId, pendingReaction };
   } catch (err) {
-    params.registry.disable(runKey);
+    const failure = params.registry.recordFailure(runKey);
     return {
       runKey,
       sent: false,
-      disabled: true,
+      disabled: failure.disabled,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 }
+

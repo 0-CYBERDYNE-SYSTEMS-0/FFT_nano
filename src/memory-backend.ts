@@ -99,7 +99,11 @@ let backendSingleton: MemoryBackend | null = null;
 
 export function getMemoryBackend(): MemoryBackend {
   if (backendSingleton) return backendSingleton;
-  backendSingleton = new LexicalMemoryBackend();
+  switch (PARITY_CONFIG.memory.backend) {
+    case 'lexical':
+    default:
+      backendSingleton = new LexicalMemoryBackend();
+      break;
+  }
   return backendSingleton;
 }
-

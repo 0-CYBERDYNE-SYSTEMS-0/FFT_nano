@@ -150,6 +150,9 @@ export function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPre
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
     next.reasoningLevel = prefs.reasoningLevel;
   }
+  if (prefs.showReasoning === true) {
+    next.showReasoning = true;
+  }
   if (prefs.verboseMode && prefs.verboseMode !== 'off') {
     next.verboseMode = prefs.verboseMode;
   }
@@ -227,8 +230,11 @@ export function patchTuiSessionPrefs(
     if (Object.prototype.hasOwnProperty.call(patch, 'reasoningLevel')) {
       if (patch.reasoningLevel && patch.reasoningLevel !== 'off') {
         prefs.reasoningLevel = patch.reasoningLevel;
+        if (patch.reasoningLevel === 'stream') prefs.showReasoning = true;
+        else delete prefs.showReasoning;
       } else {
         delete prefs.reasoningLevel;
+        delete prefs.showReasoning;
       }
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'verboseMode')) {

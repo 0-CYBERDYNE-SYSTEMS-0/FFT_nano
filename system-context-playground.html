@@ -1,0 +1,2282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Context Comparison Playground</title>
+<style>
+  :root {
+    --paper: #f4eee3;
+    --ink: #18222d;
+    --muted: #5b6a78;
+    --line: #c8bba8;
+    --panel: rgba(255, 252, 247, 0.92);
+    --panel-strong: #fffaf1;
+    --fft: #14706a;
+    --fft_nano: #234ea1;
+    --hermes: #92411a;
+    --repo: #18344a;
+    --docs: #866628;
+    --mixed: #5e5d72;
+    --mismatch: #a02f2f;
+    --reads: #2456a9;
+    --injects: #14706a;
+    --filters: #8f5d1c;
+    --retrieves: #8a3ec8;
+    --caches: #6f5f2d;
+    --appends: #b34719;
+    --sends: #b12654;
+    --grid: rgba(24, 34, 45, 0.08);
+    --shadow: 0 22px 55px rgba(24, 34, 45, 0.12);
+    --radius: 18px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background:
+      radial-gradient(circle at top left, rgba(35, 78, 161, 0.09), transparent 32%),
+      radial-gradient(circle at top right, rgba(20, 112, 106, 0.08), transparent 28%),
+      linear-gradient(180deg, #f7f1e6, #efe6d8 55%, #eadfcf);
+    color: var(--ink);
+    min-height: 100%;
+    font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  .masthead {
+    padding: 26px 28px 18px;
+    border-bottom: 1px solid rgba(24, 34, 45, 0.09);
+  }
+
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    margin: 0;
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    font-size: clamp(28px, 4vw, 42px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+  }
+
+  .lede {
+    margin-top: 12px;
+    max-width: 980px;
+    color: #2b3947;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .legend-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    margin-top: 16px;
+  }
+
+  .legend-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid rgba(24, 34, 45, 0.1);
+    border-radius: 999px;
+    background: rgba(255, 250, 241, 0.72);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .controls {
+    padding: 14px 28px 18px;
+    display: grid;
+    gap: 12px;
+    border-bottom: 1px solid rgba(24, 34, 45, 0.09);
+  }
+
+  .control-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .control-label {
+    min-width: 158px;
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+  }
+
+  .chip,
+  .toggle {
+    border: 1px solid rgba(24, 34, 45, 0.16);
+    background: rgba(255, 252, 247, 0.82);
+    color: var(--ink);
+    padding: 8px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: 0.15s ease;
+  }
+
+  .chip:hover,
+  .toggle:hover {
+    transform: translateY(-1px);
+    border-color: rgba(24, 34, 45, 0.3);
+  }
+
+  .chip.active,
+  .toggle.active {
+    color: #fff;
+    border-color: transparent;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+  }
+
+  .chip[data-kind="preset"].active { background: var(--ink); }
+  .toggle[data-system="fft_nano"].active { background: var(--fft); }
+  .toggle[data-system="fft_nano"].active { background: var(--fft_nano); }
+  .toggle[data-system="hermes-agent"].active { background: var(--hermes); }
+
+  .toggle[data-edge="reads"].active { background: var(--reads); }
+  .toggle[data-edge="injects"].active { background: var(--injects); }
+  .toggle[data-edge="filters"].active { background: var(--filters); }
+  .toggle[data-edge="retrieves"].active { background: var(--retrieves); }
+  .toggle[data-edge="caches"].active { background: var(--caches); }
+  .toggle[data-edge="appends"].active { background: var(--appends); }
+  .toggle[data-edge="sends"].active { background: var(--sends); }
+
+  .main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 370px;
+    gap: 18px;
+    padding: 20px 20px 0;
+    align-items: start;
+    flex: 1;
+  }
+
+  .preview-column {
+    display: grid;
+    gap: 18px;
+    min-width: 0;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid rgba(24, 34, 45, 0.1);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(10px);
+  }
+
+  .card-head {
+    padding: 16px 18px 0;
+  }
+
+  .card-title {
+    margin: 0;
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    font-size: 20px;
+    letter-spacing: -0.02em;
+  }
+
+  .card-subtitle {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .diagram-shell {
+    padding: 8px 12px 14px;
+  }
+
+  .diagram-wrap {
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.45), rgba(244,238,227,0.76)),
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 31px,
+        var(--grid) 31px,
+        var(--grid) 32px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent 31px,
+        var(--grid) 31px,
+        var(--grid) 32px
+      );
+    border: 1px solid rgba(24, 34, 45, 0.08);
+  }
+
+  #flow-svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .row-band {
+    fill: rgba(255, 250, 241, 0.8);
+    stroke: rgba(24, 34, 45, 0.08);
+    stroke-width: 1;
+  }
+
+  .row-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .row-summary {
+    font-size: 11px;
+    fill: #4f5d6a;
+  }
+
+  .edge-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: #3d4954;
+  }
+
+  .edge-path {
+    fill: none;
+    stroke-width: 2.4;
+    opacity: 0.88;
+  }
+
+  .edge-path.dimmed,
+  .edge-label.dimmed {
+    opacity: 0.12;
+  }
+
+  .edge-path.conditional {
+    stroke-dasharray: 7 6;
+  }
+
+  .flow-node {
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+
+  .flow-node.dimmed {
+    opacity: 0.16;
+  }
+
+  .node-rect {
+    stroke-width: 1.5;
+    filter: drop-shadow(0 10px 20px rgba(24, 34, 45, 0.1));
+  }
+
+  .flow-node.selected .node-rect {
+    stroke-width: 3;
+    filter: drop-shadow(0 0 0 rgba(0,0,0,0)) drop-shadow(0 0 16px rgba(35, 78, 161, 0.28));
+  }
+
+  .flow-node:hover .node-rect {
+    transform: translateY(-1px);
+  }
+
+  .node-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    fill: var(--ink);
+  }
+
+  .node-kind,
+  .node-lane {
+    font-size: 10px;
+    fill: #516170;
+  }
+
+  .node-source-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .matrix-shell {
+    padding: 8px 12px 16px;
+  }
+
+  .matrix-wrap {
+    overflow-x: auto;
+    padding: 4px 4px 10px;
+  }
+
+  table.matrix {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 8px;
+    min-width: 860px;
+  }
+
+  .matrix th {
+    text-align: left;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+    padding: 0 10px 6px;
+  }
+
+  .matrix td {
+    vertical-align: top;
+    padding: 0 8px;
+  }
+
+  .lane-label {
+    min-width: 270px;
+    padding: 12px 14px;
+    background: rgba(255, 252, 247, 0.88);
+    border: 1px solid rgba(24, 34, 45, 0.08);
+    border-radius: 14px;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .lane-label .lane-note {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.4;
+  }
+
+  .lane-cell {
+    min-width: 188px;
+    height: 100%;
+    background: rgba(255,255,255,0.82);
+    border: 1px solid rgba(24, 34, 45, 0.1);
+    border-radius: 14px;
+    padding: 12px 12px 10px;
+    cursor: pointer;
+    transition: 0.15s ease;
+  }
+
+  .lane-cell:hover {
+    transform: translateY(-1px);
+  }
+
+  .lane-cell.selected {
+    outline: 3px solid rgba(35, 78, 161, 0.18);
+  }
+
+  .lane-cell.dimmed {
+    opacity: 0.28;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 5px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .status-always-injected { background: rgba(20, 112, 106, 0.13); color: #0d645f; }
+  .status-conditionally-injected { background: rgba(35, 78, 161, 0.12); color: #1e4489; }
+  .status-retrieval-gated { background: rgba(138, 62, 200, 0.12); color: #7537a8; }
+  .status-on-demand-tool-read { background: rgba(143, 93, 28, 0.12); color: #7b5118; }
+  .status-session-cached { background: rgba(111, 95, 45, 0.14); color: #625526; }
+  .status-ephemeral-only { background: rgba(179, 71, 25, 0.14); color: #96421b; }
+  .status-not-used { background: rgba(91, 106, 120, 0.12); color: #516170; }
+
+  .lane-sources {
+    font-size: 12px;
+    line-height: 1.45;
+    color: #2f3d4a;
+  }
+
+  .lane-sources strong {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .mismatch-shell {
+    padding: 10px 12px 16px;
+  }
+
+  #mismatch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+  }
+
+  .mismatch-card {
+    border-radius: 16px;
+    border: 1px solid rgba(160, 47, 47, 0.18);
+    background: linear-gradient(180deg, rgba(255, 248, 246, 0.96), rgba(255, 242, 238, 0.92));
+    padding: 14px 15px;
+    cursor: pointer;
+    transition: 0.15s ease;
+  }
+
+  .mismatch-card:hover {
+    transform: translateY(-1px);
+  }
+
+  .mismatch-card.selected {
+    outline: 3px solid rgba(160, 47, 47, 0.14);
+  }
+
+  .mismatch-card.dimmed {
+    opacity: 0.22;
+  }
+
+  .mismatch-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .mismatch-system {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--mismatch);
+  }
+
+  .severity {
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .severity-high { background: rgba(160, 47, 47, 0.13); color: var(--mismatch); }
+  .severity-medium { background: rgba(143, 93, 28, 0.13); color: #7b5118; }
+  .severity-low { background: rgba(91, 106, 120, 0.12); color: #516170; }
+
+  .mismatch-topic {
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    font-size: 18px;
+    margin: 0 0 8px;
+  }
+
+  .mismatch-lines {
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .mismatch-line strong {
+    display: inline-block;
+    min-width: 66px;
+    color: var(--mismatch);
+  }
+
+  .detail {
+    position: sticky;
+    top: 18px;
+    padding: 18px;
+    min-height: 620px;
+    max-height: calc(100vh - 38px);
+    overflow-y: auto;
+  }
+
+  .detail-kicker {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .detail-title {
+    margin: 6px 0 8px;
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    font-size: 28px;
+    line-height: 1.05;
+  }
+
+  .detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .meta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(24, 34, 45, 0.12);
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.8);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .detail-copy {
+    color: #2b3947;
+    line-height: 1.6;
+    font-size: 14px;
+  }
+
+  .detail-copy p {
+    margin: 0 0 12px;
+  }
+
+  .detail-copy h3 {
+    margin: 16px 0 8px;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .detail-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .detail-item {
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(24, 34, 45, 0.08);
+    background: rgba(255,255,255,0.8);
+    font-size: 13px;
+    line-height: 1.48;
+  }
+
+  .detail-item small {
+    display: block;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .evidence-item {
+    display: grid;
+    gap: 5px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(24, 34, 45, 0.08);
+    background: rgba(255,255,255,0.84);
+  }
+
+  .evidence-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .source-badge {
+    border-radius: 999px;
+    padding: 5px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .source-repo_code { background: rgba(24, 52, 74, 0.12); color: var(--repo); }
+  .source-official_docs, .source-repo_docs { background: rgba(134, 102, 40, 0.12); color: var(--docs); }
+  .source-mixed { background: rgba(94, 93, 114, 0.12); color: var(--mixed); }
+
+  .evidence-link {
+    word-break: break-word;
+    color: #234ea1;
+    text-decoration: none;
+    font-size: 12px;
+  }
+
+  .evidence-link:hover { text-decoration: underline; }
+
+  .comment-box {
+    margin-top: 18px;
+    border-top: 1px solid rgba(24, 34, 45, 0.08);
+    padding-top: 16px;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 84px;
+    border-radius: 14px;
+    border: 1px solid rgba(24, 34, 45, 0.14);
+    padding: 12px 13px;
+    background: rgba(255,255,255,0.84);
+    color: var(--ink);
+    font: inherit;
+    resize: vertical;
+  }
+
+  textarea:focus {
+    outline: none;
+    border-color: rgba(35, 78, 161, 0.4);
+    box-shadow: 0 0 0 4px rgba(35, 78, 161, 0.08);
+  }
+
+  .action-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+  }
+
+  .button {
+    border: 0;
+    border-radius: 999px;
+    padding: 9px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .button.primary {
+    background: var(--ink);
+    color: #fff;
+  }
+
+  .button.secondary {
+    background: rgba(24, 34, 45, 0.08);
+    color: var(--ink);
+  }
+
+  .comment-target {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .comment-entry {
+    position: relative;
+    padding: 11px 40px 11px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(24, 34, 45, 0.08);
+    background: rgba(255,255,255,0.82);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .comment-entry .delete {
+    position: absolute;
+    top: 9px;
+    right: 10px;
+    border: 0;
+    background: transparent;
+    color: var(--mismatch);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .prompt-panel {
+    margin: 18px 20px 20px;
+    padding: 18px;
+  }
+
+  .prompt-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .prompt-copy {
+    margin-top: 10px;
+    background: rgba(24, 34, 45, 0.05);
+    border: 1px solid rgba(24, 34, 45, 0.1);
+    border-radius: 16px;
+    padding: 16px 18px;
+    white-space: pre-wrap;
+    line-height: 1.6;
+    color: #283542;
+    font-size: 14px;
+  }
+
+  .copied-state {
+    color: var(--muted);
+    font-size: 12px;
+    align-self: center;
+  }
+
+  @media (max-width: 1180px) {
+    .main {
+      grid-template-columns: 1fr;
+    }
+
+    .detail {
+      position: static;
+      max-height: none;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .masthead,
+    .controls {
+      padding-left: 18px;
+      padding-right: 18px;
+    }
+
+    .main {
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    .control-label {
+      min-width: 100%;
+      margin-bottom: 2px;
+    }
+  }
+</style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="eyebrow">CYBERDYNE Playground / System Messaging Map</div>
+    <h1>fft_nano vs fft_nano vs hermes-agent</h1>
+    <div class="lede">
+      This playground maps how each system composes context, which workspace and markdown files affect it, where
+      runtime overlays enter, and how the final system message is handed to the agent or provider. The upper map
+      is the deterministic flow view. The lower matrix normalizes the same behavior into comparable context layers.
+    </div>
+    <div class="legend-row">
+      <div class="legend-pill"><span class="legend-dot" style="background:var(--fft)"></span>fft_nano</div>
+      <div class="legend-pill"><span class="legend-dot" style="background:var(--fft_nano)"></span>fft_nano</div>
+      <div class="legend-pill"><span class="legend-dot" style="background:var(--hermes)"></span>hermes-agent</div>
+      <div class="legend-pill"><span class="legend-dot" style="background:var(--repo)"></span>repo code evidence</div>
+      <div class="legend-pill"><span class="legend-dot" style="background:var(--docs)"></span>official docs evidence</div>
+      <div class="legend-pill"><span class="legend-dot" style="background:var(--mismatch)"></span>docs/code mismatch preserved</div>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="control-group" id="preset-controls">
+      <div class="control-label">Presets</div>
+    </div>
+    <div class="control-group" id="system-controls">
+      <div class="control-label">Systems</div>
+    </div>
+    <div class="control-group" id="edge-controls">
+      <div class="control-label">Flow Edges</div>
+    </div>
+  </section>
+
+  <main class="main">
+    <section class="preview-column">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">Flow Map</h2>
+          <div class="card-subtitle">
+            Nodes are ordered pipeline stages. Edge labels show how context moves: reads, injects, filters, retrieves,
+            caches, appends, and sends.
+          </div>
+        </div>
+        <div class="diagram-shell">
+          <div class="diagram-wrap">
+            <svg id="flow-svg" viewBox="0 0 1640 920" aria-label="System context flow map"></svg>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">Context Mapping Layer</h2>
+          <div class="card-subtitle">
+            This collapses the runtime details into stable comparison lanes so you can see what each system injects,
+            defers to tools, gates behind retrieval, or caches across turns.
+          </div>
+        </div>
+        <div class="matrix-shell">
+          <div class="matrix-wrap">
+            <table class="matrix" id="context-matrix"></table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">Docs vs Code Mismatches</h2>
+          <div class="card-subtitle">
+            Mismatch cards stay explicit. They are not folded into a bland summary, so the artifact remains useful for
+            debugging or review.
+          </div>
+        </div>
+        <div class="mismatch-shell">
+          <div id="mismatch-grid"></div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="card detail" id="detail-panel">
+      <div id="detail-content"></div>
+    </aside>
+  </main>
+
+  <section class="card prompt-panel">
+    <div class="prompt-head">
+      <div>
+        <div class="detail-kicker">Prompt Output</div>
+        <h2 class="card-title" style="margin-top:6px;">Copyable Research Prompt</h2>
+        <div class="card-subtitle">
+          This stays in natural language, mentions only the currently visible systems and emphasis areas, and folds in your comments.
+        </div>
+      </div>
+      <div class="copied-state" id="copy-state">ready</div>
+    </div>
+    <div class="prompt-copy" id="prompt-text"></div>
+    <div class="action-row" style="justify-content:flex-end;">
+      <button class="button primary" id="copy-prompt-btn">Copy Prompt</button>
+    </div>
+  </section>
+
+<script>
+(() => {
+  const systems = [
+    {
+      id: 'fft_nano',
+      name: 'fft_nano',
+      summary: 'Host-built system prompt with explicit main/non-main branches, retrieval-gated memory context, and pi CLI delivery through --append-system-prompt.',
+      workspaceRoot: '~/nano plus groups/<group>',
+      promptOwner: 'FFT_nano host runtime',
+      deliveryMode: 'pi CLI argument: --append-system-prompt',
+      color: 'var(--fft)'
+    },
+    {
+      id: 'fft_nano',
+      name: 'fft_nano',
+      summary: 'fft_nano-owned prompt with bootstrap-file loading, hookable mutation, prompt modes, compact skills catalog injection, and embedded session overrides.',
+      workspaceRoot: '~/.fft_nano/workspace',
+      promptOwner: 'fft_nano runtime',
+      deliveryMode: 'system prompt override applied to embedded pi session',
+      color: 'var(--fft_nano)'
+    },
+    {
+      id: 'hermes-agent',
+      name: 'hermes-agent',
+      summary: 'Session-cached system prompt anchored by SOUL.md identity, optional memory blocks, prioritized project context, and API-call-time ephemeral overlays.',
+      workspaceRoot: 'HERMES_HOME (~/.hermes) plus current project cwd',
+      promptOwner: 'AIAgent in run_agent.py',
+      deliveryMode: 'prepends role=system before provider API call',
+      color: 'var(--hermes)'
+    }
+  ];
+
+  const layers = [
+    { id: 'identity', label: 'Identity / Persona', note: 'Who the agent is by default, including persona files and base identity text.' },
+    { id: 'user-profile', label: 'User / Operator Profile', note: 'Profile, operator, or owner data that influences tone or continuity.' },
+    { id: 'rules', label: 'Behavior Rules / Operating Policy', note: 'Host guidance, rules files, safety blocks, and operating instructions.' },
+    { id: 'workspace', label: 'Workspace Project Context', note: 'Injected project files, bootstrap files, or discovered project instructions.' },
+    { id: 'memory', label: 'Durable Memory', note: 'Long-lived memory files, retrieval gates, memory prompt sections, and memory tools.' },
+    { id: 'skills', label: 'Skills Metadata / Skill Loading', note: 'Skill catalogs, skill discovery, and whether skill bodies are auto-injected or read on demand.' },
+    { id: 'session-context', label: 'Session / Channel Runtime Context', note: 'Chat metadata, channel binding, sender context, session-specific runtime fields.' },
+    { id: 'ephemeral', label: 'Ephemeral Overlays / Per-run Additions', note: 'Context added for a single run only, such as onboarding, heartbeat, or extra system prompt overlays.' },
+    { id: 'delivery', label: 'Delivery / Provider Handoff', note: 'How the built system prompt crosses into pi or the provider payload.' },
+    { id: 'caching', label: 'Caching / Reuse / Compaction', note: 'Prompt reuse, cache stability, snapshot reuse, or compaction-related behavior.' }
+  ];
+
+  const evidence = [
+    {
+      id: 'fft_agents_md',
+      kind: 'file',
+      label: 'fft_nano AGENTS.md',
+      pathOrUrl: '/Users/scrimwiggins/fft_nano/AGENTS.md',
+      sourceClass: 'repo_docs'
+    },
+    {
+      id: 'fft_workspace_bootstrap',
+      kind: 'file',
+      label: 'src/workspace-bootstrap.ts (seeded files and defaults)',
+      pathOrUrl: '/Users/scrimwiggins/fft_nano/src/workspace-bootstrap.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'fft_system_prompt',
+      kind: 'file',
+      label: 'src/system-prompt.ts (context order, branches, prompt sections)',
+      pathOrUrl: '/Users/scrimwiggins/fft_nano/src/system-prompt.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'fft_pi_runner',
+      kind: 'file',
+      label: 'src/pi-runner.ts (memory gate, buildSystemPrompt, --append-system-prompt)',
+      pathOrUrl: '/Users/scrimwiggins/fft_nano/src/pi-runner.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'fft_memory_retrieval',
+      kind: 'file',
+      label: 'src/memory-retrieval.ts (chunking and scored memory context)',
+      pathOrUrl: '/Users/scrimwiggins/fft_nano/src/memory-retrieval.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'fft_index_onboarding',
+      kind: 'file',
+      label: 'src/index.ts (onboarding interview overlay)',
+      pathOrUrl: '/Users/scrimwiggins/fft_nano/src/index.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'fft_parity_config',
+      kind: 'file',
+      label: 'src/parity-config.ts (heartbeat prompt defaults)',
+      pathOrUrl: '/Users/scrimwiggins/fft_nano/src/parity-config.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'oc_docs_system_prompt',
+      kind: 'doc',
+      label: 'fft_nano docs: System Prompt',
+      pathOrUrl: 'https://docs.fft_nano.ai/concepts/system-prompt',
+      sourceClass: 'official_docs'
+    },
+    {
+      id: 'oc_docs_workspace',
+      kind: 'doc',
+      label: 'fft_nano docs: Agent Workspace',
+      pathOrUrl: 'https://docs.fft_nano.ai/concepts/agent-workspace',
+      sourceClass: 'official_docs'
+    },
+    {
+      id: 'oc_docs_memory',
+      kind: 'doc',
+      label: 'fft_nano docs: Memory',
+      pathOrUrl: 'https://docs.fft_nano.ai/concepts/memory',
+      sourceClass: 'official_docs'
+    },
+    {
+      id: 'oc_workspace_code',
+      kind: 'file',
+      label: 'fft_nano src/agents/workspace.ts (bootstrap loading and subagent filter)',
+      pathOrUrl: 'https://github.com/fft_nano/fft_nano/blob/main/src/agents/workspace.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'oc_bootstrap_files_code',
+      kind: 'file',
+      label: 'fft_nano src/agents/bootstrap-files.ts (context-mode and hook resolution)',
+      pathOrUrl: 'https://github.com/fft_nano/fft_nano/blob/main/src/agents/bootstrap-files.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'oc_bootstrap_trim_code',
+      kind: 'file',
+      label: 'fft_nano src/agents/pi-embedded-helpers/bootstrap.ts (truncation and missing markers)',
+      pathOrUrl: 'https://github.com/fft_nano/fft_nano/blob/main/src/agents/pi-embedded-helpers/bootstrap.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'oc_system_prompt_code',
+      kind: 'file',
+      label: 'fft_nano src/agents/system-prompt.ts (hardcoded sections and Project Context injection)',
+      pathOrUrl: 'https://github.com/fft_nano/fft_nano/blob/main/src/agents/system-prompt.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'oc_embedded_prompt_code',
+      kind: 'file',
+      label: 'fft_nano src/agents/pi-embedded-runner/system-prompt.ts (system prompt override into session)',
+      pathOrUrl: 'https://github.com/fft_nano/fft_nano/blob/main/src/agents/pi-embedded-runner/system-prompt.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'oc_skills_code',
+      kind: 'file',
+      label: 'fft_nano src/agents/skills/workspace.ts (skills prompt and compact catalog)',
+      pathOrUrl: 'https://github.com/fft_nano/fft_nano/blob/main/src/agents/skills/workspace.ts',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'hermes_prompt_builder',
+      kind: 'file',
+      label: 'agent/prompt_builder.py (SOUL loader and project context priority)',
+      pathOrUrl: '/Users/scrimwiggins/hermes-agent/agent/prompt_builder.py',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'hermes_run_agent',
+      kind: 'file',
+      label: 'run_agent.py (_build_system_prompt layering and cache reuse)',
+      pathOrUrl: '/Users/scrimwiggins/hermes-agent/run_agent.py',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'hermes_gateway_session',
+      kind: 'file',
+      label: 'gateway/session.py (dynamic session context prompt)',
+      pathOrUrl: '/Users/scrimwiggins/hermes-agent/gateway/session.py',
+      sourceClass: 'repo_code'
+    },
+    {
+      id: 'hermes_agents_md',
+      kind: 'file',
+      label: 'hermes-agent AGENTS.md (slash commands and prompt-caching rationale)',
+      pathOrUrl: '/Users/scrimwiggins/hermes-agent/AGENTS.md',
+      sourceClass: 'repo_docs'
+    },
+    {
+      id: 'hermes_cli_config',
+      kind: 'file',
+      label: 'cli-config.yaml.example (memory settings and reset policy)',
+      pathOrUrl: '/Users/scrimwiggins/hermes-agent/cli-config.yaml.example',
+      sourceClass: 'repo_docs'
+    }
+  ];
+
+  const notes = [
+    {
+      id: 'fft_branch_note',
+      systemId: 'fft_nano',
+      topic: 'main vs non-main branch',
+      text: 'fft_nano does not inject one universal workspace file bundle. Main sessions load the full bootstrap order plus today/yesterday daily memory files, while non-main sessions prefer global/group SOUL and optional MEMORY fallback.',
+      severity: 'medium',
+      evidenceIds: ['fft_system_prompt', 'fft_agents_md'],
+      relatedNodeIds: ['fft_main_files', 'fft_non_main_files']
+    },
+    {
+      id: 'fft_overlay_note',
+      systemId: 'fft_nano',
+      topic: 'ephemeral overlays stay host-side',
+      text: 'Heartbeat and onboarding overlays are generated by the host before pi runs. They are not durable workspace files, but they still become part of the effective system prompt for that run.',
+      severity: 'low',
+      evidenceIds: ['fft_index_onboarding', 'fft_parity_config'],
+      relatedNodeIds: ['fft_overlays', 'fft_build_prompt']
+    },
+    {
+      id: 'oc_hook_note',
+      systemId: 'fft_nano',
+      topic: 'bootstrap files are hookable',
+      text: 'fft_nano allows internal hooks to mutate the bootstrap file set before prompt injection. That means the visible workspace files are only the pre-hook snapshot, not necessarily the exact final prompt context.',
+      severity: 'medium',
+      evidenceIds: ['oc_bootstrap_files_code', 'oc_docs_system_prompt'],
+      relatedNodeIds: ['oc_hooks', 'oc_build_context']
+    },
+    {
+      id: 'hermes_priority_note',
+      systemId: 'hermes-agent',
+      topic: 'project context source is exclusive',
+      text: 'Hermes does not merge every project instruction format. It chooses the first matching source in a fixed priority order: .hermes.md, then AGENTS.md, then CLAUDE.md, then .cursorrules.',
+      severity: 'medium',
+      evidenceIds: ['hermes_prompt_builder', 'hermes_run_agent'],
+      relatedNodeIds: ['hermes_project_context']
+    },
+    {
+      id: 'hermes_cache_note',
+      systemId: 'hermes-agent',
+      topic: 'cache stability drives delivery behavior',
+      text: 'Hermes explicitly separates cached base prompt content from ephemeral overlays so Anthropic prefix caching remains stable across turns and session reloads.',
+      severity: 'low',
+      evidenceIds: ['hermes_run_agent'],
+      relatedNodeIds: ['hermes_system_builder', 'hermes_cache', 'hermes_ephemeral']
+    }
+  ];
+
+  const mismatchNotes = [
+    {
+      id: 'oc_subagent_docs_mismatch',
+      systemId: 'fft_nano',
+      topic: 'Subagent bootstrap file scope',
+      docsClaim: 'fft_nano docs say sub-agent sessions only inject AGENTS.md and TOOLS.md to keep sub-agent context small.',
+      codeClaim: 'Current workspace.ts filter allowlist for subagent and cron session keys still retains SOUL.md, IDENTITY.md, and USER.md before any extra lightweight context-mode filtering runs.',
+      severity: 'high',
+      evidenceIds: ['oc_docs_system_prompt', 'oc_workspace_code'],
+      relatedNodeIds: ['oc_filter_session']
+    },
+    {
+      id: 'fft_daily_memory_gap',
+      systemId: 'fft_nano',
+      topic: 'Daily memory injection emphasis',
+      docsClaim: 'Repo docs emphasize canonical MEMORY.md plus memory/*.md, but they do not foreground that main-session prompt injection also pulls today and yesterday daily memory files directly into Project Context.',
+      codeClaim: 'system-prompt.ts explicitly appends memory/<today>.md and memory/<yesterday>.md for main runs, subject to budget caps.',
+      severity: 'low',
+      evidenceIds: ['fft_agents_md', 'fft_system_prompt'],
+      relatedNodeIds: ['fft_main_files']
+    },
+    {
+      id: 'hermes_memory_enablement_gap',
+      systemId: 'hermes-agent',
+      topic: 'Memory docs vs effective prompt',
+      docsClaim: 'Config docs describe MEMORY.md and USER.md as bounded curated memory injected into the system prompt every session.',
+      codeClaim: 'run_agent.py only injects memory and user blocks when memory features are enabled and the memory store is available, so the behavior is configuration-conditional rather than unconditional.',
+      severity: 'medium',
+      evidenceIds: ['hermes_cli_config', 'hermes_run_agent'],
+      relatedNodeIds: ['hermes_memory', 'hermes_system_builder']
+    }
+  ];
+
+  const nodes = [
+    {
+      id: 'fft_bootstrap',
+      systemId: 'fft_nano',
+      label: 'Workspace Bootstrap Seeds',
+      kind: 'source',
+      lane: 'workspace',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_workspace_bootstrap', 'fft_agents_md'],
+      x: 170, y: 108, w: 176, h: 86,
+      flowRole: 'Seeds the main workspace contract.',
+      codeSummary: 'src/workspace-bootstrap.ts seeds AGENTS.md, SOUL.md, USER.md, IDENTITY.md, PRINCIPLES.md, TOOLS.md, HEARTBEAT.md, BOOT.md, BOOTSTRAP.md, and MEMORY.md when missing.',
+      docsSummary: 'Repo docs describe the main workspace as the durable context root and define MEMORY.md as canonical durable memory while SOUL.md stays stable.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'fft_main_files',
+      systemId: 'fft_nano',
+      label: 'Main Injected Files',
+      kind: 'builder',
+      lane: 'workspace',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_system_prompt'],
+      x: 392, y: 82, w: 196, h: 104,
+      flowRole: 'Main-session project context branch.',
+      codeSummary: 'Main runs inject AGENTS.md, SOUL.md, USER.md, IDENTITY.md, PRINCIPLES.md, TOOLS.md, HEARTBEAT.md, BOOTSTRAP.md, MEMORY.md, then memory/<today>.md and memory/<yesterday>.md subject to file and total budgets.',
+      docsSummary: 'This is the broadest fft_nano context path and the reason main sessions feel more stateful than group sessions.',
+      relatedMismatchIds: ['fft_daily_memory_gap']
+    },
+    {
+      id: 'fft_non_main_files',
+      systemId: 'fft_nano',
+      label: 'Non-main Injected Files',
+      kind: 'builder',
+      lane: 'workspace',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_system_prompt'],
+      x: 392, y: 210, w: 196, h: 104,
+      flowRole: 'Non-main and group context branch.',
+      codeSummary: 'Non-main runs inject global/SOUL.md, group/SOUL.md, and only add global/group MEMORY fallback when retrieval-gated memory context is absent.',
+      docsSummary: 'This branch keeps group contexts smaller and preserves the global/group memory split instead of mirroring the main workspace contract.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'fft_memory_gate',
+      systemId: 'fft_nano',
+      label: 'Retrieval-gated Memory Context',
+      kind: 'retriever',
+      lane: 'memory',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_pi_runner', 'fft_memory_retrieval'],
+      x: 642, y: 146, w: 196, h: 102,
+      flowRole: 'Optional scored memory overlay.',
+      codeSummary: 'pi-runner calls getMemoryBackend().buildContext() before building the system prompt. memory-retrieval.ts chunks MEMORY.md and all memory/*.md files, scores lexical overlap, and injects the top snippets into memoryContext.',
+      docsSummary: 'fft_nano memory context is not purely static file injection. The host can synthesize a smaller retrieval result and insert that separately.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'fft_overlays',
+      systemId: 'fft_nano',
+      label: 'Heartbeat / Onboarding Overlays',
+      kind: 'overlay',
+      lane: 'ephemeral',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_index_onboarding', 'fft_parity_config'],
+      x: 642, y: 268, w: 196, h: 88,
+      flowRole: 'Per-run host overlays.',
+      codeSummary: 'Heartbeat uses a dedicated HEARTBEAT prompt. Onboarding mode prepends an interview overlay that references BOOTSTRAP.md and updates USER.md, IDENTITY.md, SOUL.md, PRINCIPLES.md, and TOOLS.md.',
+      docsSummary: 'These overlays are not durable workspace files, but they still change what the model sees in a given run.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'fft_build_prompt',
+      systemId: 'fft_nano',
+      label: 'buildSystemPrompt()',
+      kind: 'builder',
+      lane: 'rules',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_system_prompt'],
+      x: 896, y: 146, w: 210, h: 124,
+      flowRole: 'Host-owned prompt composition.',
+      codeSummary: 'buildSystemPrompt() adds safety, inbound metadata JSON, tooling, workspace rules, runtime hints, messaging IPC, scheduler IPC, output style, injected workspace files, retrieved memory context, and heartbeat behavior.',
+      docsSummary: 'fft_nano keeps the system prompt host-owned instead of delegating prompt ownership to pi.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'fft_pi_runner_node',
+      systemId: 'fft_nano',
+      label: 'pi-runner handoff',
+      kind: 'runtime',
+      lane: 'delivery',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_pi_runner'],
+      x: 1162, y: 146, w: 186, h: 96,
+      flowRole: 'Turns host prompt into pi invocation args.',
+      codeSummary: 'pi-runner resolves workspace paths, syncs skills, builds prompt reports, and prepares pi args with provider/model/tool settings.',
+      docsSummary: 'This is the final host-controlled stage before the prompt leaves fft_nano and enters the agent runtime.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'fft_append_system',
+      systemId: 'fft_nano',
+      label: '--append-system-prompt',
+      kind: 'provider',
+      lane: 'delivery',
+      sourceType: 'repo_code',
+      evidenceIds: ['fft_pi_runner'],
+      x: 1402, y: 146, w: 176, h: 82,
+      flowRole: 'Actual delivery point.',
+      codeSummary: 'buildPiArgs() passes the final prompt into pi with the explicit --append-system-prompt CLI argument.',
+      docsSummary: 'fft_nano delivery is argument-based rather than a session-level system prompt override.',
+      relatedMismatchIds: []
+    },
+
+    {
+      id: 'oc_workspace_root',
+      systemId: 'fft_nano',
+      label: 'Workspace Bootstrap Files',
+      kind: 'source',
+      lane: 'workspace',
+      sourceType: 'mixed',
+      evidenceIds: ['oc_docs_workspace', 'oc_workspace_code'],
+      x: 170, y: 398, w: 186, h: 94,
+      flowRole: 'Root bootstrap source set.',
+      codeSummary: 'workspace.ts loads AGENTS.md, SOUL.md, TOOLS.md, IDENTITY.md, USER.md, HEARTBEAT.md, BOOTSTRAP.md, and MEMORY.md or memory.md fallback from the workspace root.',
+      docsSummary: 'Agent Workspace docs describe the default root as ~/.fft_nano/workspace and define the expected bootstrap files there.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'oc_load_bootstrap',
+      systemId: 'fft_nano',
+      label: 'loadWorkspaceBootstrapFiles()',
+      kind: 'builder',
+      lane: 'workspace',
+      sourceType: 'repo_code',
+      evidenceIds: ['oc_workspace_code'],
+      x: 404, y: 398, w: 196, h: 96,
+      flowRole: 'Reads bootstrap files with missing markers.',
+      codeSummary: 'The loader resolves the workspace, reads each expected file with guardrails, and records missing markers instead of aborting the run.',
+      docsSummary: 'fft_nano tolerates partial workspaces by injecting missing-file markers rather than failing hard.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'oc_filter_session',
+      systemId: 'fft_nano',
+      label: 'Session / Run Filters',
+      kind: 'filter',
+      lane: 'workspace',
+      sourceType: 'mixed',
+      evidenceIds: ['oc_workspace_code', 'oc_bootstrap_files_code', 'oc_docs_system_prompt'],
+      x: 646, y: 398, w: 202, h: 118,
+      flowRole: 'Reduces bootstrap scope for subagents, cron, and lightweight runs.',
+      codeSummary: 'workspace.ts filters bootstrap files for subagent and cron session keys. bootstrap-files.ts can further reduce lightweight runs to HEARTBEAT.md only or to an empty set.',
+      docsSummary: 'System Prompt docs say sub-agents only inject AGENTS.md and TOOLS.md, while lightweight mode is described as a smaller prompt mode for sub-agents.',
+      relatedMismatchIds: ['oc_subagent_docs_mismatch']
+    },
+    {
+      id: 'oc_hooks',
+      systemId: 'fft_nano',
+      label: 'agent:bootstrap Hook Overrides',
+      kind: 'overlay',
+      lane: 'ephemeral',
+      sourceType: 'mixed',
+      evidenceIds: ['oc_bootstrap_files_code', 'oc_docs_system_prompt'],
+      x: 646, y: 540, w: 202, h: 88,
+      flowRole: 'Mutates bootstrap context after filtering.',
+      codeSummary: 'applyBootstrapHookOverrides() passes the resolved file set through the internal agent:bootstrap hook before prompt embedding.',
+      docsSummary: 'fft_nano docs explicitly call out this hook as a way to replace or mutate injected bootstrap files.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'oc_build_context',
+      systemId: 'fft_nano',
+      label: 'buildBootstrapContextFiles()',
+      kind: 'builder',
+      lane: 'workspace',
+      sourceType: 'repo_code',
+      evidenceIds: ['oc_bootstrap_trim_code', 'oc_bootstrap_files_code'],
+      x: 906, y: 430, w: 206, h: 110,
+      flowRole: 'Trims project context into prompt-sized embedded files.',
+      codeSummary: 'pi-embedded-helpers/bootstrap.ts truncates per-file content, enforces total prompt budget, and injects missing-file markers. bootstrap-files.ts packages the result as EmbeddedContextFile entries.',
+      docsSummary: 'This is the concrete stage that turns user-editable workspace files into Project Context under the system prompt.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'oc_skills',
+      systemId: 'fft_nano',
+      label: 'Skills Catalog Injection',
+      kind: 'builder',
+      lane: 'skills',
+      sourceType: 'mixed',
+      evidenceIds: ['oc_skills_code', 'oc_docs_system_prompt'],
+      x: 906, y: 564, w: 206, h: 94,
+      flowRole: 'Injects compact available_skills metadata, not full skill bodies.',
+      codeSummary: 'skills/workspace.ts builds a prompt-facing skills catalog, compacts paths, and falls back to a compact format when the full skill list exceeds budget.',
+      docsSummary: 'System Prompt docs say eligible skills are rendered as a compact available_skills block and the agent must read SKILL.md on demand.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'oc_system_prompt',
+      systemId: 'fft_nano',
+      label: 'buildAgentSystemPrompt()',
+      kind: 'builder',
+      lane: 'rules',
+      sourceType: 'mixed',
+      evidenceIds: ['oc_system_prompt_code', 'oc_docs_system_prompt'],
+      x: 1172, y: 430, w: 214, h: 126,
+      flowRole: 'fft_nano-owned system prompt wrapper.',
+      codeSummary: 'system-prompt.ts builds the hardcoded sections: Tooling, Safety, Skills, Workspace, Documentation, injected Workspace Files notice, Project Context, Heartbeats, Runtime, and promptMode-dependent omissions.',
+      docsSummary: 'fft_nano docs describe this prompt as fft_nano-owned and intentionally compact, with promptMode full, minimal, and none.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'oc_memory_tools',
+      systemId: 'fft_nano',
+      label: 'memory_search / memory_get',
+      kind: 'retriever',
+      lane: 'memory',
+      sourceType: 'mixed',
+      evidenceIds: ['oc_docs_memory', 'oc_docs_system_prompt'],
+      x: 1172, y: 584, w: 214, h: 88,
+      flowRole: 'On-demand daily memory access.',
+      codeSummary: 'Daily memory files are not injected into Project Context by default. They remain reachable via memory tools and plugin-backed recall behavior.',
+      docsSummary: 'Memory docs explicitly say memory/YYYY-MM-DD.md is on-demand, while MEMORY.md may be part of bootstrap injection.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'oc_delivery',
+      systemId: 'fft_nano',
+      label: 'System Prompt Override -> Session',
+      kind: 'provider',
+      lane: 'delivery',
+      sourceType: 'repo_code',
+      evidenceIds: ['oc_embedded_prompt_code'],
+      x: 1438, y: 430, w: 170, h: 94,
+      flowRole: 'Final embedded prompt handoff.',
+      codeSummary: 'pi-embedded-runner/system-prompt.ts builds the embedded system prompt, then applySystemPromptOverrideToSession() replaces the session base prompt so the embedded pi agent sees the fft_nano-owned version.',
+      docsSummary: 'This is the concrete override point behind the docs claim that fft_nano injects its own prompt into every agent run.',
+      relatedMismatchIds: []
+    },
+
+    {
+      id: 'hermes_soul',
+      systemId: 'hermes-agent',
+      label: 'SOUL.md Identity Slot',
+      kind: 'source',
+      lane: 'identity',
+      sourceType: 'repo_code',
+      evidenceIds: ['hermes_prompt_builder', 'hermes_run_agent'],
+      x: 170, y: 704, w: 186, h: 92,
+      flowRole: 'Primary identity source when present.',
+      codeSummary: 'load_soul_md() reads SOUL.md from HERMES_HOME and run_agent.py uses it as slot 1 in the system prompt. If missing, Hermes falls back to DEFAULT_AGENT_IDENTITY.',
+      docsSummary: 'Hermes treats SOUL.md as the identity anchor, not as an arbitrary project note file.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'hermes_session_context',
+      systemId: 'hermes-agent',
+      label: 'build_session_context_prompt()',
+      kind: 'overlay',
+      lane: 'session-context',
+      sourceType: 'repo_code',
+      evidenceIds: ['hermes_gateway_session'],
+      x: 388, y: 704, w: 206, h: 108,
+      flowRole: 'Dynamic gateway-side chat context.',
+      codeSummary: 'gateway/session.py builds a Current Session Context section that includes source chat, connected platforms, home channels, delivery targets, and platform-specific behavioral notes.',
+      docsSummary: 'This is separate from file-based project context and only exists for gateway-bound sessions.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'hermes_memory',
+      systemId: 'hermes-agent',
+      label: 'MemoryStore + USER.md',
+      kind: 'retriever',
+      lane: 'memory',
+      sourceType: 'mixed',
+      evidenceIds: ['hermes_run_agent', 'hermes_cli_config'],
+      x: 642, y: 676, w: 194, h: 102,
+      flowRole: 'Optional persistent memory blocks.',
+      codeSummary: 'run_agent.py loads MemoryStore from disk and only appends memory and user blocks when memory features are enabled and data is available.',
+      docsSummary: 'cli-config.yaml.example describes MEMORY.md and USER.md as bounded curated memory injected into the system prompt, but actual behavior is configuration-gated.',
+      relatedMismatchIds: ['hermes_memory_enablement_gap']
+    },
+    {
+      id: 'hermes_project_context',
+      systemId: 'hermes-agent',
+      label: 'Project Context Priority Loader',
+      kind: 'filter',
+      lane: 'workspace',
+      sourceType: 'repo_code',
+      evidenceIds: ['hermes_prompt_builder'],
+      x: 642, y: 804, w: 194, h: 98,
+      flowRole: 'Chooses one project instruction source.',
+      codeSummary: 'build_context_files_prompt() walks a priority chain: .hermes.md, then AGENTS.md, then CLAUDE.md, then .cursorrules. It injects only the first matching project-context source.',
+      docsSummary: 'Hermes favors prompt-cache stability and deterministic project context over broad file merging.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'hermes_system_builder',
+      systemId: 'hermes-agent',
+      label: '_build_system_prompt()',
+      kind: 'builder',
+      lane: 'rules',
+      sourceType: 'repo_code',
+      evidenceIds: ['hermes_run_agent', 'hermes_agents_md'],
+      x: 894, y: 704, w: 224, h: 122,
+      flowRole: 'Assembles cached base prompt.',
+      codeSummary: 'run_agent.py layers SOUL identity, tool-aware guidance, Honcho memory instructions, system_message, memory blocks, skills guidance, prioritized project context, timestamp, model/provider lines, and platform-specific hints.',
+      docsSummary: 'AGENTS.md emphasizes prompt-caching discipline and notes that some skill slash commands are injected as user messages rather than system prompt text.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'hermes_cache',
+      systemId: 'hermes-agent',
+      label: 'Session Prompt Cache',
+      kind: 'cache',
+      lane: 'caching',
+      sourceType: 'repo_code',
+      evidenceIds: ['hermes_run_agent'],
+      x: 1168, y: 680, w: 186, h: 94,
+      flowRole: 'Reuses stable base prompt across turns.',
+      codeSummary: 'Hermes stores the system prompt snapshot in the session DB and reuses it on continuing sessions to preserve Anthropic prefix cache stability.',
+      docsSummary: 'Prompt caching is a first-class delivery concern, not a side effect.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'hermes_ephemeral',
+      systemId: 'hermes-agent',
+      label: 'Ephemeral System Prompt Additions',
+      kind: 'overlay',
+      lane: 'ephemeral',
+      sourceType: 'repo_code',
+      evidenceIds: ['hermes_run_agent'],
+      x: 1168, y: 804, w: 186, h: 94,
+      flowRole: 'API-call-time additions only.',
+      codeSummary: 'ephemeral_system_prompt is appended only when building the outbound API payload. It is intentionally excluded from the cached prompt snapshot and session DB.',
+      docsSummary: 'Hermes keeps one stable base prompt and a separate run-time overlay channel.',
+      relatedMismatchIds: []
+    },
+    {
+      id: 'hermes_delivery',
+      systemId: 'hermes-agent',
+      label: 'api_messages[0] = role: system',
+      kind: 'provider',
+      lane: 'delivery',
+      sourceType: 'repo_code',
+      evidenceIds: ['hermes_run_agent'],
+      x: 1412, y: 732, w: 182, h: 98,
+      flowRole: 'Final provider payload handoff.',
+      codeSummary: 'At API-call time Hermes prepends the effective system prompt as the first system message, then optionally inserts ephemeral prefill messages after it.',
+      docsSummary: 'Hermes delivery is payload-based rather than CLI-argument based.',
+      relatedMismatchIds: []
+    }
+  ];
+
+  const edges = [
+    { from: 'fft_bootstrap', to: 'fft_main_files', label: 'reads', edgeKind: 'reads', conditional: false, evidenceIds: ['fft_workspace_bootstrap', 'fft_system_prompt'] },
+    { from: 'fft_bootstrap', to: 'fft_non_main_files', label: 'reads', edgeKind: 'reads', conditional: false, evidenceIds: ['fft_workspace_bootstrap', 'fft_system_prompt'] },
+    { from: 'fft_main_files', to: 'fft_build_prompt', label: 'injects', edgeKind: 'injects', conditional: false, evidenceIds: ['fft_system_prompt'] },
+    { from: 'fft_non_main_files', to: 'fft_build_prompt', label: 'injects', edgeKind: 'injects', conditional: true, evidenceIds: ['fft_system_prompt'] },
+    { from: 'fft_memory_gate', to: 'fft_build_prompt', label: 'retrieves', edgeKind: 'retrieves', conditional: true, evidenceIds: ['fft_pi_runner', 'fft_memory_retrieval'] },
+    { from: 'fft_overlays', to: 'fft_build_prompt', label: 'appends', edgeKind: 'appends', conditional: true, evidenceIds: ['fft_index_onboarding', 'fft_parity_config'] },
+    { from: 'fft_build_prompt', to: 'fft_pi_runner_node', label: 'sends', edgeKind: 'sends', conditional: false, evidenceIds: ['fft_system_prompt', 'fft_pi_runner'] },
+    { from: 'fft_pi_runner_node', to: 'fft_append_system', label: 'appends', edgeKind: 'appends', conditional: false, evidenceIds: ['fft_pi_runner'] },
+
+    { from: 'oc_workspace_root', to: 'oc_load_bootstrap', label: 'reads', edgeKind: 'reads', conditional: false, evidenceIds: ['oc_workspace_code'] },
+    { from: 'oc_load_bootstrap', to: 'oc_filter_session', label: 'filters', edgeKind: 'filters', conditional: true, evidenceIds: ['oc_workspace_code', 'oc_bootstrap_files_code'] },
+    { from: 'oc_filter_session', to: 'oc_hooks', label: 'appends', edgeKind: 'appends', conditional: true, evidenceIds: ['oc_bootstrap_files_code'] },
+    { from: 'oc_filter_session', to: 'oc_build_context', label: 'injects', edgeKind: 'injects', conditional: false, evidenceIds: ['oc_bootstrap_files_code', 'oc_bootstrap_trim_code'] },
+    { from: 'oc_hooks', to: 'oc_build_context', label: 'injects', edgeKind: 'injects', conditional: true, evidenceIds: ['oc_bootstrap_files_code'] },
+    { from: 'oc_skills', to: 'oc_system_prompt', label: 'injects', edgeKind: 'injects', conditional: true, evidenceIds: ['oc_skills_code', 'oc_system_prompt_code'] },
+    { from: 'oc_build_context', to: 'oc_system_prompt', label: 'injects', edgeKind: 'injects', conditional: false, evidenceIds: ['oc_system_prompt_code', 'oc_bootstrap_trim_code'] },
+    { from: 'oc_memory_tools', to: 'oc_system_prompt', label: 'retrieves', edgeKind: 'retrieves', conditional: true, evidenceIds: ['oc_docs_memory', 'oc_docs_system_prompt'] },
+    { from: 'oc_system_prompt', to: 'oc_delivery', label: 'sends', edgeKind: 'sends', conditional: false, evidenceIds: ['oc_embedded_prompt_code', 'oc_system_prompt_code'] },
+
+    { from: 'hermes_soul', to: 'hermes_system_builder', label: 'injects', edgeKind: 'injects', conditional: true, evidenceIds: ['hermes_prompt_builder', 'hermes_run_agent'] },
+    { from: 'hermes_session_context', to: 'hermes_system_builder', label: 'appends', edgeKind: 'appends', conditional: true, evidenceIds: ['hermes_gateway_session'] },
+    { from: 'hermes_memory', to: 'hermes_system_builder', label: 'injects', edgeKind: 'injects', conditional: true, evidenceIds: ['hermes_run_agent', 'hermes_cli_config'] },
+    { from: 'hermes_project_context', to: 'hermes_system_builder', label: 'filters', edgeKind: 'filters', conditional: false, evidenceIds: ['hermes_prompt_builder', 'hermes_run_agent'] },
+    { from: 'hermes_system_builder', to: 'hermes_cache', label: 'caches', edgeKind: 'caches', conditional: true, evidenceIds: ['hermes_run_agent'] },
+    { from: 'hermes_cache', to: 'hermes_delivery', label: 'sends', edgeKind: 'sends', conditional: false, evidenceIds: ['hermes_run_agent'] },
+    { from: 'hermes_ephemeral', to: 'hermes_delivery', label: 'appends', edgeKind: 'appends', conditional: true, evidenceIds: ['hermes_run_agent'] }
+  ];
+
+  const contextLayerEntries = [
+    { systemId: 'fft_nano', lane: 'identity', status: 'conditionally injected', sources: ['SOUL.md always appears in some branch; IDENTITY.md only in main branch.'], notes: 'Main loads SOUL.md plus IDENTITY.md. Non-main leans on global/group SOUL.md instead of a full identity profile.', evidenceIds: ['fft_system_prompt', 'fft_workspace_bootstrap'] },
+    { systemId: 'fft_nano', lane: 'user-profile', status: 'conditionally injected', sources: ['USER.md is injected in the main branch only.'], notes: 'Non-main runs do not inherit the same USER.md path as the main workspace.', evidenceIds: ['fft_system_prompt', 'fft_workspace_bootstrap'] },
+    { systemId: 'fft_nano', lane: 'rules', status: 'always injected', sources: ['Safety section', 'Inbound metadata JSON', 'Workspace and IPC guidance'], notes: 'Even without workspace files, host-authored rules remain part of every built prompt.', evidenceIds: ['fft_system_prompt'] },
+    { systemId: 'fft_nano', lane: 'workspace', status: 'always injected', sources: ['Main bootstrap order or non-main global/group branch'], notes: 'The exact file set changes by branch, but some workspace context is always part of the host prompt.', evidenceIds: ['fft_system_prompt', 'fft_workspace_bootstrap'] },
+    { systemId: 'fft_nano', lane: 'memory', status: 'retrieval-gated', sources: ['Scored memoryContext snippets', 'Main branch MEMORY.md and daily files'], notes: 'fft_nano mixes direct file injection for main sessions with a retrieval-gated memory overlay built before prompt composition.', evidenceIds: ['fft_pi_runner', 'fft_memory_retrieval', 'fft_system_prompt'] },
+    { systemId: 'fft_nano', lane: 'skills', status: 'not used', sources: ['Skills are synced into pi home rather than cataloged in host prompt text.'], notes: 'The host prompt does not inject an available_skills catalog.', evidenceIds: ['fft_pi_runner'] },
+    { systemId: 'fft_nano', lane: 'session-context', status: 'always injected', sources: ['fft_nano.input_meta.v1 JSON'], notes: 'Chat JID, group folder, request id, provider/model overrides, and run mode are embedded by the host.', evidenceIds: ['fft_system_prompt'] },
+    { systemId: 'fft_nano', lane: 'ephemeral', status: 'ephemeral only', sources: ['Heartbeat prompt', 'Onboarding interview mode', 'extraSystemPrompt'], notes: 'These overlays change run-to-run and are not durable workspace memory.', evidenceIds: ['fft_index_onboarding', 'fft_parity_config', 'fft_system_prompt'] },
+    { systemId: 'fft_nano', lane: 'delivery', status: 'always injected', sources: ['--append-system-prompt'], notes: 'Delivery is explicit CLI argument handoff into pi.', evidenceIds: ['fft_pi_runner'] },
+    { systemId: 'fft_nano', lane: 'caching', status: 'not used', sources: ['Prompt rebuilt per host run'], notes: 'fft_nano relies on session continuation and prompt rebuilding rather than a separately cached system prompt snapshot.', evidenceIds: ['fft_pi_runner', 'fft_system_prompt'] },
+
+    { systemId: 'fft_nano', lane: 'identity', status: 'conditionally injected', sources: ['SOUL.md and IDENTITY.md can be present in full runs.'], notes: 'PromptMode and session/run filtering can remove some identity files from subagent or lightweight flows.', evidenceIds: ['oc_docs_system_prompt', 'oc_workspace_code', 'oc_bootstrap_files_code'] },
+    { systemId: 'fft_nano', lane: 'user-profile', status: 'conditionally injected', sources: ['USER.md may be part of bootstrap context.'], notes: 'USER.md is present in the workspace contract but can be filtered out depending on run type.', evidenceIds: ['oc_docs_workspace', 'oc_workspace_code'] },
+    { systemId: 'fft_nano', lane: 'rules', status: 'always injected', sources: ['Tooling', 'Safety', 'Workspace', 'Runtime', 'Reply handling'], notes: 'fft_nano owns the stable hardcoded wrapper around whatever bootstrap files survive filtering.', evidenceIds: ['oc_system_prompt_code', 'oc_docs_system_prompt'] },
+    { systemId: 'fft_nano', lane: 'workspace', status: 'conditionally injected', sources: ['Bootstrap files under Project Context'], notes: 'Full mode includes the broad bootstrap set. Lightweight and some subagent paths intentionally shrink this context.', evidenceIds: ['oc_bootstrap_files_code', 'oc_docs_system_prompt', 'oc_workspace_code'] },
+    { systemId: 'fft_nano', lane: 'memory', status: 'conditionally injected', sources: ['MEMORY.md may be injected', 'memory/*.md stays on-demand'], notes: 'Root MEMORY.md can travel with bootstrap context, but daily memory stays a tool-driven read path.', evidenceIds: ['oc_docs_memory', 'oc_docs_system_prompt', 'oc_workspace_code'] },
+    { systemId: 'fft_nano', lane: 'skills', status: 'conditionally injected', sources: ['available_skills catalog when eligible skills exist'], notes: 'Only the compact catalog is injected. SKILL.md bodies stay out of the base system prompt.', evidenceIds: ['oc_skills_code', 'oc_docs_system_prompt'] },
+    { systemId: 'fft_nano', lane: 'session-context', status: 'ephemeral only', sources: ['Group Chat Context or Subagent Context'], notes: 'Per-run group/session additions are appended outside the user-editable bootstrap files.', evidenceIds: ['oc_system_prompt_code', 'oc_docs_system_prompt'] },
+    { systemId: 'fft_nano', lane: 'ephemeral', status: 'ephemeral only', sources: ['agent:bootstrap hooks', 'extraSystemPrompt', 'promptMode'], notes: 'Hooks and run-kind filters can materially change what the prompt sees without changing the workspace files themselves.', evidenceIds: ['oc_bootstrap_files_code', 'oc_system_prompt_code'] },
+    { systemId: 'fft_nano', lane: 'delivery', status: 'always injected', sources: ['system prompt override applied to embedded pi session'], notes: 'fft_nano does not pass the prompt as a loose extra arg; it replaces the session base prompt.', evidenceIds: ['oc_embedded_prompt_code'] },
+    { systemId: 'fft_nano', lane: 'caching', status: 'session-cached', sources: ['bootstrap snapshot cache', 'promptMode-aware assembly'], notes: 'Bootstrap file snapshots and the broader context engine architecture mean fft_nano explicitly reasons about repeatability and compaction at runtime.', evidenceIds: ['oc_bootstrap_files_code', 'oc_docs_system_prompt'] },
+
+    { systemId: 'hermes-agent', lane: 'identity', status: 'always injected', sources: ['SOUL.md if present, otherwise DEFAULT_AGENT_IDENTITY'], notes: 'Hermes starts prompt composition from identity, not from project files.', evidenceIds: ['hermes_prompt_builder', 'hermes_run_agent'] },
+    { systemId: 'hermes-agent', lane: 'user-profile', status: 'conditionally injected', sources: ['USER.md via MemoryStore when enabled'], notes: 'User profile is memory-backed and controlled by config flags rather than unconditional file injection.', evidenceIds: ['hermes_run_agent', 'hermes_cli_config'] },
+    { systemId: 'hermes-agent', lane: 'rules', status: 'always injected', sources: ['DEFAULT_AGENT_IDENTITY or SOUL', 'tool-aware guidance', 'platform formatting hints'], notes: 'Hermes always has a stable host-authored rules layer even before project context is discovered.', evidenceIds: ['hermes_run_agent'] },
+    { systemId: 'hermes-agent', lane: 'workspace', status: 'conditionally injected', sources: ['.hermes.md -> AGENTS.md -> CLAUDE.md -> .cursorrules'], notes: 'Only the first matching project context source is loaded. Hermes explicitly does not merge all project file types at once.', evidenceIds: ['hermes_prompt_builder', 'hermes_run_agent'] },
+    { systemId: 'hermes-agent', lane: 'memory', status: 'conditionally injected', sources: ['MEMORY.md and USER.md prompt blocks when memory is enabled'], notes: 'Memory is opt-in and can be replaced or augmented by Honcho behavior.', evidenceIds: ['hermes_run_agent', 'hermes_cli_config'] },
+    { systemId: 'hermes-agent', lane: 'skills', status: 'conditionally injected', sources: ['skills guidance when skill tools are loaded'], notes: 'Hermes may inject skills guidance in the prompt and separately uses user-message slash-command injection to preserve cache stability.', evidenceIds: ['hermes_run_agent', 'hermes_agents_md'] },
+    { systemId: 'hermes-agent', lane: 'session-context', status: 'conditionally injected', sources: ['Current Session Context block from gateway/session.py'], notes: 'This layer exists for gateway-backed chat sessions and carries channel metadata, delivery options, and platform notes.', evidenceIds: ['hermes_gateway_session'] },
+    { systemId: 'hermes-agent', lane: 'ephemeral', status: 'ephemeral only', sources: ['ephemeral_system_prompt', 'prefill_messages', 'turn-local Honcho recall'], notes: 'Hermes keeps one cache-stable base prompt and a separate ephemeral addition path for API-call time.', evidenceIds: ['hermes_run_agent'] },
+    { systemId: 'hermes-agent', lane: 'delivery', status: 'always injected', sources: ['api_messages prepended with role=system'], notes: 'Hermes delivery happens by building an explicit system message in the outbound provider payload.', evidenceIds: ['hermes_run_agent'] },
+    { systemId: 'hermes-agent', lane: 'caching', status: 'session-cached', sources: ['_cached_system_prompt', 'session DB stored prompt snapshot'], notes: 'Hermes reloads the stored system prompt on continuing sessions specifically to preserve provider prefix caching.', evidenceIds: ['hermes_run_agent'] }
+  ];
+
+  const presets = {
+    full: {
+      label: 'Full Comparison',
+      nodeIds: null,
+      laneIds: null,
+      mismatchIds: null,
+      summary: 'Shows the complete end-to-end flow, including fft_nano main/non-main branching, fft_nano hookable bootstrap context, and Hermes cached-vs-ephemeral layering.'
+    },
+    composition: {
+      label: 'System Message Composition',
+      nodeIds: ['fft_main_files', 'fft_non_main_files', 'fft_memory_gate', 'fft_overlays', 'fft_build_prompt', 'oc_build_context', 'oc_skills', 'oc_system_prompt', 'hermes_soul', 'hermes_session_context', 'hermes_memory', 'hermes_project_context', 'hermes_system_builder'],
+      laneIds: ['identity', 'user-profile', 'rules', 'workspace', 'memory', 'skills', 'session-context', 'ephemeral'],
+      mismatchIds: ['oc_subagent_docs_mismatch', 'hermes_memory_enablement_gap'],
+      summary: 'Focuses on how the effective system prompt is assembled before final delivery.'
+    },
+    workspace: {
+      label: 'Workspace + .md Context Files',
+      nodeIds: ['fft_bootstrap', 'fft_main_files', 'fft_non_main_files', 'oc_workspace_root', 'oc_load_bootstrap', 'oc_filter_session', 'oc_hooks', 'oc_build_context', 'hermes_soul', 'hermes_project_context'],
+      laneIds: ['identity', 'user-profile', 'rules', 'workspace', 'memory'],
+      mismatchIds: ['oc_subagent_docs_mismatch', 'fft_daily_memory_gap'],
+      summary: 'Emphasizes which markdown and workspace files affect context, and where file scope changes by run type.'
+    },
+    delivery: {
+      label: 'Delivery Path',
+      nodeIds: ['fft_build_prompt', 'fft_pi_runner_node', 'fft_append_system', 'oc_system_prompt', 'oc_delivery', 'hermes_system_builder', 'hermes_cache', 'hermes_ephemeral', 'hermes_delivery'],
+      laneIds: ['delivery', 'caching', 'ephemeral'],
+      mismatchIds: ['hermes_memory_enablement_gap'],
+      summary: 'Shows the last-mile handoff into pi or provider payloads, plus cache and overlay behavior.'
+    },
+    context: {
+      label: 'Context Mapping Layer',
+      nodeIds: ['fft_build_prompt', 'oc_system_prompt', 'hermes_system_builder'],
+      laneIds: ['identity', 'user-profile', 'rules', 'workspace', 'memory', 'skills', 'session-context', 'ephemeral', 'delivery', 'caching'],
+      mismatchIds: null,
+      summary: 'Uses the normalized matrix as the primary view and keeps only one anchor node per system in the flow map.'
+    },
+    fft_nano: {
+      label: 'fft_nano Only',
+      nodeIds: nodes.filter((node) => node.systemId === 'fft_nano').map((node) => node.id),
+      laneIds: null,
+      mismatchIds: ['fft_daily_memory_gap'],
+      summary: 'Isolates the host-built pi prompt path, main/non-main divergence, and retrieval-gated memory overlay in fft_nano.'
+    },
+    fft_nano: {
+      label: 'fft_nano Only',
+      nodeIds: nodes.filter((node) => node.systemId === 'fft_nano').map((node) => node.id),
+      laneIds: null,
+      mismatchIds: ['oc_subagent_docs_mismatch'],
+      summary: 'Isolates fft_nano bootstrap resolution, hook mutation, compact skills injection, and embedded system prompt override.'
+    },
+    hermes: {
+      label: 'hermes-agent Only',
+      nodeIds: nodes.filter((node) => node.systemId === 'hermes-agent').map((node) => node.id),
+      laneIds: null,
+      mismatchIds: ['hermes_memory_enablement_gap'],
+      summary: 'Isolates Hermes identity-first assembly, project context priority, session prompt caching, and ephemeral API-call overlays.'
+    },
+    mismatches: {
+      label: 'Docs vs Code Mismatches',
+      nodeIds: ['fft_main_files', 'oc_filter_session', 'hermes_memory', 'hermes_system_builder'],
+      laneIds: ['workspace', 'memory', 'caching'],
+      mismatchIds: mismatchNotes.map((note) => note.id),
+      summary: 'Hides the less controversial plumbing so the comparison centers on what the docs say, what the code actually does, and why that matters.'
+    }
+  };
+
+  const state = {
+    preset: 'full',
+    visibleSystems: new Set(systems.map((system) => system.id)),
+    visibleEdgeKinds: new Set(['reads', 'injects', 'filters', 'retrieves', 'caches', 'appends', 'sends']),
+    selected: null,
+    comments: []
+  };
+
+  const schemaReference = [
+    'SystemSpec { id, name, summary, workspaceRoot, promptOwner, deliveryMode }',
+    'FlowNode { id, systemId, label, kind, lane, sourceType, evidenceIds }',
+    'FlowEdge { from, to, label, edgeKind, conditional }',
+    'ContextLayerEntry { systemId, lane, status, sources, notes }',
+    'EvidenceRef { id, kind, label, pathOrUrl, sourceClass }',
+    'MismatchNote { systemId, topic, docsClaim, codeClaim, severity }'
+  ];
+
+  const systemMap = Object.fromEntries(systems.map((system) => [system.id, system]));
+  const nodeMap = Object.fromEntries(nodes.map((node) => [node.id, node]));
+  const layerMap = Object.fromEntries(layers.map((layer) => [layer.id, layer]));
+  const evidenceMap = Object.fromEntries(evidence.map((entry) => [entry.id, entry]));
+  const noteMap = Object.fromEntries(notes.map((note) => [note.id, note]));
+  const mismatchMap = Object.fromEntries(mismatchNotes.map((note) => [note.id, note]));
+
+  const svg = document.getElementById('flow-svg');
+  const matrix = document.getElementById('context-matrix');
+  const mismatchGrid = document.getElementById('mismatch-grid');
+  const detailContent = document.getElementById('detail-content');
+  const promptText = document.getElementById('prompt-text');
+  const copyState = document.getElementById('copy-state');
+
+  function slugStatus(status) {
+    return status.replace(/\s+/g, '-');
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function toHref(pathOrUrl) {
+    if (/^https?:\/\//.test(pathOrUrl)) return pathOrUrl;
+    if (pathOrUrl.startsWith('/')) return `file://${encodeURI(pathOrUrl)}`;
+    return '#';
+  }
+
+  function getPreset() {
+    return presets[state.preset];
+  }
+
+  function isNodeVisible(node) {
+    const preset = getPreset();
+    if (!state.visibleSystems.has(node.systemId)) return false;
+    if (preset.nodeIds && !preset.nodeIds.includes(node.id)) return false;
+    return true;
+  }
+
+  function isEdgeVisible(edge) {
+    if (!state.visibleEdgeKinds.has(edge.edgeKind)) return false;
+    const from = nodeMap[edge.from];
+    const to = nodeMap[edge.to];
+    return Boolean(from && to && isNodeVisible(from) && isNodeVisible(to));
+  }
+
+  function getVisibleNodes() {
+    return nodes.filter(isNodeVisible);
+  }
+
+  function getVisibleEdges() {
+    return edges.filter(isEdgeVisible);
+  }
+
+  function getLaneEntry(systemId, laneId) {
+    return contextLayerEntries.find((entry) => entry.systemId === systemId && entry.lane === laneId);
+  }
+
+  function getNodeConnections(nodeId) {
+    return {
+      incoming: edges.filter((edge) => edge.to === nodeId),
+      outgoing: edges.filter((edge) => edge.from === nodeId)
+    };
+  }
+
+  function selectedMatches(type, id, systemId) {
+    return state.selected && state.selected.type === type && state.selected.id === id && (systemId === undefined || state.selected.systemId === systemId);
+  }
+
+  function renderControls() {
+    const presetControls = document.getElementById('preset-controls');
+    const systemControls = document.getElementById('system-controls');
+    const edgeControls = document.getElementById('edge-controls');
+
+    Object.entries(presets).forEach(([id, preset]) => {
+      const button = document.createElement('button');
+      button.className = `chip ${state.preset === id ? 'active' : ''}`;
+      button.dataset.kind = 'preset';
+      button.textContent = preset.label;
+      button.addEventListener('click', () => {
+        state.preset = id;
+        if (state.selected && state.selected.type === 'node' && !getVisibleNodes().some((node) => node.id === state.selected.id)) {
+          state.selected = null;
+        }
+        render();
+      });
+      presetControls.appendChild(button);
+    });
+
+    systems.forEach((system) => {
+      const button = document.createElement('button');
+      button.className = `toggle ${state.visibleSystems.has(system.id) ? 'active' : ''}`;
+      button.dataset.system = system.id;
+      button.textContent = system.name;
+      button.addEventListener('click', () => {
+        if (state.visibleSystems.has(system.id) && state.visibleSystems.size === 1) return;
+        if (state.visibleSystems.has(system.id)) state.visibleSystems.delete(system.id);
+        else state.visibleSystems.add(system.id);
+        render();
+      });
+      systemControls.appendChild(button);
+    });
+
+    ['reads', 'injects', 'filters', 'retrieves', 'caches', 'appends', 'sends'].forEach((kind) => {
+      const button = document.createElement('button');
+      button.className = `toggle ${state.visibleEdgeKinds.has(kind) ? 'active' : ''}`;
+      button.dataset.edge = kind;
+      button.textContent = kind;
+      button.addEventListener('click', () => {
+        if (state.visibleEdgeKinds.has(kind) && state.visibleEdgeKinds.size === 1) return;
+        if (state.visibleEdgeKinds.has(kind)) state.visibleEdgeKinds.delete(kind);
+        else state.visibleEdgeKinds.add(kind);
+        render();
+      });
+      edgeControls.appendChild(button);
+    });
+  }
+
+  function createSvg(tag, attrs = {}) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
+    return node;
+  }
+
+  function renderFlow() {
+    svg.innerHTML = '';
+    const bands = [
+      { y: 44, h: 288, systemId: 'fft_nano' },
+      { y: 344, h: 320, systemId: 'fft_nano' },
+      { y: 676, h: 216, systemId: 'hermes-agent' }
+    ];
+
+    bands.forEach((band) => {
+      const system = systemMap[band.systemId];
+      const bandRect = createSvg('rect', {
+        x: 20,
+        y: band.y,
+        width: 1600,
+        height: band.h,
+        rx: 22,
+        class: 'row-band'
+      });
+      svg.appendChild(bandRect);
+
+      const title = createSvg('text', {
+        x: 40,
+        y: band.y + 34,
+        class: 'row-title',
+        fill: system.color
+      });
+      title.textContent = system.name;
+      svg.appendChild(title);
+
+      const summary = createSvg('text', {
+        x: 40,
+        y: band.y + 54,
+        class: 'row-summary'
+      });
+      summary.textContent = `${system.promptOwner} | workspace: ${system.workspaceRoot} | delivery: ${system.deliveryMode}`;
+      svg.appendChild(summary);
+    });
+
+    const visibleEdges = getVisibleEdges();
+    visibleEdges.forEach((edge) => {
+      const from = nodeMap[edge.from];
+      const to = nodeMap[edge.to];
+      const startX = from.x + from.w;
+      const startY = from.y + (from.h / 2);
+      const endX = to.x;
+      const endY = to.y + (to.h / 2);
+      const midX = startX + ((endX - startX) * 0.5);
+      const path = createSvg('path', {
+        d: `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`,
+        class: `edge-path ${edge.conditional ? 'conditional' : ''} ${state.selected && state.selected.type === 'node' && state.selected.id !== edge.from && state.selected.id !== edge.to ? 'dimmed' : ''}`,
+        stroke: `var(--${edge.edgeKind})`
+      });
+      svg.appendChild(path);
+
+      const label = createSvg('text', {
+        x: startX + ((endX - startX) * 0.52),
+        y: startY + ((endY - startY) * 0.5) - 8,
+        class: `edge-label ${state.selected && state.selected.type === 'node' && state.selected.id !== edge.from && state.selected.id !== edge.to ? 'dimmed' : ''}`
+      });
+      label.textContent = edge.label;
+      svg.appendChild(label);
+    });
+
+    getVisibleNodes().forEach((node) => {
+      const system = systemMap[node.systemId];
+      const group = createSvg('g', {
+        class: `flow-node ${selectedMatches('node', node.id) ? 'selected' : ''} ${state.selected && state.selected.type === 'node' && state.selected.id !== node.id && !edges.some((edge) => (edge.from === node.id && edge.to === state.selected.id) || (edge.to === node.id && edge.from === state.selected.id)) ? 'dimmed' : ''}`
+      });
+      group.addEventListener('click', () => {
+        state.selected = { type: 'node', id: node.id, systemId: node.systemId };
+        render();
+      });
+
+      const sourceStrokeMap = {
+        repo_code: 'var(--repo)',
+        official_docs: 'var(--docs)',
+        mixed: 'var(--mixed)'
+      };
+      const fillBySystem = {
+        'fft_nano': 'rgba(20,112,106,0.13)',
+        'fft_nano': 'rgba(35,78,161,0.12)',
+        'hermes-agent': 'rgba(146,65,26,0.12)'
+      };
+
+      const rect = createSvg('rect', {
+        x: node.x,
+        y: node.y,
+        width: node.w,
+        height: node.h,
+        rx: 18,
+        class: 'node-rect',
+        fill: fillBySystem[node.systemId],
+        stroke: sourceStrokeMap[node.sourceType]
+      });
+      group.appendChild(rect);
+
+      const badge = createSvg('text', {
+        x: node.x + 16,
+        y: node.y + 18,
+        class: 'node-source-badge',
+        fill: sourceStrokeMap[node.sourceType]
+      });
+      badge.textContent = node.sourceType.replace('_', ' ');
+      group.appendChild(badge);
+
+      const title = createSvg('text', {
+        x: node.x + 16,
+        y: node.y + 42,
+        class: 'node-title'
+      });
+      title.textContent = node.label;
+      group.appendChild(title);
+
+      const kind = createSvg('text', {
+        x: node.x + 16,
+        y: node.y + 63,
+        class: 'node-kind'
+      });
+      kind.textContent = `${node.kind} | ${layerMap[node.lane].label}`;
+      group.appendChild(kind);
+
+      const role = createSvg('text', {
+        x: node.x + 16,
+        y: node.y + 82,
+        class: 'node-lane'
+      });
+      role.textContent = node.flowRole;
+      group.appendChild(role);
+
+      svg.appendChild(group);
+    });
+  }
+
+  function renderMatrix() {
+    const preset = getPreset();
+    const visibleLaneIds = preset.laneIds || layers.map((layer) => layer.id);
+    matrix.innerHTML = '';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const blank = document.createElement('th');
+    blank.textContent = 'Context Layer';
+    headerRow.appendChild(blank);
+
+    systems.forEach((system) => {
+      if (!state.visibleSystems.has(system.id)) return;
+      const th = document.createElement('th');
+      th.textContent = system.name;
+      th.style.color = system.color;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    matrix.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    layers.forEach((layer) => {
+      if (!visibleLaneIds.includes(layer.id)) return;
+      const row = document.createElement('tr');
+
+      const labelCell = document.createElement('td');
+      labelCell.innerHTML = `<div class="lane-label">${escapeHtml(layer.label)}<span class="lane-note">${escapeHtml(layer.note)}</span></div>`;
+      row.appendChild(labelCell);
+
+      systems.forEach((system) => {
+        if (!state.visibleSystems.has(system.id)) return;
+        const entry = getLaneEntry(system.id, layer.id);
+        const td = document.createElement('td');
+        if (!entry) {
+          td.innerHTML = '<div class="lane-cell"><div class="status-pill status-not-used">not used</div></div>';
+          row.appendChild(td);
+          return;
+        }
+        const selected = selectedMatches('layer', layer.id, system.id);
+        const activeNodeSystems = new Set(getVisibleNodes().map((node) => node.systemId));
+        const dimmed = preset.laneIds && !preset.laneIds.includes(layer.id) ? 'dimmed' : '';
+        const cell = document.createElement('div');
+        cell.className = `lane-cell ${selected ? 'selected' : ''} ${dimmed}`;
+        cell.addEventListener('click', () => {
+          state.selected = { type: 'layer', id: layer.id, systemId: system.id };
+          render();
+        });
+        cell.innerHTML = `
+          <div class="status-pill status-${slugStatus(entry.status)}">${escapeHtml(entry.status)}</div>
+          <div class="lane-sources">
+            <strong>Sources</strong>
+            ${escapeHtml(entry.sources.join(' '))}
+          </div>
+        `;
+        td.appendChild(cell);
+        row.appendChild(td);
+      });
+
+      tbody.appendChild(row);
+    });
+    matrix.appendChild(tbody);
+  }
+
+  function renderMismatchCards() {
+    const preset = getPreset();
+    const visibleMismatchIds = preset.mismatchIds || mismatchNotes.map((note) => note.id);
+    mismatchGrid.innerHTML = '';
+
+    mismatchNotes.forEach((note) => {
+      if (!visibleMismatchIds.includes(note.id)) return;
+      if (!state.visibleSystems.has(note.systemId)) return;
+      const card = document.createElement('article');
+      card.className = `mismatch-card ${selectedMatches('mismatch', note.id) ? 'selected' : ''}`;
+      card.addEventListener('click', () => {
+        state.selected = { type: 'mismatch', id: note.id, systemId: note.systemId };
+        render();
+      });
+      card.innerHTML = `
+        <div class="mismatch-head">
+          <div class="mismatch-system">${escapeHtml(note.systemId)}</div>
+          <div class="severity severity-${note.severity}">${escapeHtml(note.severity)}</div>
+        </div>
+        <h3 class="mismatch-topic">${escapeHtml(note.topic)}</h3>
+        <div class="mismatch-lines">
+          <div class="mismatch-line"><strong>docs</strong>${escapeHtml(note.docsClaim)}</div>
+          <div class="mismatch-line"><strong>code</strong>${escapeHtml(note.codeClaim)}</div>
+        </div>
+      `;
+      mismatchGrid.appendChild(card);
+    });
+  }
+
+  function renderDetail() {
+    const preset = getPreset();
+
+    if (!state.selected) {
+      const visibleSystemObjects = systems.filter((system) => state.visibleSystems.has(system.id));
+      detailContent.innerHTML = `
+        <div class="detail-kicker">Selection</div>
+        <div class="detail-title">${escapeHtml(preset.label)}</div>
+        <div class="detail-meta">
+          ${visibleSystemObjects.map((system) => `<div class="meta-pill">${escapeHtml(system.name)}</div>`).join('')}
+        </div>
+        <div class="detail-copy">
+          <p>${escapeHtml(preset.summary)}</p>
+          <p>This view distinguishes repo code, docs-described behavior, and explicit mismatch cards. Click any flow node, matrix cell, or mismatch card to inspect evidence and add comparison notes.</p>
+        </div>
+        <div class="detail-copy">
+          <h3>Visible Systems</h3>
+          <div class="detail-list">
+            ${visibleSystemObjects.map((system) => `
+              <div class="detail-item">
+                <strong>${escapeHtml(system.name)}</strong>
+                <small>workspace: ${escapeHtml(system.workspaceRoot)}</small>
+                <small>prompt owner: ${escapeHtml(system.promptOwner)}</small>
+                <small>delivery: ${escapeHtml(system.deliveryMode)}</small>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div class="detail-copy">
+          <h3>Internal Schema</h3>
+          <div class="detail-list">
+            ${schemaReference.map((line) => `<div class="detail-item">${escapeHtml(line)}</div>`).join('')}
+          </div>
+        </div>
+        ${renderCommentBox({ targetLabel: 'current preset', targetKey: 'preset:' + state.preset })}
+      `;
+      attachCommentHandlers('preset:' + state.preset, preset.label);
+      return;
+    }
+
+    if (state.selected.type === 'node') {
+      const node = nodeMap[state.selected.id];
+      const system = systemMap[node.systemId];
+      const relatedEvidence = node.evidenceIds.map((id) => evidenceMap[id]).filter(Boolean);
+      const relatedConnections = getNodeConnections(node.id);
+      const relatedNotes = notes.filter((note) => (note.relatedNodeIds || []).includes(node.id));
+      const relatedMismatches = mismatchNotes.filter((note) => (note.relatedNodeIds || []).includes(node.id));
+
+      detailContent.innerHTML = `
+        <div class="detail-kicker">Flow Node</div>
+        <div class="detail-title">${escapeHtml(node.label)}</div>
+        <div class="detail-meta">
+          <div class="meta-pill">${escapeHtml(system.name)}</div>
+          <div class="meta-pill">${escapeHtml(node.kind)}</div>
+          <div class="meta-pill">${escapeHtml(layerMap[node.lane].label)}</div>
+          <div class="meta-pill">${escapeHtml(node.sourceType.replace('_', ' '))}</div>
+        </div>
+        <div class="detail-copy">
+          <p>${escapeHtml(node.flowRole)}</p>
+          <h3>Repo Code Behavior</h3>
+          <p>${escapeHtml(node.codeSummary)}</p>
+          <h3>Docs-described Behavior</h3>
+          <p>${escapeHtml(node.docsSummary)}</p>
+          <h3>Connections</h3>
+          <div class="detail-list">
+            ${relatedConnections.incoming.map((edge) => `<div class="detail-item"><strong>in</strong> ${escapeHtml(nodeMap[edge.from].label)} -> ${escapeHtml(edge.label)}</div>`).join('')}
+            ${relatedConnections.outgoing.map((edge) => `<div class="detail-item"><strong>out</strong> ${escapeHtml(edge.label)} -> ${escapeHtml(nodeMap[edge.to].label)}</div>`).join('') || '<div class="detail-item">No visible outgoing edges in this preset.</div>'}
+          </div>
+          ${relatedNotes.length ? `<h3>Nuance</h3><div class="detail-list">${relatedNotes.map((note) => `<div class="detail-item">${escapeHtml(note.text)}</div>`).join('')}</div>` : ''}
+          ${relatedMismatches.length ? `<h3>Related Mismatches</h3><div class="detail-list">${relatedMismatches.map((note) => `<div class="detail-item"><strong>${escapeHtml(note.topic)}</strong><small>${escapeHtml(note.docsClaim)}</small><small>${escapeHtml(note.codeClaim)}</small></div>`).join('')}</div>` : ''}
+          <h3>Evidence</h3>
+          <div class="detail-list">
+            ${relatedEvidence.map(renderEvidenceItem).join('')}
+          </div>
+        </div>
+        ${renderCommentBox({ targetLabel: node.label, targetKey: 'node:' + node.id })}
+      `;
+      attachCommentHandlers('node:' + node.id, node.label);
+      return;
+    }
+
+    if (state.selected.type === 'layer') {
+      const layer = layerMap[state.selected.id];
+      const system = systemMap[state.selected.systemId];
+      const entry = getLaneEntry(system.id, layer.id);
+      const relatedEvidence = entry.evidenceIds.map((id) => evidenceMap[id]).filter(Boolean);
+      detailContent.innerHTML = `
+        <div class="detail-kicker">Context Layer Cell</div>
+        <div class="detail-title">${escapeHtml(layer.label)}</div>
+        <div class="detail-meta">
+          <div class="meta-pill">${escapeHtml(system.name)}</div>
+          <div class="meta-pill">${escapeHtml(entry.status)}</div>
+        </div>
+        <div class="detail-copy">
+          <p>${escapeHtml(layer.note)}</p>
+          <h3>Why This Status</h3>
+          <p>${escapeHtml(entry.notes)}</p>
+          <h3>Observed Sources</h3>
+          <div class="detail-list">
+            ${entry.sources.map((source) => `<div class="detail-item">${escapeHtml(source)}</div>`).join('')}
+          </div>
+          <h3>Evidence</h3>
+          <div class="detail-list">
+            ${relatedEvidence.map(renderEvidenceItem).join('')}
+          </div>
+        </div>
+        ${renderCommentBox({ targetLabel: `${system.name} / ${layer.label}`, targetKey: `layer:${system.id}:${layer.id}` })}
+      `;
+      attachCommentHandlers(`layer:${system.id}:${layer.id}`, `${system.name} / ${layer.label}`);
+      return;
+    }
+
+    if (state.selected.type === 'mismatch') {
+      const mismatch = mismatchMap[state.selected.id];
+      const relatedEvidence = mismatch.evidenceIds.map((id) => evidenceMap[id]).filter(Boolean);
+      const relatedNodes = (mismatch.relatedNodeIds || []).map((id) => nodeMap[id]).filter(Boolean);
+      detailContent.innerHTML = `
+        <div class="detail-kicker">Mismatch Note</div>
+        <div class="detail-title">${escapeHtml(mismatch.topic)}</div>
+        <div class="detail-meta">
+          <div class="meta-pill">${escapeHtml(mismatch.systemId)}</div>
+          <div class="meta-pill">${escapeHtml(mismatch.severity)}</div>
+        </div>
+        <div class="detail-copy">
+          <h3>Docs Claim</h3>
+          <p>${escapeHtml(mismatch.docsClaim)}</p>
+          <h3>Code Claim</h3>
+          <p>${escapeHtml(mismatch.codeClaim)}</p>
+          <h3>Why It Matters</h3>
+          <p>Mismatch cards stay separate so the comparison does not flatten operationally important differences into vague summaries.</p>
+          ${relatedNodes.length ? `<h3>Related Nodes</h3><div class="detail-list">${relatedNodes.map((node) => `<div class="detail-item">${escapeHtml(node.label)}<small>${escapeHtml(node.flowRole)}</small></div>`).join('')}</div>` : ''}
+          <h3>Evidence</h3>
+          <div class="detail-list">
+            ${relatedEvidence.map(renderEvidenceItem).join('')}
+          </div>
+        </div>
+        ${renderCommentBox({ targetLabel: mismatch.topic, targetKey: 'mismatch:' + mismatch.id })}
+      `;
+      attachCommentHandlers('mismatch:' + mismatch.id, mismatch.topic);
+    }
+  }
+
+  function renderEvidenceItem(item) {
+    return `
+      <div class="evidence-item">
+        <div class="evidence-top">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span class="source-badge source-${escapeHtml(item.sourceClass)}">${escapeHtml(item.sourceClass.replace('_', ' '))}</span>
+        </div>
+        <a class="evidence-link" href="${escapeHtml(toHref(item.pathOrUrl))}" target="_blank" rel="noreferrer">${escapeHtml(item.pathOrUrl)}</a>
+      </div>
+    `;
+  }
+
+  function renderCommentBox({ targetLabel, targetKey }) {
+    const comments = state.comments.filter((comment) => comment.targetKey === targetKey);
+    return `
+      <div class="comment-box">
+        <h3>Comments</h3>
+        <div class="comment-target">target: ${escapeHtml(targetLabel)}</div>
+        <textarea id="comment-input" placeholder="Add a note about what stands out, what differs, or what needs follow-up."></textarea>
+        <div class="action-row">
+          <button class="button primary" id="add-comment-btn">Add Note</button>
+          <button class="button secondary" id="clear-selection-btn">Clear Selection</button>
+        </div>
+        <div class="detail-list" style="margin-top:10px;" id="comment-list">
+          ${comments.length ? comments.map((comment) => `
+            <div class="comment-entry">
+              ${escapeHtml(comment.text)}
+              <small>${escapeHtml(comment.label)}</small>
+              <button class="delete" data-comment-id="${escapeHtml(comment.id)}">&times;</button>
+            </div>
+          `).join('') : '<div class="detail-item">No notes yet for this target.</div>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function attachCommentHandlers(targetKey, label) {
+    const addButton = document.getElementById('add-comment-btn');
+    const clearButton = document.getElementById('clear-selection-btn');
+    const textarea = document.getElementById('comment-input');
+    const list = document.getElementById('comment-list');
+
+    addButton.addEventListener('click', () => {
+      const value = textarea.value.trim();
+      if (!value) return;
+      state.comments.unshift({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        targetKey,
+        text: value,
+        label
+      });
+      textarea.value = '';
+      render();
+    });
+
+    clearButton.addEventListener('click', () => {
+      state.selected = null;
+      render();
+    });
+
+    list.querySelectorAll('[data-comment-id]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        const id = event.currentTarget.getAttribute('data-comment-id');
+        state.comments = state.comments.filter((comment) => comment.id !== id);
+        render();
+      });
+    });
+  }
+
+  function buildPromptOutput() {
+    const preset = getPreset();
+    const visibleSystems = systems.filter((system) => state.visibleSystems.has(system.id)).map((system) => system.name);
+    const visibleLanes = (preset.laneIds || layers.map((layer) => layer.id))
+      .map((id) => layerMap[id].label);
+    const visibleMismatchTopics = mismatchNotes
+      .filter((note) => state.visibleSystems.has(note.systemId) && (!preset.mismatchIds || preset.mismatchIds.includes(note.id)))
+      .map((note) => note.topic);
+    const recentComments = state.comments.slice(0, 6).map((comment) => `${comment.label}: ${comment.text}`);
+
+    const parts = [];
+    parts.push(`Compare how ${visibleSystems.join(', ')} compose and deliver system context.`);
+    parts.push(`Use the "${preset.label}" lens.`);
+    parts.push('Separate repo-code behavior from docs-described behavior, then call out any docs/code mismatches explicitly.');
+    if (visibleLanes.length) {
+      parts.push(`Focus on these context lanes: ${visibleLanes.join('; ')}.`);
+    }
+    if (visibleMismatchTopics.length) {
+      parts.push(`Preserve these mismatch topics instead of flattening them: ${visibleMismatchTopics.join('; ')}.`);
+    }
+    if (state.selected) {
+      if (state.selected.type === 'node') {
+        parts.push(`Give extra attention to the flow stage "${nodeMap[state.selected.id].label}".`);
+      } else if (state.selected.type === 'layer') {
+        parts.push(`Give extra attention to the context layer "${layerMap[state.selected.id].label}" for ${state.selected.systemId}.`);
+      } else if (state.selected.type === 'mismatch') {
+        parts.push(`Start from the mismatch "${mismatchMap[state.selected.id].topic}".`);
+      }
+    }
+    if (recentComments.length) {
+      parts.push(`Work in these review notes: ${recentComments.join(' | ')}.`);
+    }
+    parts.push('Explain the workspace and markdown files that shape context, the runtime overlays that are per-run only, the memory behavior, and the exact delivery handoff into pi or provider payloads.');
+    return parts.join(' ');
+  }
+
+  function renderPrompt() {
+    promptText.textContent = buildPromptOutput();
+  }
+
+  function render() {
+    document.querySelectorAll('#preset-controls .chip, #system-controls .toggle, #edge-controls .toggle').forEach((element) => element.remove());
+    renderControls();
+    renderFlow();
+    renderMatrix();
+    renderMismatchCards();
+    renderDetail();
+    renderPrompt();
+  }
+
+  document.getElementById('copy-prompt-btn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(promptText.textContent);
+      copyState.textContent = 'copied';
+      setTimeout(() => {
+        copyState.textContent = 'ready';
+      }, 1400);
+    } catch {
+      copyState.textContent = 'copy failed';
+      setTimeout(() => {
+        copyState.textContent = 'ready';
+      }, 1400);
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

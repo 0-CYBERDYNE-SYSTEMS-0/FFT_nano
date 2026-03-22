@@ -20,6 +20,7 @@ test('Telegram command normalization accepts aliases and bot-suffixed forms', ()
   assert.equal(normalizeTelegramCommandToken('/restart@TestBot'), '/restart');
   assert.equal(normalizeTelegramCommandToken('/gateway:restart'), '/gateway');
   assert.equal(normalizeTelegramCommandToken('/coder-plan@TestBot'), '/coder-plan');
+  assert.equal(normalizeTelegramCommandToken('/coding@TestBot'), '/coding');
   assert.equal(normalizeTelegramCommandToken('/t'), '/t');
   assert.equal(normalizeTelegramCommandToken('/reason'), '/reason');
 });

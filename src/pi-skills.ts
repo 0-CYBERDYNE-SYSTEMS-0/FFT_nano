@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import YAML from 'yaml';
 
+import type { SkillCatalogEntry } from './system-prompt.js';
+
 export const PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES = [
   path.join('skills', 'runtime'),
 ] as const;
@@ -474,6 +476,68 @@ function listSkillDirectories(sourceRoot: string): string[] {
     .filter((name) =>
       fs.existsSync(path.join(sourceRoot, name, 'SKILL.md')),
     );
+}
+
+function summarizeParagraph(text: string, maxChars = 220): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars - 3)}...`;
+}
+
+function extractSectionText(body: string, headingPattern: RegExp): string {
+  const match = headingPattern.exec(body);
+  if (!match || typeof match.index !== 'number') return '';
+  const rest = body.slice(match.index + match[0].length);
+  const nextHeading = rest.search(/^##\s+/m);
+  const section = nextHeading >= 0 ? rest.slice(0, nextHeading) : rest;
+  return summarizeParagraph(section.replace(/^[\s*-]+/gm, ' ').trim());
+}
+
+export function buildSkillCatalogEntries(
+  sourceDirs: string[],
+  options: { maxChars: number } = { maxChars: 6000 },
+): SkillCatalogEntry[] {
+  const results: SkillCatalogEntry[] = [];
+  let usedChars = 0;
+  for (let rootIndex = 0; rootIndex < sourceDirs.length; rootIndex += 1) {
+    const sourceDir = sourceDirs[rootIndex];
+    if (!isDirectory(sourceDir)) continue;
+    const source: SkillCatalogEntry['source'] = rootIndex === 0 ? 'project' : 'external';
+    for (const skillName of listSkillDirectories(sourceDir)) {
+      const markdownPath = path.join(sourceDir, skillName, 'SKILL.md');
+      const parsed = parseSkillMarkdown(markdownPath);
+      if (!parsed) continue;
+      const description = toTrimmedString(parsed.frontmatter.description) || skillName;
+      const allowedToolsRaw = parsed.frontmatter['allowed-tools'];
+      const allowedTools =
+        Array.isArray(allowedToolsRaw)
+          ? allowedToolsRaw.filter((value): value is string => typeof value === 'string')
+          : [];
+      const whenToUse =
+        extractSectionText(parsed.body, WHEN_TO_USE_SECTION_PATTERN) ||
+        summarizeParagraph(parsed.body);
+      const entry: SkillCatalogEntry = {
+        name: skillName,
+        description,
+        allowedTools,
+        whenToUse,
+        source,
+      };
+      const approxChars =
+        entry.name.length +
+        entry.description.length +
+        entry.whenToUse.length +
+        entry.allowedTools.join(',').length +
+        24;
+      if (results.length > 0 && usedChars + approxChars > options.maxChars) {
+        return results;
+      }
+      usedChars += approxChars;
+      results.push(entry);
+    }
+  }
+  return results;
 }
 
 function readManagedSkillNames(manifestPath: string): string[] {
