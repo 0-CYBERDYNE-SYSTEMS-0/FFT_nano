@@ -556,6 +556,30 @@ export interface TelegramBot {
     fileName?: string,
     caption?: string,
   ) => Promise<void>;
+  sendVideo: (
+    chatJid: string,
+    video: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ) => Promise<void>;
+  sendAudio: (
+    chatJid: string,
+    audio: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ) => Promise<void>;
+  sendVoice: (
+    chatJid: string,
+    voice: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ) => Promise<void>;
+  sendAnimation: (
+    chatJid: string,
+    animation: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ) => Promise<void>;
   setTyping: (chatJid: string, isTyping: boolean) => Promise<void>;
   setCommands: (
     commands: TelegramCommand[],
@@ -1210,9 +1234,12 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     };
   }
 
-  async function sendPhoto(
+  async function sendMultipartMedia(
+    method: 'sendPhoto' | 'sendDocument' | 'sendVideo' | 'sendAudio' | 'sendVoice' | 'sendAnimation',
+    fieldName: 'photo' | 'document' | 'video' | 'audio' | 'voice' | 'animation',
     chatId: string,
-    photo: string | Buffer,
+    media: string | Buffer,
+    fileName?: string,
     caption?: string,
   ): Promise<void> {
     const chatIdParsed = parseTelegramChatId(chatId);
@@ -1222,16 +1249,22 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
     const formData = new FormData();
     formData.append('chat_id', chatIdParsed);
-    if (typeof photo === 'string') {
-      formData.append('photo', photo);
+    if (typeof media === 'string') {
+      formData.append(fieldName, media);
+    } else if (fieldName === 'photo') {
+      formData.append(fieldName, new Blob([media]));
     } else {
-      formData.append('photo', new Blob([photo]));
+      formData.append(
+        fieldName,
+        new Blob([media]),
+        fileName && fileName.trim() ? fileName.trim() : `${fieldName}.bin`,
+      );
     }
     if (caption) {
       formData.append('caption', caption);
     }
 
-    const url = new URL(`${base}/sendPhoto`);
+    const url = new URL(`${base}/${method}`);
     const res = await fetch(url.toString(), {
       method: 'POST',
       body: formData as any,
@@ -1244,43 +1277,57 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }
   }
 
+  async function sendPhoto(
+    chatId: string,
+    photo: string | Buffer,
+    caption?: string,
+  ): Promise<void> {
+    await sendMultipartMedia('sendPhoto', 'photo', chatId, photo, undefined, caption);
+  }
+
   async function sendDocument(
     chatId: string,
     document: string | Buffer,
     fileName?: string,
     caption?: string,
   ): Promise<void> {
-    const chatIdParsed = parseTelegramChatId(chatId);
-    if (!chatIdParsed) {
-      throw new Error(`Invalid Telegram chat ID: ${chatId}`);
-    }
+    await sendMultipartMedia('sendDocument', 'document', chatId, document, fileName, caption);
+  }
 
-    const formData = new FormData();
-    formData.append('chat_id', chatIdParsed);
-    if (typeof document === 'string') {
-      formData.append('document', document);
-    } else {
-      formData.append(
-        'document',
-        new Blob([document]),
-        fileName && fileName.trim() ? fileName.trim() : 'attachment.bin',
-      );
-    }
-    if (caption) {
-      formData.append('caption', caption);
-    }
+  async function sendVideo(
+    chatId: string,
+    video: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ): Promise<void> {
+    await sendMultipartMedia('sendVideo', 'video', chatId, video, fileName, caption);
+  }
 
-    const url = new URL(`${base}/sendDocument`);
-    const res = await fetch(url.toString(), {
-      method: 'POST',
-      body: formData as any,
-    });
+  async function sendAudio(
+    chatId: string,
+    audio: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ): Promise<void> {
+    await sendMultipartMedia('sendAudio', 'audio', chatId, audio, fileName, caption);
+  }
 
-    if (!res.ok) {
-      const body = (await res.json()) as TelegramApiResponse<never>;
-      const description = body?.description || `Telegram API error (status ${res.status})`;
-      throw new Error(description);
-    }
+  async function sendVoice(
+    chatId: string,
+    voice: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ): Promise<void> {
+    await sendMultipartMedia('sendVoice', 'voice', chatId, voice, fileName, caption);
+  }
+
+  async function sendAnimation(
+    chatId: string,
+    animation: string | Buffer,
+    fileName?: string,
+    caption?: string,
+  ): Promise<void> {
+    await sendMultipartMedia('sendAnimation', 'animation', chatId, animation, fileName, caption);
   }
 
   return {
@@ -1298,6 +1345,10 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     editMessageWithKeyboard,
     sendPhoto,
     sendDocument,
+    sendVideo,
+    sendAudio,
+    sendVoice,
+    sendAnimation,
     setTyping,
     setCommands,
     deleteCommands,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createTelegramBot,
   isTelegramJid,
   normalizeTelegramDraftText,
   parseTelegramChatId,
@@ -91,4 +92,45 @@ test('markdownToTelegramHtml escapes unsafe tags while preserving inline code', 
 test('markdownToTelegramHtml keeps markdown link query params intact', () => {
   const html = markdownToTelegramHtml('[x](https://example.com/?a=1&b=2)');
   assert.equal(html, '<a href="https://example.com/?a=1&amp;b=2">x</a>');
+});
+
+test('createTelegramBot uploads video, audio, voice, and animation via Telegram Bot API', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; body?: FormData }> = [];
+
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      body: init?.body as FormData | undefined,
+    });
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: {} }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const bot = createTelegramBot({
+      token: 'token',
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+    });
+
+    await bot.sendVideo('telegram:1', Buffer.from('video'), 'clip.mp4', 'Video');
+    await bot.sendAudio('telegram:1', Buffer.from('audio'), 'song.mp3', 'Audio');
+    await bot.sendVoice('telegram:1', Buffer.from('voice'), 'note.ogg', 'Voice');
+    await bot.sendAnimation('telegram:1', Buffer.from('gif'), 'loop.gif', 'Animation');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 4);
+  assert.match(calls[0].url, /\/sendVideo$/);
+  assert.match(calls[1].url, /\/sendAudio$/);
+  assert.match(calls[2].url, /\/sendVoice$/);
+  assert.match(calls[3].url, /\/sendAnimation$/);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].body?.get('chat_id'), '1');
+  assert.equal(calls[0].body?.get('caption'), 'Video');
 });
