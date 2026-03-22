@@ -588,6 +588,7 @@ export interface TelegramBot {
   deleteCommands: (scope?: TelegramCommandScope) => Promise<void>;
   setDescription: (description: string, shortDescription?: string) => Promise<void>;
   answerCallbackQuery: (callbackQueryId: string, text?: string) => Promise<void>;
+  setMessageReaction: (chatJid: string, messageId: number, emoji: string | null) => Promise<void>;
   downloadFile: (fileId: string) => Promise<TelegramDownloadFileResult>;
 }
 
@@ -1214,6 +1215,27 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     });
   }
 
+  async function setMessageReaction(
+    chatJid: string,
+    messageId: number,
+    emoji: string | null,
+  ): Promise<void> {
+    const chatId = parseTelegramChatId(chatJid);
+    if (!chatId) return;
+    try {
+      await apiPostWithRetry('setMessageReaction', {
+        chat_id: chatId,
+        message_id: messageId,
+        reaction: emoji ? [{ type: 'emoji', emoji }] : [],
+      });
+    } catch (err) {
+      logger.debug(
+        { chatId, messageId, emoji, err: err instanceof Error ? err.message : String(err) },
+        'setMessageReaction failed (best-effort)',
+      );
+    }
+  }
+
   async function downloadFile(fileId: string): Promise<TelegramDownloadFileResult> {
     const file = await apiGet<TelegramFileInfo>('getFile', { file_id: fileId });
     if (!file.file_path) {
@@ -1354,6 +1376,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     deleteCommands,
     setDescription,
     answerCallbackQuery,
+    setMessageReaction,
     downloadFile,
   };
 }

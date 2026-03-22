@@ -64,9 +64,12 @@ Notes:
 ## Coding Agent (/coder)
 
 - In the main/admin chat you can use: `@FarmFriend /coder <task>`.
-- The coder profile streams progress back to the same originating chat when possible, and avoids duplicating the final answer.
-- Coder delegation behavior is runtime-mode independent (`start` and `dev` both support it).
-- Main/admin natural-language coding requests can auto-delegate when the model decides deeper coding execution is appropriate.
+- `/coding <task>` is an alias for `/coder <task>`.
+- `/coder-plan <task>` and `/coder_plan <task>` run the coding worker in read-only planning mode.
+- Main/admin substantial natural-language coding requests can auto-route to the real coding worker.
+- Execute-mode coder runs use a host-managed isolated worktree by default; they report the worktree path, changed files, and test commands in the final result.
+- `/subagents` manages real worker runs owned by the host orchestrator.
+- When spawning subagents, prefer `gpt-5.4-mini` whenever possible; only use a larger model when the task clearly requires it.
 
 ## Main Workspace + Heartbeat
 

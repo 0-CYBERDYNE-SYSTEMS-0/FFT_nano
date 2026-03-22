@@ -23,7 +23,7 @@ No exported symbols.
 
 - chat routing and queue behavior
 - Telegram command policy and admin controls
-- `/coder` delegation handling
+- real coding worker orchestration (`/coder`, `/coding`, `/subagents`)
 - onboarding gate integration
 - IPC namespace authorization
 - heartbeat scheduling and delivery

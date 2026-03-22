@@ -36,21 +36,23 @@ For each message in `processMessage(msg)`:
 4. Build final prompt lines:
    - `[timestamp] sender: content`
 5. Append mode-specific steering notes.
-6. Append delegation marker if explicit coder trigger detected.
+6. Route substantial main-chat coding work to the host coding orchestrator when applicable.
 
 ## Delegation Trigger Routing
 
 Delegation parsing uses `parseDelegationTrigger` from `src/coding-delegation.ts`:
 - `/coder <task>` -> `force_delegate_execute`
+- `/coding <task>` -> `force_delegate_execute`
 - `/coder-plan <task>` or `/coder_plan <task>` -> `force_delegate_plan`
 - exact alias phrases (`use coding agent`, `use your coding agent skill`) -> execute delegation
 
 Safety gate:
 - Delegation is main-chat-only.
+- Main-chat natural-language substantial coding asks can also auto-route through `isSubstantialCodingTask(...)`.
 
 ## Model Invocation
 
-`runAgent(group, prompt, ...)` does:
+Direct runs use `runAgent(group, prompt, ...)`, which does:
 1. Write per-group task snapshot (`current_tasks.json`).
 2. Write groups snapshot (`available_groups.json`, main only).
 3. Build container input with per-chat overrides:
@@ -59,6 +61,12 @@ Safety gate:
    - continue/new-session mode (`noContinue`)
 4. Call `runContainerAgent` in `src/pi-runner.ts`, which launches `pi` directly and optionally wraps it in the configured sandbox.
 5. Retry once after runtime health verification when applicable.
+
+Coder runs use `runCodingTask(...)`, which calls the host-side orchestrator in `src/coding-orchestrator.ts`:
+1. Create a structured worker request.
+2. Create an isolated worktree for execute mode.
+3. Run `pi` in that isolated workspace with explicit tool mode (`read_only` or `full`).
+4. Return a structured worker result including changed files, diff summary, artifacts, and test commands.
 
 ## Success/Failure Semantics
 
@@ -83,4 +91,4 @@ Heartbeat loop (main chat only):
 Telegram command handler intercepts lightweight/admin commands before agent invocation.
 Examples: `/help`, `/status`, `/tasks`, `/queue`, `/model`, `/compact`, `/subagents`.
 
-If command returns `false` for pass-through (`/coder*`), normal agent path handles it.
+If command returns `false` for pass-through (`/coder*`, `/coding`), normal message routing decides whether to call `runAgent(...)` or the host coding worker path.

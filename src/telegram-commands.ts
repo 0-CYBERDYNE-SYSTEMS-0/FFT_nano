@@ -31,6 +31,24 @@ type RunResult = {
   usage?: RunUsage;
 };
 
+type CodingRunResult = RunResult & {
+  workerResult?: {
+    status: 'success' | 'error' | 'aborted';
+    summary: string;
+    finalMessage: string;
+    changedFiles: string[];
+    commandsRun: string[];
+    testsRun: string[];
+    artifacts: string[];
+    childRunIds: string[];
+    startedAt: string;
+    finishedAt: string;
+    diffSummary?: string;
+    worktreePath?: string;
+    error?: string;
+  };
+};
+
 type SetupState = {
   kind: 'provider' | 'model' | 'endpoint' | 'api-key';
   startedAt?: number;
@@ -76,6 +94,13 @@ export interface TelegramCommandDeps {
       chatJid: string;
       groupName: string;
       startedAt: number;
+      parentRequestId?: string;
+      backend?: 'pi';
+      route?: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+      state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
+      worktreePath?: string;
+      childRunIds?: string[];
+      abortController?: AbortController;
     }
   >;
   sendMessage: (chatJid: string, text: string) => Promise<void>;
@@ -154,6 +179,24 @@ export interface TelegramCommandDeps {
     options: Record<string, unknown>,
     abortSignal: AbortSignal,
   ) => Promise<RunResult>;
+  runCodingTask?: (params: {
+    requestId: string;
+    parentRequestId?: string;
+    mode: 'plan' | 'execute';
+    route: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+    originChatJid: string;
+    originGroupFolder: string;
+    taskText: string;
+    workspaceMode: 'ephemeral_worktree' | 'read_only';
+    timeoutSeconds: number;
+    allowFanout: boolean;
+    sessionContext: string;
+    assistantName: string;
+    sessionKey: string;
+    group: any;
+    runtimePrefs?: Record<string, any>;
+    abortController?: AbortController;
+  }) => Promise<CodingRunResult>;
   setTyping: (chatJid: string, typing: boolean) => Promise<void>;
   persistAssistantHistory: (chatJid: string, text: string, runId?: string) => void;
   sendAgentResultMessage: (
@@ -244,8 +287,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           return;
         case 'set-reasoning':
           deps.updateChatRunPreferences(q.chatJid, (prefs) => {
-            if (settingsAction.value === 'off') delete prefs.reasoningLevel;
-            else prefs.reasoningLevel = settingsAction.value;
+            if (settingsAction.value === 'off') {
+              delete prefs.reasoningLevel;
+              delete prefs.showReasoning;
+            } else {
+              prefs.reasoningLevel = settingsAction.value;
+              prefs.showReasoning = settingsAction.value === 'stream';
+            }
             return prefs;
           });
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
@@ -277,13 +325,15 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             return;
           }
           if (settingsAction.target === 'all') {
-            for (const run of deps.activeChatRuns.values()) {
-              run.abortController.abort(new Error('Stopped via Telegram panel (all)'));
+            for (const run of deps.activeCoderRuns.values()) {
+              run.abortController?.abort(new Error('Stopped via Telegram panel (all)'));
             }
           } else {
-            const run = deps.activeChatRuns.get(q.chatJid);
+            const run = Array.from(deps.activeCoderRuns.values())
+              .filter((entry) => entry.chatJid === q.chatJid)
+              .sort((a, b) => b.startedAt - a.startedAt)[0];
             if (run) {
-              run.abortController.abort(new Error('Stopped via Telegram panel (current)'));
+              run.abortController?.abort(new Error('Stopped via Telegram panel (current)'));
             }
           }
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-subagents' });
@@ -440,7 +490,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
         await deps.sendMessage(
           q.chatJid,
-          ['Coder delegation:', '- /coder <task> to execute', '- /coder-plan <task> for read-only plan', '- use coding agent'].join('\n'),
+          [
+            'Coder delegation:',
+            '- /coder <task> to execute',
+            '- /coding <task> as /coder alias',
+            '- /coder-plan <task> for read-only plan',
+            '- use coding agent',
+          ].join('\n'),
         );
         return;
       case 'panel:groups':
@@ -686,8 +742,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
 
       deps.updateChatRunPreferences(m.chatJid, (prefs) => {
-        if (normalized === 'off') delete prefs.reasoningLevel;
-        else prefs.reasoningLevel = normalized;
+        if (normalized === 'off') {
+          delete prefs.reasoningLevel;
+          delete prefs.showReasoning;
+        } else {
+          prefs.reasoningLevel = normalized;
+          prefs.showReasoning = normalized === 'stream';
+        }
         return prefs;
       });
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
@@ -866,7 +927,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
-    if (cmd === '/coder' || cmd === '/coder-plan' || cmd === '/coder_plan') {
+    if (cmd === '/coder' || cmd === '/coding' || cmd === '/coder-plan' || cmd === '/coder_plan') {
       if (!isMainGroup) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
         await deps.sendMessage(
@@ -1193,30 +1254,32 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       if (action === 'stop') {
         const target = (rest[1] || 'current').toLowerCase();
         if (target === 'all') {
-          for (const run of deps.activeChatRuns.values()) {
-            run.abortController.abort(new Error('Stopped via /subagents stop all'));
+          for (const run of deps.activeCoderRuns.values()) {
+            run.abortController?.abort(new Error('Stopped via /subagents stop all'));
           }
           deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop all');
           await deps.sendMessage(m.chatJid, 'Stopping all active subagent runs...');
           return true;
         }
         if (target === 'current') {
-          const run = deps.activeChatRuns.get(m.chatJid);
+          const run = Array.from(deps.activeCoderRuns.values())
+            .filter((entry) => entry.chatJid === m.chatJid)
+            .sort((a, b) => b.startedAt - a.startedAt)[0];
           if (!run) {
             await deps.sendMessage(m.chatJid, 'No active run in this chat.');
             return true;
           }
-          run.abortController.abort(new Error('Stopped via /subagents stop current'));
+          run.abortController?.abort(new Error('Stopped via /subagents stop current'));
           deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop current');
           await deps.sendMessage(m.chatJid, 'Stopping current chat run...');
           return true;
         }
-        const matched = Array.from(deps.activeChatRuns.values()).find((run) => run.requestId === target);
+        const matched = deps.activeCoderRuns.get(target);
         if (!matched) {
           await deps.sendMessage(m.chatJid, `No active subagent run found for: ${target}`);
           return true;
         }
-        matched.abortController.abort(new Error('Stopped via /subagents stop <id>'));
+        matched.abortController?.abort(new Error('Stopped via /subagents stop <id>'));
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop id');
         await deps.sendMessage(m.chatJid, `Stopping run ${target}...`);
         return true;
@@ -1242,13 +1305,6 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           return true;
         }
         const requestId = `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        deps.activeCoderRuns.set(requestId, {
-          requestId,
-          mode: 'execute',
-          chatJid: m.chatJid,
-          groupName: group.name,
-          startedAt: Date.now(),
-        });
         const abortController = new AbortController();
         const activeRun = {
           chatJid: m.chatJid,
@@ -1273,16 +1329,34 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         await deps.sendMessage(m.chatJid, `Starting subagent run (${requestId})...`);
         await deps.setTyping(m.chatJid, true);
         try {
-          const run = await deps.runAgent(
-            group,
-            `[SUBAGENT EXECUTE REQUEST]\n${task}`,
-            m.chatJid,
-            'force_delegate_execute',
-            requestId,
-            deps.state.chatRunPreferences[m.chatJid] || {},
-            {},
-            abortController.signal,
-          );
+          const run = deps.runCodingTask
+            ? await deps.runCodingTask({
+                requestId,
+                mode: 'execute',
+                route: 'subagent_execute',
+                originChatJid: m.chatJid,
+                originGroupFolder: group.folder,
+                taskText: task,
+                workspaceMode: 'ephemeral_worktree',
+                timeoutSeconds: 1800,
+                allowFanout: false,
+                sessionContext: `[SUBAGENT EXECUTE REQUEST]\n${task}`,
+                assistantName: deps.constants.assistantName,
+                sessionKey: deps.getSessionKeyForChat(m.chatJid),
+                group,
+                runtimePrefs: deps.state.chatRunPreferences[m.chatJid] || {},
+                abortController,
+              })
+            : await deps.runAgent(
+                group,
+                `[SUBAGENT EXECUTE REQUEST]\n${task}`,
+                m.chatJid,
+                'force_delegate_execute',
+                requestId,
+                deps.state.chatRunPreferences[m.chatJid] || {},
+                {},
+                abortController.signal,
+              );
           deps.updateChatUsage(m.chatJid, run.usage);
           if (!run.ok) {
             deps.emitTuiChatEvent({
@@ -1328,7 +1402,6 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             deps.activeChatRuns.delete(m.chatJid);
           }
           deps.activeChatRunsById?.delete(requestId);
-          deps.activeCoderRuns.delete(requestId);
           await deps.setTyping(m.chatJid, false);
         }
         return true;

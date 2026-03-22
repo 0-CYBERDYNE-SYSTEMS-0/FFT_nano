@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 
 import {
   DATA_DIR,
@@ -13,6 +14,7 @@ import {
 } from './config.js';
 import { closeDatabase, getAllTasks, initDatabaseAtPath } from './db.js';
 import { parseHeartbeatActiveHours } from './heartbeat-policy.js';
+import type { SystemPromptReport } from './system-prompt.js';
 import { readMainWorkspaceState } from './workspace-bootstrap.js';
 
 type CheckLevel = 'pass' | 'warn' | 'fail';
@@ -246,6 +248,74 @@ function checkMemoryConfig(): CheckResult {
   };
 }
 
+function checkPromptLifecycle(): CheckResult {
+  const statePath = path.join(DATA_DIR, 'pi', 'main', '.pi', 'fft_nano', 'prompt-state.json');
+  const manifestPath = path.join(MAIN_WORKSPACE_DIR, 'logs', 'system-prompt.latest.json');
+  if (!PARITY_CONFIG.prompt.cacheEnabled) {
+    return {
+      id: 'prompt.lifecycle',
+      level: 'warn',
+      summary: 'Prompt cache is disabled',
+      detail: `manifest_latest=${manifestPath}`,
+    };
+  }
+  if (!fs.existsSync(statePath)) {
+    return {
+      id: 'prompt.lifecycle',
+      level: 'warn',
+      summary: 'Prompt runtime state not written yet',
+      detail: statePath,
+    };
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as {
+      sessionEpoch?: number;
+      corrupted?: boolean;
+      lastPreflightDecision?: string;
+      lastRebaseAt?: string;
+      cacheEntries?: Record<string, unknown>;
+    };
+    const cacheCount = parsed.cacheEntries ? Object.keys(parsed.cacheEntries).length : 0;
+    const manifestExists = fs.existsSync(manifestPath);
+    let manifestDetail = 'manifest=missing';
+    if (manifestExists) {
+      try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as SystemPromptReport;
+        const blockedFiles = manifest.contextEntries
+          .filter((entry) => entry.blocked)
+          .map((entry) => path.basename(entry.path));
+        const cacheKeyHash = manifest.baseCacheKey ? manifest.baseCacheKey.slice(0, 12) : 'unknown';
+        manifestDetail = [
+          `cache_key=${cacheKeyHash}`,
+          `cache_hit=${manifest.cacheHit ? 'yes' : 'no'}`,
+          `blocked=${blockedFiles.length > 0 ? blockedFiles.join(',') : 'none'}`,
+          `budget=${manifest.contextBudget.injectedTotalChars}/${manifest.contextBudget.totalMaxChars}`,
+          `skills=${manifest.skillsCatalog.count}`,
+        ].join(' ');
+      } catch {
+        manifestDetail = 'manifest=unreadable';
+      }
+    }
+    return {
+      id: 'prompt.lifecycle',
+      level: parsed.corrupted ? 'fail' : manifestExists ? 'pass' : 'warn',
+      summary: parsed.corrupted
+        ? 'Prompt lifecycle state is corrupted'
+        : manifestExists
+        ? 'Prompt lifecycle state and latest manifest are present'
+        : 'Prompt lifecycle state exists but latest manifest is missing',
+      detail: `cache_entries=${cacheCount} session_epoch=${parsed.sessionEpoch || 0} decision=${parsed.lastPreflightDecision || 'unknown'}${parsed.lastRebaseAt ? ` last_rebase=${parsed.lastRebaseAt}` : ''} ${manifestDetail}`.trim(),
+    };
+  } catch {
+    return {
+      id: 'prompt.lifecycle',
+      level: 'fail',
+      summary: 'Prompt lifecycle state is unreadable',
+      detail: statePath,
+    };
+  }
+}
+
 function checkStateDirs(): CheckResult {
   const exists = fs.existsSync(DATA_DIR);
   return {
@@ -273,7 +343,7 @@ function checkRuntimeProfile(): CheckResult {
   };
 }
 
-function buildDoctorReport(): DoctorReport {
+export function buildDoctorReport(): DoctorReport {
   const checks: CheckResult[] = [
     checkStateDirs(),
     checkRuntimeProfile(),
@@ -283,6 +353,7 @@ function buildDoctorReport(): DoctorReport {
     checkHeartbeatConfig(),
     checkCronHealth(),
     checkMemoryConfig(),
+    checkPromptLifecycle(),
   ];
   return {
     status: summarizeStatus(checks),
@@ -304,4 +375,6 @@ function main(): void {
   if (report.status === 'warn') process.exit(1);
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

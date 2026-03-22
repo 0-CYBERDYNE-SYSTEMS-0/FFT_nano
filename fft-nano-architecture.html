@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FFT_nano Architecture — Post-Refactor</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #1c2128; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --l-external: #da3633; --l-channel: #d29922; --l-orchestrator: #58a6ff;
+    --l-agent: #3fb950; --l-streaming: #bc8cff; --l-persistence: #f0883e;
+    --l-support: #768390;
+    --c-data: #58a6ff; --c-event: #3fb950; --c-ipc: #bc8cff; --c-call: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  #topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; z-index: 10; }
+  #topbar h1 { font-size: 14px; font-weight: 600; white-space: nowrap; margin-right: 6px; }
+  .sep { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+  .section-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; white-space: nowrap; }
+  .tb-btn { border: 1px solid var(--border); background: var(--surface2); color: var(--muted); font-size: 11px; padding: 3px 10px; border-radius: 5px; cursor: pointer; transition: all .12s; white-space: nowrap; }
+  .tb-btn:hover { background: var(--border); color: var(--text); }
+  .tb-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .layer-btn.active { border-color: var(--lc); background: color-mix(in srgb, var(--lc) 22%, var(--surface2)); color: #fff; }
+  .layer-btn .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 3px; vertical-align: middle; }
+  .conn-btn.active { border-color: var(--cc); background: color-mix(in srgb, var(--cc) 18%, var(--surface2)); color: #fff; }
+
+  #main { flex: 1; display: flex; overflow: hidden; }
+  #canvas-wrap { flex: 1; position: relative; overflow: auto; background: var(--bg); }
+  #canvas-wrap svg { display: block; }
+
+  #detail { width: 320px; background: var(--surface); border-left: 1px solid var(--border); display: none; flex-direction: column; overflow-y: auto; padding: 14px; }
+  #detail.open { display: flex; }
+  #detail h2 { font-size: 14px; margin-bottom: 2px; }
+  #detail .sub { color: var(--muted); font-size: 11px; font-family: 'SF Mono', Monaco, Consolas, monospace; margin-bottom: 10px; }
+  #detail .badge { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 8px; margin-bottom: 10px; }
+  #detail .desc { font-size: 12px; line-height: 1.55; color: #c9d1d9; margin-bottom: 14px; white-space: pre-wrap; }
+  .conn-sect { margin-bottom: 12px; }
+  .conn-sect h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
+  .ci { font-size: 11px; padding: 2px 0; display: flex; align-items: center; gap: 5px; }
+  .cd { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+  .close-btn { position: absolute; top: 10px; right: 10px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
+  .close-btn:hover { color: var(--text); }
+  #detail .comments-area { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+  #detail textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: #c9d1d9; font-size: 11px; padding: 6px; resize: vertical; min-height: 50px; font-family: inherit; }
+  #detail textarea:focus { outline: none; border-color: var(--accent); }
+  .add-btn { background: #238636; border: 1px solid #2ea043; color: #fff; font-size: 11px; padding: 3px 10px; border-radius: 5px; cursor: pointer; margin-top: 4px; }
+  .add-btn:hover { background: #2ea043; }
+  .cmt-list { list-style: none; margin-top: 6px; }
+  .cmt-list li { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 6px; margin-bottom: 4px; font-size: 11px; position: relative; }
+  .cmt-list li .del { position: absolute; top: 3px; right: 5px; background: none; border: none; color: #f85149; cursor: pointer; font-size: 13px; }
+
+  #prompt-panel { background: var(--surface); border-top: 1px solid var(--border); }
+  #prompt-toggle { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px; cursor: pointer; }
+  #prompt-toggle span { font-size: 11px; color: var(--muted); }
+  #prompt-toggle .arrow { transition: transform .2s; }
+  #prompt-toggle .arrow.open { transform: rotate(180deg); }
+  #prompt-body { display: none; padding: 0 14px 10px; overflow-y: auto; max-height: 160px; }
+  #prompt-body.open { display: block; }
+  #prompt-text { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 8px; font-size: 11px; font-family: 'SF Mono', Monaco, Consolas, monospace; color: #c9d1d9; white-space: pre-wrap; line-height: 1.45; }
+  .copy-btn { background: var(--surface2); border: 1px solid var(--border); color: #c9d1d9; font-size: 10px; padding: 2px 8px; border-radius: 4px; cursor: pointer; margin-top: 4px; float: right; }
+  .copy-btn:hover { background: var(--border); }
+  .copy-btn.copied { background: #238636; border-color: #2ea043; color: #fff; }
+
+  .node-group { cursor: pointer; }
+  .node-group:hover rect { filter: drop-shadow(0 0 6px var(--glow)); }
+  .node-group.selected rect { stroke-width: 2.5; stroke: var(--accent) !important; }
+  .node-group.dimmed { opacity: .12; }
+  .conn-path { fill: none; stroke-width: 1.6; transition: opacity .25s; stroke-dasharray: 6,4; animation: flowDash 0.8s linear infinite; }
+  .conn-path.dimmed { opacity: .07; animation: none; }
+  .conn-label { font-size: 8.5px; fill: var(--muted); pointer-events: none; }
+  @keyframes flowDash { to { stroke-dashoffset: -20; } }
+
+  .layer-band { fill: none; stroke-dasharray: 6,4; rx: 10; }
+  .layer-band-label { font-size: 10px; font-weight: 600; letter-spacing: .8px; }
+
+  .legend { display: flex; gap: 12px; margin-left: auto; font-size: 10px; color: var(--muted); align-items: center; flex-wrap: wrap; }
+  .legend-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 3px; vertical-align: middle; }
+  .refactor-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 600; margin-left: 4px; }
+  .tag-new { background: rgba(63,185,80,0.2); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+  .tag-refactored { background: rgba(188,140,255,0.2); color: #bc8cff; border: 1px solid rgba(188,140,255,0.3); }
+  .tag-legacy { background: rgba(139,148,158,0.15); color: #8b949e; border: 1px solid rgba(139,148,158,0.2); }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>FFT_nano Architecture</h1>
+  <span class="refactor-tag tag-refactored">Post-Refactor</span>
+  <div class="sep"></div>
+  <span class="section-label">View</span>
+  <div id="preset-btns"></div>
+  <div class="sep"></div>
+  <span class="section-label">Layers</span>
+  <div id="layer-btns"></div>
+  <div class="sep"></div>
+  <span class="section-label">Connections</span>
+  <div id="conn-btns"></div>
+  <div class="sep"></div>
+  <div class="legend">
+    <span><span class="legend-dot" style="background:var(--l-external)"></span>External</span>
+    <span><span class="legend-dot" style="background:var(--l-channel)"></span>I/O</span>
+    <span><span class="legend-dot" style="background:var(--l-orchestrator)"></span>Orchestrator</span>
+    <span><span class="legend-dot" style="background:var(--l-agent)"></span>Agent</span>
+    <span><span class="legend-dot" style="background:var(--l-streaming)"></span>Streaming</span>
+    <span><span class="legend-dot" style="background:var(--l-persistence)"></span>Persistence</span>
+    <span><span class="legend-dot" style="background:var(--l-support)"></span>Support</span>
+  </div>
+</div>
+
+<div id="main">
+  <div id="canvas-wrap">
+    <svg id="svg" viewBox="0 0 1340 880" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+  <div id="detail">
+    <button class="close-btn" id="close-btn">&times;</button>
+    <h2 id="d-title"></h2>
+    <div class="sub" id="d-sub"></div>
+    <div class="badge" id="d-badge"></div>
+    <div class="desc" id="d-desc"></div>
+    <div class="conn-sect"><h3>Inbound</h3><div id="d-in"></div></div>
+    <div class="conn-sect"><h3>Outbound</h3><div id="d-out"></div></div>
+    <div class="comments-area">
+      <h3 style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">Comments</h3>
+      <textarea id="cmt-input" placeholder="Add a note about this component..."></textarea>
+      <button class="add-btn" id="add-cmt">Add Comment</button>
+      <ul class="cmt-list" id="cmt-list"></ul>
+    </div>
+  </div>
+</div>
+
+<div id="prompt-panel">
+  <div id="prompt-toggle"><span>Prompt Output</span><span class="arrow">&#9650;</span></div>
+  <div id="prompt-body">
+    <div id="prompt-text"></div>
+    <button class="copy-btn" id="copy-btn">Copy</button>
+  </div>
+</div>
+
+<script>
+(function() {
+'use strict';
+
+// ─── Layer definitions ────────────────────────────────────────
+var LAYERS = {
+  external:     { label: 'External',     color: '#da3633', stroke: '#f85149' },
+  channel:      { label: 'I/O Channel',  color: '#d29922', stroke: '#e3b341' },
+  orchestrator: { label: 'Orchestrator', color: '#58a6ff', stroke: '#79c0ff' },
+  agent:        { label: 'Agent',        color: '#3fb950', stroke: '#56d364' },
+  streaming:    { label: 'Streaming',    color: '#bc8cff', stroke: '#d2a8ff' },
+  persistence:  { label: 'Persistence',  color: '#f0883e', stroke: '#f4a261' },
+  support:      { label: 'Support',      color: '#768390', stroke: '#8b949e' },
+};
+
+var CONN_TYPES = {
+  data:  { label: 'Data Flow',    color: '#58a6ff', dash: '' },
+  event: { label: 'Event',        color: '#3fb950', dash: '5,3' },
+  ipc:   { label: 'IPC / File',   color: '#bc8cff', dash: '8,4' },
+  call:  { label: 'Function Call',color: '#d29922', dash: '3,3' },
+};
+
+// ─── Nodes ────────────────────────────────────────────────────
+// Layout: horizontal bands by layer
+var nodes = [
+  // ── External (y ~30) ──
+  { id: 'tg-api',       label: 'Telegram Bot API',      sub: 'External Service',                layer: 'external',     x: 130,  y: 30,  w: 160, h: 46, status: '',
+    desc: 'External Telegram service. Receives getUpdates polls. Accepts sendMessage, editMessage, deleteMessage API calls. Rate-limited with exponential backoff.' },
+  { id: 'wa-api',       label: 'WhatsApp (Baileys)',     sub: 'External Service',                layer: 'external',     x: 540,  y: 30,  w: 160, h: 46, status: '',
+    desc: 'WhatsApp connection via Baileys library. Optional channel — connects via QR code auth flow.' },
+
+  // ── I/O Channel (y ~120) ──
+  { id: 'tg-bot',       label: 'TelegramBot Client',    sub: 'src/telegram.ts',                 layer: 'channel',      x: 80,   y: 120, w: 160, h: 46, status: '',
+    desc: 'Wraps all Telegram HTTP API calls. Runs getUpdates polling loop. Provides sendMessage(), editStreamMessage(), sendPhoto(), deleteMessage(). Handles retry with exponential backoff and rate limits. Parses into TelegramInboundEvent union type.' },
+  { id: 'tg-commands',  label: 'Telegram Commands',     sub: 'src/telegram-commands.ts',         layer: 'channel',      x: 310,  y: 120, w: 160, h: 46, status: 'new',
+    desc: 'Extracted from index.ts (1351 lines). Handles all /slash commands: /model, /think, /reasoning, /verbose, /queue, /status, /reset, /free. Also processes inline keyboard callback queries and settings panels.' },
+  { id: 'wa-client',    label: 'WhatsApp Client',       sub: 'src/index.ts (connectWhatsApp)',   layer: 'channel',      x: 540,  y: 120, w: 160, h: 46, status: '',
+    desc: 'WhatsApp connection setup via Baileys. Auth state persistence, QR code flow, message event handlers. Optional — only connects if WHATSAPP_ENABLED.' },
+  { id: 'tui',          label: 'TUI Gateway',           sub: 'src/tui/gateway-server.ts',        layer: 'channel',      x: 770,  y: 120, w: 160, h: 46, status: '',
+    desc: 'WebSocket server on port 28989 for terminal UI clients. Broadcasts agent events in real-time: tool starts, text deltas, completions. Used by `fft tui` CLI.' },
+  { id: 'web',          label: 'Web Control Center',    sub: 'src/web/control-center-server.ts', layer: 'channel',      x: 1000, y: 120, w: 160, h: 46, status: '',
+    desc: 'HTTP server on port 28990. Static dashboard from dist-web/. REST APIs: runtime status, model info, task management, file browsing.' },
+
+  // ── Orchestrator (y ~240) ──
+  { id: 'app',          label: 'App Bootstrap',          sub: 'src/app.ts',                      layer: 'orchestrator', x: 80,   y: 240, w: 150, h: 46, status: 'new',
+    desc: 'Extracted from index.ts (433 lines). main() entry point, startup sequence, shutdown handler, singleton lock, connectWhatsApp delegation. Initializes all subsystems and wires event handlers.' },
+  { id: 'msg-dispatch', label: 'Message Dispatch',      sub: 'src/message-dispatch.ts',          layer: 'orchestrator', x: 290,  y: 240, w: 160, h: 46, status: 'new',
+    desc: 'Extracted from index.ts (687 lines). processMessage(), runDirectSessionTurn(), message queue logic. Routes inbound messages to agent runs. Manages active run tracking and queue modes (collect/interrupt/followup/steer).' },
+  { id: 'index',        label: 'Main Router',           sub: 'src/index.ts (4545 lines)',        layer: 'orchestrator', x: 520,  y: 240, w: 160, h: 46, status: 'refactored',
+    desc: 'Central orchestrator — reduced from 6809 to 4545 lines. Still owns IPC watcher loop, heartbeat loop, Telegram event routing, completion state resolution. Being decomposed in phases.' },
+  { id: 'chat-prefs',   label: 'Chat Preferences',      sub: 'src/chat-preferences.ts',          layer: 'orchestrator', x: 750,  y: 240, w: 160, h: 46, status: 'new',
+    desc: 'Extracted from index.ts (415 lines). Normalizers for provider/model/thinkLevel/verboseMode/queueMode. Queue parsing, preference persistence to SQLite, usage stats helpers.' },
+  { id: 'app-state',    label: 'App State',              sub: 'src/app-state.ts',                 layer: 'orchestrator', x: 980,  y: 240, w: 150, h: 46, status: 'new',
+    desc: 'All global mutable state extracted from index.ts (203 lines). 20+ Maps (activeChatRuns, chatRunPreferences, etc.), type definitions (ActiveCoderRun, ChatRunPreferences, ThinkLevel, etc.). Reassignable vars wrapped in exported `state` object for ESM compatibility.' },
+
+  // ── Agent (y ~370) ──
+  { id: 'pi-runner',    label: 'PI Runner',              sub: 'src/pi-runner.ts',                 layer: 'agent',        x: 180,  y: 370, w: 160, h: 46, status: 'new',
+    desc: 'Extracted from container-runner.ts (828 lines). Spawns PI subprocess via child_process.spawn(). Builds command args: --mode json, --thinking, --api-key, --model, --tools. Streams JSON events from stdout. Emits runtime events via PiRuntimeEventHub instead of writing IPC files for host-local delivery.' },
+  { id: 'pi-sub',       label: 'PI Subprocess',          sub: 'LLM Agent (Claude/etc)',           layer: 'agent',        x: 430,  y: 370, w: 160, h: 46, status: '',
+    desc: 'The LLM agent running as child process. Produces JSON event stream on stdout: assistant text deltas (thinking + response), tool call starts/completions, errors. Think level (off/minimal/low/medium/high/xhigh) controls reasoning depth.' },
+  { id: 'sys-prompt',   label: 'System Prompt',          sub: 'src/system-prompt.ts',             layer: 'agent',        x: 680,  y: 370, w: 160, h: 46, status: '',
+    desc: 'Assembles complete system prompt from workspace files: SOUL.md, USER.md, IDENTITY.md, BOOTSTRAP.md. Injects memory search results, coding delegation hints, workspace context. Supports minimal and full modes.' },
+  { id: 'sandbox',      label: 'Sandbox Wrapper',        sub: 'src/sandbox.ts',                   layer: 'agent',        x: 930,  y: 370, w: 150, h: 46, status: 'new',
+    desc: 'wrapWithSandbox() — optional process isolation. Supports bubblewrap (bwrap), docker, or none. Wraps the PI subprocess command with sandbox flags.' },
+
+  // ── Streaming (y ~500) ──
+  { id: 'runtime-hub',  label: 'Runtime Event Hub',      sub: 'src/pi-runtime-events.ts',         layer: 'streaming',    x: 80,   y: 500, w: 170, h: 46, status: 'new',
+    desc: 'EventEmitter-based hub (73 lines). Replaces file-based IPC for host-local preview delivery. PiRuntimeEventHub with subscribe/emit. Two event kinds: telegram_preview_update (draft text) and agent_message (final text). Ordered processor ensures sequential handling.' },
+  { id: 'preview-reg',  label: 'Preview Registry',       sub: 'src/telegram-streaming.ts',        layer: 'streaming',    x: 310,  y: 500, w: 170, h: 46, status: 'new',
+    desc: 'TelegramPreviewRegistry (163 lines). Single-path visible preview streaming. Tracks per-run message preview state (messageId, lastText). Manages disabled runs (TTL-based), completed runs, and stream completion resolution. Replaces dual-path draft/message mode.' },
+  { id: 'ipc-files',    label: 'IPC File Layer',          sub: 'data/ipc/{group}/messages/',       layer: 'streaming',    x: 540,  y: 500, w: 170, h: 46, status: 'legacy',
+    desc: 'Filesystem-based IPC channel. Still used for cross-boundary sandbox communication: agent-authored messages/, tasks/, actions/, action_results/. Atomic rename pattern (write .tmp, rename). Being phased out for host-local events.' },
+  { id: 'ipc-watcher',  label: 'IPC Watcher',             sub: 'src/index.ts (startIpcWatcher)',   layer: 'streaming',    x: 770,  y: 500, w: 170, h: 46, status: 'refactored',
+    desc: 'Polling loop in main router. Reads files from data/ipc/{group}/messages/ at IPC_POLL_INTERVAL. Still handles sandbox-originated IPC files. Host-local preview delivery now bypasses this via PiRuntimeEventHub.' },
+  { id: 'draft-ipc',    label: 'Draft IPC (Legacy)',      sub: 'src/telegram-draft-ipc.ts',        layer: 'streaming',    x: 1000, y: 500, w: 170, h: 46, status: 'legacy',
+    desc: 'Legacy dual-path draft delivery. TelegramDraftDisableRegistry, TelegramStreamState. Native sendMessageDraft (Path A) vs send+edit fallback (Path B). Still in-tree but host-local preview now uses single visible path via TelegramPreviewRegistry.' },
+
+  // ── Streaming continued (y ~600) ──
+  { id: 'verbose',      label: 'Verbose Mode',            sub: 'src/verbose-mode.ts',              layer: 'streaming',    x: 80,   y: 600, w: 150, h: 46, status: '',
+    desc: 'Controls TOOL PROGRESS visibility. Four modes:\n\noff — No tool progress\nnew — Only new/unique tool names\nall — Every tool call with preview (default)\nverbose — Full args, results, debug\n\nCycled via /verbose. Stored per-chat.' },
+  { id: 'tg-format',    label: 'Telegram Formatter',      sub: 'src/telegram-format.ts',           layer: 'streaming',    x: 310,  y: 600, w: 170, h: 46, status: '',
+    desc: 'Converts Markdown to Telegram HTML. splitTelegramText() respects 4096 char limit (safe at 4000), preserving code blocks across splits. Escapes HTML entities. Handles bold, italic, code, links.' },
+  { id: 'tui-hub',      label: 'TUI Event Hub',            sub: 'src/tui/runtime-events.ts',        layer: 'streaming',    x: 540,  y: 600, w: 170, h: 46, status: '',
+    desc: 'Lightweight EventEmitter for TUI clients (34 lines). Template for the PiRuntimeEventHub pattern. Broadcasts agent events to connected WebSocket TUI clients.' },
+
+  // ── Persistence (y ~720) ──
+  { id: 'db',           label: 'SQLite Store',             sub: 'src/db.ts',                        layer: 'persistence',  x: 160,  y: 720, w: 150, h: 46, status: '',
+    desc: 'Persistence via better-sqlite3. Tables: chats (metadata), messages (history), scheduled_tasks (cron/interval), task_run_logs (execution). storeMessage(), getChatHistory(), task CRUD.' },
+  { id: 'memory',       label: 'Memory System',            sub: 'src/memory-*.ts',                  layer: 'persistence',  x: 400,  y: 720, w: 160, h: 46, status: '',
+    desc: 'Semantic/BM25 search across memory documents + session history. memory-retrieval.ts searches and ranks. Results injected into system prompt with daily budget cap. File-based + SQLite backend.' },
+  { id: 'config',       label: 'Config & Runtime',         sub: 'src/config.ts + runtime-config.ts',layer: 'persistence',  x: 650,  y: 720, w: 170, h: 46, status: '',
+    desc: 'All configuration constants (config.ts) and runtime provider configuration (runtime-config.ts). API keys, model settings, default think levels, IPC intervals, sandbox mode.' },
+
+  // ── Support (y ~830) ──
+  { id: 'scheduler',    label: 'Task Scheduler',           sub: 'src/task-scheduler.ts + cron/',    layer: 'support',      x: 130,  y: 830, w: 160, h: 46, status: '',
+    desc: 'Hybrid scheduler: v2 cron (event-driven via cron/service.ts) + legacy polling (checks DB every 60s). Fires scheduled prompts through same agent pipeline as interactive messages.' },
+  { id: 'heartbeat',    label: 'Heartbeat Loop',           sub: 'src/heartbeat-policy.ts',          layer: 'support',      x: 380,  y: 830, w: 160, h: 46, status: '',
+    desc: 'Periodic health checks (default 30min). Active hours support (Mon-Fri@9:00-17:00), duplicate suppression, acknowledgment normalization. Only extracts thinking when HEARTBEAT_INCLUDE_REASONING=true.' },
+  { id: 'farm',         label: 'Farm Actions',              sub: 'src/farm-*.ts',                    layer: 'support',      x: 630,  y: 830, w: 160, h: 46, status: '',
+    desc: 'Farm state collector and action gateway. Monitors connected IoT/farm devices, collects sensor data, executes farm actions through the agent pipeline.' },
+  { id: 'ha',           label: 'Home Assistant',             sub: 'src/home-assistant.ts',            layer: 'support',      x: 880,  y: 830, w: 160, h: 46, status: '',
+    desc: 'Home Assistant integration. Controls smart home devices, reads sensor states. Connected via HA REST API.' },
+];
+
+// ─── Connections ──────────────────────────────────────────────
+var connections = [
+  // Inbound message flow
+  { from: 'tg-api',      to: 'tg-bot',       type: 'data',  label: 'getUpdates polling',          group: 'inbound' },
+  { from: 'tg-bot',      to: 'tg-commands',  type: 'call',  label: 'command routing',             group: 'inbound' },
+  { from: 'tg-bot',      to: 'index',        type: 'data',  label: 'TelegramInboundEvent',        group: 'inbound' },
+  { from: 'wa-api',      to: 'wa-client',    type: 'data',  label: 'Baileys events',              group: 'inbound' },
+  { from: 'wa-client',   to: 'index',        type: 'data',  label: 'WhatsApp message',            group: 'inbound' },
+
+  // Orchestrator layer
+  { from: 'app',         to: 'index',        type: 'call',  label: 'startup / init',              group: 'orchestrator' },
+  { from: 'index',       to: 'msg-dispatch', type: 'call',  label: 'processMessage()',            group: 'orchestrator' },
+  { from: 'msg-dispatch',to: 'pi-runner',    type: 'call',  label: 'runPiAgent()',                group: 'orchestrator' },
+  { from: 'index',       to: 'chat-prefs',   type: 'call',  label: 'normalize + persist prefs',   group: 'orchestrator' },
+  { from: 'tg-commands', to: 'chat-prefs',   type: 'call',  label: 'update preferences',          group: 'orchestrator' },
+  { from: 'index',       to: 'app-state',    type: 'data',  label: 'shared state access',         group: 'orchestrator' },
+  { from: 'msg-dispatch',to: 'app-state',    type: 'data',  label: 'activeChatRuns',              group: 'orchestrator' },
+  { from: 'chat-prefs',  to: 'app-state',    type: 'data',  label: 'chatRunPreferences',          group: 'orchestrator' },
+
+  // Agent layer
+  { from: 'pi-runner',   to: 'pi-sub',       type: 'data',  label: 'spawn --mode json',           group: 'agent' },
+  { from: 'sys-prompt',  to: 'pi-runner',    type: 'data',  label: 'system prompt',               group: 'agent' },
+  { from: 'memory',      to: 'sys-prompt',   type: 'data',  label: 'memory context',              group: 'agent' },
+  { from: 'pi-runner',   to: 'sandbox',      type: 'call',  label: 'wrapWithSandbox()',           group: 'agent' },
+  { from: 'pi-sub',      to: 'pi-runner',    type: 'event', label: 'JSON stdout stream',          group: 'agent-output' },
+
+  // Streaming — new EventEmitter path
+  { from: 'pi-runner',   to: 'runtime-hub',  type: 'event', label: 'emit(preview_update)',        group: 'event-stream' },
+  { from: 'runtime-hub', to: 'preview-reg',  type: 'event', label: 'subscribe → handle',         group: 'event-stream' },
+  { from: 'preview-reg', to: 'tg-bot',       type: 'call',  label: 'send + edit visible',         group: 'event-stream' },
+  { from: 'pi-runner',   to: 'runtime-hub',  type: 'event', label: 'emit(agent_message)',         group: 'event-stream' },
+
+  // Streaming — legacy IPC path (sandbox)
+  { from: 'pi-runner',   to: 'ipc-files',    type: 'ipc',   label: 'writeIpcFile() (sandbox)',    group: 'ipc' },
+  { from: 'ipc-files',   to: 'ipc-watcher',  type: 'ipc',   label: 'poll + read + delete',        group: 'ipc' },
+  { from: 'ipc-watcher', to: 'draft-ipc',    type: 'ipc',   label: 'draft_update (legacy)',       group: 'ipc' },
+  { from: 'ipc-watcher', to: 'index',        type: 'ipc',   label: 'external_completion',         group: 'ipc' },
+  { from: 'draft-ipc',   to: 'tg-bot',       type: 'call',  label: 'sendDraftWithFallback',       group: 'ipc' },
+
+  // Final delivery
+  { from: 'pi-runner',   to: 'index',        type: 'event', label: 'result + streamed flag',      group: 'final' },
+  { from: 'index',       to: 'tg-bot',       type: 'call',  label: 'sendAgentResultMessage',      group: 'final' },
+  { from: 'tg-format',   to: 'tg-bot',       type: 'call',  label: 'format + chunk',              group: 'final' },
+  { from: 'tg-bot',      to: 'tg-api',       type: 'data',  label: 'final reply',                 group: 'final' },
+
+  // Verbose / TUI
+  { from: 'pi-runner',   to: 'verbose',      type: 'event', label: 'tool events',                 group: 'verbose' },
+  { from: 'verbose',     to: 'tg-bot',       type: 'call',  label: 'tool progress msgs',          group: 'verbose' },
+  { from: 'pi-runner',   to: 'tui-hub',      type: 'event', label: 'broadcast events',            group: 'tui' },
+  { from: 'tui-hub',     to: 'tui',          type: 'event', label: 'WebSocket push',              group: 'tui' },
+  { from: 'index',       to: 'web',          type: 'data',  label: 'HTTP API status',             group: 'tui' },
+
+  // Persistence
+  { from: 'index',       to: 'db',           type: 'call',  label: 'storeMessage()',              group: 'persist' },
+  { from: 'msg-dispatch',to: 'db',           type: 'call',  label: 'getChatHistory()',            group: 'persist' },
+  { from: 'chat-prefs',  to: 'db',           type: 'call',  label: 'persist preferences',         group: 'persist' },
+
+  // Support
+  { from: 'scheduler',   to: 'msg-dispatch', type: 'call',  label: 'fires scheduled prompt',      group: 'support' },
+  { from: 'heartbeat',   to: 'msg-dispatch', type: 'call',  label: 'periodic health check',       group: 'support' },
+  { from: 'farm',        to: 'msg-dispatch', type: 'call',  label: 'farm action trigger',         group: 'support' },
+  { from: 'ha',          to: 'farm',         type: 'data',  label: 'device state',                group: 'support' },
+];
+
+// ─── Presets ──────────────────────────────────────────────────
+var PRESETS = {
+  'full':          { label: 'Full System',      nodes: null, groups: null },
+  'message-flow':  { label: 'Message Flow',     nodes: ['tg-api','tg-bot','tg-commands','index','msg-dispatch','pi-runner','pi-sub','sys-prompt','memory','tg-format','chat-prefs','app-state','db'], groups: ['inbound','orchestrator','agent','final','persist'] },
+  'event-stream':  { label: 'Event Streaming',  nodes: ['pi-runner','pi-sub','runtime-hub','preview-reg','tg-bot','tg-api','tg-format','tui-hub','tui','verbose'], groups: ['agent-output','event-stream','verbose','tui','final'] },
+  'legacy-ipc':    { label: 'Legacy IPC',       nodes: ['pi-runner','pi-sub','ipc-files','ipc-watcher','draft-ipc','tg-bot','tg-api','index'], groups: ['agent-output','ipc','final'] },
+  'new-modules':   { label: 'New Extractions',  nodes: ['app','msg-dispatch','chat-prefs','app-state','pi-runner','sandbox','runtime-hub','preview-reg','tg-commands','index'], groups: ['orchestrator','agent','event-stream'] },
+  'support-sys':   { label: 'Support Systems',  nodes: ['scheduler','heartbeat','farm','ha','msg-dispatch','db','memory','config'], groups: ['support','persist'] },
+};
+
+// ─── Layer bands ─────────────────────────────────────────────
+var BANDS = [
+  { y: 10,  h: 70,  layer: 'external',     label: 'EXTERNAL SERVICES' },
+  { y: 100, h: 75,  layer: 'channel',      label: 'I/O CHANNELS' },
+  { y: 218, h: 80,  layer: 'orchestrator', label: 'ORCHESTRATOR' },
+  { y: 348, h: 80,  layer: 'agent',        label: 'AGENT LAYER' },
+  { y: 478, h: 180, layer: 'streaming',    label: 'STREAMING & DELIVERY' },
+  { y: 698, h: 80,  layer: 'persistence',  label: 'PERSISTENCE' },
+  { y: 810, h: 80,  layer: 'support',      label: 'SUPPORT SERVICES' },
+];
+
+// ─── State ───────────────────────────────────────────────────
+var state = {
+  preset: 'full',
+  layers: {},
+  connTypes: {},
+  selectedNode: null,
+  comments: JSON.parse(localStorage.getItem('fft-arch-v2-comments') || '{}'),
+};
+Object.keys(LAYERS).forEach(function(k) { state.layers[k] = true; });
+Object.keys(CONN_TYPES).forEach(function(k) { state.connTypes[k] = true; });
+
+function saveComments() { localStorage.setItem('fft-arch-v2-comments', JSON.stringify(state.comments)); }
+
+// ─── SVG setup ───────────────────────────────────────────────
+var svg = document.getElementById('svg');
+var NS = 'http://www.w3.org/2000/svg';
+
+function el(tag, attrs, parent) {
+  var e = document.createElementNS(NS, tag);
+  for (var k in attrs) { if (attrs[k] != null) e.setAttribute(k, attrs[k]); }
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); }
+
+function getCenter(n) { return { x: n.x + n.w / 2, y: n.y + n.h / 2 }; }
+
+function computePath(conn) {
+  var fn = nodes.find(function(n) { return n.id === conn.from; });
+  var tn = nodes.find(function(n) { return n.id === conn.to; });
+  if (!fn || !tn) return '';
+  var a = getCenter(fn), b = getCenter(tn);
+  var dx = b.x - a.x, dy = b.y - a.y;
+  var sx, sy, ex, ey;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    sx = dx > 0 ? fn.x + fn.w : fn.x;
+    ex = dx > 0 ? tn.x : tn.x + tn.w;
+    sy = a.y; ey = b.y;
+  } else {
+    sy = dy > 0 ? fn.y + fn.h : fn.y;
+    ey = dy > 0 ? tn.y : tn.y + tn.h;
+    sx = a.x; ex = b.x;
+  }
+  var cpx1 = sx + (ex - sx) * 0.35, cpx2 = sx + (ex - sx) * 0.65;
+  return 'M ' + sx + ',' + sy + ' C ' + cpx1 + ',' + sy + ' ' + cpx2 + ',' + ey + ' ' + ex + ',' + ey;
+}
+
+// ─── Rendering ───────────────────────────────────────────────
+function initSvg() {
+  var defs = el('defs', {}, svg);
+  Object.keys(CONN_TYPES).forEach(function(id) {
+    var ct = CONN_TYPES[id];
+    var marker = el('marker', { id: 'arrow-' + id, markerWidth: '8', markerHeight: '6', refX: '7', refY: '3', orient: 'auto' }, defs);
+    el('polygon', { points: '0 0, 8 3, 0 6', fill: ct.color }, marker);
+  });
+  var filter = el('filter', { id: 'glow', x: '-50%', y: '-50%', width: '200%', height: '200%' }, defs);
+  el('feGaussianBlur', { stdDeviation: '3', result: 'blur' }, filter);
+  var merge = el('feMerge', {}, filter);
+  el('feMergeNode', { 'in': 'blur' }, merge);
+  el('feMergeNode', { 'in': 'SourceGraphic' }, merge);
+}
+
+function isNodeVisible(n) {
+  var preset = PRESETS[state.preset];
+  var inPreset = !preset.nodes || preset.nodes.indexOf(n.id) >= 0;
+  return inPreset && state.layers[n.layer];
+}
+
+function isConnVisible(conn) {
+  var preset = PRESETS[state.preset];
+  var fn = nodes.find(function(n) { return n.id === conn.from; });
+  var tn = nodes.find(function(n) { return n.id === conn.to; });
+  if (!fn || !tn || !isNodeVisible(fn) || !isNodeVisible(tn)) return false;
+  if (!state.connTypes[conn.type]) return false;
+  if (preset.groups && preset.groups.indexOf(conn.group) < 0) return false;
+  return true;
+}
+
+function renderBands() {
+  BANDS.forEach(function(band) {
+    if (!state.layers[band.layer]) return;
+    var layer = LAYERS[band.layer];
+    el('rect', {
+      x: 20, y: band.y, width: 1300, height: band.h, rx: 10,
+      class: 'layer-band',
+      stroke: 'rgba(' + hexToRgb(layer.color) + ',0.15)',
+      'stroke-width': 1,
+    }, svg);
+    var txt = el('text', {
+      x: 30, y: band.y + 14,
+      class: 'layer-band-label',
+      fill: 'rgba(' + hexToRgb(layer.color) + ',0.35)',
+    }, svg);
+    txt.textContent = band.label;
+  });
+}
+
+function hexToRgb(hex) {
+  var r = parseInt(hex.slice(1, 3), 16);
+  var g = parseInt(hex.slice(3, 5), 16);
+  var b = parseInt(hex.slice(5, 7), 16);
+  return r + ',' + g + ',' + b;
+}
+
+function renderConnections() {
+  var preset = PRESETS[state.preset];
+  connections.forEach(function(conn) {
+    var visible = isConnVisible(conn);
+    var d = computePath(conn);
+    if (!d) return;
+    var ct = CONN_TYPES[conn.type];
+    var classes = 'conn-path';
+    if (!visible) classes += ' dimmed';
+
+    el('path', {
+      d: d, class: classes, stroke: ct.color,
+      'marker-end': 'url(#arrow-' + conn.type + ')',
+    }, svg);
+
+    if (visible && conn.label) {
+      var fn = nodes.find(function(n) { return n.id === conn.from; });
+      var tn = nodes.find(function(n) { return n.id === conn.to; });
+      var fc = getCenter(fn), tc = getCenter(tn);
+      var txt = el('text', {
+        x: (fc.x + tc.x) / 2, y: (fc.y + tc.y) / 2 - 5,
+        class: 'conn-label', 'text-anchor': 'middle',
+      }, svg);
+      txt.textContent = conn.label;
+    }
+  });
+}
+
+function renderNodes() {
+  nodes.forEach(function(n) {
+    var visible = isNodeVisible(n);
+    var layer = LAYERS[n.layer];
+    var selected = state.selectedNode === n.id;
+    var classes = 'node-group';
+    if (!visible) classes += ' dimmed';
+    if (selected) classes += ' selected';
+
+    var g = el('g', { class: classes, style: '--glow:' + layer.color }, svg);
+    g.addEventListener('click', function(e) { e.stopPropagation(); selectNode(n.id); });
+
+    el('rect', {
+      x: n.x, y: n.y, width: n.w, height: n.h, rx: 8,
+      fill: 'color-mix(in srgb, ' + layer.color + ' 12%, #161b22)',
+      stroke: selected ? '#58a6ff' : layer.stroke,
+      'stroke-width': selected ? 2.5 : 1.2,
+    }, g);
+
+    // Status tag
+    if (n.status === 'new') {
+      el('rect', { x: n.x + n.w - 30, y: n.y + 2, width: 28, height: 12, rx: 3, fill: 'rgba(63,185,80,0.25)', stroke: 'rgba(63,185,80,0.4)', 'stroke-width': .5 }, g);
+      var st = el('text', { x: n.x + n.w - 16, y: n.y + 11, fill: '#3fb950', 'font-size': '7', 'text-anchor': 'middle', 'font-weight': '600' }, g);
+      st.textContent = 'NEW';
+    } else if (n.status === 'refactored') {
+      el('rect', { x: n.x + n.w - 30, y: n.y + 2, width: 28, height: 12, rx: 3, fill: 'rgba(188,140,255,0.2)', stroke: 'rgba(188,140,255,0.35)', 'stroke-width': .5 }, g);
+      var st2 = el('text', { x: n.x + n.w - 16, y: n.y + 11, fill: '#bc8cff', 'font-size': '6', 'text-anchor': 'middle', 'font-weight': '600' }, g);
+      st2.textContent = 'REFAC';
+    } else if (n.status === 'legacy') {
+      el('rect', { x: n.x + n.w - 30, y: n.y + 2, width: 28, height: 12, rx: 3, fill: 'rgba(139,148,158,0.15)', stroke: 'rgba(139,148,158,0.25)', 'stroke-width': .5 }, g);
+      var st3 = el('text', { x: n.x + n.w - 16, y: n.y + 11, fill: '#8b949e', 'font-size': '6', 'text-anchor': 'middle', 'font-weight': '600' }, g);
+      st3.textContent = 'LEGACY';
+    }
+
+    // Comment indicator
+    if (state.comments[n.id] && state.comments[n.id].length > 0) {
+      el('circle', { cx: n.x + n.w - 6, cy: n.y + n.h - 6, r: 5, fill: '#f0883e' }, g);
+      var cnt = el('text', { x: n.x + n.w - 6, y: n.y + n.h - 3, fill: '#fff', 'font-size': '7', 'text-anchor': 'middle', 'font-weight': 'bold' }, g);
+      cnt.textContent = String(state.comments[n.id].length);
+    }
+
+    var labelEl = el('text', {
+      x: n.x + n.w / 2, y: n.y + (n.sub ? 17 : 22),
+      fill: '#e6edf3', 'font-size': '11', 'font-weight': '600', 'text-anchor': 'middle',
+    }, g);
+    labelEl.textContent = n.label;
+
+    if (n.sub) {
+      var subEl = el('text', {
+        x: n.x + n.w / 2, y: n.y + 33,
+        fill: '#8b949e', 'font-size': '8', 'text-anchor': 'middle',
+        'font-family': "'SF Mono', Monaco, Consolas, monospace",
+      }, g);
+      subEl.textContent = n.sub;
+    }
+  });
+}
+
+function updateAll() {
+  clear(svg);
+  initSvg();
+  renderBands();
+  renderConnections();
+  renderNodes();
+  updatePrompt();
+}
+
+// ─── Detail panel ────────────────────────────────────────────
+function selectNode(id) {
+  state.selectedNode = id;
+  var n = nodes.find(function(n) { return n.id === id; });
+  var layer = LAYERS[n.layer];
+
+  document.getElementById('d-title').textContent = n.label;
+  document.getElementById('d-sub').textContent = n.sub;
+  var badge = document.getElementById('d-badge');
+  badge.textContent = layer.label + (n.status ? ' — ' + n.status.toUpperCase() : '');
+  badge.style.background = 'color-mix(in srgb, ' + layer.color + ' 25%, #21262d)';
+  badge.style.color = layer.stroke;
+  document.getElementById('d-desc').textContent = n.desc;
+
+  var inConns = connections.filter(function(c) { return c.to === id; });
+  var outConns = connections.filter(function(c) { return c.from === id; });
+  renderConnList('d-in', inConns, 'from');
+  renderConnList('d-out', outConns, 'to');
+  renderComments(id);
+
+  document.getElementById('detail').classList.add('open');
+  updateAll();
+}
+
+function renderConnList(elId, conns, dir) {
+  var container = document.getElementById(elId);
+  clear(container);
+  if (!conns.length) {
+    var empty = document.createElement('div');
+    empty.className = 'ci';
+    empty.style.color = '#8b949e';
+    empty.textContent = 'None';
+    container.appendChild(empty);
+    return;
+  }
+  conns.forEach(function(c) {
+    var ct = CONN_TYPES[c.type];
+    var peer = nodes.find(function(n) { return n.id === c[dir]; });
+    var item = document.createElement('div');
+    item.className = 'ci';
+    var dot = document.createElement('span');
+    dot.className = 'cd';
+    dot.style.background = ct.color;
+    item.appendChild(dot);
+    item.appendChild(document.createTextNode((peer ? peer.label : c[dir]) + ' — ' + c.label));
+    container.appendChild(item);
+  });
+}
+
+function renderComments(nodeId) {
+  var list = document.getElementById('cmt-list');
+  clear(list);
+  var items = state.comments[nodeId] || [];
+  items.forEach(function(c, i) {
+    var li = document.createElement('li');
+    li.appendChild(document.createTextNode(c.text));
+    var br = document.createElement('br');
+    li.appendChild(br);
+    var ts = document.createElement('span');
+    ts.style.color = '#8b949e';
+    ts.style.fontSize = '9px';
+    ts.textContent = c.time;
+    li.appendChild(ts);
+    var del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '\u00d7';
+    del.addEventListener('click', function() { deleteComment(nodeId, i); });
+    li.appendChild(del);
+    list.appendChild(li);
+  });
+}
+
+function deselect() {
+  state.selectedNode = null;
+  document.getElementById('detail').classList.remove('open');
+  updateAll();
+}
+
+function addComment() {
+  if (!state.selectedNode) return;
+  var input = document.getElementById('cmt-input');
+  var text = input.value.trim();
+  if (!text) return;
+  if (!state.comments[state.selectedNode]) state.comments[state.selectedNode] = [];
+  state.comments[state.selectedNode].push({ text: text, time: new Date().toLocaleString() });
+  input.value = '';
+  saveComments();
+  renderComments(state.selectedNode);
+  updateAll();
+}
+
+function deleteComment(nodeId, idx) {
+  state.comments[nodeId].splice(idx, 1);
+  if (!state.comments[nodeId].length) delete state.comments[nodeId];
+  saveComments();
+  renderComments(nodeId);
+  updateAll();
+}
+
+// ─── Controls ────────────────────────────────────────────────
+function initControls() {
+  var presetContainer = document.getElementById('preset-btns');
+  Object.keys(PRESETS).forEach(function(key) {
+    var btn = document.createElement('button');
+    btn.className = 'tb-btn' + (key === state.preset ? ' active' : '');
+    btn.textContent = PRESETS[key].label;
+    btn.dataset.preset = key;
+    btn.addEventListener('click', function() {
+      state.preset = key;
+      document.querySelectorAll('#preset-btns .tb-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      updateAll();
+    });
+    presetContainer.appendChild(btn);
+  });
+
+  var layerContainer = document.getElementById('layer-btns');
+  Object.keys(LAYERS).forEach(function(key) {
+    var layer = LAYERS[key];
+    var btn = document.createElement('button');
+    btn.className = 'tb-btn layer-btn active';
+    btn.style.setProperty('--lc', layer.color);
+    var dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = layer.color;
+    btn.appendChild(dot);
+    btn.appendChild(document.createTextNode(layer.label));
+    btn.addEventListener('click', function() {
+      state.layers[key] = !state.layers[key];
+      btn.classList.toggle('active', state.layers[key]);
+      updateAll();
+    });
+    layerContainer.appendChild(btn);
+  });
+
+  var connContainer = document.getElementById('conn-btns');
+  Object.keys(CONN_TYPES).forEach(function(key) {
+    var ct = CONN_TYPES[key];
+    var btn = document.createElement('button');
+    btn.className = 'tb-btn conn-btn active';
+    btn.style.setProperty('--cc', ct.color);
+    btn.textContent = ct.label;
+    btn.addEventListener('click', function() {
+      state.connTypes[key] = !state.connTypes[key];
+      btn.classList.toggle('active', state.connTypes[key]);
+      updateAll();
+    });
+    connContainer.appendChild(btn);
+  });
+
+  document.getElementById('close-btn').addEventListener('click', deselect);
+  document.getElementById('add-cmt').addEventListener('click', addComment);
+
+  document.getElementById('prompt-toggle').addEventListener('click', function() {
+    document.getElementById('prompt-body').classList.toggle('open');
+    document.querySelector('#prompt-toggle .arrow').classList.toggle('open');
+  });
+
+  document.getElementById('copy-btn').addEventListener('click', function() {
+    var text = document.getElementById('prompt-text').textContent;
+    navigator.clipboard.writeText(text).then(function() {
+      var btn = document.getElementById('copy-btn');
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    });
+  });
+
+  svg.addEventListener('click', function(e) {
+    if (e.target === svg || e.target.tagName === 'rect' && e.target.classList.contains('layer-band')) {
+      deselect();
+    }
+  });
+}
+
+// ─── Prompt output ───────────────────────────────────────────
+function updatePrompt() {
+  var parts = [];
+  var preset = PRESETS[state.preset];
+
+  parts.push('FFT_nano architecture (post-refactor, branch: refactor/architecture-simplification).');
+
+  if (state.preset !== 'full') {
+    parts.push('Currently viewing: ' + preset.label + '.');
+  }
+
+  var hiddenLayers = Object.keys(LAYERS).filter(function(k) { return !state.layers[k]; });
+  if (hiddenLayers.length > 0) {
+    parts.push('Hidden layers: ' + hiddenLayers.map(function(k) { return LAYERS[k].label; }).join(', ') + '.');
+  }
+
+  var newModules = nodes.filter(function(n) { return n.status === 'new'; });
+  if (newModules.length > 0) {
+    parts.push('\nNew extractions in this refactor:');
+    newModules.forEach(function(n) {
+      parts.push('- ' + n.label + ' (' + n.sub + '): ' + n.desc.split('.')[0] + '.');
+    });
+  }
+
+  var commentKeys = Object.keys(state.comments);
+  if (commentKeys.length > 0) {
+    parts.push('\nFeedback on components:');
+    commentKeys.forEach(function(id) {
+      var n = nodes.find(function(n) { return n.id === id; });
+      if (!n) return;
+      state.comments[id].forEach(function(c) {
+        parts.push('\n**' + n.label + '** (' + n.sub + '):\n' + c.text);
+      });
+    });
+  }
+
+  document.getElementById('prompt-text').textContent = parts.join('\n');
+}
+
+// ─── Init ────────────────────────────────────────────────────
+initControls();
+updateAll();
+
+})();
+</script>
+</body>
+</html>

@@ -124,8 +124,8 @@
 <h2 id="core-runtime-components">Core Runtime Components</h2>
 <p>Host modules:</p>
 <ul>
-<li><code>src/index.ts</code>: lifecycle, message loops, Telegram commands, IPC watcher, scheduler startup, heartbeat, delegation routing.</li>
-<li><code>src/container-runner.ts</code>: mounts, env passthrough, container command args, output parsing, error/timeout handling.</li>
+<li><code>src/index.ts</code>: lifecycle, message loops, Telegram commands, host runtime-event handling, filesystem IPC watcher, scheduler startup, heartbeat, and coding-worker routing.</li>
+<li><code>src/pi-runner.ts</code>: prompt assembly handoff, <code>pi</code> subprocess spawning, sandbox wrapping, output parsing, and runtime event emission.</li>
 <li><code>src/db.ts</code>: SQLite schema + query helpers + transcript FTS.</li>
 <li><code>src/task-scheduler.ts</code>: due-task polling + task execution loop.</li>
 <li><code>src/telegram.ts</code>: Telegram Bot API poll/send/download abstraction.</li>
@@ -133,18 +133,18 @@
 <li><code>src/farm-action-gateway.ts</code>: allowlisted farm action dispatcher with production gates.</li>
 <li><code>src/memory-*.ts</code>: retrieval, search, paths, maintenance, IPC memory actions.</li>
 </ul>
-<p>Container modules:</p>
+<p>Runtime boundary:</p>
 <ul>
-<li><code>container/agent-runner/src/index.ts</code>: reads JSON stdin, assembles system prompt, runs <code>pi</code>, emits JSON output markers.</li>
-<li><code>container/agent-runner/src/coder-worker.ts</code>: delegated coding worker flow.</li>
-<li><code>container/agent-runner/src/memory-tool.ts</code>: IPC helper CLI for memory search/get.</li>
+<li>Sandboxed <code>pi</code> process receives prompt/system context and emits stdout event stream.</li>
+<li><code>src/coding-orchestrator.ts</code> owns real coding worker lifecycle, isolated worktrees, and structured worker results.</li>
+<li>The host retains scheduler execution, Telegram/WhatsApp delivery, and IPC file handling.</li>
 </ul>
 <h2 id="runtime-topology">Runtime Topology</h2>
 <pre><code class="language-text">Telegram/WhatsApp -&gt; src/index.ts
                    -&gt; src/db.ts
-                   -&gt; src/container-runner.ts
-                   -&gt; container runtime (docker|host)
-                   -&gt; container/agent-runner/src/index.ts -&gt; pi
+                   -&gt; src/pi-runner.ts
+                   -&gt; src/sandbox.ts (optional)
+                   -&gt; pi
                    -&gt; src/index.ts sendMessage()
                    -&gt; Telegram/WhatsApp
 </code></pre>

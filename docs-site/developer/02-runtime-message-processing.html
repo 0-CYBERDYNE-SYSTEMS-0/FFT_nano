@@ -151,21 +151,23 @@
 </ul>
 </li>
 <li>Append mode-specific steering notes.</li>
-<li>Append delegation marker if explicit coder trigger detected.</li>
+<li>Route substantial main-chat coding work to the host coding orchestrator when applicable.</li>
 </ol>
 <h2 id="delegation-trigger-routing">Delegation Trigger Routing</h2>
 <p>Delegation parsing uses <code>parseDelegationTrigger</code> from <code>src/coding-delegation.ts</code>:</p>
 <ul>
 <li><code>/coder &lt;task&gt;</code> -&gt; <code>force_delegate_execute</code></li>
+<li><code>/coding &lt;task&gt;</code> -&gt; <code>force_delegate_execute</code></li>
 <li><code>/coder-plan &lt;task&gt;</code> or <code>/coder_plan &lt;task&gt;</code> -&gt; <code>force_delegate_plan</code></li>
 <li>exact alias phrases (<code>use coding agent</code>, <code>use your coding agent skill</code>) -&gt; execute delegation</li>
 </ul>
 <p>Safety gate:</p>
 <ul>
 <li>Delegation is main-chat-only.</li>
+<li>Main-chat natural-language substantial coding asks can also auto-route through <code>isSubstantialCodingTask(...)</code>.</li>
 </ul>
 <h2 id="model-invocation">Model Invocation</h2>
-<p><code>runAgent(group, prompt, ...)</code> does:</p>
+<p>Direct runs use <code>runAgent(group, prompt, ...)</code>, which does:</p>
 <ol>
 <li>Write per-group task snapshot (<code>current_tasks.json</code>).</li>
 <li>Write groups snapshot (<code>available_groups.json</code>, main only).</li>
@@ -177,6 +179,13 @@
 </li>
 <li>Call <code>runContainerAgent</code>.</li>
 <li>Retry once after runtime health verification when applicable.</li>
+</ol>
+<p>Coder runs use <code>runCodingTask(...)</code>, which calls the host-side orchestrator in <code>src/coding-orchestrator.ts</code>:</p>
+<ol>
+<li>Create a structured worker request.</li>
+<li>Create an isolated worktree for execute mode.</li>
+<li>Run <code>pi</code> in that isolated workspace with explicit tool mode.</li>
+<li>Return changed files, diff summary, artifacts, and test commands.</li>
 </ol>
 <h2 id="successfailure-semantics">Success/Failure Semantics</h2>
 <p>On successful run (<code>ok</code>):</p>
@@ -200,7 +209,7 @@
 <h2 id="command-path-vs-agent-path">Command Path vs Agent Path</h2>
 <p>Telegram command handler intercepts lightweight/admin commands before agent invocation.
 Examples: <code>/help</code>, <code>/status</code>, <code>/tasks</code>, <code>/queue</code>, <code>/model</code>, <code>/compact</code>, <code>/subagents</code>.</p>
-<p>If command returns <code>false</code> for pass-through (<code>/coder*</code>), normal agent path handles it.</p>
+<p>If command returns <code>false</code> for pass-through (<code>/coder*</code>, <code>/coding</code>), normal message routing decides whether to call <code>runAgent(...)</code> or the host coding worker path.</p>
 
 
         </article>

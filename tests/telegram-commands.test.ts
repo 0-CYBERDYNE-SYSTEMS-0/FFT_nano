@@ -86,6 +86,7 @@ function createBaseDeps(): TelegramCommandDeps {
     emitTuiAgentEvent: () => {},
     getSessionKeyForChat: (chatJid) => chatJid,
     runAgent: async () => ({ ok: true, result: 'done', streamed: false }),
+    runCodingTask: async () => ({ ok: true, result: 'done', streamed: false }),
     setTyping: async () => {},
     persistAssistantHistory: () => {},
     sendAgentResultMessage: async () => {},
@@ -166,7 +167,7 @@ test('handleTelegramCommand registers spawned subagent runs in both active maps'
   };
   deps.isMainChat = () => true;
   deps.activeChatRunsById = new Map();
-  deps.runAgent = () =>
+  deps.runCodingTask = () =>
     new Promise((resolve) => {
       resolveRun = resolve;
     });

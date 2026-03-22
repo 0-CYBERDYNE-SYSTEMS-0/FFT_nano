@@ -7,6 +7,7 @@ import {
   getEffectiveModelLabel,
   normalizeThinkLevel,
   parseQueueArgs,
+  patchTuiSessionPrefs,
   updateChatRunPreferences,
   updateChatUsage,
 } from '../src/chat-preferences.js';
@@ -108,4 +109,16 @@ test('updateChatUsage aggregates counts and formatUsageText reports totals', () 
   assert.match(formatUsageText(runtime, 'telegram:1'), /- total_tokens: 15/);
   assert.match(formatUsageText(runtime, 'telegram:1'), /- last_model: zai\/glm-4.7/);
   assert.match(formatUsageText(runtime, 'telegram:1', 'all'), /Usage \(all chats\):/);
+});
+
+test('patchTuiSessionPrefs keeps preview reasoning in sync with reasoningLevel', () => {
+  const runtime = createRuntime();
+
+  patchTuiSessionPrefs(runtime, 'telegram:1', { reasoningLevel: 'stream' });
+  assert.equal(runtime.chatRunPreferences['telegram:1']?.reasoningLevel, 'stream');
+  assert.equal(runtime.chatRunPreferences['telegram:1']?.showReasoning, true);
+
+  patchTuiSessionPrefs(runtime, 'telegram:1', { reasoningLevel: 'on' });
+  assert.equal(runtime.chatRunPreferences['telegram:1']?.reasoningLevel, 'on');
+  assert.equal(runtime.chatRunPreferences['telegram:1']?.showReasoning, undefined);
 });

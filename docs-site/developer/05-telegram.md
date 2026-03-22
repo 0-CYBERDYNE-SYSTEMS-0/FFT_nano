@@ -96,7 +96,9 @@ Admin-only (main chat):
 - `/reload`
 - `/panel`
 - `/coder <task>`
+- `/coding <task>`
 - `/coder-plan <task>`
+- `/coder_plan <task>`
 - `/subagents ...`
 
 ## Callback Panel Actions

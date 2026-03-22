@@ -4,8 +4,8 @@ import test from 'node:test';
 
 import WebSocket from 'ws';
 
+import { HostEventBus } from '../src/runtime/host-events.ts';
 import { startTuiGatewayServer } from '../src/tui/gateway-server.ts';
-import { TuiRuntimeEventHub } from '../src/tui/runtime-events.ts';
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -53,7 +53,7 @@ function waitForMessage<T = unknown>(ws: WebSocket): Promise<T> {
 
 test('gateway rejects unauthorized method calls until connect token handshake succeeds', async () => {
   const port = await getFreePort();
-  const eventHub = new TuiRuntimeEventHub();
+  const eventHub = new HostEventBus();
   const gateway = await startTuiGatewayServer(
     {
       getStatus: () => ({ runtime: 'docker', sessions: 2, activeRuns: 0 }),

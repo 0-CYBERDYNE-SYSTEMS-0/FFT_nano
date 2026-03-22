@@ -1,0 +1,113 @@
+"""Bloated prop interface detection (>14 props = prop drilling signal)."""
+
+import argparse
+import json
+import logging
+import re
+from pathlib import Path
+
+from desloppify.base.discovery.file_paths import rel
+
+from desloppify.base.discovery.source import find_ts_and_tsx_files
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.output.terminal import colorize, print_table
+from desloppify.base.discovery.paths import get_project_root
+
+logger = logging.getLogger(__name__)
+
+
+def detect_prop_interface_bloat(
+    path: Path, *, threshold: int = 14
+) -> tuple[list[dict], int]:
+    """Find interfaces/types with >threshold properties — signals need for composition or context.
+
+    Returns (entries, total_interfaces_checked).
+    """
+    entries = []
+    total_interfaces = 0
+    # Match interface blocks — Props, Context, State, and related suffixes
+    _BLOAT_SUFFIXES = r"(?:Props|Context|ContextValue|ContextType|State|StateValue)\w*"
+    interface_re = re.compile(
+        rf"(?:export\s+)?(?:interface|type)\s+(\w+{_BLOAT_SUFFIXES})\s*(?:=\s*)?{{",
+        re.MULTILINE,
+    )
+
+    for filepath in find_ts_and_tsx_files(path):
+        try:
+            p = (
+                Path(filepath)
+                if Path(filepath).is_absolute()
+                else get_project_root() / filepath
+            )
+            content = p.read_text()
+            for m in interface_re.finditer(content):
+                total_interfaces += 1
+                name = m.group(1)
+                start = m.end()
+                # Count properties by issue the closing brace
+                brace_depth = 1
+                pos = start
+                prop_count = 0
+                while pos < len(content) and brace_depth > 0:
+                    ch = content[pos]
+                    if ch == "{":
+                        brace_depth += 1
+                    elif ch == "}":
+                        brace_depth -= 1
+                    elif ch == "\n" and brace_depth == 1:
+                        # Count non-empty, non-comment lines as properties
+                        line_start = pos + 1
+                        line_end = content.find("\n", line_start)
+                        if line_end == -1:
+                            line_end = len(content)
+                        line = content[line_start:line_end].strip()
+                        if (
+                            line
+                            and not line.startswith("//")
+                            and not line.startswith("*")
+                            and not line.startswith("/**")
+                            and line != "}"
+                        ):
+                            prop_count += 1
+                    pos += 1
+
+                if prop_count > threshold:
+                    kind = (
+                        "context"
+                        if "Context" in name
+                        else "state"
+                        if "State" in name
+                        else "props"
+                    )
+                    entries.append(
+                        {
+                            "file": filepath,
+                            "interface": name,
+                            "prop_count": prop_count,
+                            "line": content[: m.start()].count("\n") + 1,
+                            "kind": kind,
+                        }
+                    )
+        except (OSError, UnicodeDecodeError) as exc:
+            log_best_effort_failure(
+                logger, f"read TypeScript interface file {filepath}", exc
+            )
+            continue
+    return sorted(entries, key=lambda e: -e["prop_count"]), total_interfaces
+
+
+def cmd_props(args: argparse.Namespace) -> None:
+    entries, _ = detect_prop_interface_bloat(Path(args.path))
+    if args.json:
+        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        return
+    if not entries:
+        print(colorize("No bloated prop interfaces found.", "green"))
+        return
+    print(colorize(f"\nBloated prop interfaces (>14 props): {len(entries)}\n", "bold"))
+    rows = []
+    for e in entries[: args.top]:
+        rows.append(
+            [e["interface"], rel(e["file"]), str(e["prop_count"]), str(e["line"])]
+        )
+    print_table(["Interface", "File", "Props", "Line"], rows, [35, 50, 6, 6])

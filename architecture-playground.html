@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FFT_nano Architecture Playground</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+
+  #topbar { background: #161b22; border-bottom: 1px solid #30363d; padding: 10px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; z-index: 10; min-height: 52px; }
+  #topbar .section-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px; white-space: nowrap; }
+  .preset-btn, .layer-btn, .conn-btn { border: 1px solid #30363d; background: #21262d; color: #c9d1d9; font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .preset-btn:hover, .layer-btn:hover, .conn-btn:hover { background: #30363d; border-color: #484f58; }
+  .preset-btn.active { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+  .layer-btn.active { border-color: var(--layer-color); color: #fff; background: color-mix(in srgb, var(--layer-color) 25%, #21262d); }
+  .layer-btn .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+  .conn-btn.active { border-color: var(--conn-color); background: color-mix(in srgb, var(--conn-color) 20%, #21262d); }
+  .sep { width: 1px; height: 24px; background: #30363d; margin: 0 4px; flex-shrink: 0; }
+
+  #main { flex: 1; display: flex; position: relative; overflow: hidden; }
+  #canvas-wrap { flex: 1; position: relative; background: #0d1117; }
+  #canvas-wrap svg { width: 100%; height: 100%; }
+
+  #detail { width: 340px; background: #161b22; border-left: 1px solid #30363d; display: none; flex-direction: column; overflow-y: auto; padding: 16px; position: relative; }
+  #detail.open { display: flex; }
+  #detail h2 { font-size: 15px; margin-bottom: 2px; }
+  #detail .subtitle { color: #8b949e; font-size: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; margin-bottom: 12px; }
+  #detail .layer-badge { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 10px; margin-bottom: 12px; }
+  #detail .desc { font-size: 13px; line-height: 1.5; color: #c9d1d9; margin-bottom: 16px; white-space: pre-wrap; }
+  #detail .conn-section { margin-bottom: 16px; }
+  #detail .conn-section h3 { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .conn-item { font-size: 12px; padding: 3px 0; display: flex; align-items: center; gap: 6px; }
+  .conn-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  #detail .close-btn { position: absolute; top: 12px; right: 12px; background: none; border: none; color: #8b949e; cursor: pointer; font-size: 18px; }
+  #detail .close-btn:hover { color: #e6edf3; }
+  #detail textarea { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 12px; padding: 8px; resize: vertical; min-height: 60px; font-family: inherit; margin-bottom: 8px; }
+  #detail textarea:focus { outline: none; border-color: #58a6ff; }
+  .comment-add-btn { background: #238636; border: 1px solid #2ea043; color: #fff; font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; margin-bottom: 12px; }
+  .comment-add-btn:hover { background: #2ea043; }
+  .comment-list { list-style: none; }
+  .comment-list li { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px; margin-bottom: 6px; font-size: 12px; position: relative; }
+  .comment-list li .del { position: absolute; top: 4px; right: 6px; background: none; border: none; color: #f85149; cursor: pointer; font-size: 14px; }
+
+  #prompt-panel { background: #161b22; border-top: 1px solid #30363d; max-height: 200px; display: flex; flex-direction: column; }
+  #prompt-toggle { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; cursor: pointer; }
+  #prompt-toggle span { font-size: 12px; color: #8b949e; }
+  #prompt-toggle .arrow { transition: transform 0.2s; }
+  #prompt-toggle .arrow.open { transform: rotate(180deg); }
+  #prompt-body { display: none; padding: 0 16px 12px; overflow-y: auto; flex: 1; }
+  #prompt-body.open { display: block; }
+  #prompt-text { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; font-size: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace; color: #c9d1d9; white-space: pre-wrap; line-height: 1.5; min-height: 60px; }
+  .copy-btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; font-size: 11px; padding: 3px 10px; border-radius: 4px; cursor: pointer; margin-top: 6px; float: right; }
+  .copy-btn:hover { background: #30363d; }
+  .copy-btn.copied { background: #238636; border-color: #2ea043; color: #fff; }
+
+  .annotation { position: absolute; background: #1c2128; border: 1px solid #484f58; border-radius: 8px; padding: 10px 12px; font-size: 11px; line-height: 1.5; color: #c9d1d9; max-width: 260px; pointer-events: none; z-index: 5; box-shadow: 0 4px 12px rgba(0,0,0,0.4); white-space: pre-wrap; }
+
+  .node-group { cursor: pointer; }
+  .node-group:hover rect { filter: drop-shadow(0 0 6px var(--glow)); }
+  .node-group.selected rect { stroke-width: 2.5; stroke: #58a6ff; }
+  .node-group.dimmed { opacity: 0.15; }
+  .conn-path { fill: none; stroke-width: 1.8; transition: opacity 0.3s; }
+  .conn-path.dimmed { opacity: 0.08; }
+  .conn-path:hover { stroke-width: 3; }
+  .conn-label { font-size: 9px; fill: #8b949e; pointer-events: none; }
+
+  @keyframes flowDash { to { stroke-dashoffset: -20; } }
+  .conn-path.animated { animation: flowDash 1s linear infinite; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <span class="section-label">View</span>
+  <button class="preset-btn active" data-preset="full">Full System</button>
+  <button class="preset-btn" data-preset="message-flow">Message Flow</button>
+  <button class="preset-btn" data-preset="draft-streaming">Draft Streaming</button>
+  <button class="preset-btn" data-preset="ipc-system">IPC System</button>
+  <button class="preset-btn" data-preset="verbose-display">Verbose & Display</button>
+  <button class="preset-btn" data-preset="think-vs-verbose">Think vs Verbose</button>
+  <div class="sep"></div>
+  <span class="section-label">Layers</span>
+  <div id="layer-toggles"></div>
+  <div class="sep"></div>
+  <span class="section-label">Connections</span>
+  <div id="conn-toggles"></div>
+</div>
+
+<div id="main">
+  <div id="canvas-wrap">
+    <svg id="svg" viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="annotations"></div>
+  </div>
+  <div id="detail">
+    <button class="close-btn" id="close-detail-btn">&times;</button>
+    <h2 id="d-title"></h2>
+    <div class="subtitle" id="d-file"></div>
+    <div class="layer-badge" id="d-layer"></div>
+    <div class="desc" id="d-desc"></div>
+    <div class="conn-section" id="d-in"><h3>Connections In</h3><div id="d-in-list"></div></div>
+    <div class="conn-section" id="d-out"><h3>Connections Out</h3><div id="d-out-list"></div></div>
+    <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 6px;">Comments</h3>
+    <textarea id="comment-input" placeholder="Add a note about this component..."></textarea>
+    <button class="comment-add-btn" id="add-comment-btn">Add Comment</button>
+    <ul class="comment-list" id="comment-list"></ul>
+  </div>
+</div>
+
+<div id="prompt-panel">
+  <div id="prompt-toggle">
+    <span>Prompt Output</span>
+    <span class="arrow">&#9650;</span>
+  </div>
+  <div id="prompt-body">
+    <div id="prompt-text"></div>
+    <button class="copy-btn" id="copy-btn">Copy</button>
+  </div>
+</div>
+
+<script>
+const LAYERS = {
+  external:  { label: 'External',    color: '#da3633', stroke: '#f85149' },
+  io:        { label: 'I/O Channel', color: '#d29922', stroke: '#e3b341' },
+  router:    { label: 'Router',      color: '#58a6ff', stroke: '#79c0ff' },
+  agent:     { label: 'Agent',       color: '#3fb950', stroke: '#56d364' },
+  streaming: { label: 'Streaming',   color: '#bc8cff', stroke: '#d2a8ff' },
+  support:   { label: 'Support',     color: '#768390', stroke: '#8b949e' },
+};
+
+const CONN_TYPES = {
+  data:  { label: 'Data Flow',    color: '#58a6ff', dash: '' },
+  event: { label: 'Event Stream', color: '#3fb950', dash: '5,3' },
+  ipc:   { label: 'IPC File',     color: '#bc8cff', dash: '8,4' },
+  tool:  { label: 'Tool Call',    color: '#d29922', dash: '3,3' },
+};
+
+const nodes = [
+  { id: 'tg-api',      label: 'Telegram Bot API',     subtitle: 'External Service',              layer: 'external',  x: 50,  y: 180, w: 155, h: 48,
+    desc: 'External Telegram service. Receives getUpdates polls from the bot client. Accepts sendMessage, editMessage, deleteMessage, and sendMessageDraft API calls. Rate-limited with exponential backoff retry logic.' },
+  { id: 'tg-bot',      label: 'TelegramBot Client',   subtitle: 'src/telegram.ts',               layer: 'io',        x: 50,  y: 310, w: 155, h: 48,
+    desc: 'Wraps all Telegram HTTP API calls. Runs the polling loop (getUpdates). Provides sendMessage(), editStreamMessage(), sendMessageDraft(), sendPhoto(), deleteMessage(). Handles retry with exponential backoff and rate limit detection. Parses inbound messages into TelegramInboundEvent union type.' },
+  { id: 'router',      label: 'Main Router',          subtitle: 'src/index.ts',                  layer: 'router',    x: 330, y: 120, w: 155, h: 48,
+    desc: 'Central orchestrator (6945 lines). Routes inbound Telegram/WhatsApp events to the agent. Manages IPC watcher loop, heartbeat loop, command parsing (/verbose, /think, /model). Resolves stream completion state via resolveTelegramStreamCompletionState(). Tracks active runs, usage stats, chat preferences.' },
+  { id: 'db',          label: 'SQLite Store',          subtitle: 'src/db.ts',                     layer: 'router',    x: 330, y: 240, w: 155, h: 48,
+    desc: 'Persistence layer using better-sqlite3. Tables: chats (metadata), messages (history), scheduled_tasks (cron/interval), task_run_logs (execution history). Used for storeMessage(), getChatHistory(), task CRUD, and run logging.' },
+  { id: 'pi-runner',   label: 'PI Runner',            subtitle: 'src/pi-runner.ts',              layer: 'agent',     x: 620, y: 80,  w: 155, h: 48,
+    desc: 'Spawns PI subprocess via child_process.spawn(). Builds command args including --mode json, --thinking {level}, --api-key, --model, --tools. Streams JSON events from stdout via pi-stream-parser.ts. Writes draft IPC files via writeIpcFile() using atomic rename (write .tmp then rename). 2000+ lines.' },
+  { id: 'pi-sub',      label: 'PI Subprocess',        subtitle: 'LLM Agent Process',             layer: 'agent',     x: 620, y: 200, w: 155, h: 48,
+    desc: 'The actual LLM agent running as a child process. Produces a JSON event stream on stdout containing: assistant text deltas (thinking + response), tool call starts/completions, error events. Think level (off/minimal/low/medium/high/xhigh) controls reasoning depth. Thinking content stays INTERNAL.' },
+  { id: 'sys-prompt',  label: 'System Prompt',        subtitle: 'src/system-prompt.ts',          layer: 'agent',     x: 620, y: 320, w: 155, h: 48,
+    desc: 'Assembles the complete system prompt from workspace files: SOUL.md, USER.md, IDENTITY.md, BOOTSTRAP.md. Injects memory search results, coding delegation hints, workspace context, and provider/model info. Supports minimal and full modes with character budget tracking.' },
+  { id: 'ipc-files',   label: 'IPC File Layer',       subtitle: 'data/ipc/{group}/messages/',    layer: 'streaming', x: 440, y: 420, w: 155, h: 48,
+    desc: 'Filesystem-based IPC channel. PI Runner writes JSON files here using atomic rename (write to .tmp, then rename for crash safety). File types: draft_*.json (draft text updates), action_*.json (completed actions), completion_*.json (external completion signals). Files are consumed and deleted by the IPC watcher.' },
+  { id: 'ipc-watcher', label: 'IPC Watcher',          subtitle: 'index.ts ~line 5909',           layer: 'streaming', x: 230, y: 420, w: 155, h: 48,
+    desc: 'Polling loop in the main router (ipcWatcherLoop). Reads files from data/ipc/{group}/messages/ at IPC_POLL_INTERVAL. Parses each file by type: telegram_draft_update routes to Draft IPC system, telegram_action_result processes the action, telegram_external_completion marks run as externally completed. Deletes files after processing.' },
+  { id: 'draft-ipc',   label: 'Draft IPC System',     subtitle: 'src/telegram-draft-ipc.ts',     layer: 'streaming', x: 50,  y: 470, w: 155, h: 48,
+    desc: 'Manages draft delivery with smart fallback. sendTelegramDraftWithFallback() tries native draft API first (Path A: invisible sendMessageDraft), falls back to visible message + edits (Path B). TelegramDraftDisableRegistry tracks disabled runs (TTL-based expiry). TelegramStreamState tracks per-run mode (draft vs message) with message ID for edits. Deduplicates unchanged text.' },
+  { id: 'tg-format',   label: 'Telegram Formatter',   subtitle: 'src/telegram-format.ts',        layer: 'streaming', x: 50,  y: 570, w: 155, h: 48,
+    desc: 'Converts Markdown to Telegram HTML format. splitTelegramText() respects 4096 char limit (safe threshold at 4000), preserving code blocks across splits. Escapes HTML entities. Handles bold, italic, code, links formatting.' },
+  { id: 'verbose',     label: 'Verbose Mode',         subtitle: 'src/verbose-mode.ts',           layer: 'streaming', x: 620, y: 470, w: 155, h: 48,
+    desc: 'Controls TOOL PROGRESS visibility (NOT thinking content). Four modes:\n\noff \u2014 No tool progress shown, just final response\nnew \u2014 Only new/unique tool names, skips repeats\nall \u2014 Every tool call with args preview (default)\nverbose \u2014 Full args, results, and debug logs\n\nCycled via /verbose command. Stored per-chat in ChatRunPreferences.verboseMode.' },
+  { id: 'tui',         label: 'TUI Gateway',          subtitle: 'src/tui/gateway-server.ts',     layer: 'io',        x: 920, y: 120, w: 155, h: 48,
+    desc: 'WebSocket server on port 28989 for terminal UI clients. Broadcasts agent events in real-time: tool starts, text deltas, completions. Manages authenticated sessions. Used by the fft tui CLI command.' },
+  { id: 'web',         label: 'Web Control Center',   subtitle: 'src/web/control-center-server.ts', layer: 'io',     x: 920, y: 240, w: 155, h: 48,
+    desc: 'HTTP server on port 28990. Serves static dashboard from dist-web/. REST APIs for runtime status, model info, task management, file browsing. Used by fft web CLI command.' },
+  { id: 'scheduler',   label: 'Task Scheduler',       subtitle: 'src/task-scheduler.ts',         layer: 'support',   x: 330, y: 600, w: 155, h: 48,
+    desc: 'Hybrid scheduler supporting v2 cron (event-driven via cron/service.ts) and legacy polling (checks DB every 60s). Fires scheduled prompts through the same agent pipeline as interactive messages.' },
+  { id: 'memory',      label: 'Memory System',        subtitle: 'src/memory-*.ts',               layer: 'support',   x: 560, y: 600, w: 155, h: 48,
+    desc: 'Semantic/BM25 search across memory documents + session history. memory-retrieval.ts searches and ranks results. Results injected into system prompt with daily budget cap.' },
+  { id: 'heartbeat',   label: 'Heartbeat Loop',       subtitle: 'heartbeat-policy.ts',           layer: 'support',   x: 100, y: 660, w: 155, h: 48,
+    desc: 'Periodic health check runs (default 30min, configurable). Active hours support (e.g. Mon-Fri@9:00-17:00), duplicate suppression, acknowledgment normalization. Only extracts thinking content when HEARTBEAT_INCLUDE_REASONING=true. Uses same agent pipeline as messages.' },
+];
+
+const connections = [
+  { from: 'tg-api',     to: 'tg-bot',     type: 'data',  label: 'getUpdates polling',          group: 'inbound' },
+  { from: 'tg-bot',     to: 'router',     type: 'data',  label: 'TelegramInboundEvent',        group: 'inbound' },
+  { from: 'router',     to: 'db',         type: 'tool',  label: 'storeMessage()',               group: 'inbound' },
+  { from: 'router',     to: 'pi-runner',  type: 'tool',  label: 'runContainerAgent()',          group: 'inbound' },
+  { from: 'sys-prompt', to: 'pi-runner',  type: 'data',  label: 'system prompt + context',      group: 'inbound' },
+  { from: 'memory',     to: 'sys-prompt', type: 'data',  label: 'memory context',               group: 'inbound' },
+  { from: 'pi-runner',  to: 'pi-sub',     type: 'data',  label: 'spawn with --mode json',       group: 'inbound' },
+  { from: 'pi-sub',     to: 'pi-runner',  type: 'event', label: 'JSON event stream (stdout)',   group: 'agent-output' },
+  { from: 'pi-runner',  to: 'ipc-files',  type: 'ipc',   label: 'writeIpcFile() atomic rename', group: 'ipc' },
+  { from: 'ipc-files',  to: 'ipc-watcher',type: 'ipc',   label: 'poll + read + delete',         group: 'ipc' },
+  { from: 'ipc-watcher',to: 'draft-ipc',  type: 'ipc',   label: 'telegram_draft_update',        group: 'ipc' },
+  { from: 'ipc-watcher',to: 'router',     type: 'ipc',   label: 'external_completion',          group: 'ipc' },
+  { from: 'draft-ipc',  to: 'tg-bot',     type: 'tool',  label: 'sendDraftWithFallback',        group: 'draft' },
+  { from: 'tg-bot',     to: 'tg-api',     type: 'data',  label: 'Path A: sendMessageDraft',     group: 'draft-native' },
+  { from: 'tg-bot',     to: 'tg-api',     type: 'data',  label: 'Path B: send+edit (fallback)', group: 'draft-fallback' },
+  { from: 'pi-runner',  to: 'router',     type: 'event', label: 'result + streamed flag',       group: 'final' },
+  { from: 'router',     to: 'tg-bot',     type: 'tool',  label: 'sendAgentResultMessage',       group: 'final' },
+  { from: 'tg-bot',     to: 'tg-api',     type: 'data',  label: 'final reply to user',          group: 'final' },
+  { from: 'tg-format',  to: 'tg-bot',     type: 'tool',  label: 'format + chunk text',          group: 'final' },
+  { from: 'pi-sub',     to: 'pi-runner',  type: 'event', label: 'tool events in JSON',          group: 'verbose' },
+  { from: 'pi-runner',  to: 'router',     type: 'event', label: 'onRuntimeEvent callback',      group: 'verbose' },
+  { from: 'router',     to: 'verbose',    type: 'tool',  label: 'check verbose mode',           group: 'verbose' },
+  { from: 'router',     to: 'tg-bot',     type: 'tool',  label: 'tool progress messages',       group: 'verbose-send' },
+  { from: 'pi-runner',  to: 'tui',        type: 'event', label: 'WebSocket broadcast',          group: 'tui-web' },
+  { from: 'router',     to: 'web',        type: 'data',  label: 'HTTP API status',              group: 'tui-web' },
+  { from: 'scheduler',  to: 'router',     type: 'tool',  label: 'fires scheduled prompt',       group: 'support' },
+  { from: 'heartbeat',  to: 'router',     type: 'tool',  label: 'periodic health check',        group: 'support' },
+];
+
+const PRESETS = {
+  'full': { label: 'Full System', nodes: null, groups: null, annotations: [] },
+  'message-flow': {
+    label: 'Message Flow',
+    nodes: ['tg-api','tg-bot','router','db','pi-runner','pi-sub','sys-prompt','memory','tg-format'],
+    groups: ['inbound','agent-output','final'],
+    annotations: []
+  },
+  'draft-streaming': {
+    label: 'Draft Streaming',
+    nodes: ['pi-runner','pi-sub','ipc-files','ipc-watcher','draft-ipc','tg-bot','tg-api','tg-format'],
+    groups: ['agent-output','ipc','draft','draft-native','draft-fallback'],
+    annotations: [
+      { x: 240, y: 510, text: 'Path A (Native Draft): Invisible to user.\nsendMessageDraft API \u2014 text appears\nonly in compose area of some clients.' },
+      { x: 240, y: 590, text: 'Path B (Fallback): Visible progressive.\nsendMessage first, then editMessage\nfor each update. User sees it build up.' },
+    ]
+  },
+  'ipc-system': {
+    label: 'IPC System',
+    nodes: ['pi-runner','pi-sub','ipc-files','ipc-watcher','draft-ipc','router','tg-bot'],
+    groups: ['agent-output','ipc','draft'],
+    annotations: [
+      { x: 430, y: 490, text: 'Filesystem IPC: PI Runner writes JSON\nto data/ipc/{group}/messages/ via\natomic rename (.tmp \u2192 final).' },
+      { x: 180, y: 490, text: 'IPC Watcher polls directory, parses\nmessage type, routes to handler,\nthen deletes processed file.' },
+    ]
+  },
+  'verbose-display': {
+    label: 'Verbose & Display',
+    nodes: ['pi-sub','pi-runner','router','verbose','tg-bot','tg-api'],
+    groups: ['verbose','verbose-send','inbound'],
+    annotations: [
+      { x: 580, y: 540, text: 'Verbose modes control TOOL display:\n\u2022 off \u2014 silent\n\u2022 new \u2014 unique tools only\n\u2022 all \u2014 all tools + preview\n\u2022 verbose \u2014 full args + results' },
+    ]
+  },
+  'think-vs-verbose': {
+    label: 'Think vs Verbose',
+    nodes: ['pi-sub','pi-runner','router','verbose','tg-bot','heartbeat'],
+    groups: ['verbose','verbose-send','agent-output','support'],
+    annotations: [
+      { x: 580, y: 260, text: 'THINKING: Agent reasoning depth.\nLevels: off/minimal/low/medium/high/xhigh\nPassed as --thinking flag to PI.\nContent stays INTERNAL to agent.' },
+      { x: 580, y: 540, text: 'VERBOSE: Tool progress display.\nModes: off/new/all/verbose\nControls what USER SEES about tools.\nOrthogonal to thinking.' },
+      { x: 60, y: 690, text: 'Exception: Heartbeat runs CAN extract\nthinking when HEARTBEAT_INCLUDE_\nREASONING=true.' },
+    ]
+  },
+};
+
+// State
+const state = {
+  preset: 'full',
+  layers: Object.fromEntries(Object.keys(LAYERS).map(k => [k, true])),
+  connTypes: Object.fromEntries(Object.keys(CONN_TYPES).map(k => [k, true])),
+  selectedNode: null,
+  comments: JSON.parse(localStorage.getItem('fft-arch-comments') || '{}'),
+};
+
+function saveComments() {
+  localStorage.setItem('fft-arch-comments', JSON.stringify(state.comments));
+}
+
+// SVG helpers
+const svg = document.getElementById('svg');
+const NS = 'http://www.w3.org/2000/svg';
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function clearChildren(element) {
+  while (element.firstChild) element.removeChild(element.firstChild);
+}
+
+function initSvg() {
+  const defs = el('defs', {}, svg);
+  for (const [id, ct] of Object.entries(CONN_TYPES)) {
+    const marker = el('marker', { id: 'arrow-' + id, markerWidth: '8', markerHeight: '6', refX: '7', refY: '3', orient: 'auto' }, defs);
+    el('polygon', { points: '0 0, 8 3, 0 6', fill: ct.color }, marker);
+  }
+  const filter = el('filter', { id: 'glow', x: '-50%', y: '-50%', width: '200%', height: '200%' }, defs);
+  el('feGaussianBlur', { stdDeviation: '3', result: 'blur' }, filter);
+  const merge = el('feMerge', {}, filter);
+  el('feMergeNode', { in: 'blur' }, merge);
+  el('feMergeNode', { in: 'SourceGraphic' }, merge);
+}
+
+function getCenter(n) { return { x: n.x + n.w / 2, y: n.y + n.h / 2 }; }
+
+function computePath(conn) {
+  const fn = nodes.find(n => n.id === conn.from);
+  const tn = nodes.find(n => n.id === conn.to);
+  if (!fn || !tn) return '';
+  const a = getCenter(fn), b = getCenter(tn);
+  const dx = b.x - a.x, dy = b.y - a.y;
+  let sx, sy, ex, ey;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    sx = dx > 0 ? fn.x + fn.w : fn.x;
+    ex = dx > 0 ? tn.x : tn.x + tn.w;
+    sy = a.y; ey = b.y;
+  } else {
+    sy = dy > 0 ? fn.y + fn.h : fn.y;
+    ey = dy > 0 ? tn.y : tn.y + tn.h;
+    sx = a.x; ex = b.x;
+  }
+  return 'M ' + sx + ',' + sy + ' C ' + (sx + (ex - sx) * 0.4) + ',' + sy + ' ' + (sx + (ex - sx) * 0.6) + ',' + ey + ' ' + ex + ',' + ey;
+}
+
+function renderConnections() {
+  svg.querySelectorAll('.conn-group').forEach(function(e) { e.remove(); });
+  var g = el('g', { class: 'conn-group' }, svg);
+  var preset = PRESETS[state.preset];
+  var visibleIds = preset.nodes ? new Set(preset.nodes) : new Set(nodes.map(function(n) { return n.id; }));
+
+  connections.forEach(function(conn) {
+    if (!visibleIds.has(conn.from) || !visibleIds.has(conn.to)) return;
+    var ct = CONN_TYPES[conn.type];
+    if (!ct) return;
+    var fn = nodes.find(function(n) { return n.id === conn.from; });
+    var tn = nodes.find(function(n) { return n.id === conn.to; });
+    var layerVis = state.layers[fn.layer] && state.layers[tn.layer];
+    var typeVis = state.connTypes[conn.type];
+    var groupVis = !preset.groups || preset.groups.indexOf(conn.group) >= 0;
+    var dimmed = !layerVis || !typeVis || !groupVis;
+    var d = computePath(conn);
+    if (!d) return;
+
+    var classes = 'conn-path';
+    if (dimmed) classes += ' dimmed';
+    else if (preset.groups) classes += ' animated';
+
+    el('path', {
+      d: d, class: classes, stroke: ct.color,
+      'stroke-dasharray': ct.dash || (!dimmed && preset.groups ? '6,4' : ''),
+      'marker-end': 'url(#arrow-' + conn.type + ')',
+    }, g);
+
+    if (!dimmed && conn.label) {
+      var fc = getCenter(fn), tc = getCenter(tn);
+      var txt = el('text', {
+        x: (fc.x + tc.x) / 2, y: (fc.y + tc.y) / 2 - 6,
+        class: 'conn-label', 'text-anchor': 'middle',
+      }, g);
+      txt.textContent = conn.label;
+    }
+  });
+}
+
+function renderNodes() {
+  svg.querySelectorAll('.node-group').forEach(function(e) { e.remove(); });
+  var preset = PRESETS[state.preset];
+  var visibleIds = preset.nodes ? new Set(preset.nodes) : null;
+
+  nodes.forEach(function(n) {
+    var inPreset = !visibleIds || visibleIds.has(n.id);
+    var layerOn = state.layers[n.layer];
+    var dimmed = !inPreset || !layerOn;
+    var layer = LAYERS[n.layer];
+    var isSelected = state.selectedNode === n.id;
+
+    var g = el('g', {
+      class: 'node-group' + (dimmed ? ' dimmed' : '') + (isSelected ? ' selected' : ''),
+      style: '--glow: ' + layer.color,
+    }, svg);
+    g.addEventListener('click', function() { selectNode(n.id); });
+
+    el('rect', {
+      x: n.x, y: n.y, width: n.w, height: n.h, rx: 8,
+      fill: 'color-mix(in srgb, ' + layer.color + ' 12%, #161b22)',
+      stroke: isSelected ? '#58a6ff' : layer.stroke,
+      'stroke-width': isSelected ? 2.5 : 1.2,
+    }, g);
+
+    if (state.comments[n.id] && state.comments[n.id].length > 0) {
+      el('circle', { cx: n.x + n.w - 8, cy: n.y + 8, r: 5, fill: '#f0883e' }, g);
+      var countText = el('text', { x: n.x + n.w - 8, y: n.y + 11, fill: '#fff', 'font-size': '7', 'text-anchor': 'middle', 'font-weight': 'bold' }, g);
+      countText.textContent = String(state.comments[n.id].length);
+    }
+
+    var labelEl = el('text', {
+      x: n.x + n.w / 2, y: n.y + (n.subtitle ? 18 : 22),
+      fill: '#e6edf3', 'font-size': '12', 'font-weight': '600', 'text-anchor': 'middle',
+    }, g);
+    labelEl.textContent = n.label;
+
+    if (n.subtitle) {
+      var subEl = el('text', {
+        x: n.x + n.w / 2, y: n.y + 34,
+        fill: '#8b949e', 'font-size': '9', 'text-anchor': 'middle',
+        'font-family': "'SF Mono', Monaco, Consolas, monospace",
+      }, g);
+      subEl.textContent = n.subtitle;
+    }
+  });
+}
+
+function renderAnnotations() {
+  var container = document.getElementById('annotations');
+  clearChildren(container);
+  var preset = PRESETS[state.preset];
+  if (!preset.annotations || !preset.annotations.length) return;
+
+  var svgEl = document.getElementById('svg');
+  var rect = svgEl.getBoundingClientRect();
+  var vb = svgEl.viewBox.baseVal;
+  var scaleX = rect.width / vb.width;
+  var scaleY = rect.height / vb.height;
+  var scale = Math.min(scaleX, scaleY);
+  var offsetX = (rect.width - vb.width * scale) / 2;
+  var offsetY = (rect.height - vb.height * scale) / 2;
+
+  preset.annotations.forEach(function(ann) {
+    var div = document.createElement('div');
+    div.className = 'annotation';
+    div.style.left = (ann.x * scale + offsetX) + 'px';
+    div.style.top = (ann.y * scale + offsetY) + 'px';
+    div.textContent = ann.text;
+    container.appendChild(div);
+  });
+}
+
+// Detail panel
+function selectNode(id) {
+  state.selectedNode = id;
+  var n = nodes.find(function(n) { return n.id === id; });
+  var layer = LAYERS[n.layer];
+
+  document.getElementById('d-title').textContent = n.label;
+  document.getElementById('d-file').textContent = n.subtitle;
+  var badge = document.getElementById('d-layer');
+  badge.textContent = layer.label;
+  badge.style.background = 'color-mix(in srgb, ' + layer.color + ' 25%, #21262d)';
+  badge.style.color = layer.stroke;
+  document.getElementById('d-desc').textContent = n.desc;
+
+  var inConns = connections.filter(function(c) { return c.to === id; });
+  var outConns = connections.filter(function(c) { return c.from === id; });
+
+  var inList = document.getElementById('d-in-list');
+  clearChildren(inList);
+  if (inConns.length === 0) {
+    var empty = document.createElement('div');
+    empty.className = 'conn-item';
+    empty.style.color = '#8b949e';
+    empty.textContent = 'None';
+    inList.appendChild(empty);
+  } else {
+    inConns.forEach(function(c) {
+      var ct = CONN_TYPES[c.type];
+      var fromN = nodes.find(function(n) { return n.id === c.from; });
+      var item = document.createElement('div');
+      item.className = 'conn-item';
+      var dot = document.createElement('span');
+      dot.className = 'conn-dot';
+      dot.style.background = ct.color;
+      item.appendChild(dot);
+      var text = document.createTextNode(fromN.label + ' \u2014 ' + c.label);
+      item.appendChild(text);
+      inList.appendChild(item);
+    });
+  }
+
+  var outList = document.getElementById('d-out-list');
+  clearChildren(outList);
+  if (outConns.length === 0) {
+    var empty2 = document.createElement('div');
+    empty2.className = 'conn-item';
+    empty2.style.color = '#8b949e';
+    empty2.textContent = 'None';
+    outList.appendChild(empty2);
+  } else {
+    outConns.forEach(function(c) {
+      var ct = CONN_TYPES[c.type];
+      var toN = nodes.find(function(n) { return n.id === c.to; });
+      var item = document.createElement('div');
+      item.className = 'conn-item';
+      var dot = document.createElement('span');
+      dot.className = 'conn-dot';
+      dot.style.background = ct.color;
+      item.appendChild(dot);
+      var text = document.createTextNode(toN.label + ' \u2014 ' + c.label);
+      item.appendChild(text);
+      outList.appendChild(item);
+    });
+  }
+
+  renderCommentsList(id);
+  document.getElementById('detail').classList.add('open');
+  updateAll();
+}
+
+function deselectNode() {
+  state.selectedNode = null;
+  document.getElementById('detail').classList.remove('open');
+  updateAll();
+}
+
+function addComment() {
+  if (!state.selectedNode) return;
+  var input = document.getElementById('comment-input');
+  var text = input.value.trim();
+  if (!text) return;
+  if (!state.comments[state.selectedNode]) state.comments[state.selectedNode] = [];
+  state.comments[state.selectedNode].push({ text: text, time: new Date().toLocaleString() });
+  input.value = '';
+  saveComments();
+  renderCommentsList(state.selectedNode);
+  updateAll();
+}
+
+function deleteComment(nodeId, idx) {
+  state.comments[nodeId].splice(idx, 1);
+  if (state.comments[nodeId].length === 0) delete state.comments[nodeId];
+  saveComments();
+  renderCommentsList(nodeId);
+  updateAll();
+}
+
+function renderCommentsList(nodeId) {
+  var list = document.getElementById('comment-list');
+  clearChildren(list);
+  var items = state.comments[nodeId] || [];
+  items.forEach(function(c, i) {
+    var li = document.createElement('li');
+    li.appendChild(document.createTextNode(c.text));
+    var br = document.createElement('br');
+    li.appendChild(br);
+    var timeSpan = document.createElement('span');
+    timeSpan.style.color = '#8b949e';
+    timeSpan.style.fontSize = '10px';
+    timeSpan.textContent = c.time;
+    li.appendChild(timeSpan);
+    var delBtn = document.createElement('button');
+    delBtn.className = 'del';
+    delBtn.textContent = '\u00d7';
+    delBtn.addEventListener('click', function() { deleteComment(nodeId, i); });
+    li.appendChild(delBtn);
+    list.appendChild(li);
+  });
+}
+
+// Controls
+function initControls() {
+  var lt = document.getElementById('layer-toggles');
+  Object.entries(LAYERS).forEach(function(entry) {
+    var id = entry[0], layer = entry[1];
+    var btn = document.createElement('button');
+    btn.className = 'layer-btn active';
+    btn.style.setProperty('--layer-color', layer.color);
+    var dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = layer.color;
+    btn.appendChild(dot);
+    btn.appendChild(document.createTextNode(layer.label));
+    btn.addEventListener('click', function() {
+      state.layers[id] = !state.layers[id];
+      btn.classList.toggle('active', state.layers[id]);
+      updateAll();
+    });
+    lt.appendChild(btn);
+  });
+
+  var ct = document.getElementById('conn-toggles');
+  Object.entries(CONN_TYPES).forEach(function(entry) {
+    var id = entry[0], ctype = entry[1];
+    var btn = document.createElement('button');
+    btn.className = 'conn-btn active';
+    btn.style.setProperty('--conn-color', ctype.color);
+    btn.textContent = ctype.label;
+    btn.addEventListener('click', function() {
+      state.connTypes[id] = !state.connTypes[id];
+      btn.classList.toggle('active', state.connTypes[id]);
+      updateAll();
+    });
+    ct.appendChild(btn);
+  });
+
+  document.querySelectorAll('.preset-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      state.preset = btn.dataset.preset;
+      document.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      updateAll();
+    });
+  });
+
+  document.getElementById('close-detail-btn').addEventListener('click', deselectNode);
+  document.getElementById('add-comment-btn').addEventListener('click', addComment);
+  document.getElementById('prompt-toggle').addEventListener('click', togglePrompt);
+  document.getElementById('copy-btn').addEventListener('click', function() { copyPrompt(this); });
+}
+
+// Prompt output
+function updatePrompt() {
+  var preset = PRESETS[state.preset];
+  var visibleNodeIds = preset.nodes || nodes.map(function(n) { return n.id; });
+  var visibleNodes = nodes.filter(function(n) { return visibleNodeIds.indexOf(n.id) >= 0 && state.layers[n.layer]; });
+
+  var parts = [];
+  parts.push('FFT_nano Architecture \u2014 ' + preset.label + ' view');
+  parts.push('');
+
+  if (preset.nodes) {
+    parts.push('Showing ' + visibleNodes.length + ' components: ' + visibleNodes.map(function(n) { return n.label; }).join(', ') + '.');
+  } else {
+    var hidden = Object.entries(state.layers).filter(function(e) { return !e[1]; }).map(function(e) { return LAYERS[e[0]].label; });
+    if (hidden.length) parts.push('Hidden layers: ' + hidden.join(', ') + '.');
+    else parts.push('Showing all components.');
+  }
+  parts.push('');
+
+  var visConns = connections.filter(function(c) {
+    var fn = nodes.find(function(n) { return n.id === c.from; });
+    var tn = nodes.find(function(n) { return n.id === c.to; });
+    return visibleNodeIds.indexOf(c.from) >= 0 && visibleNodeIds.indexOf(c.to) >= 0 &&
+           state.layers[fn.layer] && state.layers[tn.layer] &&
+           state.connTypes[c.type] &&
+           (!preset.groups || preset.groups.indexOf(c.group) >= 0);
+  });
+
+  if (visConns.length) {
+    parts.push('Active data flows:');
+    visConns.forEach(function(c) {
+      var fn = nodes.find(function(n) { return n.id === c.from; });
+      var tn = nodes.find(function(n) { return n.id === c.to; });
+      parts.push('  ' + fn.label + ' \u2192 ' + tn.label + ': ' + c.label);
+    });
+    parts.push('');
+  }
+
+  var commented = visibleNodes.filter(function(n) { return state.comments[n.id] && state.comments[n.id].length > 0; });
+  if (commented.length) {
+    parts.push('Notes on components:');
+    parts.push('');
+    commented.forEach(function(n) {
+      parts.push(n.label + ' (' + n.subtitle + '):');
+      state.comments[n.id].forEach(function(c) { parts.push('  ' + c.text); });
+      parts.push('');
+    });
+  }
+
+  if (preset.annotations && preset.annotations.length) {
+    parts.push('Key observations:');
+    preset.annotations.forEach(function(a) {
+      parts.push('  ' + a.text.replace(/\n/g, ' '));
+    });
+  }
+
+  document.getElementById('prompt-text').textContent = parts.join('\n');
+}
+
+function togglePrompt() {
+  var body = document.getElementById('prompt-body');
+  var arrow = document.querySelector('#prompt-toggle .arrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+  if (body.classList.contains('open')) updatePrompt();
+}
+
+function copyPrompt(btn) {
+  var text = document.getElementById('prompt-text').textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+function updateAll() {
+  renderConnections();
+  renderNodes();
+  renderAnnotations();
+  updatePrompt();
+}
+
+initSvg();
+initControls();
+updateAll();
+window.addEventListener('resize', renderAnnotations);
+</script>
+</body>
+</html>

@@ -22,6 +22,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'restart', description: 'Alias for /gateway restart' },
   { command: 'setup', description: 'Open runtime setup wizard for provider/model/key' },
   { command: 'coder', description: 'Delegate coding execution' },
+  { command: 'coding', description: 'Alias for /coder' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
   { command: 'tasks', description: 'List scheduled tasks' },
@@ -65,6 +66,7 @@ export type TelegramCommandName =
   | '/reload'
   | '/panel'
   | '/coder'
+  | '/coding'
   | '/coder-plan'
   | '/coder_plan'
   | '/freechat';
@@ -101,6 +103,7 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/reload',
   '/panel',
   '/coder',
+  '/coding',
   '/coder-plan',
   '/coder_plan',
   '/freechat',
@@ -159,6 +162,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/reload - refresh command menus and group metadata',
     '/panel - open admin quick actions',
     '/coder <task> - explicit delegated coding run',
+    '/coding <task> - alias for /coder',
     '/coder-plan <task> - explicit delegated planning run',
     '/subagents list|stop|spawn - manage delegated subagent runs',
   ].join('\n');

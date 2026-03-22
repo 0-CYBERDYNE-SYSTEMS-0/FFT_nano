@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  isSubstantialCodingTask,
   normalizeDelegationAlias,
   parseDelegationTrigger,
 } from '../src/coding-delegation.js';
@@ -11,6 +12,20 @@ test('parses /coder execute trigger', () => {
   assert.equal(parsed.hint, 'force_delegate_execute');
   assert.equal(parsed.trigger, 'coder');
   assert.equal(parsed.instruction, 'fix auth');
+});
+
+test('parses /coding execute trigger', () => {
+  const parsed = parseDelegationTrigger('/coding build an app');
+  assert.equal(parsed.hint, 'force_delegate_execute');
+  assert.equal(parsed.trigger, 'coding');
+  assert.equal(parsed.instruction, 'build an app');
+});
+
+test('parses bot-suffixed /coding execute trigger', () => {
+  const parsed = parseDelegationTrigger('/coding@TestBot build an app');
+  assert.equal(parsed.hint, 'force_delegate_execute');
+  assert.equal(parsed.trigger, 'coding');
+  assert.equal(parsed.instruction, 'build an app');
 });
 
 test('parses /coder-plan trigger', () => {
@@ -51,3 +66,18 @@ test('does not trigger delegation for natural language coding asks', () => {
   assert.equal(parsed.instruction, null);
 });
 
+test('detects substantial natural-language coding asks', () => {
+  assert.equal(
+    isSubstantialCodingTask('make me a full app with auth and a dashboard'),
+    true,
+  );
+  assert.equal(
+    isSubstantialCodingTask('debug this TypeScript build failure and patch the code'),
+    true,
+  );
+});
+
+test('does not classify ordinary chat as a substantial coding ask', () => {
+  assert.equal(isSubstantialCodingTask('what is the weather today?'), false);
+  assert.equal(isSubstantialCodingTask('hello there'), false);
+});

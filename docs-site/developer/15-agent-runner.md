@@ -1,72 +1,72 @@
-# Container Agent Runner
+# Pi Runner And Coding Worker
 
 Primary files:
-- `container/agent-runner/src/index.ts`
-- `container/agent-runner/src/coder-worker.ts`
-- `container/agent-runner/src/memory-tool.ts`
+- `src/pi-runner.ts`
+- `src/coding-orchestrator.ts`
+- `src/system-prompt.ts`
+- `src/pi-json-parser.ts`
 
 ## Purpose
 
-This runtime is the in-container bridge between host input JSON and the `pi` coding agent CLI.
+FFT_nano no longer uses a separate in-container delegated coder worker file.
 
-Host sends `ContainerInput` JSON over stdin; runner returns `ContainerOutput` JSON between sentinel markers.
+The host now has two layers:
+- `runContainerAgent(...)` in `src/pi-runner.ts` is the low-level `pi` process launcher.
+- `createCodingOrchestrator(...)` in `src/coding-orchestrator.ts` is the host-side coding worker lifecycle manager for `/coder`, `/coding`, auto-routed coding asks, and `/subagents`.
 
-## Input Normalization
+## Pi Runner Input
 
-Runner normalizes:
+`ContainerInput` supports:
+- prompt/group/chat metadata
+- provider/model overrides
+- think/reasoning/verbose modes
 - `codingHint`
-- `thinkLevel`
-- `reasoningLevel`
+- `toolMode=default|read_only|full`
+- `workspaceDirOverride`
 - `noContinue`
 
-Then builds system prompt sections including:
-- capabilities/tooling instructions
-- workspace conventions
-- memory context or memory file fallback
-- delegation policy hints (when extension available)
+`toolMode` is the important host-side isolation control:
+- `read_only` -> `read,grep,find,ls`
+- `full` -> `read,bash,edit,write,grep,find,ls`
 
-## `pi` Invocation Details
+## Workspace Selection
 
-`pi` args include:
+`runContainerAgent(...)` resolves workspace paths from:
+- main workspace for main chat runs
+- group folder for non-main runs
+- `workspaceDirOverride` when the coding orchestrator assigns an isolated worktree
+
+That lets execute-mode coder runs operate in a real separate workspace without mutating the live one.
+
+## Pi Invocation
+
+`pi` runs with:
 - `--mode json`
-- optional `-c` (continue session)
-- optional provider/model overrides
-- optional thinking mode
-- optional extension injection for delegation
+- optional `-c`
+- optional provider/model/api-key flags
 - `--append-system-prompt <assembled prompt>`
-- explicit tool allowlist: `read,bash,edit,write,grep,find,ls`
-
-Environment includes:
-- `PI_CODING_AGENT_DIR=/home/node/.pi/agent-farmfriend`
-- request/chat/coding hint metadata vars
+- explicit tool allowlist derived from `toolMode` or legacy `codingHint`
 
 ## Output Parsing
 
-Runner parses JSON event stream lines from `pi` stdout.
-
-Collected output:
+`parsePiJsonOutput(...)` extracts:
 - final assistant text
-- streamed flag
-- usage fields (input/output/total tokens + provider/model)
+- usage fields
+- tool execution summaries
 
-Error handling:
-- captures model stop-reason errors
-- throws non-zero `pi` exit as container output error
+`runContainerAgent(...)` also emits runtime tool events to the host and returns parsed `toolExecutions` so the coding orchestrator can build `commandsRun` and `testsRun`.
 
-## Delegated Worker
+## Host Coding Worker
 
-`coder-worker.ts` is used for delegated coding execution/plan runs.
+Execute-mode worker flow:
+1. Create isolated git worktree.
+2. Sync current workspace snapshot into it.
+3. Run `pi` with `toolMode=full` in that worktree.
+4. Return structured result with changed files, diff summary, worktree path, commands, and tests.
 
-Capabilities:
-- tracks tool execution stats
-- captures changed files via git dirty-set comparison
-- emits progress updates via IPC message files
-- enforces safer behavior in plan mode vs execute mode
+Plan-mode worker flow:
+1. Skip worktree creation.
+2. Run `pi` with `toolMode=read_only`.
+3. Return structured plan result.
 
-## Memory Tool CLI
-
-`memory-tool.ts` allows in-container read/search through host memory gateway over IPC:
-- `memory-tool search --query ...`
-- `memory-tool get --path MEMORY.md`
-
-The tool writes request JSON to `/workspace/ipc/actions`, then waits for matching result JSON in `/workspace/ipc/action_results`.
+If worktree creation fails, the host returns an explicit error and does not fall back to mutating the live workspace.

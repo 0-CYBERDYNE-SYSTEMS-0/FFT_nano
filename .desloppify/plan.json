@@ -1,0 +1,1885 @@
+{
+  "version": 8,
+  "created": "2026-03-18T16:16:48+00:00",
+  "updated": "2026-03-18T16:16:48+00:00",
+  "queue_order": [
+    "subjective::abstraction_fitness",
+    "subjective::ai_generated_debt",
+    "subjective::api_surface_coherence",
+    "subjective::authorization_consistency",
+    "subjective::contract_coherence",
+    "subjective::convention_outlier",
+    "subjective::cross_module_architecture",
+    "subjective::dependency_health",
+    "subjective::design_coherence",
+    "subjective::error_consistency",
+    "subjective::high_level_elegance",
+    "subjective::incomplete_migration",
+    "subjective::initialization_coupling",
+    "subjective::logic_clarity",
+    "subjective::low_level_elegance",
+    "subjective::mid_level_elegance",
+    "subjective::naming_quality",
+    "subjective::package_organization",
+    "subjective::test_strategy",
+    "subjective::type_safety",
+    "unused::container/agent-runner/src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16",
+    "unused::container/agent-runner/src/index.ts::loadDelegationExtension:226",
+    "unused::data/sessions/main/agent-runner-src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16",
+    "unused::data/sessions/main/agent-runner-src/index.ts::loadDelegationExtension:226",
+    "unused::src/container-runner.ts::registeredJids:1462",
+    "unused::src/cron/service.ts::GROUPS_DIR:5",
+    "unused::src/farm-action-gateway.ts::DEFAULT_CANVAS_TITLE:31",
+    "unused::src/index.ts::TelegramCommandName:109",
+    "unused::src/index.ts::cycleVerboseMode:126",
+    "unused::src/index.ts::normalizeVerboseMode:128"
+  ],
+  "deferred": [],
+  "skipped": {},
+  "active_cluster": null,
+  "overrides": {
+    "unused::container/agent-runner/src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16": {
+      "issue_id": "unused::container/agent-runner/src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::container/agent-runner/src/index.ts::loadDelegationExtension:226": {
+      "issue_id": "unused::container/agent-runner/src/index.ts::loadDelegationExtension:226",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::data/sessions/main/agent-runner-src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16": {
+      "issue_id": "unused::data/sessions/main/agent-runner-src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::data/sessions/main/agent-runner-src/index.ts::loadDelegationExtension:226": {
+      "issue_id": "unused::data/sessions/main/agent-runner-src/index.ts::loadDelegationExtension:226",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::src/container-runner.ts::registeredJids:1462": {
+      "issue_id": "unused::src/container-runner.ts::registeredJids:1462",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::src/cron/service.ts::GROUPS_DIR:5": {
+      "issue_id": "unused::src/cron/service.ts::GROUPS_DIR:5",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::src/farm-action-gateway.ts::DEFAULT_CANVAS_TITLE:31": {
+      "issue_id": "unused::src/farm-action-gateway.ts::DEFAULT_CANVAS_TITLE:31",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::src/index.ts::TelegramCommandName:109": {
+      "issue_id": "unused::src/index.ts::TelegramCommandName:109",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::src/index.ts::cycleVerboseMode:126": {
+      "issue_id": "unused::src/index.ts::cycleVerboseMode:126",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "unused::src/index.ts::normalizeVerboseMode:128": {
+      "issue_id": "unused::src/index.ts::normalizeVerboseMode:128",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/unused",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/config.ts::ASSISTANT_TRIGGER_ALIASES": {
+      "issue_id": "exports::src/config.ts::ASSISTANT_TRIGGER_ALIASES",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/db.ts::getTasksForGroup": {
+      "issue_id": "exports::src/db.ts::getTasksForGroup",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/telegram.ts::TELEGRAM_JID_PREFIX": {
+      "issue_id": "exports::src/telegram.ts::TELEGRAM_JID_PREFIX",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/runtime-config.ts::hasMeaningfulSecret": {
+      "issue_id": "exports::src/runtime-config.ts::hasMeaningfulSecret",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/runtime-config.ts::getRuntimeProviderDefinitionByPiApi": {
+      "issue_id": "exports::src/runtime-config.ts::getRuntimeProviderDefinitionByPiApi",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/runtime-config.ts::isRuntimeProviderPreset": {
+      "issue_id": "exports::src/runtime-config.ts::isRuntimeProviderPreset",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/telegram-draft-ipc.ts::getTelegramDraftRunKey": {
+      "issue_id": "exports::src/telegram-draft-ipc.ts::getTelegramDraftRunKey",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/workspace-bootstrap.ts::WORKSPACE_TEMPLATE_FILENAMES": {
+      "issue_id": "exports::src/workspace-bootstrap.ts::WORKSPACE_TEMPLATE_FILENAMES",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/workspace-bootstrap.ts::writeMainWorkspaceState": {
+      "issue_id": "exports::src/workspace-bootstrap.ts::writeMainWorkspaceState",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/pi-skills.ts::PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES": {
+      "issue_id": "exports::src/pi-skills.ts::PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/pi-skills.ts::PROJECT_SETUP_SKILLS_RELATIVE_DIR_CANDIDATES": {
+      "issue_id": "exports::src/pi-skills.ts::PROJECT_SETUP_SKILLS_RELATIVE_DIR_CANDIDATES",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/agent-empty-output.ts::hasUserVisibleText": {
+      "issue_id": "exports::src/agent-empty-output.ts::hasUserVisibleText",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/cron/service.ts::runCronSchedulerTick": {
+      "issue_id": "exports::src/cron/service.ts::runCronSchedulerTick",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/cron/service.ts::writeCronStoreSnapshot": {
+      "issue_id": "exports::src/cron/service.ts::writeCronStoreSnapshot",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/telegram-format.ts::chunkTelegramMarkdownText": {
+      "issue_id": "exports::src/telegram-format.ts::chunkTelegramMarkdownText",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/telegram-draft.ts::writeIpcMessage": {
+      "issue_id": "exports::container/agent-runner/src/telegram-draft.ts::writeIpcMessage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/telegram-draft.ts::writeIpcTelegramEditMessage": {
+      "issue_id": "exports::container/agent-runner/src/telegram-draft.ts::writeIpcTelegramEditMessage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/telegram-draft.ts::writeIpcTelegramDraftUpdate": {
+      "issue_id": "exports::container/agent-runner/src/telegram-draft.ts::writeIpcTelegramDraftUpdate",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/telegram-draft.js::writeIpcMessage": {
+      "issue_id": "exports::container/agent-runner/dist/telegram-draft.js::writeIpcMessage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/telegram-draft.js::writeIpcTelegramEditMessage": {
+      "issue_id": "exports::container/agent-runner/dist/telegram-draft.js::writeIpcTelegramEditMessage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/telegram-draft.js::writeIpcTelegramDraftUpdate": {
+      "issue_id": "exports::container/agent-runner/dist/telegram-draft.js::writeIpcTelegramDraftUpdate",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcMessage": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcMessage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcTelegramEditMessage": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcTelegramEditMessage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcTelegramDraftUpdate": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcTelegramDraftUpdate",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-backend.ts::LexicalMemoryBackend": {
+      "issue_id": "exports::src/memory-backend.ts::LexicalMemoryBackend",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/mount-security.ts::loadMountAllowlist": {
+      "issue_id": "exports::src/mount-security.ts::loadMountAllowlist",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/mount-security.ts::validateMount": {
+      "issue_id": "exports::src/mount-security.ts::validateMount",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/mount-security.ts::generateAllowlistTemplate": {
+      "issue_id": "exports::src/mount-security.ts::generateAllowlistTemplate",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_ROOT_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_ROOT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_GROUP_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_GROUP_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_PROJECT_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_PROJECT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_GLOBAL_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_GLOBAL_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_ACTIONS_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_ACTIONS_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_ACTION_RESULTS_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_ACTION_RESULTS_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::PI_HOME_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::PI_HOME_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::PI_AGENT_FFT_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::PI_AGENT_FFT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::PI_AGENT_CODER_DIR": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::PI_AGENT_CODER_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::PI_ON_PI_EXTENSION_PATH": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::PI_ON_PI_EXTENSION_PATH",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/dist/runtime-paths.js::isAllowedWorkspaceAbsolutePath": {
+      "issue_id": "exports::container/agent-runner/dist/runtime-paths.js::isAllowedWorkspaceAbsolutePath",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_ROOT_DIR": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_ROOT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_PROJECT_DIR": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_PROJECT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_IPC_ACTIONS_DIR": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_IPC_ACTIONS_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_IPC_ACTION_RESULTS_DIR": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_IPC_ACTION_RESULTS_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::PI_HOME_DIR": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::PI_HOME_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::PI_AGENT_FFT_DIR": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::PI_AGENT_FFT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::PI_AGENT_CODER_DIR": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::PI_AGENT_CODER_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::PI_ON_PI_EXTENSION_PATH": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::PI_ON_PI_EXTENSION_PATH",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/runtime-paths.ts::isAllowedWorkspaceAbsolutePath": {
+      "issue_id": "exports::container/agent-runner/src/runtime-paths.ts::isAllowedWorkspaceAbsolutePath",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_ROOT_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_ROOT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_GROUP_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_GROUP_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_PROJECT_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_PROJECT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_GLOBAL_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_GLOBAL_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_ACTIONS_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_ACTIONS_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_ACTION_RESULTS_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_ACTION_RESULTS_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_HOME_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_HOME_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_AGENT_FFT_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_AGENT_FFT_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_AGENT_CODER_DIR": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_AGENT_CODER_DIR",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_ON_PI_EXTENSION_PATH": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_ON_PI_EXTENSION_PATH",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::isAllowedWorkspaceAbsolutePath": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::isAllowedWorkspaceAbsolutePath",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-export",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/db.ts::ChatInfo": {
+      "issue_id": "exports::src/db.ts::ChatInfo",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/db.ts::ChatHistoryMessageRow": {
+      "issue_id": "exports::src/db.ts::ChatHistoryMessageRow",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/telegram.ts::TelegramEntity": {
+      "issue_id": "exports::src/telegram.ts::TelegramEntity",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/telegram.ts::TelegramMediaType": {
+      "issue_id": "exports::src/telegram.ts::TelegramMediaType",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/telegram.ts::TelegramBotOptions": {
+      "issue_id": "exports::src/telegram.ts::TelegramBotOptions",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/runtime-config.ts::RuntimeProviderModelInputMode": {
+      "issue_id": "exports::src/runtime-config.ts::RuntimeProviderModelInputMode",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/runtime-config.ts::RuntimeProviderDefinition": {
+      "issue_id": "exports::src/runtime-config.ts::RuntimeProviderDefinition",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/runtime-config.ts::RuntimeConfigSnapshot": {
+      "issue_id": "exports::src/runtime-config.ts::RuntimeConfigSnapshot",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/telegram-draft-ipc.ts::TelegramDraftIpcMessage": {
+      "issue_id": "exports::src/telegram-draft-ipc.ts::TelegramDraftIpcMessage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/workspace-bootstrap.ts::WorkspaceTemplateFileName": {
+      "issue_id": "exports::src/workspace-bootstrap.ts::WorkspaceTemplateFileName",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/workspace-bootstrap.ts::WorkspaceOnboardingState": {
+      "issue_id": "exports::src/workspace-bootstrap.ts::WorkspaceOnboardingState",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/workspace-bootstrap.ts::MainWorkspaceOnboardingStatus": {
+      "issue_id": "exports::src/workspace-bootstrap.ts::MainWorkspaceOnboardingStatus",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/workspace-bootstrap.ts::CompleteMainWorkspaceOnboardingParams": {
+      "issue_id": "exports::src/workspace-bootstrap.ts::CompleteMainWorkspaceOnboardingParams",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/pi-skills.ts::SkillValidationIssue": {
+      "issue_id": "exports::src/pi-skills.ts::SkillValidationIssue",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/pi-skills.ts::SkillValidationResult": {
+      "issue_id": "exports::src/pi-skills.ts::SkillValidationResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/pi-skills.ts::SkillSyncResult": {
+      "issue_id": "exports::src/pi-skills.ts::SkillSyncResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/pi-skills.ts::SkillSyncOptions": {
+      "issue_id": "exports::src/pi-skills.ts::SkillSyncOptions",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/agent-empty-output.ts::AgentRunResult": {
+      "issue_id": "exports::src/agent-empty-output.ts::AgentRunResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/cron/service.ts::CronServiceDependencies": {
+      "issue_id": "exports::src/cron/service.ts::CronServiceDependencies",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/telegram-draft.ts::TelegramDraftUpdate": {
+      "issue_id": "exports::container/agent-runner/src/telegram-draft.ts::TelegramDraftUpdate",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::TelegramDraftUpdate": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::TelegramDraftUpdate",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-backend.ts::MemorySearchInput": {
+      "issue_id": "exports::src/memory-backend.ts::MemorySearchInput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-backend.ts::MemoryDocumentInput": {
+      "issue_id": "exports::src/memory-backend.ts::MemoryDocumentInput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-backend.ts::MemoryBackend": {
+      "issue_id": "exports::src/memory-backend.ts::MemoryBackend",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/mount-security.ts::MountValidationResult": {
+      "issue_id": "exports::src/mount-security.ts::MountValidationResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/container-runner.ts::ContainerInput": {
+      "issue_id": "exports::src/container-runner.ts::ContainerInput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/container-runner.ts::ContainerOutput": {
+      "issue_id": "exports::src/container-runner.ts::ContainerOutput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/container-runner.ts::ContainerRuntimeEvent": {
+      "issue_id": "exports::src/container-runner.ts::ContainerRuntimeEvent",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/task-scheduler.ts::SchedulerDependencies": {
+      "issue_id": "exports::src/task-scheduler.ts::SchedulerDependencies",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/coding-delegation.ts::DelegationTrigger": {
+      "issue_id": "exports::src/coding-delegation.ts::DelegationTrigger",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-maintenance.ts::CompactionMigrationResult": {
+      "issue_id": "exports::src/memory-maintenance.ts::CompactionMigrationResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/verbose-mode.ts::ParsedVerboseDirective": {
+      "issue_id": "exports::src/verbose-mode.ts::ParsedVerboseDirective",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/cron/adapters.ts::ScheduleTaskIpcPayload": {
+      "issue_id": "exports::src/cron/adapters.ts::ScheduleTaskIpcPayload",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/cron/types.ts::CronV2BackoffState": {
+      "issue_id": "exports::src/cron/types.ts::CronV2BackoffState",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/heartbeat-policy.ts::StripHeartbeatMode": {
+      "issue_id": "exports::src/heartbeat-policy.ts::StripHeartbeatMode",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/heartbeat-policy.ts::StripHeartbeatResult": {
+      "issue_id": "exports::src/heartbeat-policy.ts::StripHeartbeatResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/heartbeat-policy.ts::ActiveHoursWindow": {
+      "issue_id": "exports::src/heartbeat-policy.ts::ActiveHoursWindow",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/tui/gateway-server.ts::TuiGatewayOptions": {
+      "issue_id": "exports::src/tui/gateway-server.ts::TuiGatewayOptions",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/tui/runtime-events.ts::TuiRuntimeEvent": {
+      "issue_id": "exports::src/tui/runtime-events.ts::TuiRuntimeEvent",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/web/control-center-server.ts::WebControlCenterFileRoot": {
+      "issue_id": "exports::src/web/control-center-server.ts::WebControlCenterFileRoot",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/web/control-center-server.ts::WebControlCenterServerOptions": {
+      "issue_id": "exports::src/web/control-center-server.ts::WebControlCenterServerOptions",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/profile.ts::ProfileDetection": {
+      "issue_id": "exports::src/profile.ts::ProfileDetection",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/tui/gateway-client.ts::GatewayClientOptions": {
+      "issue_id": "exports::src/tui/gateway-client.ts::GatewayClientOptions",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/tui/startup-session.ts::StartupSessionResolution": {
+      "issue_id": "exports::src/tui/startup-session.ts::StartupSessionResolution",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-retrieval.ts::BuildMemoryContextInput": {
+      "issue_id": "exports::src/memory-retrieval.ts::BuildMemoryContextInput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/system-prompt.ts::SystemPromptReport": {
+      "issue_id": "exports::container/agent-runner/src/system-prompt.ts::SystemPromptReport",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/bash-guard.ts::DestructivePattern": {
+      "issue_id": "exports::container/agent-runner/src/bash-guard.ts::DestructivePattern",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/pi-json-parser.ts::PiUsage": {
+      "issue_id": "exports::container/agent-runner/src/pi-json-parser.ts::PiUsage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/pi-json-parser.ts::PiToolExecution": {
+      "issue_id": "exports::container/agent-runner/src/pi-json-parser.ts::PiToolExecution",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/pi-json-parser.ts::ParsePiJsonOutputInput": {
+      "issue_id": "exports::container/agent-runner/src/pi-json-parser.ts::ParsePiJsonOutputInput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/pi-json-parser.ts::ParsePiJsonOutputResult": {
+      "issue_id": "exports::container/agent-runner/src/pi-json-parser.ts::ParsePiJsonOutputResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/pi-stream-parser.ts::TextDelta": {
+      "issue_id": "exports::container/agent-runner/src/pi-stream-parser.ts::TextDelta",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/pi-stream-parser.ts::ToolDelta": {
+      "issue_id": "exports::container/agent-runner/src/pi-stream-parser.ts::ToolDelta",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::container/agent-runner/src/pi-stream-parser.ts::ToolTrackerState": {
+      "issue_id": "exports::container/agent-runner/src/pi-stream-parser.ts::ToolTrackerState",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/bash-guard.ts::DestructivePattern": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/bash-guard.ts::DestructivePattern",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::PiUsage": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::PiUsage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::PiToolExecution": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::PiToolExecution",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputInput": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputInput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputResult": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::TextDelta": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::TextDelta",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::ToolDelta": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::ToolDelta",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::ToolTrackerState": {
+      "issue_id": "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::ToolTrackerState",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::PiUsage": {
+      "issue_id": "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::PiUsage",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputInput": {
+      "issue_id": "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputInput",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputResult": {
+      "issue_id": "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputResult",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::MemoryBackendKind": {
+      "issue_id": "exports::src/parity-config.ts::MemoryBackendKind",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::MemoryMissingFileBehavior": {
+      "issue_id": "exports::src/parity-config.ts::MemoryMissingFileBehavior",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::HeartbeatTargetMode": {
+      "issue_id": "exports::src/parity-config.ts::HeartbeatTargetMode",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::HeartbeatTimezoneMode": {
+      "issue_id": "exports::src/parity-config.ts::HeartbeatTimezoneMode",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::MemoryFlushConfig": {
+      "issue_id": "exports::src/parity-config.ts::MemoryFlushConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::MemoryParityConfig": {
+      "issue_id": "exports::src/parity-config.ts::MemoryParityConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::HeartbeatActiveHoursConfig": {
+      "issue_id": "exports::src/parity-config.ts::HeartbeatActiveHoursConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::HeartbeatVisibilityConfig": {
+      "issue_id": "exports::src/parity-config.ts::HeartbeatVisibilityConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::HeartbeatParityConfig": {
+      "issue_id": "exports::src/parity-config.ts::HeartbeatParityConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::CronDeterministicStaggerConfig": {
+      "issue_id": "exports::src/parity-config.ts::CronDeterministicStaggerConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::CronParityConfig": {
+      "issue_id": "exports::src/parity-config.ts::CronParityConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::WorkspaceParityConfig": {
+      "issue_id": "exports::src/parity-config.ts::WorkspaceParityConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::DoctorParityConfig": {
+      "issue_id": "exports::src/parity-config.ts::DoctorParityConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/parity-config.ts::ParityConfig": {
+      "issue_id": "exports::src/parity-config.ts::ParityConfig",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-search.ts::MemorySearchHit": {
+      "issue_id": "exports::src/memory-search.ts::MemorySearchHit",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "exports::src/memory-search.ts::MemoryDocument": {
+      "issue_id": "exports::src/memory-search.ts::MemoryDocument",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/exports-type",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/singleton-lock.ts::untested_module": {
+      "issue_id": "test_coverage::src/singleton-lock.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/farm-state-collector.ts::untested_module": {
+      "issue_id": "test_coverage::src/farm-state-collector.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/lib/browser.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/lib/browser.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/components/user-message.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/components/user-message.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/start.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/start.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/scripts/quote.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/scripts/quote.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/doctor.ts::untested_module": {
+      "issue_id": "test_coverage::src/doctor.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/components/custom-editor.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/components/custom-editor.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/theme/theme.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/theme/theme.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::web/control-center/src/main.tsx::untested_module": {
+      "issue_id": "test_coverage::web/control-center/src/main.tsx::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/scripts/post.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/scripts/post.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/agent.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/agent.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/scripts/reply.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/scripts/reply.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::scripts/benchmark-memory-search.ts::untested_module": {
+      "issue_id": "test_coverage::scripts/benchmark-memory-search.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/client.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/client.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/components/chat-log.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/components/chat-log.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/gateway-client.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/gateway-client.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/scripts/like.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/scripts/like.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/scripts/setup.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/scripts/setup.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::scripts/validate-pi-skills.ts::untested_module": {
+      "issue_id": "test_coverage::scripts/validate-pi-skills.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/profile-cli.ts::untested_module": {
+      "issue_id": "test_coverage::src/profile-cli.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/components/tool-message.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/components/tool-message.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/host.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/host.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/whatsapp-auth.ts::untested_module": {
+      "issue_id": "test_coverage::src/whatsapp-auth.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/lib/config.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/lib/config.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/tui/components/assistant-message.ts::untested_module": {
+      "issue_id": "test_coverage::src/tui/components/assistant-message.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::skills/setup/x-integration/scripts/retweet.ts::untested_module": {
+      "issue_id": "test_coverage::skills/setup/x-integration/scripts/retweet.ts::untested_module",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/memory-search.ts::transitive_only": {
+      "issue_id": "test_coverage::src/memory-search.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/container-runner.ts::transitive_only": {
+      "issue_id": "test_coverage::src/container-runner.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/parity-config.ts::transitive_only": {
+      "issue_id": "test_coverage::src/parity-config.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/memory-backend.ts::transitive_only": {
+      "issue_id": "test_coverage::src/memory-backend.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/home-assistant.ts::transitive_only": {
+      "issue_id": "test_coverage::src/home-assistant.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/utils.ts::transitive_only": {
+      "issue_id": "test_coverage::src/utils.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/mount-security.ts::transitive_only": {
+      "issue_id": "test_coverage::src/mount-security.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/cron/types.ts::transitive_only": {
+      "issue_id": "test_coverage::src/cron/types.ts::transitive_only",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-transitive_only",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::src/index.ts::untested_critical": {
+      "issue_id": "test_coverage::src/index.ts::untested_critical",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_critical",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "test_coverage::web/control-center/src/App.tsx::untested_critical": {
+      "issue_id": "test_coverage::web/control-center/src/App.tsx::untested_critical",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/test_coverage-untested_critical",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/heartbeat-output.ts::security::hardcoded_secret_name::src/heartbeat-output.ts::1": {
+      "issue_id": "security::src/heartbeat-output.ts::security::hardcoded_secret_name::src/heartbeat-output.ts::1",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/heartbeat-policy.ts::security::hardcoded_secret_name::src/heartbeat-policy.ts::3": {
+      "issue_id": "security::src/heartbeat-policy.ts::security::hardcoded_secret_name::src/heartbeat-policy.ts::3",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/onboarding-completion.ts::security::hardcoded_secret_name::src/onboarding-completion.ts::1": {
+      "issue_id": "security::src/onboarding-completion.ts::security::hardcoded_secret_name::src/onboarding-completion.ts::1",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::42": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::42",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::51": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::51",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::54": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::54",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::64": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::64",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::72": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::72",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::80": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::80",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::88": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::88",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::98": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::98",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::108": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::108",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::116": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::116",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::126": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::126",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::136": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::136",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::147": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::147",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::310": {
+      "issue_id": "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::310",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::web/control-center/src/App.tsx::security::hardcoded_secret_name::web/control-center/src/App.tsx::118": {
+      "issue_id": "security::web/control-center/src/App.tsx::security::hardcoded_secret_name::web/control-center/src/App.tsx::118",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-hardcoded_secret_name",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/farm-action-gateway.ts::security::json_parse_unguarded::src/farm-action-gateway.ts::613": {
+      "issue_id": "security::src/farm-action-gateway.ts::security::json_parse_unguarded::src/farm-action-gateway.ts::613",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-json_parse_unguarded",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "security::src/web/control-center-server.ts::security::json_parse_unguarded::src/web/control-center-server.ts::146": {
+      "issue_id": "security::src/web/control-center-server.ts::security::json_parse_unguarded::src/web/control-center-server.ts::146",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/security-json_parse_unguarded",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "stale_exclude::tmp-ipc::tmp-ipc": {
+      "issue_id": "stale_exclude::tmp-ipc::tmp-ipc",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/stale_exclude",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "stale_exclude::.venv-desloppify::.venv-desloppify": {
+      "issue_id": "stale_exclude::.venv-desloppify::.venv-desloppify",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/stale_exclude",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "stale_exclude::.factory::.factory": {
+      "issue_id": "stale_exclude::.factory::.factory",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/stale_exclude",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "stale_exclude::docs-site::docs-site": {
+      "issue_id": "stale_exclude::docs-site::docs-site",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/stale_exclude",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::abstraction_fitness": {
+      "issue_id": "subjective::abstraction_fitness",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::ai_generated_debt": {
+      "issue_id": "subjective::ai_generated_debt",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::api_surface_coherence": {
+      "issue_id": "subjective::api_surface_coherence",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::authorization_consistency": {
+      "issue_id": "subjective::authorization_consistency",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::contract_coherence": {
+      "issue_id": "subjective::contract_coherence",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::convention_outlier": {
+      "issue_id": "subjective::convention_outlier",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::cross_module_architecture": {
+      "issue_id": "subjective::cross_module_architecture",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::dependency_health": {
+      "issue_id": "subjective::dependency_health",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::design_coherence": {
+      "issue_id": "subjective::design_coherence",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::error_consistency": {
+      "issue_id": "subjective::error_consistency",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::high_level_elegance": {
+      "issue_id": "subjective::high_level_elegance",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::incomplete_migration": {
+      "issue_id": "subjective::incomplete_migration",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::initialization_coupling": {
+      "issue_id": "subjective::initialization_coupling",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::logic_clarity": {
+      "issue_id": "subjective::logic_clarity",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::low_level_elegance": {
+      "issue_id": "subjective::low_level_elegance",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::mid_level_elegance": {
+      "issue_id": "subjective::mid_level_elegance",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::naming_quality": {
+      "issue_id": "subjective::naming_quality",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::package_organization": {
+      "issue_id": "subjective::package_organization",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::test_strategy": {
+      "issue_id": "subjective::test_strategy",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    },
+    "subjective::type_safety": {
+      "issue_id": "subjective::type_safety",
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-18T16:16:48+00:00"
+    }
+  },
+  "clusters": {
+    "auto/unused": {
+      "name": "auto/unused",
+      "description": "Remove 10 unused issues",
+      "issue_ids": [
+        "unused::container/agent-runner/src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16",
+        "unused::container/agent-runner/src/index.ts::loadDelegationExtension:226",
+        "unused::data/sessions/main/agent-runner-src/coder-worker.ts::WORKSPACE_IPC_MESSAGES_DIR:16",
+        "unused::data/sessions/main/agent-runner-src/index.ts::loadDelegationExtension:226",
+        "unused::src/container-runner.ts::registeredJids:1462",
+        "unused::src/cron/service.ts::GROUPS_DIR:5",
+        "unused::src/farm-action-gateway.ts::DEFAULT_CANVAS_TITLE:31",
+        "unused::src/index.ts::TelegramCommandName:109",
+        "unused::src/index.ts::cycleVerboseMode:126",
+        "unused::src/index.ts::normalizeVerboseMode:128"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "auto::unused",
+      "action": "desloppify autofix unused-imports --dry-run",
+      "execution_status": "active",
+      "user_modified": false,
+      "action_type": "auto_fix",
+      "execution_policy": "ephemeral_autopromote"
+    },
+    "auto/exports-export": {
+      "name": "auto/exports-export",
+      "description": "Fix 61 exports issues",
+      "issue_ids": [
+        "exports::src/config.ts::ASSISTANT_TRIGGER_ALIASES",
+        "exports::src/db.ts::getTasksForGroup",
+        "exports::src/telegram.ts::TELEGRAM_JID_PREFIX",
+        "exports::src/runtime-config.ts::hasMeaningfulSecret",
+        "exports::src/runtime-config.ts::getRuntimeProviderDefinitionByPiApi",
+        "exports::src/runtime-config.ts::isRuntimeProviderPreset",
+        "exports::src/telegram-draft-ipc.ts::getTelegramDraftRunKey",
+        "exports::src/workspace-bootstrap.ts::WORKSPACE_TEMPLATE_FILENAMES",
+        "exports::src/workspace-bootstrap.ts::writeMainWorkspaceState",
+        "exports::src/pi-skills.ts::PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES",
+        "exports::src/pi-skills.ts::PROJECT_SETUP_SKILLS_RELATIVE_DIR_CANDIDATES",
+        "exports::src/agent-empty-output.ts::hasUserVisibleText",
+        "exports::src/cron/service.ts::runCronSchedulerTick",
+        "exports::src/cron/service.ts::writeCronStoreSnapshot",
+        "exports::src/telegram-format.ts::chunkTelegramMarkdownText",
+        "exports::container/agent-runner/src/telegram-draft.ts::writeIpcMessage",
+        "exports::container/agent-runner/src/telegram-draft.ts::writeIpcTelegramEditMessage",
+        "exports::container/agent-runner/src/telegram-draft.ts::writeIpcTelegramDraftUpdate",
+        "exports::container/agent-runner/dist/telegram-draft.js::writeIpcMessage",
+        "exports::container/agent-runner/dist/telegram-draft.js::writeIpcTelegramEditMessage",
+        "exports::container/agent-runner/dist/telegram-draft.js::writeIpcTelegramDraftUpdate",
+        "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcMessage",
+        "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcTelegramEditMessage",
+        "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::writeIpcTelegramDraftUpdate",
+        "exports::src/memory-backend.ts::LexicalMemoryBackend",
+        "exports::src/mount-security.ts::loadMountAllowlist",
+        "exports::src/mount-security.ts::validateMount",
+        "exports::src/mount-security.ts::generateAllowlistTemplate",
+        "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_ROOT_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_GROUP_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_PROJECT_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_GLOBAL_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_ACTIONS_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::WORKSPACE_IPC_ACTION_RESULTS_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::PI_HOME_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::PI_AGENT_FFT_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::PI_AGENT_CODER_DIR",
+        "exports::container/agent-runner/dist/runtime-paths.js::PI_ON_PI_EXTENSION_PATH",
+        "exports::container/agent-runner/dist/runtime-paths.js::isAllowedWorkspaceAbsolutePath",
+        "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_ROOT_DIR",
+        "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_PROJECT_DIR",
+        "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_IPC_ACTIONS_DIR",
+        "exports::container/agent-runner/src/runtime-paths.ts::WORKSPACE_IPC_ACTION_RESULTS_DIR",
+        "exports::container/agent-runner/src/runtime-paths.ts::PI_HOME_DIR",
+        "exports::container/agent-runner/src/runtime-paths.ts::PI_AGENT_FFT_DIR",
+        "exports::container/agent-runner/src/runtime-paths.ts::PI_AGENT_CODER_DIR",
+        "exports::container/agent-runner/src/runtime-paths.ts::PI_ON_PI_EXTENSION_PATH",
+        "exports::container/agent-runner/src/runtime-paths.ts::isAllowedWorkspaceAbsolutePath",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_ROOT_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_GROUP_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_PROJECT_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_GLOBAL_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_ACTIONS_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::WORKSPACE_IPC_ACTION_RESULTS_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_HOME_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_AGENT_FFT_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_AGENT_CODER_DIR",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::PI_ON_PI_EXTENSION_PATH",
+        "exports::data/sessions/main/agent-runner-src/runtime-paths.ts::isAllowedWorkspaceAbsolutePath"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::exports::export",
+      "action": "run `knip --fix` to remove dead exports",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    },
+    "auto/exports-type": {
+      "name": "auto/exports-type",
+      "description": "Fix 81 exports issues",
+      "issue_ids": [
+        "exports::src/db.ts::ChatInfo",
+        "exports::src/db.ts::ChatHistoryMessageRow",
+        "exports::src/telegram.ts::TelegramEntity",
+        "exports::src/telegram.ts::TelegramMediaType",
+        "exports::src/telegram.ts::TelegramBotOptions",
+        "exports::src/runtime-config.ts::RuntimeProviderModelInputMode",
+        "exports::src/runtime-config.ts::RuntimeProviderDefinition",
+        "exports::src/runtime-config.ts::RuntimeConfigSnapshot",
+        "exports::src/telegram-draft-ipc.ts::TelegramDraftIpcMessage",
+        "exports::src/workspace-bootstrap.ts::WorkspaceTemplateFileName",
+        "exports::src/workspace-bootstrap.ts::WorkspaceOnboardingState",
+        "exports::src/workspace-bootstrap.ts::MainWorkspaceOnboardingStatus",
+        "exports::src/workspace-bootstrap.ts::CompleteMainWorkspaceOnboardingParams",
+        "exports::src/pi-skills.ts::SkillValidationIssue",
+        "exports::src/pi-skills.ts::SkillValidationResult",
+        "exports::src/pi-skills.ts::SkillSyncResult",
+        "exports::src/pi-skills.ts::SkillSyncOptions",
+        "exports::src/agent-empty-output.ts::AgentRunResult",
+        "exports::src/cron/service.ts::CronServiceDependencies",
+        "exports::container/agent-runner/src/telegram-draft.ts::TelegramDraftUpdate",
+        "exports::data/sessions/main/agent-runner-src/telegram-draft.ts::TelegramDraftUpdate",
+        "exports::src/memory-backend.ts::MemorySearchInput",
+        "exports::src/memory-backend.ts::MemoryDocumentInput",
+        "exports::src/memory-backend.ts::MemoryBackend",
+        "exports::src/mount-security.ts::MountValidationResult",
+        "exports::src/container-runner.ts::ContainerInput",
+        "exports::src/container-runner.ts::ContainerOutput",
+        "exports::src/container-runner.ts::ContainerRuntimeEvent",
+        "exports::src/task-scheduler.ts::SchedulerDependencies",
+        "exports::src/coding-delegation.ts::DelegationTrigger",
+        "exports::src/memory-maintenance.ts::CompactionMigrationResult",
+        "exports::src/verbose-mode.ts::ParsedVerboseDirective",
+        "exports::src/cron/adapters.ts::ScheduleTaskIpcPayload",
+        "exports::src/cron/types.ts::CronV2BackoffState",
+        "exports::src/heartbeat-policy.ts::StripHeartbeatMode",
+        "exports::src/heartbeat-policy.ts::StripHeartbeatResult",
+        "exports::src/heartbeat-policy.ts::ActiveHoursWindow",
+        "exports::src/tui/gateway-server.ts::TuiGatewayOptions",
+        "exports::src/tui/runtime-events.ts::TuiRuntimeEvent",
+        "exports::src/web/control-center-server.ts::WebControlCenterFileRoot",
+        "exports::src/web/control-center-server.ts::WebControlCenterServerOptions",
+        "exports::src/profile.ts::ProfileDetection",
+        "exports::src/tui/gateway-client.ts::GatewayClientOptions",
+        "exports::src/tui/startup-session.ts::StartupSessionResolution",
+        "exports::src/memory-retrieval.ts::BuildMemoryContextInput",
+        "exports::container/agent-runner/src/system-prompt.ts::SystemPromptReport",
+        "exports::container/agent-runner/src/bash-guard.ts::DestructivePattern",
+        "exports::container/agent-runner/src/pi-json-parser.ts::PiUsage",
+        "exports::container/agent-runner/src/pi-json-parser.ts::PiToolExecution",
+        "exports::container/agent-runner/src/pi-json-parser.ts::ParsePiJsonOutputInput",
+        "exports::container/agent-runner/src/pi-json-parser.ts::ParsePiJsonOutputResult",
+        "exports::container/agent-runner/src/pi-stream-parser.ts::TextDelta",
+        "exports::container/agent-runner/src/pi-stream-parser.ts::ToolDelta",
+        "exports::container/agent-runner/src/pi-stream-parser.ts::ToolTrackerState",
+        "exports::data/sessions/main/agent-runner-src/bash-guard.ts::DestructivePattern",
+        "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::PiUsage",
+        "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::PiToolExecution",
+        "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputInput",
+        "exports::data/sessions/main/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputResult",
+        "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::TextDelta",
+        "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::ToolDelta",
+        "exports::data/sessions/main/agent-runner-src/pi-stream-parser.ts::ToolTrackerState",
+        "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::PiUsage",
+        "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputInput",
+        "exports::data/sessions/telegram--5199228153/agent-runner-src/pi-json-parser.ts::ParsePiJsonOutputResult",
+        "exports::src/parity-config.ts::MemoryBackendKind",
+        "exports::src/parity-config.ts::MemoryMissingFileBehavior",
+        "exports::src/parity-config.ts::HeartbeatTargetMode",
+        "exports::src/parity-config.ts::HeartbeatTimezoneMode",
+        "exports::src/parity-config.ts::MemoryFlushConfig",
+        "exports::src/parity-config.ts::MemoryParityConfig",
+        "exports::src/parity-config.ts::HeartbeatActiveHoursConfig",
+        "exports::src/parity-config.ts::HeartbeatVisibilityConfig",
+        "exports::src/parity-config.ts::HeartbeatParityConfig",
+        "exports::src/parity-config.ts::CronDeterministicStaggerConfig",
+        "exports::src/parity-config.ts::CronParityConfig",
+        "exports::src/parity-config.ts::WorkspaceParityConfig",
+        "exports::src/parity-config.ts::DoctorParityConfig",
+        "exports::src/parity-config.ts::ParityConfig",
+        "exports::src/memory-search.ts::MemorySearchHit",
+        "exports::src/memory-search.ts::MemoryDocument"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::exports::type",
+      "action": "run `knip --fix` to remove dead exports",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    },
+    "auto/test_coverage-untested_module": {
+      "name": "auto/test_coverage-untested_module",
+      "description": "Fix 27 test coverage issues",
+      "issue_ids": [
+        "test_coverage::src/singleton-lock.ts::untested_module",
+        "test_coverage::src/farm-state-collector.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/lib/browser.ts::untested_module",
+        "test_coverage::src/tui/components/user-message.ts::untested_module",
+        "test_coverage::src/tui/start.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/scripts/quote.ts::untested_module",
+        "test_coverage::src/doctor.ts::untested_module",
+        "test_coverage::src/tui/components/custom-editor.ts::untested_module",
+        "test_coverage::src/tui/theme/theme.ts::untested_module",
+        "test_coverage::web/control-center/src/main.tsx::untested_module",
+        "test_coverage::skills/setup/x-integration/scripts/post.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/agent.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/scripts/reply.ts::untested_module",
+        "test_coverage::scripts/benchmark-memory-search.ts::untested_module",
+        "test_coverage::src/tui/client.ts::untested_module",
+        "test_coverage::src/tui/components/chat-log.ts::untested_module",
+        "test_coverage::src/tui/gateway-client.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/scripts/like.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/scripts/setup.ts::untested_module",
+        "test_coverage::scripts/validate-pi-skills.ts::untested_module",
+        "test_coverage::src/profile-cli.ts::untested_module",
+        "test_coverage::src/tui/components/tool-message.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/host.ts::untested_module",
+        "test_coverage::src/whatsapp-auth.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/lib/config.ts::untested_module",
+        "test_coverage::src/tui/components/assistant-message.ts::untested_module",
+        "test_coverage::skills/setup/x-integration/scripts/retweet.ts::untested_module"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::test_coverage::untested_module",
+      "action": "add tests for untested production modules",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "refactor",
+      "execution_policy": "planned_only"
+    },
+    "auto/test_coverage-transitive_only": {
+      "name": "auto/test_coverage-transitive_only",
+      "description": "Fix 8 test coverage issues",
+      "issue_ids": [
+        "test_coverage::src/memory-search.ts::transitive_only",
+        "test_coverage::src/container-runner.ts::transitive_only",
+        "test_coverage::src/parity-config.ts::transitive_only",
+        "test_coverage::src/memory-backend.ts::transitive_only",
+        "test_coverage::src/home-assistant.ts::transitive_only",
+        "test_coverage::src/utils.ts::transitive_only",
+        "test_coverage::src/mount-security.ts::transitive_only",
+        "test_coverage::src/cron/types.ts::transitive_only"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::test_coverage::transitive_only",
+      "action": "add tests for untested production modules",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "refactor",
+      "execution_policy": "planned_only"
+    },
+    "auto/test_coverage-untested_critical": {
+      "name": "auto/test_coverage-untested_critical",
+      "description": "Fix 2 test coverage issues",
+      "issue_ids": [
+        "test_coverage::src/index.ts::untested_critical",
+        "test_coverage::web/control-center/src/App.tsx::untested_critical"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::test_coverage::untested_critical",
+      "action": "add tests for untested production modules",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "refactor",
+      "execution_policy": "planned_only"
+    },
+    "auto/security-hardcoded_secret_name": {
+      "name": "auto/security-hardcoded_secret_name",
+      "description": "Fix 18 security issues",
+      "issue_ids": [
+        "security::src/heartbeat-output.ts::security::hardcoded_secret_name::src/heartbeat-output.ts::1",
+        "security::src/heartbeat-policy.ts::security::hardcoded_secret_name::src/heartbeat-policy.ts::3",
+        "security::src/onboarding-completion.ts::security::hardcoded_secret_name::src/onboarding-completion.ts::1",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::42",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::51",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::54",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::64",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::72",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::80",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::88",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::98",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::108",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::116",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::126",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::136",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::147",
+        "security::src/runtime-config.ts::security::hardcoded_secret_name::src/runtime-config.ts::310",
+        "security::web/control-center/src/App.tsx::security::hardcoded_secret_name::web/control-center/src/App.tsx::118"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::security::hardcoded_secret_name",
+      "action": "review and fix security issues",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    },
+    "auto/security-json_parse_unguarded": {
+      "name": "auto/security-json_parse_unguarded",
+      "description": "Fix 2 security issues",
+      "issue_ids": [
+        "security::src/farm-action-gateway.ts::security::json_parse_unguarded::src/farm-action-gateway.ts::613",
+        "security::src/web/control-center-server.ts::security::json_parse_unguarded::src/web/control-center-server.ts::146"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::security::json_parse_unguarded",
+      "action": "review and fix security issues",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    },
+    "auto/stale_exclude": {
+      "name": "auto/stale_exclude",
+      "description": "Fix 4 stale exclude issues",
+      "issue_ids": [
+        "stale_exclude::tmp-ipc::tmp-ipc",
+        "stale_exclude::.venv-desloppify::.venv-desloppify",
+        "stale_exclude::.factory::.factory",
+        "stale_exclude::docs-site::docs-site"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "detector::stale_exclude",
+      "action": "remove stale exclusion or verify it's still needed",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    },
+    "auto/initial-review": {
+      "name": "auto/initial-review",
+      "description": "Initial review of 20 unscored subjective dimensions",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "created_at": "2026-03-18T16:16:48+00:00",
+      "updated_at": "2026-03-18T16:16:48+00:00",
+      "auto": true,
+      "cluster_key": "subjective::unscored",
+      "action": "desloppify review --prepare --dimensions abstraction_fitness,ai_generated_debt,api_surface_coherence,authorization_consistency,contract_coherence,convention_outlier,cross_module_architecture,dependency_health,design_coherence,error_consistency,high_level_elegance,incomplete_migration,initialization_coupling,logic_clarity,low_level_elegance,mid_level_elegance,naming_quality,package_organization,test_strategy,type_safety",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    }
+  },
+  "superseded": {},
+  "promoted_ids": [],
+  "plan_start_scores": {
+    "strict": 19.5,
+    "overall": 19.5,
+    "objective": 78.1,
+    "verified": 78.1
+  },
+  "refresh_state": {
+    "lifecycle_phase": "review_initial"
+  },
+  "execution_log": [
+    {
+      "timestamp": "2026-03-18T16:16:48+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-18T16:16:48+00:00",
+      "action": "auto_cluster",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-18T16:16:48+00:00",
+      "action": "sync_lifecycle_phase",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "phase": "review_initial"
+      }
+    },
+    {
+      "timestamp": "2026-03-18T16:16:48+00:00",
+      "action": "seed_start_scores",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {}
+    }
+  ],
+  "epic_triage_meta": {},
+  "commit_log": [],
+  "uncommitted_issues": [],
+  "commit_tracking_branch": null,
+  "scan_count_at_plan_start": 1
+}

@@ -13,7 +13,11 @@ import type {
   TuiSessionSummary,
 } from './protocol.js';
 import { isGatewayRequestFrame } from './protocol.js';
-import type { TuiRuntimeEventHub } from './runtime-events.js';
+import {
+  projectEventToGatewayFrame,
+  type HostEventOrLegacyTuiEvent,
+  type HostEventSubscriber,
+} from '../runtime/host-events.js';
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
@@ -174,7 +178,7 @@ function parseMessage(data: WebSocket.RawData): GatewayRequestFrame | null {
 
 export async function startTuiGatewayServer(
   adapters: TuiGatewayAdapters,
-  eventHub: TuiRuntimeEventHub,
+  eventHub: HostEventSubscriber<HostEventOrLegacyTuiEvent>,
   options: number | TuiGatewayOptions = {},
 ): Promise<TuiGatewayServer> {
   const resolvedOptions =
@@ -199,11 +203,9 @@ export async function startTuiGatewayServer(
     const recipients = authRequired
       ? new Set(Array.from(clients).filter((ws) => authenticatedClients.has(ws)))
       : clients;
-    if (event.kind === 'chat') {
-      broadcast(recipients, { event: 'chat_event', payload: event.payload });
-      return;
-    }
-    broadcast(recipients, { event: 'agent_event', payload: event.payload });
+    const frame = projectEventToGatewayFrame(event);
+    if (!frame) return;
+    broadcast(recipients, frame);
   });
 
   wss.on('connection', (ws) => {
