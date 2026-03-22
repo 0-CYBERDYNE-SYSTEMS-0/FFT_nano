@@ -112,12 +112,21 @@ export interface ActiveChatRun {
 export interface TelegramAttachmentHint {
   rawPath: string;
   caption?: string;
+  kind?: TelegramAttachmentKind;
 }
+
+export type TelegramAttachmentKind =
+  | 'photo'
+  | 'document'
+  | 'video'
+  | 'audio'
+  | 'voice'
+  | 'animation';
 
 export interface TelegramResolvedAttachment {
   hostPath: string;
   fileName: string;
-  kind: 'photo' | 'document';
+  kind: TelegramAttachmentKind;
   caption?: string;
 }
 
