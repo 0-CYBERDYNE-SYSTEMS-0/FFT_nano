@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "Running pre-commit checks..."
+
+echo "  - Running typecheck..."
+npm run typecheck
+
+echo "  - Running tests..."
+npm test
+
+echo "Pre-commit checks passed."
