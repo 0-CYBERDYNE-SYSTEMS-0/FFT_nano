@@ -30,6 +30,44 @@ generated_images/
 skills/runtime/*/generated_images/
 skills/runtime/*/scripts/identification_log.md
 
+# Personal and optional skills (keep only core install skills in git)
+skills/runtime/applescript-automation/
+skills/runtime/award-winning-designer/
+skills/runtime/business-contact-recon/
+skills/runtime/cli-coding-agents/
+skills/runtime/code-first-responder/
+skills/runtime/discord-server/
+skills/runtime/docs/
+skills/runtime/document-skills/
+skills/runtime/dreamhost-manager/
+skills/runtime/fft-canvas-dynamic-ops/
+skills/runtime/fft-farm-autonomy/
+skills/runtime/fft-farm-validate/
+skills/runtime/gemini/
+skills/runtime/grok/
+skills/runtime/hf-dataset-creator/
+skills/runtime/hf-evaluation-manager/
+skills/runtime/hugging-face-paper-publisher/
+skills/runtime/kimi-writing/
+skills/runtime/lm-studio-private/
+skills/runtime/mcp-builder/
+skills/runtime/model-trainer/
+skills/runtime/nano-pdf/
+skills/runtime/nanobanana-image-gen/
+skills/runtime/plantnet-api/
+skills/runtime/ralph-wiggum/
+skills/runtime/rapid-research/
+skills/runtime/responsive-web-design/
+skills/runtime/run-other-cli-agents/
+skills/runtime/satellite-osint/
+skills/runtime/skill-creator/
+skills/runtime/telegram-bot-creator/
+skills/runtime/template-skill/
+skills/runtime/tmux/
+skills/runtime/trello/
+skills/runtime/video-frames/
+skills/runtime/web-artifacts-builder/
+
 # OS
 .DS_Store
 
