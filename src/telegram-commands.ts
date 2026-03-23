@@ -96,7 +96,12 @@ export interface TelegramCommandDeps {
       startedAt: number;
       parentRequestId?: string;
       backend?: 'pi';
-      route?: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+      route?:
+        | 'coder_execute'
+        | 'coder_plan'
+        | 'auto_execute'
+        | 'subagent_execute'
+        | 'subagent_plan';
       state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
       worktreePath?: string;
       childRunIds?: string[];
@@ -105,7 +110,11 @@ export interface TelegramCommandDeps {
   >;
   sendMessage: (chatJid: string, text: string) => Promise<void>;
   sendTelegramSettingsPanel: (chatJid: string, panel: any) => Promise<void>;
-  editTelegramSettingsPanel: (chatJid: string, messageId: number, panel: any) => Promise<void>;
+  editTelegramSettingsPanel: (
+    chatJid: string,
+    messageId: number,
+    panel: any,
+  ) => Promise<void>;
   promptTelegramSetupInput: (
     chatJid: string,
     kind: SetupState['kind'],
@@ -146,24 +155,35 @@ export interface TelegramCommandDeps {
   getEffectiveModelLabel: (chatJid: string) => string;
   resolveMainOnboardingGate: (chatJid: string) => { active: boolean };
   onboardingCommandBlockedText: () => string;
-  runCompactionForChat: (chatJid: string, instructions: string) => Promise<string>;
+  runCompactionForChat: (
+    chatJid: string,
+    instructions: string,
+  ) => Promise<string>;
   parseTelegramChatId: (chatJid: string) => string | null;
   parseTelegramTargetJid: (value: string) => string | null;
   normalizeTelegramCommandToken: (token: string) => string | null;
   promoteChatToMain: (chatJid: string, chatName: string) => void;
   refreshTelegramCommandMenus: () => Promise<void>;
   hasMainGroup: () => boolean;
-  runGatewayServiceCommand: (
-    action: 'status' | 'restart' | 'doctor',
-  ) => { ok: boolean; text: string };
-  buildRuntimeProviderPresetUpdates: (params: any) => Record<string, string | undefined>;
+  runGatewayServiceCommand: (action: 'status' | 'restart' | 'doctor') => {
+    ok: boolean;
+    text: string;
+  };
+  buildRuntimeProviderPresetUpdates: (
+    params: any,
+  ) => Record<string, string | undefined>;
   getRuntimeConfigEnv: () => Record<string, string | undefined>;
-  persistRuntimeConfigUpdates: (updates: Record<string, string | undefined>) => void;
-  resolveRuntimeConfigSnapshot: (
-    env: Record<string, string | undefined>,
-  ) => { providerPreset: string; apiKeyEnv: string };
+  persistRuntimeConfigUpdates: (
+    updates: Record<string, string | undefined>,
+  ) => void;
+  resolveRuntimeConfigSnapshot: (env: Record<string, string | undefined>) => {
+    providerPreset: string;
+    apiKeyEnv: string;
+  };
   registerTelegramSettingsPanelAction: (chatJid: string, action: any) => string;
-  buildAdminPanelKeyboard: () => Array<Array<{ text: string; callbackData: string }>>;
+  buildAdminPanelKeyboard: () => Array<
+    Array<{ text: string; callbackData: string }>
+  >;
   getTaskById: (taskId: string) => unknown;
   updateTask: (taskId: string, patch: Record<string, unknown>) => void;
   deleteTask: (taskId: string) => void;
@@ -184,7 +204,12 @@ export interface TelegramCommandDeps {
     requestId: string;
     parentRequestId?: string;
     mode: 'plan' | 'execute';
-    route: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+    route:
+      | 'coder_execute'
+      | 'coder_plan'
+      | 'auto_execute'
+      | 'subagent_execute'
+      | 'subagent_plan';
     originChatJid: string;
     originGroupFolder: string;
     taskText: string;
@@ -199,7 +224,11 @@ export interface TelegramCommandDeps {
     abortController?: AbortController;
   }) => Promise<CodingRunResult>;
   setTyping: (chatJid: string, typing: boolean) => Promise<void>;
-  persistAssistantHistory: (chatJid: string, text: string, runId?: string) => void;
+  persistAssistantHistory: (
+    chatJid: string,
+    text: string,
+    runId?: string,
+  ) => void;
   sendAgentResultMessage: (
     chatJid: string,
     text: string,
@@ -219,7 +248,9 @@ export interface TelegramCommandDeps {
 }
 
 export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
-  handleTelegramCallbackQuery: (q: TelegramCommandCallbackQuery) => Promise<void>;
+  handleTelegramCallbackQuery: (
+    q: TelegramCommandCallbackQuery,
+  ) => Promise<void>;
   handleTelegramSetupInput: (m: TelegramSetupInputMessage) => Promise<boolean>;
   handleTelegramCommand: (m: TelegramCommandMessage) => Promise<boolean>;
 } {
@@ -234,7 +265,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       void err;
     }
 
-    const settingsAction = deps.getTelegramSettingsPanelAction(q.chatJid, q.data);
+    const settingsAction = deps.getTelegramSettingsPanelAction(
+      q.chatJid,
+      q.data,
+    );
     if (settingsAction) {
       switch (settingsAction.kind) {
         case 'show-home':
@@ -251,7 +285,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         case 'show-setup-models':
         case 'show-setup-endpoint':
         case 'show-setup-api-key':
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, settingsAction);
+          await deps.editTelegramSettingsPanel(
+            q.chatJid,
+            q.messageId,
+            settingsAction,
+          );
           return;
         case 'set-model':
           deps.updateChatRunPreferences(q.chatJid, (prefs) => {
@@ -285,7 +323,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             else prefs.thinkLevel = settingsAction.value;
             return prefs;
           });
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-think' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-think',
+          });
           return;
         case 'set-reasoning':
           deps.updateChatRunPreferences(q.chatJid, (prefs) => {
@@ -317,7 +357,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             else prefs.verboseMode = settingsAction.value;
             return prefs;
           });
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-verbose' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-verbose',
+          });
           return;
         case 'set-queue-mode':
           deps.updateChatRunPreferences(q.chatJid, (prefs) => {
@@ -325,7 +367,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             else prefs.queueMode = settingsAction.value;
             return prefs;
           });
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-queue' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-queue',
+          });
           return;
         case 'stop-subagents':
           if (!deps.isMainChat(q.chatJid)) {
@@ -337,24 +381,32 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           }
           if (settingsAction.target === 'all') {
             for (const run of deps.activeCoderRuns.values()) {
-              run.abortController?.abort(new Error('Stopped via Telegram panel (all)'));
+              run.abortController?.abort(
+                new Error('Stopped via Telegram panel (all)'),
+              );
             }
           } else {
             const run = Array.from(deps.activeCoderRuns.values())
               .filter((entry) => entry.chatJid === q.chatJid)
               .sort((a, b) => b.startedAt - a.startedAt)[0];
             if (run) {
-              run.abortController?.abort(new Error('Stopped via Telegram panel (current)'));
+              run.abortController?.abort(
+                new Error('Stopped via Telegram panel (current)'),
+              );
             }
           }
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-subagents' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-subagents',
+          });
           return;
         case 'trigger-new':
           deps.updateChatRunPreferences(q.chatJid, (prefs) => {
             prefs.nextRunNoContinue = true;
             return prefs;
           });
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-home' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-home',
+          });
           return;
         case 'set-setup-provider':
           deps.persistRuntimeConfigUpdates(
@@ -385,7 +437,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           });
           return;
         case 'prompt-setup-provider':
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-setup-home',
+          });
           await deps.promptTelegramSetupInput(
             q.chatJid,
             'provider',
@@ -393,7 +447,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           );
           return;
         case 'prompt-setup-model': {
-          const snapshot = deps.resolveRuntimeConfigSnapshot(deps.getRuntimeConfigEnv());
+          const snapshot = deps.resolveRuntimeConfigSnapshot(
+            deps.getRuntimeConfigEnv(),
+          );
           if (snapshot.providerPreset !== 'manual') {
             await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
               kind: 'show-setup-models',
@@ -402,7 +458,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             });
             return;
           }
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-setup-home',
+          });
           await deps.promptTelegramSetupInput(
             q.chatJid,
             'model',
@@ -411,7 +469,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           return;
         }
         case 'prompt-setup-model-typed':
-          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, { kind: 'show-setup-home' });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-setup-home',
+          });
           await deps.promptTelegramSetupInput(
             q.chatJid,
             'model',
@@ -449,7 +509,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           );
           return;
         case 'clear-setup-api-key': {
-          const snapshot = deps.resolveRuntimeConfigSnapshot(deps.getRuntimeConfigEnv());
+          const snapshot = deps.resolveRuntimeConfigSnapshot(
+            deps.getRuntimeConfigEnv(),
+          );
           deps.persistRuntimeConfigUpdates({ [snapshot.apiKeyEnv]: undefined });
           deps.clearTelegramSetupInputState(q.chatJid);
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
@@ -464,7 +526,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           );
           const result = deps.runGatewayServiceCommand('restart');
           if (!result.ok) {
-            await deps.sendMessage(q.chatJid, `Gateway restart failed:\n${result.text}`);
+            await deps.sendMessage(
+              q.chatJid,
+              `Gateway restart failed:\n${result.text}`,
+            );
           }
           return;
         }
@@ -523,7 +588,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
   }
 
-  async function handleTelegramSetupInput(m: TelegramSetupInputMessage): Promise<boolean> {
+  async function handleTelegramSetupInput(
+    m: TelegramSetupInputMessage,
+  ): Promise<boolean> {
     const pending = deps.getTelegramSetupInputState(m.chatJid);
     if (!pending) return false;
 
@@ -537,7 +604,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           PI_API: content,
         });
         deps.clearTelegramSetupInputState(m.chatJid);
-        await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
+        await deps.sendTelegramSettingsPanel(m.chatJid, {
+          kind: 'show-setup-home',
+        });
         await deps.sendMessage(
           m.chatJid,
           `Saved provider: ${content}\nUse /setup -> Model next if you need to change PI_MODEL.`,
@@ -546,7 +615,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       case 'model':
         deps.persistRuntimeConfigUpdates({ PI_MODEL: content });
         deps.clearTelegramSetupInputState(m.chatJid);
-        await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
+        await deps.sendTelegramSettingsPanel(m.chatJid, {
+          kind: 'show-setup-home',
+        });
         await deps.sendMessage(m.chatJid, `Saved model: ${content}`);
         return true;
       case 'endpoint':
@@ -555,15 +626,27 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           OPENAI_BASE_URL: content,
         });
         deps.clearTelegramSetupInputState(m.chatJid);
-        await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
-        await deps.sendMessage(m.chatJid, `Saved openai-compatible endpoint: ${content}`);
+        await deps.sendTelegramSettingsPanel(m.chatJid, {
+          kind: 'show-setup-home',
+        });
+        await deps.sendMessage(
+          m.chatJid,
+          `Saved openai-compatible endpoint: ${content}`,
+        );
         return true;
       case 'api-key': {
-        const snapshot = deps.resolveRuntimeConfigSnapshot(deps.getRuntimeConfigEnv());
+        const snapshot = deps.resolveRuntimeConfigSnapshot(
+          deps.getRuntimeConfigEnv(),
+        );
         deps.persistRuntimeConfigUpdates({ [snapshot.apiKeyEnv]: content });
         deps.clearTelegramSetupInputState(m.chatJid);
-        await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
-        await deps.sendMessage(m.chatJid, `Saved API key in ${snapshot.apiKeyEnv}.`);
+        await deps.sendTelegramSettingsPanel(m.chatJid, {
+          kind: 'show-setup-home',
+        });
+        await deps.sendMessage(
+          m.chatJid,
+          `Saved API key in ${snapshot.apiKeyEnv}.`,
+        );
         return true;
       }
       default:
@@ -571,7 +654,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
   }
 
-  async function handleTelegramCommand(m: TelegramCommandMessage): Promise<boolean> {
+  async function handleTelegramCommand(
+    m: TelegramCommandMessage,
+  ): Promise<boolean> {
     const content = m.content.trim();
     if (!content.startsWith('/')) return false;
 
@@ -593,7 +678,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const chatId = deps.parseTelegramChatId(m.chatJid);
       await deps.sendMessage(
         m.chatJid,
-        chatId ? `Chat id: ${chatId}` : 'Could not parse chat id for this chat.',
+        chatId
+          ? `Chat id: ${chatId}`
+          : 'Could not parse chat id for this chat.',
       );
       return true;
     }
@@ -615,14 +702,23 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const searchText = rest.join(' ');
       const listed = deps.runPiListModels(searchText);
       if (!searchText && deps.state.telegramBot?.sendMessageWithKeyboard) {
-        await deps.state.telegramBot.sendMessageWithKeyboard(m.chatJid, listed.text, [[
-          {
-            text: 'Open Model Picker',
-            callbackData: deps.registerTelegramSettingsPanelAction(m.chatJid, {
-              kind: 'show-model-providers',
-            }),
-          },
-        ]]);
+        await deps.state.telegramBot.sendMessageWithKeyboard(
+          m.chatJid,
+          listed.text,
+          [
+            [
+              {
+                text: 'Open Model Picker',
+                callbackData: deps.registerTelegramSettingsPanelAction(
+                  m.chatJid,
+                  {
+                    kind: 'show-model-providers',
+                  },
+                ),
+              },
+            ],
+          ],
+        );
       } else {
         await deps.sendMessage(m.chatJid, listed.text);
       }
@@ -634,7 +730,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       if (!argText) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
         if (deps.state.telegramBot) {
-          await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-model-providers' });
+          await deps.sendTelegramSettingsPanel(m.chatJid, {
+            kind: 'show-model-providers',
+          });
         } else {
           const prefs = deps.state.chatRunPreferences[m.chatJid] || {};
           const override = prefs.provider || prefs.model;
@@ -670,8 +768,16 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         const provider = argText.slice(0, slash).trim();
         const model = argText.slice(slash + 1).trim();
         if (!provider || !model) {
-          deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid model ref');
-          await deps.sendMessage(m.chatJid, 'Usage: /model <provider/model> or /model reset');
+          deps.logTelegramCommandAudit(
+            m.chatJid,
+            cmd,
+            false,
+            'invalid model ref',
+          );
+          await deps.sendMessage(
+            m.chatJid,
+            'Usage: /model <provider/model> or /model reset',
+          );
           return true;
         }
         nextProvider = provider;
@@ -687,26 +793,40 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return prefs;
       });
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
-      await deps.sendMessage(m.chatJid, `Model set for this chat: ${deps.getEffectiveModelLabel(m.chatJid)}`);
+      await deps.sendMessage(
+        m.chatJid,
+        `Model set for this chat: ${deps.getEffectiveModelLabel(m.chatJid)}`,
+      );
       return true;
     }
 
     if (cmd === '/think' || cmd === '/thinking' || cmd === '/t') {
       const argText = rest.join(' ').trim();
       if (!argText) {
-        const current = deps.state.chatRunPreferences[m.chatJid]?.thinkLevel || 'off';
+        const current =
+          deps.state.chatRunPreferences[m.chatJid]?.thinkLevel || 'off';
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
         if (deps.state.telegramBot) {
-          await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-think' });
+          await deps.sendTelegramSettingsPanel(m.chatJid, {
+            kind: 'show-think',
+          });
         } else {
-          await deps.sendMessage(m.chatJid, `Current thinking level: ${current}`);
+          await deps.sendMessage(
+            m.chatJid,
+            `Current thinking level: ${current}`,
+          );
         }
         return true;
       }
 
       const normalized = deps.normalizeThinkLevel(argText);
       if (!normalized) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid think level');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'invalid think level',
+        );
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized thinking level. Valid: off, minimal, low, medium, high, xhigh',
@@ -732,19 +852,30 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/reasoning' || cmd === '/reason') {
       const argText = rest.join(' ').trim();
       if (!argText) {
-        const current = deps.state.chatRunPreferences[m.chatJid]?.reasoningLevel || 'off';
+        const current =
+          deps.state.chatRunPreferences[m.chatJid]?.reasoningLevel || 'off';
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
         if (deps.state.telegramBot) {
-          await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-reasoning' });
+          await deps.sendTelegramSettingsPanel(m.chatJid, {
+            kind: 'show-reasoning',
+          });
         } else {
-          await deps.sendMessage(m.chatJid, `Current reasoning level: ${current}`);
+          await deps.sendMessage(
+            m.chatJid,
+            `Current reasoning level: ${current}`,
+          );
         }
         return true;
       }
 
       const normalized = deps.normalizeReasoningLevel(argText);
       if (!normalized) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid reasoning level');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'invalid reasoning level',
+        );
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized reasoning level. Valid: off, on, stream',
@@ -776,11 +907,15 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/delivery' || cmd === '/text_delivery') {
       const argText = rest.join(' ').trim();
-      const current = deps.state.chatRunPreferences[m.chatJid]?.telegramDeliveryMode || 'partial';
+      const current =
+        deps.state.chatRunPreferences[m.chatJid]?.telegramDeliveryMode ||
+        'partial';
       if (!argText) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
         if (deps.state.telegramBot) {
-          await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-delivery' });
+          await deps.sendTelegramSettingsPanel(m.chatJid, {
+            kind: 'show-delivery',
+          });
         } else {
           await deps.sendMessage(
             m.chatJid,
@@ -795,7 +930,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
       const normalized = deps.normalizeTelegramDeliveryMode(argText);
       if (!normalized) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid delivery mode');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'invalid delivery mode',
+        );
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized delivery mode. Valid: off, partial, block, draft, persistent',
@@ -818,7 +958,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/verbose' || cmd === '/v') {
       const parsed = deps.parseVerboseDirective(m.content);
       if (parsed.kind === 'invalid' || parsed.kind === 'none') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid verbose mode');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'invalid verbose mode',
+        );
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized tool progress mode. Valid: off, new, all, verbose. `/verbose` cycles modes.',
@@ -829,7 +974,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       if (parsed.kind === 'cycle') {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
         if (deps.state.telegramBot) {
-          await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-verbose' });
+          await deps.sendTelegramSettingsPanel(m.chatJid, {
+            kind: 'show-verbose',
+          });
         } else {
           await deps.sendMessage(
             m.chatJid,
@@ -884,16 +1031,25 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         delete deps.state.chatUsageStats[m.chatJid];
         deps.saveState?.();
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
-        await deps.sendMessage(m.chatJid, 'Usage counters reset for this chat.');
+        await deps.sendMessage(
+          m.chatJid,
+          'Usage counters reset for this chat.',
+        );
         return true;
       }
       if (arg === 'all') {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'all');
-        await deps.sendMessage(m.chatJid, deps.formatUsageText(m.chatJid, 'all'));
+        await deps.sendMessage(
+          m.chatJid,
+          deps.formatUsageText(m.chatJid, 'all'),
+        );
         return true;
       }
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
-      await deps.sendMessage(m.chatJid, deps.formatUsageText(m.chatJid, 'chat'));
+      await deps.sendMessage(
+        m.chatJid,
+        deps.formatUsageText(m.chatJid, 'chat'),
+      );
       return true;
     }
 
@@ -903,7 +1059,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         const prefs = deps.state.chatRunPreferences[m.chatJid] || {};
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
         if (deps.state.telegramBot) {
-          await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-queue' });
+          await deps.sendTelegramSettingsPanel(m.chatJid, {
+            kind: 'show-queue',
+          });
         } else {
           await deps.sendMessage(
             m.chatJid,
@@ -951,7 +1109,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
       deps.updateChatRunPreferences(m.chatJid, (prefs) => {
         if (parsed.mode) prefs.queueMode = parsed.mode;
-        if (typeof parsed.debounceMs === 'number') prefs.queueDebounceMs = parsed.debounceMs;
+        if (typeof parsed.debounceMs === 'number')
+          prefs.queueDebounceMs = parsed.debounceMs;
         if (typeof parsed.cap === 'number') prefs.queueCap = parsed.cap;
         if (parsed.drop) prefs.queueDrop = parsed.drop;
         return prefs;
@@ -979,7 +1138,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
-    if (cmd === '/coder' || cmd === '/coding' || cmd === '/coder-plan' || cmd === '/coder_plan') {
+    if (
+      cmd === '/coder' ||
+      cmd === '/coding' ||
+      cmd === '/coder-plan' ||
+      cmd === '/coder_plan'
+    ) {
       if (!isMainGroup) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
         await deps.sendMessage(
@@ -989,7 +1153,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       if (deps.resolveMainOnboardingGate(m.chatJid).active) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'blocked by onboarding gate');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'blocked by onboarding gate',
+        );
         await deps.sendMessage(m.chatJid, deps.onboardingCommandBlockedText());
         return true;
       }
@@ -1001,24 +1170,46 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const chatId = deps.parseTelegramChatId(m.chatJid);
       if (!chatId) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id');
-        await deps.sendMessage(m.chatJid, 'Could not parse chat id for this chat.');
+        await deps.sendMessage(
+          m.chatJid,
+          'Could not parse chat id for this chat.',
+        );
         return true;
       }
       const isDirectTelegramDm = !chatId.startsWith('-');
       const existingMain = deps.hasMainGroup();
-      const alreadyMain = deps.state.registeredGroups[m.chatJid]?.folder === deps.constants.mainGroupFolder;
+      const alreadyMain =
+        deps.state.registeredGroups[m.chatJid]?.folder ===
+        deps.constants.mainGroupFolder;
       if (existingMain && !alreadyMain) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'main already configured');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'main already configured',
+        );
         await deps.sendMessage(
           m.chatJid,
           'Main chat is already set. If you want to change it, edit data/registered_groups.json (or delete it to re-bootstrap).',
         );
         return true;
       }
-      if (!existingMain && isDirectTelegramDm && !deps.constants.telegramAdminSecret) {
-        deps.promoteChatToMain(m.chatJid, m.chatName || `${deps.constants.assistantName} (main)`);
+      if (
+        !existingMain &&
+        isDirectTelegramDm &&
+        !deps.constants.telegramAdminSecret
+      ) {
+        deps.promoteChatToMain(
+          m.chatJid,
+          m.chatName || `${deps.constants.assistantName} (main)`,
+        );
         await deps.refreshTelegramCommandMenus();
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'first-claim without secret');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          true,
+          'first-claim without secret',
+        );
         await deps.sendMessage(
           m.chatJid,
           [
@@ -1029,7 +1220,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       if (!deps.constants.telegramAdminSecret) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'missing TELEGRAM_ADMIN_SECRET');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'missing TELEGRAM_ADMIN_SECRET',
+        );
         await deps.sendMessage(
           m.chatJid,
           'TELEGRAM_ADMIN_SECRET is not set on the host. Set it, restart, then run: /main <secret>',
@@ -1038,14 +1234,28 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
       const provided = rest.join(' ');
       if (!provided || provided !== deps.constants.telegramAdminSecret) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid admin secret');
-        await deps.sendMessage(m.chatJid, 'Unauthorized. Usage: /main <secret>');
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'invalid admin secret',
+        );
+        await deps.sendMessage(
+          m.chatJid,
+          'Unauthorized. Usage: /main <secret>',
+        );
         return true;
       }
-      deps.promoteChatToMain(m.chatJid, m.chatName || `${deps.constants.assistantName} (main)`);
+      deps.promoteChatToMain(
+        m.chatJid,
+        m.chatName || `${deps.constants.assistantName} (main)`,
+      );
       await deps.refreshTelegramCommandMenus();
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      await deps.sendMessage(m.chatJid, 'This chat is now the main/admin channel.');
+      await deps.sendMessage(
+        m.chatJid,
+        'This chat is now the main/admin channel.',
+      );
       return true;
     }
 
@@ -1066,7 +1276,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       );
       const result = deps.runGatewayServiceCommand('restart');
       if (!result.ok) {
-        await deps.sendMessage(m.chatJid, `Gateway restart failed:\n${result.text}`);
+        await deps.sendMessage(
+          m.chatJid,
+          `Gateway restart failed:\n${result.text}`,
+        );
       }
       return true;
     }
@@ -1083,7 +1296,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               : null;
       if (!action) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
-        await deps.sendMessage(m.chatJid, 'Usage: /gateway <status|restart|doctor>');
+        await deps.sendMessage(
+          m.chatJid,
+          'Usage: /gateway <status|restart|doctor>',
+        );
         return true;
       }
       if (action === 'restart') {
@@ -1094,15 +1310,25 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         const result = deps.runGatewayServiceCommand(action);
         if (!result.ok) {
-          await deps.sendMessage(m.chatJid, `Gateway restart failed:\n${result.text}`);
+          await deps.sendMessage(
+            m.chatJid,
+            `Gateway restart failed:\n${result.text}`,
+          );
         }
         return true;
       }
       const result = deps.runGatewayServiceCommand(action);
-      deps.logTelegramCommandAudit(m.chatJid, cmd, result.ok, result.ok ? action : `${action} failed`);
+      deps.logTelegramCommandAudit(
+        m.chatJid,
+        cmd,
+        result.ok,
+        result.ok ? action : `${action} failed`,
+      );
       await deps.sendMessage(
         m.chatJid,
-        result.ok ? `Gateway ${action}:\n${result.text}` : `Gateway ${action} failed:\n${result.text}`,
+        result.ok
+          ? `Gateway ${action}:\n${result.text}`
+          : `Gateway ${action} failed:\n${result.text}`,
       );
       return true;
     }
@@ -1116,7 +1342,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
-      await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-setup-home' });
+      await deps.sendTelegramSettingsPanel(m.chatJid, {
+        kind: 'show-setup-home',
+      });
       return true;
     }
 
@@ -1126,7 +1354,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
         await deps.sendMessage(
           m.chatJid,
-          ['Free chat admin (main only):', '- /freechat list', '- /freechat add <chatId|telegram:<chatId>>', '- /freechat remove <chatId|telegram:<chatId>>'].join('\n'),
+          [
+            'Free chat admin (main only):',
+            '- /freechat list',
+            '- /freechat add <chatId|telegram:<chatId>>',
+            '- /freechat remove <chatId|telegram:<chatId>>',
+          ].join('\n'),
         );
         return true;
       }
@@ -1136,14 +1369,17 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           .map(([jid]) => {
             const group = deps.state.registeredGroups[jid];
             const name = group?.name || '(unregistered)';
-            const mainTag = group?.folder === deps.constants.mainGroupFolder ? ' (main)' : '';
+            const mainTag =
+              group?.folder === deps.constants.mainGroupFolder ? ' (main)' : '';
             return `- ${jid} -> ${name}${mainTag}`;
           })
           .sort();
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
         await deps.sendMessage(
           m.chatJid,
-          entries.length > 0 ? ['Free chat enabled for:', ...entries].join('\n') : 'No chats currently have free chat enabled.',
+          entries.length > 0
+            ? ['Free chat enabled for:', ...entries].join('\n')
+            : 'No chats currently have free chat enabled.',
         );
         return true;
       }
@@ -1220,11 +1456,20 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       if (sub === 'runs') {
         const taskId = rest[1];
         if (!taskId) {
-          await deps.sendMessage(m.chatJid, 'Usage: /tasks runs <taskId> [limit]');
+          await deps.sendMessage(
+            m.chatJid,
+            'Usage: /tasks runs <taskId> [limit]',
+          );
           return true;
         }
         const limitRaw = Number.parseInt(rest[2] || '10', 10);
-        await deps.sendMessage(m.chatJid, deps.formatTaskRunsText(taskId, Number.isFinite(limitRaw) ? limitRaw : 10));
+        await deps.sendMessage(
+          m.chatJid,
+          deps.formatTaskRunsText(
+            taskId,
+            Number.isFinite(limitRaw) ? limitRaw : 10,
+          ),
+        );
         return true;
       }
       await deps.sendMessage(
@@ -1234,7 +1479,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
-    if (cmd === '/task_pause' || cmd === '/task_resume' || cmd === '/task_cancel') {
+    if (
+      cmd === '/task_pause' ||
+      cmd === '/task_resume' ||
+      cmd === '/task_cancel'
+    ) {
       const taskId = rest[0];
       if (!taskId) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'missing task id');
@@ -1276,7 +1525,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         await deps.syncGroupMetadata?.(true);
       }
       await deps.refreshTelegramCommandMenus();
-      await deps.sendMessage(m.chatJid, 'Command menus and metadata refreshed.');
+      await deps.sendMessage(
+        m.chatJid,
+        'Command menus and metadata refreshed.',
+      );
       return true;
     }
 
@@ -1295,7 +1547,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const action = (rest[0] || 'list').toLowerCase();
       if (!rest[0] && deps.state.telegramBot) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
-        await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-subagents' });
+        await deps.sendTelegramSettingsPanel(m.chatJid, {
+          kind: 'show-subagents',
+        });
         return true;
       }
       if (action === 'list') {
@@ -1307,10 +1561,15 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         const target = (rest[1] || 'current').toLowerCase();
         if (target === 'all') {
           for (const run of deps.activeCoderRuns.values()) {
-            run.abortController?.abort(new Error('Stopped via /subagents stop all'));
+            run.abortController?.abort(
+              new Error('Stopped via /subagents stop all'),
+            );
           }
           deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop all');
-          await deps.sendMessage(m.chatJid, 'Stopping all active subagent runs...');
+          await deps.sendMessage(
+            m.chatJid,
+            'Stopping all active subagent runs...',
+          );
           return true;
         }
         if (target === 'current') {
@@ -1321,17 +1580,24 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             await deps.sendMessage(m.chatJid, 'No active run in this chat.');
             return true;
           }
-          run.abortController?.abort(new Error('Stopped via /subagents stop current'));
+          run.abortController?.abort(
+            new Error('Stopped via /subagents stop current'),
+          );
           deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop current');
           await deps.sendMessage(m.chatJid, 'Stopping current chat run...');
           return true;
         }
         const matched = deps.activeCoderRuns.get(target);
         if (!matched) {
-          await deps.sendMessage(m.chatJid, `No active subagent run found for: ${target}`);
+          await deps.sendMessage(
+            m.chatJid,
+            `No active subagent run found for: ${target}`,
+          );
           return true;
         }
-        matched.abortController?.abort(new Error('Stopped via /subagents stop <id>'));
+        matched.abortController?.abort(
+          new Error('Stopped via /subagents stop <id>'),
+        );
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop id');
         await deps.sendMessage(m.chatJid, `Stopping run ${target}...`);
         return true;
@@ -1349,7 +1615,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         }
         const existingRun = deps.activeChatRuns.get(m.chatJid);
         if (existingRun) {
-          deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'spawn blocked: active run');
+          deps.logTelegramCommandAudit(
+            m.chatJid,
+            cmd,
+            false,
+            'spawn blocked: active run',
+          );
           await deps.sendMessage(
             m.chatJid,
             `Cannot spawn while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
@@ -1370,7 +1641,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           runId: requestId,
           sessionKey: deps.getSessionKeyForChat(m.chatJid),
           state: 'message',
-          message: { role: 'system', content: `Starting subagent run (${requestId})...` },
+          message: {
+            role: 'system',
+            content: `Starting subagent run (${requestId})...`,
+          },
         });
         deps.emitTuiAgentEvent({
           runId: requestId,
@@ -1378,7 +1652,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           phase: 'start',
           detail: 'running',
         });
-        await deps.sendMessage(m.chatJid, `Starting subagent run (${requestId})...`);
+        await deps.sendMessage(
+          m.chatJid,
+          `Starting subagent run (${requestId})...`,
+        );
         await deps.setTyping(m.chatJid, true);
         try {
           const run = deps.runCodingTask

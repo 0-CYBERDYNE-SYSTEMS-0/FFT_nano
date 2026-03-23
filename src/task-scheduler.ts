@@ -113,7 +113,9 @@ async function runLegacyTask(
   let error: string | null = null;
 
   if (deps.isChatRunActive?.(task.chat_jid)) {
-    const deferUntil = new Date(Date.now() + SCHEDULER_POLL_INTERVAL).toISOString();
+    const deferUntil = new Date(
+      Date.now() + SCHEDULER_POLL_INTERVAL,
+    ).toISOString();
     updateTask(task.id, { next_run: deferUntil });
     logger.info(
       { taskId: task.id, chatJid: task.chat_jid, deferUntil },

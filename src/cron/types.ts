@@ -33,4 +33,3 @@ export interface CronV2ExecutionPlan {
   nextRun: string | null;
   scheduleJson?: string;
 }
-

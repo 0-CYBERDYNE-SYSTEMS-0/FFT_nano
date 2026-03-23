@@ -40,7 +40,9 @@ export function normalizeThinkLevel(raw: string): ThinkLevel | undefined {
   return undefined;
 }
 
-export function normalizeReasoningLevel(raw: string): ReasoningLevel | undefined {
+export function normalizeReasoningLevel(
+  raw: string,
+): ReasoningLevel | undefined {
   const key = raw.trim().toLowerCase();
   if (!key) return undefined;
   if (['off', 'false', 'no', '0'].includes(key)) return 'off';
@@ -49,14 +51,17 @@ export function normalizeReasoningLevel(raw: string): ReasoningLevel | undefined
   return undefined;
 }
 
-export function normalizeTelegramDeliveryMode(raw: string): TelegramDeliveryMode | undefined {
+export function normalizeTelegramDeliveryMode(
+  raw: string,
+): TelegramDeliveryMode | undefined {
   const key = raw.trim().toLowerCase();
   if (!key) return undefined;
   if (['off', 'final', 'final-only', 'quiet'].includes(key)) return 'off';
   if (['partial', 'progress', 'live'].includes(key)) return 'partial';
   if (key === 'block') return 'block';
   if (['draft', 'native', 'native-draft'].includes(key)) return 'draft';
-  if (['persistent', 'persist', 'transcript', 'append'].includes(key)) return 'persistent';
+  if (['persistent', 'persist', 'transcript', 'append'].includes(key))
+    return 'persistent';
   return undefined;
 }
 
@@ -148,17 +153,26 @@ export function parseQueueArgs(argText: string): {
     }
   }
 
-  if (reset && mode === undefined && debounceMs === undefined && cap === undefined && drop === undefined) {
+  if (
+    reset &&
+    mode === undefined &&
+    debounceMs === undefined &&
+    cap === undefined &&
+    drop === undefined
+  ) {
     return { reset: true };
   }
   return { mode, debounceMs, cap, drop, reset };
 }
 
-export function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPreferences | null {
+export function compactChatRunPreferences(
+  prefs: ChatRunPreferences,
+): ChatRunPreferences | null {
   const next: ChatRunPreferences = {};
   if (prefs.provider?.trim()) next.provider = prefs.provider.trim();
   if (prefs.model?.trim()) next.model = prefs.model.trim();
-  if (prefs.thinkLevel && prefs.thinkLevel !== 'off') next.thinkLevel = prefs.thinkLevel;
+  if (prefs.thinkLevel && prefs.thinkLevel !== 'off')
+    next.thinkLevel = prefs.thinkLevel;
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
     next.reasoningLevel = prefs.reasoningLevel;
   }
@@ -171,7 +185,8 @@ export function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPre
   if (prefs.verboseMode && prefs.verboseMode !== 'off') {
     next.verboseMode = prefs.verboseMode;
   }
-  if (prefs.queueMode && prefs.queueMode !== 'collect') next.queueMode = prefs.queueMode;
+  if (prefs.queueMode && prefs.queueMode !== 'collect')
+    next.queueMode = prefs.queueMode;
   if (
     typeof prefs.queueDebounceMs === 'number' &&
     Number.isFinite(prefs.queueDebounceMs) &&
@@ -186,7 +201,8 @@ export function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPre
   ) {
     next.queueCap = Math.floor(prefs.queueCap);
   }
-  if (prefs.queueDrop && prefs.queueDrop !== 'old') next.queueDrop = prefs.queueDrop;
+  if (prefs.queueDrop && prefs.queueDrop !== 'old')
+    next.queueDrop = prefs.queueDrop;
   if (prefs.freeChat === true) next.freeChat = true;
   if (prefs.nextRunNoContinue) next.nextRunNoContinue = true;
   return Object.keys(next).length > 0 ? next : null;
@@ -239,7 +255,8 @@ export function patchTuiSessionPrefs(
       else delete prefs.model;
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'thinkLevel')) {
-      if (patch.thinkLevel && patch.thinkLevel !== 'off') prefs.thinkLevel = patch.thinkLevel;
+      if (patch.thinkLevel && patch.thinkLevel !== 'off')
+        prefs.thinkLevel = patch.thinkLevel;
       else delete prefs.thinkLevel;
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'reasoningLevel')) {
@@ -253,7 +270,8 @@ export function patchTuiSessionPrefs(
       }
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'verboseMode')) {
-      if (patch.verboseMode && patch.verboseMode !== 'off') prefs.verboseMode = patch.verboseMode;
+      if (patch.verboseMode && patch.verboseMode !== 'off')
+        prefs.verboseMode = patch.verboseMode;
       else delete prefs.verboseMode;
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'noContinueNext')) {
@@ -286,11 +304,15 @@ export function consumeNextRunNoContinue(
 }
 
 export function getEffectiveModelLabel(
-  runtime: Pick<ChatPreferencesRuntime, 'chatRunPreferences' | 'defaultProvider' | 'defaultModel'>,
+  runtime: Pick<
+    ChatPreferencesRuntime,
+    'chatRunPreferences' | 'defaultProvider' | 'defaultModel'
+  >,
   chatJid: string,
 ): string {
   const prefs = runtime.chatRunPreferences[chatJid] || {};
-  const provider = prefs.provider || runtime.defaultProvider || '(default-provider)';
+  const provider =
+    prefs.provider || runtime.defaultProvider || '(default-provider)';
   const model = prefs.model || runtime.defaultModel || '(default-model)';
   return `${provider}/${model}`;
 }
@@ -298,7 +320,10 @@ export function getEffectiveModelLabel(
 export function formatChatRuntimePreferences(
   runtime: Pick<
     ChatPreferencesRuntime,
-    'chatRunPreferences' | 'defaultProvider' | 'defaultModel' | 'getEffectiveVerboseMode'
+    | 'chatRunPreferences'
+    | 'defaultProvider'
+    | 'defaultModel'
+    | 'getEffectiveVerboseMode'
   >,
   chatJid: string,
 ): string[] {
@@ -343,15 +368,18 @@ export function updateChatUsage(
   current.runs += 1;
   if (usage) {
     const inputTokens =
-      typeof usage.inputTokens === 'number' && Number.isFinite(usage.inputTokens)
+      typeof usage.inputTokens === 'number' &&
+      Number.isFinite(usage.inputTokens)
         ? Math.max(0, Math.floor(usage.inputTokens))
         : 0;
     const outputTokens =
-      typeof usage.outputTokens === 'number' && Number.isFinite(usage.outputTokens)
+      typeof usage.outputTokens === 'number' &&
+      Number.isFinite(usage.outputTokens)
         ? Math.max(0, Math.floor(usage.outputTokens))
         : 0;
     const totalTokens =
-      typeof usage.totalTokens === 'number' && Number.isFinite(usage.totalTokens)
+      typeof usage.totalTokens === 'number' &&
+      Number.isFinite(usage.totalTokens)
         ? Math.max(0, Math.floor(usage.totalTokens))
         : inputTokens + outputTokens;
 

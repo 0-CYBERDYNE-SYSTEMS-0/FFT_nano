@@ -176,7 +176,12 @@ function envInt(
 
 function resolveDefaultParityConfigPath(): string {
   const home = process.env.HOME || os.homedir();
-  const userPath = path.join(home, '.config', 'fft_nano', 'runtime.parity.json');
+  const userPath = path.join(
+    home,
+    '.config',
+    'fft_nano',
+    'runtime.parity.json',
+  );
   const repoPath = path.join(process.cwd(), 'config', 'runtime.parity.json');
   if (fs.existsSync(userPath)) return userPath;
   return repoPath;
@@ -193,7 +198,10 @@ function readJsonIfExists(filePath: string): Partial<ParityConfig> {
   }
 }
 
-function sanitizeHeartbeatTarget(value: unknown, fallback: HeartbeatTargetMode): HeartbeatTargetMode {
+function sanitizeHeartbeatTarget(
+  value: unknown,
+  fallback: HeartbeatTargetMode,
+): HeartbeatTargetMode {
   if (typeof value !== 'string') return fallback;
   const normalized = value.trim().toLowerCase();
   if (
@@ -217,7 +225,10 @@ function sanitizeMissingBehavior(
   return fallback;
 }
 
-function sanitizeBackend(value: unknown, fallback: MemoryBackendKind): MemoryBackendKind {
+function sanitizeBackend(
+  value: unknown,
+  fallback: MemoryBackendKind,
+): MemoryBackendKind {
   if (value === 'lexical') return value;
   return fallback;
 }
@@ -276,17 +287,26 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
     merged.memory.missingFileBehavior,
     'empty',
   );
-  merged.heartbeat.target = sanitizeHeartbeatTarget(merged.heartbeat.target, 'main');
+  merged.heartbeat.target = sanitizeHeartbeatTarget(
+    merged.heartbeat.target,
+    'main',
+  );
   merged.memory.flushBeforeCompaction.softThresholdTokens = Math.max(
     1,
     Number(merged.memory.flushBeforeCompaction.softThresholdTokens) || 4000,
   );
-  merged.heartbeat.ackMaxChars = Math.max(0, Number(merged.heartbeat.ackMaxChars) || 300);
+  merged.heartbeat.ackMaxChars = Math.max(
+    0,
+    Number(merged.heartbeat.ackMaxChars) || 300,
+  );
   merged.cron.deterministicTopOfHourStagger.maxMs = Math.max(
     0,
     Number(merged.cron.deterministicTopOfHourStagger.maxMs) || 300000,
   );
-  merged.workspace.bootstrapMaxChars = Math.max(1000, Number(merged.workspace.bootstrapMaxChars) || 20000);
+  merged.workspace.bootstrapMaxChars = Math.max(
+    1000,
+    Number(merged.workspace.bootstrapMaxChars) || 20000,
+  );
   merged.workspace.bootstrapTotalMaxChars = Math.max(
     merged.workspace.bootstrapMaxChars,
     Number(merged.workspace.bootstrapTotalMaxChars) || 150000,
@@ -311,7 +331,11 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
   const next: ParityConfig = JSON.parse(JSON.stringify(config)) as ParityConfig;
 
   const backend = process.env.FFT_NANO_MEMORY_BACKEND;
-  if (backend) next.memory.backend = sanitizeBackend(backend.trim().toLowerCase(), next.memory.backend);
+  if (backend)
+    next.memory.backend = sanitizeBackend(
+      backend.trim().toLowerCase(),
+      next.memory.backend,
+    );
 
   const missing = process.env.FFT_NANO_MEMORY_GET_MISSING;
   if (missing) {
@@ -335,7 +359,8 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
       process.env.FFT_NANO_MEMORY_FLUSH_SYSTEM_PROMPT.trim();
   }
   if (process.env.FFT_NANO_MEMORY_FLUSH_PROMPT?.trim()) {
-    next.memory.flushBeforeCompaction.prompt = process.env.FFT_NANO_MEMORY_FLUSH_PROMPT.trim();
+    next.memory.flushBeforeCompaction.prompt =
+      process.env.FFT_NANO_MEMORY_FLUSH_PROMPT.trim();
   }
 
   next.heartbeat.enabled = envBool(
@@ -354,9 +379,11 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
       next.heartbeat.target,
     );
   }
-  next.heartbeat.to = process.env.FFT_NANO_HEARTBEAT_TO?.trim() || next.heartbeat.to;
+  next.heartbeat.to =
+    process.env.FFT_NANO_HEARTBEAT_TO?.trim() || next.heartbeat.to;
   next.heartbeat.accountId =
-    process.env.FFT_NANO_HEARTBEAT_ACCOUNT_ID?.trim() || next.heartbeat.accountId;
+    process.env.FFT_NANO_HEARTBEAT_ACCOUNT_ID?.trim() ||
+    next.heartbeat.accountId;
   next.heartbeat.includeReasoning = envBool(
     process.env.FFT_NANO_HEARTBEAT_INCLUDE_REASONING,
     next.heartbeat.includeReasoning,
@@ -386,7 +413,8 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
   }
 
   if (process.env.FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY?.trim()) {
-    const mode = process.env.FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY.trim().toLowerCase();
+    const mode =
+      process.env.FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY.trim().toLowerCase();
     if (mode === 'none' || mode === 'announce') {
       next.cron.isolatedDefaultDelivery = mode;
     }
@@ -431,7 +459,10 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     next.workspace.enableBootMd,
   );
 
-  next.doctor.enabled = envBool(process.env.FFT_NANO_DOCTOR_ENABLED, next.doctor.enabled);
+  next.doctor.enabled = envBool(
+    process.env.FFT_NANO_DOCTOR_ENABLED,
+    next.doctor.enabled,
+  );
   next.prompt.cacheEnabled = envBool(
     process.env.FFT_NANO_PROMPT_CACHE_ENABLED,
     next.prompt.cacheEnabled,

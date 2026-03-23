@@ -249,8 +249,19 @@ function checkMemoryConfig(): CheckResult {
 }
 
 function checkPromptLifecycle(): CheckResult {
-  const statePath = path.join(DATA_DIR, 'pi', 'main', '.pi', 'fft_nano', 'prompt-state.json');
-  const manifestPath = path.join(MAIN_WORKSPACE_DIR, 'logs', 'system-prompt.latest.json');
+  const statePath = path.join(
+    DATA_DIR,
+    'pi',
+    'main',
+    '.pi',
+    'fft_nano',
+    'prompt-state.json',
+  );
+  const manifestPath = path.join(
+    MAIN_WORKSPACE_DIR,
+    'logs',
+    'system-prompt.latest.json',
+  );
   if (!PARITY_CONFIG.prompt.cacheEnabled) {
     return {
       id: 'prompt.lifecycle',
@@ -275,16 +286,22 @@ function checkPromptLifecycle(): CheckResult {
       lastRebaseAt?: string;
       cacheEntries?: Record<string, unknown>;
     };
-    const cacheCount = parsed.cacheEntries ? Object.keys(parsed.cacheEntries).length : 0;
+    const cacheCount = parsed.cacheEntries
+      ? Object.keys(parsed.cacheEntries).length
+      : 0;
     const manifestExists = fs.existsSync(manifestPath);
     let manifestDetail = 'manifest=missing';
     if (manifestExists) {
       try {
-        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as SystemPromptReport;
+        const manifest = JSON.parse(
+          fs.readFileSync(manifestPath, 'utf-8'),
+        ) as SystemPromptReport;
         const blockedFiles = manifest.contextEntries
           .filter((entry) => entry.blocked)
           .map((entry) => path.basename(entry.path));
-        const cacheKeyHash = manifest.baseCacheKey ? manifest.baseCacheKey.slice(0, 12) : 'unknown';
+        const cacheKeyHash = manifest.baseCacheKey
+          ? manifest.baseCacheKey.slice(0, 12)
+          : 'unknown';
         manifestDetail = [
           `cache_key=${cacheKeyHash}`,
           `cache_hit=${manifest.cacheHit ? 'yes' : 'no'}`,
@@ -302,9 +319,10 @@ function checkPromptLifecycle(): CheckResult {
       summary: parsed.corrupted
         ? 'Prompt lifecycle state is corrupted'
         : manifestExists
-        ? 'Prompt lifecycle state and latest manifest are present'
-        : 'Prompt lifecycle state exists but latest manifest is missing',
-      detail: `cache_entries=${cacheCount} session_epoch=${parsed.sessionEpoch || 0} decision=${parsed.lastPreflightDecision || 'unknown'}${parsed.lastRebaseAt ? ` last_rebase=${parsed.lastRebaseAt}` : ''} ${manifestDetail}`.trim(),
+          ? 'Prompt lifecycle state and latest manifest are present'
+          : 'Prompt lifecycle state exists but latest manifest is missing',
+      detail:
+        `cache_entries=${cacheCount} session_epoch=${parsed.sessionEpoch || 0} decision=${parsed.lastPreflightDecision || 'unknown'}${parsed.lastRebaseAt ? ` last_rebase=${parsed.lastRebaseAt}` : ''} ${manifestDetail}`.trim(),
     };
   } catch {
     return {
@@ -321,7 +339,9 @@ function checkStateDirs(): CheckResult {
   return {
     id: 'runtime.state',
     level: exists ? 'pass' : 'warn',
-    summary: exists ? 'Runtime state directory exists' : 'Runtime state directory missing',
+    summary: exists
+      ? 'Runtime state directory exists'
+      : 'Runtime state directory missing',
     detail: DATA_DIR,
   };
 }
@@ -375,6 +395,9 @@ function main(): void {
   if (report.status === 'warn') process.exit(1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main();
 }

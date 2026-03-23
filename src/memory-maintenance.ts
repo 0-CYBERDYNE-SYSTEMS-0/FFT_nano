@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import { ensureMemoryScaffold, resolveMemoryPath, resolveSoulPath } from './memory-paths.js';
+import {
+  ensureMemoryScaffold,
+  resolveMemoryPath,
+  resolveSoulPath,
+} from './memory-paths.js';
 
 const COMPACTION_HEADING_PREFIX = '## Session Compaction ';
 const MIGRATION_NOTE =
@@ -78,12 +82,17 @@ export function migrateCompactionSectionsFromSoul(
       ? fs.readFileSync(memoryPath, 'utf8')
       : '# MEMORY\n\n';
     const separator = existingMemory.trimEnd().length > 0 ? '\n\n' : '';
-    fs.writeFileSync(memoryPath, `${existingMemory.trimEnd()}${separator}${moved}\n`);
+    fs.writeFileSync(
+      memoryPath,
+      `${existingMemory.trimEnd()}${separator}${moved}\n`,
+    );
   }
 
   const preservedText = preservedLines.join('\n').trimEnd();
   const notePresent = preservedText.includes(MIGRATION_NOTE);
-  const nextSoul = notePresent ? preservedText : `${preservedText}\n\n${MIGRATION_NOTE}`;
+  const nextSoul = notePresent
+    ? preservedText
+    : `${preservedText}\n\n${MIGRATION_NOTE}`;
   fs.writeFileSync(soulPath, `${nextSoul.trimEnd()}\n`);
 
   return {
@@ -93,7 +102,9 @@ export function migrateCompactionSectionsFromSoul(
   };
 }
 
-export function migrateCompactionsForGroup(groupFolder: string): CompactionMigrationResult {
+export function migrateCompactionsForGroup(
+  groupFolder: string,
+): CompactionMigrationResult {
   ensureMemoryScaffold(groupFolder);
   return migrateCompactionSectionsFromSoul(
     resolveSoulPath(groupFolder),

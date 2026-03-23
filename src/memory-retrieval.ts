@@ -115,7 +115,10 @@ function tokenize(text: string): string[] {
 }
 
 function splitLongSegment(segment: string): string[] {
-  const lines = segment.split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = segment
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
   const out: string[] = [];
   let buffer = '';
 
@@ -156,7 +159,8 @@ function splitLongSegment(segment: string): string[] {
       if (!sentenceBuffer) {
         sentenceBuffer = sentence;
       } else if (
-        sentenceBuffer.length + 1 + sentence.length <= MAX_CHUNK_CHARS
+        sentenceBuffer.length + 1 + sentence.length <=
+        MAX_CHUNK_CHARS
       ) {
         sentenceBuffer += ` ${sentence}`;
       } else {
@@ -209,7 +213,10 @@ function chunkMemoryText(text: string): string[] {
 }
 
 function extractQueryText(prompt: string): string {
-  const assistantPrefix = new RegExp(`^${escapeRegex(ASSISTANT_NAME)}:\\s*`, 'i');
+  const assistantPrefix = new RegExp(
+    `^${escapeRegex(ASSISTANT_NAME)}:\\s*`,
+    'i',
+  );
   const lines = prompt
     .split('\n')
     .map((line) => line.trim())
@@ -314,7 +321,9 @@ export function buildMemoryContext(
     allChunks.push({ source: 'group', index: i, text: groupChunks[i] });
   }
 
-  const globalChunks = getPreferredMemoryChunks(path.join(GROUPS_DIR, 'global'));
+  const globalChunks = getPreferredMemoryChunks(
+    path.join(GROUPS_DIR, 'global'),
+  );
   for (let i = 0; i < globalChunks.length; i += 1) {
     allChunks.push({ source: 'global', index: i, text: globalChunks[i] });
   }
@@ -350,7 +359,10 @@ export function buildMemoryContext(
   });
 
   const header = 'Relevant memory snippets:\n';
-  const budgetForSnippets = Math.max(0, MEMORY_CONTEXT_CHAR_BUDGET - header.length);
+  const budgetForSnippets = Math.max(
+    0,
+    MEMORY_CONTEXT_CHAR_BUDGET - header.length,
+  );
   const selected: string[] = [];
   let usedChars = 0;
 
@@ -382,7 +394,8 @@ export function buildMemoryContext(
     break;
   }
 
-  const context = selected.length > 0 ? `${header}${selected.join('\n\n')}` : '';
+  const context =
+    selected.length > 0 ? `${header}${selected.join('\n\n')}` : '';
 
   return {
     context,

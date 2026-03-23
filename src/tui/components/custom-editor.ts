@@ -27,7 +27,11 @@ export class CustomEditor extends Editor {
       this.onCtrlG();
       return;
     }
-    if (matchesKey(data, Key.escape) && this.onEscape && !this.isShowingAutocomplete()) {
+    if (
+      matchesKey(data, Key.escape) &&
+      this.onEscape &&
+      !this.isShowingAutocomplete()
+    ) {
       this.onEscape();
       return;
     }

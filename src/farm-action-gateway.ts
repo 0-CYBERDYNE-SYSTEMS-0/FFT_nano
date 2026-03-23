@@ -25,9 +25,11 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_STAGING_DASHBOARD_PATH = '/workspace/dashboard/ui-lovelace-staging.yaml';
+const DEFAULT_STAGING_DASHBOARD_PATH =
+  '/workspace/dashboard/ui-lovelace-staging.yaml';
 const DEFAULT_LIVE_DASHBOARD_PATH = '/workspace/dashboard/ui-lovelace.yaml';
-const DEFAULT_CANVAS_SPEC_PATH = '/workspace/dashboard/www/agent-canvas-spec.json';
+const DEFAULT_CANVAS_SPEC_PATH =
+  '/workspace/dashboard/www/agent-canvas-spec.json';
 const DEFAULT_CANVAS_TITLE = 'Agent Canvas';
 
 type JsonObject = Record<string, unknown>;
@@ -112,7 +114,15 @@ const canvasLayoutSchema = z.object({
 
 const canvasCardSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(['line', 'bar', 'radial', 'comparison', 'kpi', 'markdown', 'iframe']),
+  type: z.enum([
+    'line',
+    'bar',
+    'radial',
+    'comparison',
+    'kpi',
+    'markdown',
+    'iframe',
+  ]),
   title: z.string().optional(),
   entities: z.array(z.string().min(1)).optional(),
   labels: z.array(z.string()).optional(),
@@ -169,7 +179,9 @@ const haDashboardValidateParamsSchema = z
     checkEntities: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
-    const hasDashboardFile = typeof value.dashboardFile === 'string' && value.dashboardFile.trim().length > 0;
+    const hasDashboardFile =
+      typeof value.dashboardFile === 'string' &&
+      value.dashboardFile.trim().length > 0;
     const hasContent = typeof value.content === 'string';
     if (hasDashboardFile === hasContent) {
       ctx.addIssue({
@@ -284,7 +296,8 @@ function ensureControlActionGate(action: string): void {
     );
   }
 
-  const validation = (profile as { validation?: { status?: string } }).validation;
+  const validation = (profile as { validation?: { status?: string } })
+    .validation;
   if (validation?.status !== 'pass') {
     throw new Error(
       `Action "${action}" blocked: production validation status is "${validation?.status || 'missing'}"; run farm-validate first`,
@@ -304,7 +317,10 @@ function getHaConfigDir(): string {
 
 function isWithinRoot(root: string, target: string): boolean {
   const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  return (
+    relative === '' ||
+    (!relative.startsWith('..') && !path.isAbsolute(relative))
+  );
 }
 
 function resolveDashboardPath(
@@ -332,7 +348,9 @@ function resolveDashboardPath(
 
   const safeResolved = path.resolve(resolvedPath);
   if (!isWithinRoot(haConfigDir, safeResolved)) {
-    throw new Error(`${fieldName} resolves outside ha_config; refusing operation`);
+    throw new Error(
+      `${fieldName} resolves outside ha_config; refusing operation`,
+    );
   }
 
   return safeResolved;
@@ -370,7 +388,10 @@ function readDashboardFile(dashboardPath: string): DashboardDocumentShape {
   return parseDashboardYaml(content);
 }
 
-function writeDashboardFile(dashboardPath: string, dashboard: DashboardDocumentShape): void {
+function writeDashboardFile(
+  dashboardPath: string,
+  dashboard: DashboardDocumentShape,
+): void {
   fs.mkdirSync(path.dirname(dashboardPath), { recursive: true });
   fs.writeFileSync(dashboardPath, YAML.stringify(dashboard), 'utf-8');
 }
@@ -382,7 +403,10 @@ function ensureViewsArray(dashboard: DashboardDocumentShape): unknown[] {
   return dashboard.views as unknown[];
 }
 
-function getViewByPath(dashboard: DashboardDocumentShape, viewPath: string): JsonObject {
+function getViewByPath(
+  dashboard: DashboardDocumentShape,
+  viewPath: string,
+): JsonObject {
   const views = ensureViewsArray(dashboard);
   const view = views.find(
     (candidate) =>
@@ -396,7 +420,10 @@ function getViewByPath(dashboard: DashboardDocumentShape, viewPath: string): Jso
   return view;
 }
 
-function normalizeInsertIndex(index: number | undefined, length: number): number {
+function normalizeInsertIndex(
+  index: number | undefined,
+  length: number,
+): number {
   if (index === undefined) return length;
   if (!Number.isInteger(index) || index < 0 || index > length) {
     throw new Error(`Index ${index} is out of bounds for length ${length}`);
@@ -414,7 +441,10 @@ function getCardContainers(view: JsonObject): CardContainerRef[] {
   if (Array.isArray(view.sections)) {
     view.sections.forEach((section, idx) => {
       if (isJsonObject(section) && Array.isArray(section.cards)) {
-        containers.push({ cards: section.cards as unknown[], sectionIndex: idx });
+        containers.push({
+          cards: section.cards as unknown[],
+          sectionIndex: idx,
+        });
       }
     });
   }
@@ -431,18 +461,29 @@ function getOrCreateCardContainer(
   if (hasSections) {
     const sections = view.sections as unknown[];
     const targetSectionIndex = sectionIndex ?? 0;
-    if (!Number.isInteger(targetSectionIndex) || targetSectionIndex < 0 || targetSectionIndex >= sections.length) {
-      throw new Error(`sectionIndex ${targetSectionIndex} is out of bounds for view sections`);
+    if (
+      !Number.isInteger(targetSectionIndex) ||
+      targetSectionIndex < 0 ||
+      targetSectionIndex >= sections.length
+    ) {
+      throw new Error(
+        `sectionIndex ${targetSectionIndex} is out of bounds for view sections`,
+      );
     }
 
     const section = sections[targetSectionIndex];
     if (!isJsonObject(section)) {
-      throw new Error(`Section at index ${targetSectionIndex} is not an object`);
+      throw new Error(
+        `Section at index ${targetSectionIndex} is not an object`,
+      );
     }
     if (!Array.isArray(section.cards)) {
       section.cards = [];
     }
-    return { cards: section.cards as unknown[], sectionIndex: targetSectionIndex };
+    return {
+      cards: section.cards as unknown[],
+      sectionIndex: targetSectionIndex,
+    };
   }
 
   if (sectionIndex !== undefined) {
@@ -476,7 +517,9 @@ function findCardInView(view: JsonObject, cardId: string): CardLocation {
     throw new Error(`Card id "${cardId}" not found in view`);
   }
   if (matches.length > 1) {
-    throw new Error(`Card id "${cardId}" appears multiple times in view; ids must be unique`);
+    throw new Error(
+      `Card id "${cardId}" appears multiple times in view; ids must be unique`,
+    );
   }
 
   return matches[0];
@@ -533,7 +576,10 @@ function applyDashboardPatch(
       }
       ensureCardIdUniqueInView(view, cardId);
       const target = getOrCreateCardContainer(view, operation.sectionIndex);
-      const insertAt = normalizeInsertIndex(operation.index, target.cards.length);
+      const insertAt = normalizeInsertIndex(
+        operation.index,
+        target.cards.length,
+      );
       target.cards.splice(insertAt, 0, operation.card);
       return;
     }
@@ -564,7 +610,10 @@ function applyDashboardPatch(
         operation.toSectionIndex === undefined
           ? located
           : getOrCreateCardContainer(view, operation.toSectionIndex);
-      let insertAt = normalizeInsertIndex(operation.toIndex, destination.cards.length);
+      let insertAt = normalizeInsertIndex(
+        operation.toIndex,
+        destination.cards.length,
+      );
       if (destination.cards === located.cards && located.index < insertAt) {
         insertAt -= 1;
       }
@@ -580,9 +629,16 @@ function looksLikeEntityId(value: string): boolean {
   return /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(value);
 }
 
-function collectEntityIds(value: unknown, set: Set<string>, parentKey?: string): void {
+function collectEntityIds(
+  value: unknown,
+  set: Set<string>,
+  parentKey?: string,
+): void {
   if (typeof value === 'string') {
-    if ((parentKey === 'entity' || parentKey === 'entity_id') && looksLikeEntityId(value)) {
+    if (
+      (parentKey === 'entity' || parentKey === 'entity_id') &&
+      looksLikeEntityId(value)
+    ) {
       set.add(value);
     }
     if (parentKey === 'entities' && looksLikeEntityId(value)) {
@@ -644,7 +700,9 @@ function applyCanvasPatch(spec: CanvasSpec, operation: CanvasPatchOp): void {
       }
       if (
         nextCard.id !== operation.cardId &&
-        spec.cards.some((card, cardIdx) => card.id === nextCard.id && cardIdx !== idx)
+        spec.cards.some(
+          (card, cardIdx) => card.id === nextCard.id && cardIdx !== idx,
+        )
       ) {
         throw new Error(`Canvas card id "${nextCard.id}" already exists`);
       }
@@ -697,7 +755,9 @@ async function handleHaGetStatus(): Promise<unknown> {
   };
 }
 
-async function handleHaCallService(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaCallService(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const domain = params.domain;
   const service = params.service;
 
@@ -709,14 +769,18 @@ async function handleHaCallService(params: Record<string, unknown>): Promise<unk
   }
 
   const data =
-    params.data && typeof params.data === 'object' && !Array.isArray(params.data)
+    params.data &&
+    typeof params.data === 'object' &&
+    !Array.isArray(params.data)
       ? (params.data as Record<string, unknown>)
       : {};
 
   return adapter.callService(domain, service, data);
 }
 
-async function handleHaSetEntity(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaSetEntity(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const entityId = params.entityId;
   if (typeof entityId !== 'string' || !entityId.includes('.')) {
     throw new Error('ha_set_entity requires params.entityId (domain.entity)');
@@ -743,7 +807,11 @@ async function handleHaSetEntity(params: Record<string, unknown>): Promise<unkno
   }
 
   const boolValue =
-    value === true || value === 'on' || value === 1 || value === '1' || value === 'true';
+    value === true ||
+    value === 'on' ||
+    value === 1 ||
+    value === '1' ||
+    value === 'true';
 
   return adapter.callService(domain, boolValue ? 'turn_on' : 'turn_off', {
     entity_id: entityId,
@@ -751,7 +819,10 @@ async function handleHaSetEntity(params: Record<string, unknown>): Promise<unkno
 }
 
 async function handleHaRestart(): Promise<unknown> {
-  const { stdout, stderr } = await execFileAsync('docker', ['restart', 'homeassistant']);
+  const { stdout, stderr } = await execFileAsync('docker', [
+    'restart',
+    'homeassistant',
+  ]);
   return {
     exitCode: 0,
     stdout: (stdout || '').toString().trim(),
@@ -759,7 +830,9 @@ async function handleHaRestart(): Promise<unknown> {
   };
 }
 
-async function handleHaDashboardGet(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaDashboardGet(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haDashboardGetParamsSchema.parse(params);
   const dashboardPath = resolveDashboardPath(
     parsed.dashboardFile,
@@ -783,7 +856,9 @@ async function handleHaDashboardGet(params: Record<string, unknown>): Promise<un
   };
 }
 
-async function handleHaDashboardValidate(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaDashboardValidate(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haDashboardValidateParamsSchema.parse(params);
 
   let dashboard: DashboardDocumentShape;
@@ -803,7 +878,9 @@ async function handleHaDashboardValidate(params: Record<string, unknown>): Promi
 
   const views = dashboard.views;
   if (!Array.isArray(views)) {
-    throw new Error('Dashboard validation failed: top-level "views" must be an array');
+    throw new Error(
+      'Dashboard validation failed: top-level "views" must be an array',
+    );
   }
 
   const entityIds = new Set<string>();
@@ -813,7 +890,9 @@ async function handleHaDashboardValidate(params: Record<string, unknown>): Promi
   if (parsed.checkEntities) {
     const states = await adapter.getAllStates();
     const known = new Set(states.map((state) => state.entity_id));
-    missingEntities = Array.from(entityIds).filter((entityId) => !known.has(entityId));
+    missingEntities = Array.from(entityIds).filter(
+      (entityId) => !known.has(entityId),
+    );
   }
 
   return {
@@ -826,7 +905,9 @@ async function handleHaDashboardValidate(params: Record<string, unknown>): Promi
   };
 }
 
-async function handleHaDashboardPatch(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaDashboardPatch(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haDashboardPatchParamsSchema.parse(params);
   const dashboardPath = resolveDashboardPath(
     parsed.dashboardFile,
@@ -853,9 +934,15 @@ async function handleHaDashboardPatch(params: Record<string, unknown>): Promise<
   };
 }
 
-async function handleHaApplyDashboard(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaApplyDashboard(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haApplyDashboardParamsSchema.parse(params);
-  const stagingPath = resolveDashboardPath(parsed.stagingFile, '', 'stagingFile');
+  const stagingPath = resolveDashboardPath(
+    parsed.stagingFile,
+    '',
+    'stagingFile',
+  );
 
   if (!fs.existsSync(stagingPath)) {
     throw new Error(`Staging file not found: ${stagingPath}`);
@@ -888,7 +975,8 @@ async function handleHaApplyDashboard(params: Record<string, unknown>): Promise<
 
 function resolveScreenshotUrl(view: unknown, dashboard: unknown): string {
   const base = adapter.getActiveBaseUrl().replace(/\/$/, '');
-  const normalizedView = typeof view === 'string' && view.trim().length > 0 ? view.trim() : '';
+  const normalizedView =
+    typeof view === 'string' && view.trim().length > 0 ? view.trim() : '';
   const normalizedDashboard =
     typeof dashboard === 'string' && dashboard.trim().length > 0
       ? dashboard.trim().replace(/^\/+|\/+$/g, '')
@@ -910,7 +998,9 @@ function resolveScreenshotUrl(view: unknown, dashboard: unknown): string {
   return `${base}/lovelace/0`;
 }
 
-async function handleHaCaptureScreenshot(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaCaptureScreenshot(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haCaptureScreenshotParamsSchema.parse(params);
 
   const screenshotsDir = path.join(FARM_STATE_DIR, 'screenshots');
@@ -925,7 +1015,10 @@ async function handleHaCaptureScreenshot(params: Record<string, unknown>): Promi
   const width = parsed.width ?? 1920;
   const height = parsed.height ?? 1080;
   const waitMs = parsed.waitMs ?? 1200;
-  const selectorArg = parsed.selector && parsed.selector.trim() ? parsed.selector.trim() : '__none__';
+  const selectorArg =
+    parsed.selector && parsed.selector.trim()
+      ? parsed.selector.trim()
+      : '__none__';
 
   const script = `
     (async () => {
@@ -1006,7 +1099,9 @@ async function handleHaCaptureScreenshot(params: Record<string, unknown>): Promi
   }
 }
 
-async function handleHaCanvasGetSpec(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaCanvasGetSpec(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haCanvasGetSpecParamsSchema.parse(params);
   const specPath = resolveCanvasSpecPath(parsed.specFile);
   const spec = readCanvasSpec(specPath);
@@ -1017,13 +1112,18 @@ async function handleHaCanvasGetSpec(params: Record<string, unknown>): Promise<u
   };
 }
 
-async function handleHaCanvasSetSpec(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaCanvasSetSpec(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haCanvasSetSpecParamsSchema.parse(params);
   const specPath = resolveCanvasSpecPath(parsed.specFile);
 
   const nextSpec: CanvasSpec = {
     ...parsed.spec,
-    title: parsed.title && parsed.title.trim().length > 0 ? parsed.title.trim() : parsed.spec.title,
+    title:
+      parsed.title && parsed.title.trim().length > 0
+        ? parsed.title.trim()
+        : parsed.spec.title,
   };
 
   const validated = canvasSpecSchema.parse(nextSpec) as CanvasSpec;
@@ -1035,7 +1135,9 @@ async function handleHaCanvasSetSpec(params: Record<string, unknown>): Promise<u
   };
 }
 
-async function handleHaCanvasPatchSpec(params: Record<string, unknown>): Promise<unknown> {
+async function handleHaCanvasPatchSpec(
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const parsed = haCanvasPatchSpecParamsSchema.parse(params);
   const specPath = resolveCanvasSpecPath(parsed.specFile);
   const spec = readCanvasSpec(specPath);
@@ -1139,7 +1241,9 @@ export async function executeFarmAction(
     return successResult;
   } catch (err) {
     const parsedRequestId =
-      request && typeof request.requestId === 'string' ? request.requestId : 'unknown';
+      request && typeof request.requestId === 'string'
+        ? request.requestId
+        : 'unknown';
 
     const errorResult: FarmActionResult = {
       requestId: parsedRequestId,

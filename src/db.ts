@@ -122,12 +122,11 @@ export function initDatabaseAtPath(dbPath: string): void {
     /* column already exists */
   }
 
-  const hadMessagesFts =
-    !!db
-      .prepare(
-        `SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='messages_fts'`,
-      )
-      .get();
+  const hadMessagesFts = !!db
+    .prepare(
+      `SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='messages_fts'`,
+    )
+    .get();
 
   // Episodic memory index over chat transcripts.
   db.exec(`
@@ -302,7 +301,10 @@ export interface ChatHistoryMessageRow {
   is_from_me: number;
 }
 
-export function getChatHistory(chatJid: string, limit = 120): ChatHistoryMessageRow[] {
+export function getChatHistory(
+  chatJid: string,
+  limit = 120,
+): ChatHistoryMessageRow[] {
   const safeLimit = Number.isFinite(limit)
     ? Math.max(1, Math.min(400, Math.floor(limit)))
     : 120;
@@ -373,7 +375,12 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, '__fft_tui__') as NewMessage[];
+    .all(
+      lastTimestamp,
+      ...jids,
+      `${botPrefix}:%`,
+      '__fft_tui__',
+    ) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -399,7 +406,12 @@ export function getMessagesSince(
   `;
   return db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, '__fft_tui__') as NewMessage[];
+    .all(
+      chatJid,
+      sinceTimestamp,
+      `${botPrefix}:%`,
+      '__fft_tui__',
+    ) as NewMessage[];
 }
 
 export function createTask(
@@ -657,5 +669,7 @@ export function searchMessagesByFts(
     LIMIT ?
   `;
 
-  return db.prepare(sql).all(ftsQuery, ...chatJids, limit) as TranscriptSearchRow[];
+  return db
+    .prepare(sql)
+    .all(ftsQuery, ...chatJids, limit) as TranscriptSearchRow[];
 }

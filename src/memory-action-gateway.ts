@@ -96,9 +96,16 @@ export async function executeMemoryAction(
     };
   } catch (err) {
     const requestId =
-      request && typeof request.requestId === 'string' ? request.requestId : 'unknown';
+      request && typeof request.requestId === 'string'
+        ? request.requestId
+        : 'unknown';
     logger.warn(
-      { requestId, action: request?.action, sourceGroup: context.sourceGroup, err },
+      {
+        requestId,
+        action: request?.action,
+        sourceGroup: context.sourceGroup,
+        err,
+      },
       'Memory action execution failed',
     );
     return {

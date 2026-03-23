@@ -24,8 +24,14 @@ const EXACT_ALIAS_PHRASES = new Set([
 ]);
 
 const TELEGRAM_COMMAND_SUFFIX = '(?:@[A-Za-z0-9_]+)?';
-const CODER_PLAN_PATTERN = new RegExp(`^/coder_plan${TELEGRAM_COMMAND_SUFFIX}\\b`, 'i');
-const CODER_DASH_PLAN_PATTERN = new RegExp(`^/coder-plan${TELEGRAM_COMMAND_SUFFIX}\\b`, 'i');
+const CODER_PLAN_PATTERN = new RegExp(
+  `^/coder_plan${TELEGRAM_COMMAND_SUFFIX}\\b`,
+  'i',
+);
+const CODER_DASH_PLAN_PATTERN = new RegExp(
+  `^/coder-plan${TELEGRAM_COMMAND_SUFFIX}\\b`,
+  'i',
+);
 const CODER_PATTERN = new RegExp(`^/coder${TELEGRAM_COMMAND_SUFFIX}\\b`, 'i');
 const CODING_PATTERN = new RegExp(`^/coding${TELEGRAM_COMMAND_SUFFIX}\\b`, 'i');
 

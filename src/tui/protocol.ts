@@ -62,7 +62,9 @@ export type AgentEventPayload =
       };
     };
 
-export function isGatewayRequestFrame(value: unknown): value is GatewayRequestFrame {
+export function isGatewayRequestFrame(
+  value: unknown,
+): value is GatewayRequestFrame {
   if (!value || typeof value !== 'object') return false;
   const rec = value as Record<string, unknown>;
   return typeof rec.id === 'string' && typeof rec.method === 'string';

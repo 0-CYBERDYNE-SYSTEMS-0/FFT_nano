@@ -38,15 +38,20 @@ function wrapWithBwrap(
   if (!commandExists('bwrap')) {
     throw new Error(
       'FFT_NANO_SANDBOX=bwrap but bwrap is not installed. ' +
-      'Install bwrap or set FFT_NANO_SANDBOX=none.',
+        'Install bwrap or set FFT_NANO_SANDBOX=none.',
     );
   }
 
   const bwrapArgs: string[] = [
-    '--ro-bind', '/', '/',
-    '--dev', '/dev',
-    '--proc', '/proc',
-    '--tmpfs', '/tmp',
+    '--ro-bind',
+    '/',
+    '/',
+    '--dev',
+    '/dev',
+    '--proc',
+    '/proc',
+    '--tmpfs',
+    '/tmp',
   ];
 
   for (const p of config.allowedPaths || []) {
@@ -69,15 +74,12 @@ function wrapWithDocker(
   if (!commandExists('docker')) {
     throw new Error(
       'FFT_NANO_SANDBOX=docker but docker is not installed. ' +
-      'Install docker or set FFT_NANO_SANDBOX=none.',
+        'Install docker or set FFT_NANO_SANDBOX=none.',
     );
   }
 
   const image = process.env.FFT_NANO_SANDBOX_IMAGE || 'fft-nano-pi:latest';
-  const dockerArgs: string[] = [
-    'run', '--rm', '-i',
-    '-w', '/workspace',
-  ];
+  const dockerArgs: string[] = ['run', '--rm', '-i', '-w', '/workspace'];
 
   for (const p of config.allowedPaths || []) {
     dockerArgs.push('-v', `${p}:${p}`);

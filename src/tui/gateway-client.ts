@@ -61,7 +61,10 @@ export class GatewayClient {
     });
   }
 
-  async request<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+  async request<T>(
+    method: string,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Gateway is not connected.');
     }

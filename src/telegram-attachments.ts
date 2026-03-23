@@ -31,7 +31,8 @@ const AUDIO_EXTENSIONS = new Set([
   '.opus',
 ]);
 const VOICE_EXTENSIONS = new Set(['.ogg', '.oga', '.opus']);
-const VOICE_HINT_RE = /\b(voice|voice[-_ ]?note|memo|recording|spoken|audio[-_ ]?note)\b/i;
+const VOICE_HINT_RE =
+  /\b(voice|voice[-_ ]?note|memo|recording|spoken|audio[-_ ]?note)\b/i;
 
 export interface TelegramMediaStoragePaths {
   inboxDir: string;
@@ -57,7 +58,11 @@ export interface TelegramAttachmentSendOutcome {
 }
 
 interface TelegramAttachmentBot {
-  sendPhoto: (chatJid: string, photo: string | Buffer, caption?: string) => Promise<void>;
+  sendPhoto: (
+    chatJid: string,
+    photo: string | Buffer,
+    caption?: string,
+  ) => Promise<void>;
   sendDocument: (
     chatJid: string,
     document: string | Buffer,
@@ -108,8 +113,14 @@ function truncateTelegramCaption(value?: string | null): string | undefined {
   return trimmed.length > 1024 ? trimmed.slice(0, 1024) : trimmed;
 }
 
-function extractAttachmentAttribute(rawAttrs: string, key: string): string | null {
-  const pattern = new RegExp(`\\b${key}=(?:\"([^\"]+)\"|'([^']+)'|([^\\s\\]]+))`, 'i');
+function extractAttachmentAttribute(
+  rawAttrs: string,
+  key: string,
+): string | null {
+  const pattern = new RegExp(
+    `\\b${key}=(?:\"([^\"]+)\"|'([^']+)'|([^\\s\\]]+))`,
+    'i',
+  );
   const match = rawAttrs.match(pattern);
   if (!match) return null;
   const value = match[1] || match[2] || match[3] || '';
@@ -135,14 +146,19 @@ function parseMarkdownLocalPath(rawTarget: string): string | null {
 
 function isPathWithinBase(baseDir: string, targetPath: string): boolean {
   const relative = path.relative(baseDir, targetPath);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  return (
+    relative === '' ||
+    (!relative.startsWith('..') && !path.isAbsolute(relative))
+  );
 }
 
 function isClearlyVoiceOriented(fileName: string): boolean {
   return VOICE_HINT_RE.test(fileName);
 }
 
-export function normalizeTelegramAttachmentKind(value?: string | null): TelegramAttachmentKind | null {
+export function normalizeTelegramAttachmentKind(
+  value?: string | null,
+): TelegramAttachmentKind | null {
   const normalized = (value || '').trim().toLowerCase();
   switch (normalized) {
     case 'photo':
@@ -197,23 +213,32 @@ export function buildTelegramMediaStoragePaths(params: {
   };
 }
 
-export function extractTelegramAttachmentHints(
-  text: string,
-): { cleanedText: string; hints: TelegramAttachmentHint[] } {
+export function extractTelegramAttachmentHints(text: string): {
+  cleanedText: string;
+  hints: TelegramAttachmentHint[];
+} {
   const hints: TelegramAttachmentHint[] = [];
   let cleaned = text;
 
-  cleaned = cleaned.replace(TELEGRAM_ATTACHMENT_HINT_RE, (_full, attrs: string) => {
-    const rawPath = extractAttachmentAttribute(attrs, 'path');
-    if (rawPath) {
-      hints.push({
-        rawPath,
-        kind: normalizeTelegramAttachmentKind(extractAttachmentAttribute(attrs, 'kind') || undefined) || undefined,
-        caption: truncateTelegramCaption(extractAttachmentAttribute(attrs, 'caption')),
-      });
-    }
-    return '';
-  });
+  cleaned = cleaned.replace(
+    TELEGRAM_ATTACHMENT_HINT_RE,
+    (_full, attrs: string) => {
+      const rawPath = extractAttachmentAttribute(attrs, 'path');
+      if (rawPath) {
+        hints.push({
+          rawPath,
+          kind:
+            normalizeTelegramAttachmentKind(
+              extractAttachmentAttribute(attrs, 'kind') || undefined,
+            ) || undefined,
+          caption: truncateTelegramCaption(
+            extractAttachmentAttribute(attrs, 'caption'),
+          ),
+        });
+      }
+      return '';
+    },
+  );
 
   cleaned = cleaned.replace(
     TELEGRAM_MARKDOWN_IMAGE_RE,
@@ -229,15 +254,18 @@ export function extractTelegramAttachmentHints(
     },
   );
 
-  cleaned = cleaned.replace(TELEGRAM_MARKDOWN_LINK_RE, (full: string, target: string) => {
-    const localPath = parseMarkdownLocalPath(target);
-    if (!localPath) return full;
-    hints.push({
-      rawPath: localPath,
-      kind: normalizeTelegramAttachmentKind(undefined) || undefined,
-    });
-    return '';
-  });
+  cleaned = cleaned.replace(
+    TELEGRAM_MARKDOWN_LINK_RE,
+    (full: string, target: string) => {
+      const localPath = parseMarkdownLocalPath(target);
+      if (!localPath) return full;
+      hints.push({
+        rawPath: localPath,
+        kind: normalizeTelegramAttachmentKind(undefined) || undefined,
+      });
+      return '';
+    },
+  );
 
   const deduped = new Map<string, TelegramAttachmentHint>();
   for (const hint of hints) {
@@ -313,11 +341,17 @@ export function resolveTelegramAttachmentHostPath(
   } else if (trimmed === '/workspace/project') {
     resolved = projectRoot;
   } else if (trimmed.startsWith('/workspace/project/')) {
-    resolved = path.resolve(projectRoot, trimmed.slice('/workspace/project/'.length));
+    resolved = path.resolve(
+      projectRoot,
+      trimmed.slice('/workspace/project/'.length),
+    );
   } else if (trimmed === '/workspace/global') {
     resolved = globalRoot;
   } else if (trimmed.startsWith('/workspace/global/')) {
-    resolved = path.resolve(globalRoot, trimmed.slice('/workspace/global/'.length));
+    resolved = path.resolve(
+      globalRoot,
+      trimmed.slice('/workspace/global/'.length),
+    );
   } else if (path.isAbsolute(trimmed)) {
     resolved = path.resolve(trimmed);
   } else {
@@ -378,20 +412,45 @@ async function sendAttachmentAsKind(
       await bot.sendPhoto(chatJid, data, attachment.caption);
       return 'photo';
     case 'video':
-      await bot.sendVideo(chatJid, data, attachment.fileName, attachment.caption);
+      await bot.sendVideo(
+        chatJid,
+        data,
+        attachment.fileName,
+        attachment.caption,
+      );
       return 'video';
     case 'audio':
-      await bot.sendAudio(chatJid, data, attachment.fileName, attachment.caption);
+      await bot.sendAudio(
+        chatJid,
+        data,
+        attachment.fileName,
+        attachment.caption,
+      );
       return 'audio';
     case 'voice':
-      await bot.sendVoice(chatJid, data, attachment.fileName, attachment.caption);
+      await bot.sendVoice(
+        chatJid,
+        data,
+        attachment.fileName,
+        attachment.caption,
+      );
       return 'voice';
     case 'animation':
-      await bot.sendAnimation(chatJid, data, attachment.fileName, attachment.caption);
+      await bot.sendAnimation(
+        chatJid,
+        data,
+        attachment.fileName,
+        attachment.caption,
+      );
       return 'animation';
     case 'document':
     default:
-      await bot.sendDocument(chatJid, data, attachment.fileName, attachment.caption);
+      await bot.sendDocument(
+        chatJid,
+        data,
+        attachment.fileName,
+        attachment.caption,
+      );
       return 'document';
   }
 }
@@ -405,7 +464,11 @@ export async function sendResolvedTelegramAttachments(params: {
 
   for (const attachment of params.attachments) {
     try {
-      const deliveredKind = await sendAttachmentAsKind(params.bot, params.chatJid, attachment);
+      const deliveredKind = await sendAttachmentAsKind(
+        params.bot,
+        params.chatJid,
+        attachment,
+      );
       outcomes.push({
         attachment,
         deliveredKind,

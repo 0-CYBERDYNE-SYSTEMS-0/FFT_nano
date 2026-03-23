@@ -60,7 +60,10 @@ function toNumber(value: unknown): number | undefined {
   return value >= 0 ? value : undefined;
 }
 
-function readString(record: Record<string, unknown>, keys: string[]): string | undefined {
+function readString(
+  record: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -94,12 +97,7 @@ function summarizeValue(value: unknown, max = 320): string | undefined {
 }
 
 function extractToolName(evt: Record<string, unknown>): string | undefined {
-  return readString(evt, [
-    'toolName',
-    'tool_name',
-    'name',
-    'tool',
-  ]);
+  return readString(evt, ['toolName', 'tool_name', 'name', 'tool']);
 }
 
 function extractToolCallId(evt: Record<string, unknown>): string | undefined {
@@ -124,16 +122,24 @@ function extractToolArgs(evt: Record<string, unknown>): string | undefined {
 
 function extractToolError(evt: Record<string, unknown>): string | undefined {
   const direct =
-    readString(evt, ['errorMessage', 'error_message', 'errorText', 'message']) ||
-    summarizeValue(evt.error, 320);
+    readString(evt, [
+      'errorMessage',
+      'error_message',
+      'errorText',
+      'message',
+    ]) || summarizeValue(evt.error, 320);
   if (direct) return direct;
 
   const result = evt.result;
   if (result && typeof result === 'object') {
     const nested = result as Record<string, unknown>;
     return (
-      readString(nested, ['errorMessage', 'error_message', 'errorText', 'message']) ||
-      summarizeValue(nested.error, 320)
+      readString(nested, [
+        'errorMessage',
+        'error_message',
+        'errorText',
+        'message',
+      ]) || summarizeValue(nested.error, 320)
     );
   }
   return undefined;
@@ -169,7 +175,8 @@ function isToolEndEvent(type: string): boolean {
 function isToolError(evt: Record<string, unknown>): boolean {
   if (evt.isError === true || evt.is_error === true) return true;
   const status = readString(evt, ['status']);
-  if (status && ['error', 'failed', 'failure'].includes(status.toLowerCase())) return true;
+  if (status && ['error', 'failed', 'failure'].includes(status.toLowerCase()))
+    return true;
   const stopReason = readString(evt, ['stopReason', 'stop_reason']);
   if (stopReason && stopReason.toLowerCase() === 'error') return true;
   return false;
@@ -197,11 +204,12 @@ export function parsePiJsonOutput(
   const extractUsage = (evt: any) => {
     const messageUsage = evt?.message?.usage;
     const directUsage = evt?.usage;
-    const usageCandidate = messageUsage && typeof messageUsage === 'object'
-      ? messageUsage
-      : directUsage && typeof directUsage === 'object'
-        ? directUsage
-        : undefined;
+    const usageCandidate =
+      messageUsage && typeof messageUsage === 'object'
+        ? messageUsage
+        : directUsage && typeof directUsage === 'object'
+          ? directUsage
+          : undefined;
     if (!usageCandidate) return;
 
     const inputTokens =
@@ -272,8 +280,10 @@ export function parsePiJsonOutput(
 
           const isError = isToolError(evtRecord);
           const output = extractToolOutput(evtRecord);
-          const error = extractToolError(evtRecord) || (isError ? output : undefined);
-          const toolName = extractToolName(evtRecord) || pending?.toolName || 'tool';
+          const error =
+            extractToolError(evtRecord) || (isError ? output : undefined);
+          const toolName =
+            extractToolName(evtRecord) || pending?.toolName || 'tool';
           const args = extractToolArgs(evtRecord) || pending?.args;
 
           toolExecutions.push({
@@ -281,13 +291,7 @@ export function parsePiJsonOutput(
             toolName,
             status: isError ? 'error' : 'ok',
             ...(args ? { args } : {}),
-            ...(isError
-              ? error
-                ? { error }
-                : {}
-              : output
-                ? { output }
-                : {}),
+            ...(isError ? (error ? { error } : {}) : output ? { output } : {}),
           });
         }
       }

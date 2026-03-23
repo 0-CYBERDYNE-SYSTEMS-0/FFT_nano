@@ -32,14 +32,13 @@ export function resolveStartupSession(
     return {
       sessionKey: requested,
       shouldLoadHistory: false,
-      infoMessage:
-        [
-          'Session "main" is not registered yet, so onboarding gate cannot run in TUI.',
-          'Claim a main chat first (Telegram DM: /id then /main <secret>), then reconnect TUI.',
-          available
-            ? `Available sessions right now: ${available} (use /session <key> to switch).`
-            : 'No alternate sessions are currently available.',
-        ].join(' '),
+      infoMessage: [
+        'Session "main" is not registered yet, so onboarding gate cannot run in TUI.',
+        'Claim a main chat first (Telegram DM: /id then /main <secret>), then reconnect TUI.',
+        available
+          ? `Available sessions right now: ${available} (use /session <key> to switch).`
+          : 'No alternate sessions are currently available.',
+      ].join(' '),
     };
   }
 

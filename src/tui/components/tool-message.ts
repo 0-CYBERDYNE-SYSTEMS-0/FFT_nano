@@ -12,7 +12,10 @@ interface ToolEventData {
   error?: string;
 }
 
-function formatToolEvent(data: ToolEventData, verboseMode: VerboseMode): string {
+function formatToolEvent(
+  data: ToolEventData,
+  verboseMode: VerboseMode,
+): string {
   const statusLabel =
     data.status === 'start' ? 'running' : data.status === 'ok' ? 'ok' : 'error';
   const lines = [`Tool #${data.index} ${data.toolName} ${statusLabel}`];
@@ -34,13 +37,19 @@ export class ToolMessageComponent extends Container {
 
   constructor(data: ToolEventData, verboseMode: VerboseMode) {
     super();
-    this.body = new Markdown(formatToolEvent(data, verboseMode), 1, 0, markdownTheme, {
-      color: (line) => {
-        if (data.status === 'error') return theme.error(line);
-        if (data.status === 'ok') return theme.success(line);
-        return theme.accentSoft(line);
+    this.body = new Markdown(
+      formatToolEvent(data, verboseMode),
+      1,
+      0,
+      markdownTheme,
+      {
+        color: (line) => {
+          if (data.status === 'error') return theme.error(line);
+          if (data.status === 'ok') return theme.success(line);
+          return theme.accentSoft(line);
+        },
       },
-    });
+    );
     this.addChild(new Spacer(1));
     this.addChild(this.body);
   }

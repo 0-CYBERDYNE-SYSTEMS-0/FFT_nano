@@ -113,10 +113,15 @@ export function getDefaultDotEnvPath(projectRoot = process.cwd()): string {
   return path.join(projectRoot, '.env');
 }
 
-export function loadDotEnvMap(envPath = getDefaultDotEnvPath()): Record<string, string> {
+export function loadDotEnvMap(
+  envPath = getDefaultDotEnvPath(),
+): Record<string, string> {
   const out: Record<string, string> = {};
   if (!fs.existsSync(envPath)) return out;
-  const lines = fs.readFileSync(envPath, 'utf-8').replace(/\r\n/g, '\n').split('\n');
+  const lines = fs
+    .readFileSync(envPath, 'utf-8')
+    .replace(/\r\n/g, '\n')
+    .split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -129,7 +134,10 @@ export function loadDotEnvMap(envPath = getDefaultDotEnvPath()): Record<string, 
   return out;
 }
 
-export function upsertDotEnv(envPath: string, updates: Record<string, string | undefined>): void {
+export function upsertDotEnv(
+  envPath: string,
+  updates: Record<string, string | undefined>,
+): void {
   const existing = fs.existsSync(envPath)
     ? fs.readFileSync(envPath, 'utf-8').replace(/\r\n/g, '\n').split('\n')
     : [];
@@ -165,7 +173,9 @@ export function upsertDotEnv(envPath: string, updates: Record<string, string | u
   fs.writeFileSync(`${envPath}`, `${lines.join('\n')}\n`, 'utf-8');
 }
 
-export function applyProcessEnvUpdates(updates: Record<string, string | undefined>): void {
+export function applyProcessEnvUpdates(
+  updates: Record<string, string | undefined>,
+): void {
   for (const [key, value] of Object.entries(updates)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -182,7 +192,9 @@ export function hasMeaningfulSecret(raw: string | undefined): boolean {
 export function getRuntimeProviderDefinitionByPreset(
   preset: RuntimeProviderPreset,
 ): RuntimeProviderDefinition {
-  const found = RUNTIME_PROVIDER_DEFINITIONS.find((entry) => entry.id === preset);
+  const found = RUNTIME_PROVIDER_DEFINITIONS.find(
+    (entry) => entry.id === preset,
+  );
   if (!found) {
     throw new Error(`Unknown runtime provider preset: ${preset}`);
   }
@@ -195,7 +207,8 @@ export function getRuntimeProviderDefinitionByPiApi(
   const normalized = (piApi || '').trim().toLowerCase();
   if (!normalized) return null;
   return (
-    RUNTIME_PROVIDER_DEFINITIONS.find((entry) => entry.piApi === normalized) || null
+    RUNTIME_PROVIDER_DEFINITIONS.find((entry) => entry.piApi === normalized) ||
+    null
   );
 }
 
@@ -210,7 +223,9 @@ function getRuntimeProviderDefinitionBySource(
   source: Record<string, string | undefined>,
 ): RuntimeProviderDefinition | null {
   const provider = (source.PI_API || '').trim().toLowerCase();
-  const preset = (source[RUNTIME_PROVIDER_PRESET_ENV] || '').trim().toLowerCase();
+  const preset = (source[RUNTIME_PROVIDER_PRESET_ENV] || '')
+    .trim()
+    .toLowerCase();
   if (isRuntimeProviderPreset(preset)) {
     const presetDef = getRuntimeProviderDefinitionByPreset(preset);
     if (!provider || presetDef.piApi === provider) {

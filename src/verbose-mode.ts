@@ -16,14 +16,19 @@ export function normalizeVerboseMode(raw: string): VerboseMode | undefined {
   return undefined;
 }
 
-export function getEffectiveVerboseMode(mode: VerboseMode | undefined): VerboseMode {
+export function getEffectiveVerboseMode(
+  mode: VerboseMode | undefined,
+): VerboseMode {
   return mode ?? 'off';
 }
 
 export function describeVerboseMode(mode: VerboseMode): string {
-  if (mode === 'off') return 'Tool progress: OFF — silent mode, just the final response.';
-  if (mode === 'new') return 'Tool progress: NEW — emoji reactions show which tool is running.';
-  if (mode === 'all') return 'Tool progress: ALL — emoji reactions + tool trail in the preview.';
+  if (mode === 'off')
+    return 'Tool progress: OFF — silent mode, just the final response.';
+  if (mode === 'new')
+    return 'Tool progress: NEW — emoji reactions show which tool is running.';
+  if (mode === 'all')
+    return 'Tool progress: ALL — emoji reactions + tool trail in the preview.';
   return 'Tool progress: VERBOSE — separate message with full tool details.';
 }
 
@@ -39,14 +44,20 @@ export function parseVerboseDirective(text: string): ParsedVerboseDirective {
   const trimmed = raw.trim();
   if (!trimmed) return { kind: 'none', prompt: raw };
 
-  const leading = trimmed.match(/^\/(?:verbose|v)(?:@[A-Za-z0-9_]+)?(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i);
+  const leading = trimmed.match(
+    /^\/(?:verbose|v)(?:@[A-Za-z0-9_]+)?(?:\s+(\S+))?(?:\s+([\s\S]*))?$/i,
+  );
   if (!leading) return { kind: 'none', prompt: raw };
 
   const rawMode = (leading[1] || '').trim();
   const remainder = (leading[2] || '').trim();
   if (!rawMode && !remainder) return { kind: 'cycle', prompt: raw };
   if (!rawMode || remainder) {
-    return { kind: 'invalid', prompt: raw, value: `${rawMode}${remainder ? ` ${remainder}` : ''}`.trim() };
+    return {
+      kind: 'invalid',
+      prompt: raw,
+      value: `${rawMode}${remainder ? ` ${remainder}` : ''}`.trim(),
+    };
   }
 
   const normalized = normalizeVerboseMode(rawMode);

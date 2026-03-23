@@ -32,8 +32,15 @@ export interface FinalizeCompletedRunParams {
     },
   ) => void;
   persistLastAgentTimestamp?: (chatJid: string, timestamp: string) => void;
-  persistAssistantHistory: (chatJid: string, text: string, runId?: string) => string | void;
-  deleteTelegramPreviewMessage: (chatJid: string, messageId: number) => Promise<void>;
+  persistAssistantHistory: (
+    chatJid: string,
+    text: string,
+    runId?: string,
+  ) => string | void;
+  deleteTelegramPreviewMessage: (
+    chatJid: string,
+    messageId: number,
+  ) => Promise<void>;
   finalizeTelegramPreviewMessage: (
     chatJid: string,
     messageId: number,
@@ -136,21 +143,39 @@ export interface MessageDispatcherDeps {
       startedAt: number;
       parentRequestId?: string;
       backend?: 'pi';
-      route?: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+      route?:
+        | 'coder_execute'
+        | 'coder_plan'
+        | 'auto_execute'
+        | 'subagent_execute'
+        | 'subagent_plan';
       state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
       worktreePath?: string;
       childRunIds?: string[];
       abortController?: AbortController;
     }
   >;
-  tuiMessageQueue: Map<string, Array<{ text: string; runId: string; deliver: boolean }>>;
+  tuiMessageQueue: Map<
+    string,
+    Array<{ text: string; runId: string; deliver: boolean }>
+  >;
   sendMessage: (chatJid: string, text: string) => Promise<void>;
   setTyping: (chatJid: string, typing: boolean) => Promise<void>;
-  getMessagesSince: (chatJid: string, sinceTimestamp: string, assistantName: string) => NewMessage[];
+  getMessagesSince: (
+    chatJid: string,
+    sinceTimestamp: string,
+    assistantName: string,
+  ) => NewMessage[];
   getSessionKeyForChat: (chatJid: string) => string;
   resolveMainOnboardingGate: (chatJid: string) => { active: boolean };
-  buildOnboardingInterviewPrompt: (params: { prompt: string; latestUserText: string }) => string;
-  extractOnboardingCompletion: (text: string | null) => { text: string | null; completed: boolean };
+  buildOnboardingInterviewPrompt: (params: {
+    prompt: string;
+    latestUserText: string;
+  }) => string;
+  extractOnboardingCompletion: (text: string | null) => {
+    text: string | null;
+    completed: boolean;
+  };
   completeMainWorkspaceOnboarding: (params: any) => void;
   rememberHeartbeatTarget: (chatJid: string) => void;
   runAgent: (
@@ -162,12 +187,22 @@ export interface MessageDispatcherDeps {
     runtimePrefs: Record<string, any>,
     options: Record<string, unknown>,
     abortSignal: AbortSignal,
-  ) => Promise<{ result: string | null; streamed: boolean; ok: boolean; usage?: RunUsage }>;
+  ) => Promise<{
+    result: string | null;
+    streamed: boolean;
+    ok: boolean;
+    usage?: RunUsage;
+  }>;
   runCodingTask?: (params: {
     requestId: string;
     parentRequestId?: string;
     mode: 'plan' | 'execute';
-    route: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+    route:
+      | 'coder_execute'
+      | 'coder_plan'
+      | 'auto_execute'
+      | 'subagent_execute'
+      | 'subagent_plan';
     originChatJid: string;
     originGroupFolder: string;
     taskText: string;
@@ -183,8 +218,15 @@ export interface MessageDispatcherDeps {
   }) => Promise<CodingRunResult>;
   consumeNextRunNoContinue: (chatJid: string) => boolean;
   updateChatUsage: (chatJid: string, usage?: RunUsage) => void;
-  persistAssistantHistory: (chatJid: string, text: string, runId?: string) => string | void;
-  deleteTelegramPreviewMessage: (chatJid: string, messageId: number) => Promise<void>;
+  persistAssistantHistory: (
+    chatJid: string,
+    text: string,
+    runId?: string,
+  ) => string | void;
+  deleteTelegramPreviewMessage: (
+    chatJid: string,
+    messageId: number,
+  ) => Promise<void>;
   finalizeTelegramPreviewMessage: (
     chatJid: string,
     messageId: number,
@@ -207,7 +249,10 @@ export interface MessageDispatcherDeps {
     previewState: TelegramMessagePreviewState | null;
   }>;
   consumeTelegramHostCompletedRun: (chatJid: string, runId: string) => boolean;
-  consumeTelegramHostStreamState: (chatJid: string, runId: string) => TelegramMessagePreviewState | null;
+  consumeTelegramHostStreamState: (
+    chatJid: string,
+    runId: string,
+  ) => TelegramMessagePreviewState | null;
   resolveTelegramStreamCompletionState: (params: {
     externallyCompleted: boolean;
     previewState: TelegramMessagePreviewState | null;
@@ -216,13 +261,20 @@ export interface MessageDispatcherDeps {
     messagePreviewState: TelegramMessagePreviewState | null;
   };
   finalizeCompletedRun: (params: FinalizeCompletedRunParams) => Promise<void>;
-  parseDelegationTrigger?: (text: string) => { hint: string; instruction: string | null };
+  parseDelegationTrigger?: (text: string) => {
+    hint: string;
+    instruction: string | null;
+  };
   isSubstantialCodingTask?: (text: string) => boolean;
   isCoderDelegationCommand?: (content: string) => boolean;
   onboardingCommandBlockedText?: () => string;
   makeRunId?: (prefix: string) => string;
   logger?: { info?: (payload: unknown, message?: string) => void };
-  persistTuiUserHistory?: (chatJid: string, text: string, runId: string) => void;
+  persistTuiUserHistory?: (
+    chatJid: string,
+    text: string,
+    runId: string,
+  ) => void;
 }
 
 export async function finalizeCompletedRun(
@@ -230,7 +282,10 @@ export async function finalizeCompletedRun(
 ): Promise<void> {
   params.updateChatUsage(params.chatJid, params.usage);
   if (params.timestampToPersist) {
-    params.persistLastAgentTimestamp?.(params.chatJid, params.timestampToPersist);
+    params.persistLastAgentTimestamp?.(
+      params.chatJid,
+      params.timestampToPersist,
+    );
   }
 
   if (params.abortSignal.aborted) {
@@ -310,7 +365,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     text: string;
     runId: string;
     deliver: boolean;
-  }) => Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }>;
+  }) => Promise<{
+    runId: string;
+    status: 'started' | 'queued' | 'already_running';
+  }>;
 } {
   async function processMessage(msg: NewMessage): Promise<boolean> {
     const group = deps.state.registeredGroups[msg.chat_jid];
@@ -326,28 +384,40 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         ? Math.floor(queuePrefs.queueCap)
         : undefined;
     const queueDebounceMs =
-      typeof queuePrefs.queueDebounceMs === 'number' && queuePrefs.queueDebounceMs > 0
+      typeof queuePrefs.queueDebounceMs === 'number' &&
+      queuePrefs.queueDebounceMs > 0
         ? Math.floor(queuePrefs.queueDebounceMs)
         : 0;
     const freeChatEnabled = queuePrefs.freeChat === true;
-    if (!isMainGroup && !freeChatEnabled && !deps.constants.triggerPattern.test(content)) return true;
+    if (
+      !isMainGroup &&
+      !freeChatEnabled &&
+      !deps.constants.triggerPattern.test(content)
+    )
+      return true;
 
     const onboardingGate = deps.resolveMainOnboardingGate(msg.chat_jid);
     if (onboardingGate.active && deps.isCoderDelegationCommand?.(content)) {
-      await deps.sendMessage(msg.chat_jid, deps.onboardingCommandBlockedText?.() || 'Blocked');
+      await deps.sendMessage(
+        msg.chat_jid,
+        deps.onboardingCommandBlockedText?.() || 'Blocked',
+      );
       return true;
     }
 
-    let codingHint: any = isMainGroup
-      ? 'auto'
-      : 'none';
-    let requestId = deps.makeRunId ? deps.makeRunId('chat') : `chat-${Date.now()}`;
+    let codingHint: any = isMainGroup ? 'auto' : 'none';
+    let requestId = deps.makeRunId
+      ? deps.makeRunId('chat')
+      : `chat-${Date.now()}`;
     let delegationInstruction: string | null = null;
 
-    const stripped = content.replace(deps.constants.triggerPattern, '').trimStart();
-    const parsedTrigger = onboardingGate.active || !deps.parseDelegationTrigger
-      ? { hint: 'none' as const, instruction: null }
-      : deps.parseDelegationTrigger(stripped);
+    const stripped = content
+      .replace(deps.constants.triggerPattern, '')
+      .trimStart();
+    const parsedTrigger =
+      onboardingGate.active || !deps.parseDelegationTrigger
+        ? { hint: 'none' as const, instruction: null }
+        : deps.parseDelegationTrigger(stripped);
     const wantsDelegation = parsedTrigger.hint !== 'none';
 
     if (wantsDelegation && !isMainGroup) {
@@ -376,26 +446,31 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       deps.constants.assistantName,
     );
 
-    let selectedMessages = missedMessages.length > 0
-      ? [...missedMessages]
-      : [msg];
+    let selectedMessages =
+      missedMessages.length > 0 ? [...missedMessages] : [msg];
     let droppedCount = 0;
     if (queueCap && selectedMessages.length > queueCap) {
       droppedCount = selectedMessages.length - queueCap;
-      if (queueDrop === 'new') selectedMessages = selectedMessages.slice(0, queueCap);
+      if (queueDrop === 'new')
+        selectedMessages = selectedMessages.slice(0, queueCap);
       else selectedMessages = selectedMessages.slice(-queueCap);
     }
     if (queueMode === 'followup' || queueMode === 'interrupt') {
-      selectedMessages = selectedMessages.length ? [selectedMessages[selectedMessages.length - 1] as NewMessage] : [];
+      selectedMessages = selectedMessages.length
+        ? [selectedMessages[selectedMessages.length - 1] as NewMessage]
+        : [];
     }
-    const lines = selectedMessages.map((m) => `[${m.timestamp}] ${m.sender_name}: ${m.content}`);
+    const lines = selectedMessages.map(
+      (m) => `[${m.timestamp}] ${m.sender_name}: ${m.content}`,
+    );
     const prompt = lines.join('\n');
     if (!prompt) return true;
     if (group.folder === deps.constants.mainGroupFolder) {
       deps.rememberHeartbeatTarget(msg.chat_jid);
     }
     const sessionKey = deps.getSessionKeyForChat(msg.chat_jid);
-    const latestUserText = selectedMessages[selectedMessages.length - 1]?.content || content;
+    const latestUserText =
+      selectedMessages[selectedMessages.length - 1]?.content || content;
     const shouldAutoRouteCoding =
       !wantsDelegation &&
       isMainGroup &&
@@ -429,7 +504,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     }
     if (onboardingGate.active) {
       codingHint = 'none';
-      requestId = deps.makeRunId ? deps.makeRunId('onboarding') : `onboarding-${Date.now()}`;
+      requestId = deps.makeRunId
+        ? deps.makeRunId('onboarding')
+        : `onboarding-${Date.now()}`;
       finalPrompt = deps.buildOnboardingInterviewPrompt({
         prompt,
         latestUserText,
@@ -480,43 +557,46 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     });
     await deps.setTyping(msg.chat_jid, true);
     try {
-      const run = shouldUseCodingWorker && deps.runCodingTask
-        ? await deps.runCodingTask({
-            requestId,
-            mode: codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
-            route: codingHint === 'force_delegate_plan'
-              ? 'coder_plan'
-              : wantsDelegation
-                ? 'coder_execute'
-                : 'auto_execute',
-            originChatJid: msg.chat_jid,
-            originGroupFolder: group.folder,
-            taskText: delegationInstruction || latestUserText,
-            workspaceMode:
-              codingHint === 'force_delegate_plan'
-                ? 'read_only'
-                : 'ephemeral_worktree',
-            timeoutSeconds: 1800,
-            allowFanout:
-              (codingHint === 'force_delegate_execute' || shouldAutoRouteCoding) &&
-              !onboardingGate.active,
-            sessionContext: finalPrompt,
-            assistantName: deps.constants.assistantName,
-            sessionKey,
-            group,
-            runtimePrefs: runPreferences,
-            abortController,
-          })
-        : await deps.runAgent(
-            group,
-            finalPrompt,
-            msg.chat_jid,
-            codingHint,
-            requestId,
-            runPreferences,
-            {},
-            abortController.signal,
-          );
+      const run =
+        shouldUseCodingWorker && deps.runCodingTask
+          ? await deps.runCodingTask({
+              requestId,
+              mode: codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
+              route:
+                codingHint === 'force_delegate_plan'
+                  ? 'coder_plan'
+                  : wantsDelegation
+                    ? 'coder_execute'
+                    : 'auto_execute',
+              originChatJid: msg.chat_jid,
+              originGroupFolder: group.folder,
+              taskText: delegationInstruction || latestUserText,
+              workspaceMode:
+                codingHint === 'force_delegate_plan'
+                  ? 'read_only'
+                  : 'ephemeral_worktree',
+              timeoutSeconds: 1800,
+              allowFanout:
+                (codingHint === 'force_delegate_execute' ||
+                  shouldAutoRouteCoding) &&
+                !onboardingGate.active,
+              sessionContext: finalPrompt,
+              assistantName: deps.constants.assistantName,
+              sessionKey,
+              group,
+              runtimePrefs: runPreferences,
+              abortController,
+            })
+          : await deps.runAgent(
+              group,
+              finalPrompt,
+              msg.chat_jid,
+              codingHint,
+              requestId,
+              runPreferences,
+              {},
+              abortController.signal,
+            );
       result = run.result;
       streamed = run.streamed;
       ok = run.ok;
@@ -532,7 +612,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       const completion = deps.extractOnboardingCompletion(result);
       result = completion.text;
       if (completion.completed) {
-        deps.completeMainWorkspaceOnboarding({ workspaceDir: deps.constants.mainWorkspaceDir });
+        deps.completeMainWorkspaceOnboarding({
+          workspaceDir: deps.constants.mainWorkspaceDir,
+        });
         if (!result) result = 'Onboarding complete.';
         deps.logger?.info?.(
           { chatJid: msg.chat_jid, requestId },
@@ -556,10 +638,12 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
                 ? deps.consumeTelegramHostStreamState(msg.chat_jid, requestId)
                 : null,
             };
-      const telegramCompletionState = deps.resolveTelegramStreamCompletionState({
-        externallyCompleted: completionState.externallyCompleted,
-        previewState: completionState.previewState,
-      });
+      const telegramCompletionState = deps.resolveTelegramStreamCompletionState(
+        {
+          externallyCompleted: completionState.externallyCompleted,
+          previewState: completionState.previewState,
+        },
+      );
       streamed = telegramCompletionState.effectiveStreamed;
       const telegramPreviewState = telegramCompletionState.messagePreviewState;
       await deps.finalizeCompletedRun({
@@ -607,7 +691,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     text: string;
     runId: string;
     deliver: boolean;
-  }): Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }> {
+  }): Promise<{
+    runId: string;
+    status: 'started' | 'queued' | 'already_running';
+  }> {
     const { chatJid, text, runId, deliver } = params;
     const group = deps.state.registeredGroups[chatJid];
     if (!group) {
@@ -715,7 +802,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         const completion = deps.extractOnboardingCompletion(result);
         result = completion.text;
         if (completion.completed) {
-          deps.completeMainWorkspaceOnboarding({ workspaceDir: deps.constants.mainWorkspaceDir });
+          deps.completeMainWorkspaceOnboarding({
+            workspaceDir: deps.constants.mainWorkspaceDir,
+          });
           if (!result) result = 'Onboarding complete.';
           deps.logger?.info?.(
             { chatJid, runId },
@@ -738,10 +827,12 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
                 ? deps.consumeTelegramHostStreamState(chatJid, runId)
                 : null,
             };
-      const telegramCompletionState = deps.resolveTelegramStreamCompletionState({
-        externallyCompleted: completionState.externallyCompleted,
-        previewState: completionState.previewState,
-      });
+      const telegramCompletionState = deps.resolveTelegramStreamCompletionState(
+        {
+          externallyCompleted: completionState.externallyCompleted,
+          previewState: completionState.previewState,
+        },
+      );
       streamed = telegramCompletionState.effectiveStreamed;
       const telegramPreviewState = telegramCompletionState.messagePreviewState;
       await deps.finalizeCompletedRun({

@@ -1,6 +1,10 @@
 import { randomUUID } from 'crypto';
 
-import type { AgentEventPayload, ChatEventPayload, GatewayEventFrame } from '../tui/protocol.js';
+import type {
+  AgentEventPayload,
+  ChatEventPayload,
+  GatewayEventFrame,
+} from '../tui/protocol.js';
 
 export interface HostEventBase {
   id: string;

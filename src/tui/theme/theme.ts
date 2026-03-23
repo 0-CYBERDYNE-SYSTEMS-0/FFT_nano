@@ -1,9 +1,16 @@
-import type { EditorTheme, MarkdownTheme, SelectListTheme } from '@mariozechner/pi-tui';
+import type {
+  EditorTheme,
+  MarkdownTheme,
+  SelectListTheme,
+} from '@mariozechner/pi-tui';
 import chalk from 'chalk';
 import { createRequire } from 'module';
 
 type CliHighlightModule = {
-  highlight: (code: string, options?: { language?: string; ignoreIllegals?: boolean }) => string;
+  highlight: (
+    code: string,
+    options?: { language?: string; ignoreIllegals?: boolean },
+  ) => string;
   supportsLanguage: (language: string) => boolean;
 };
 
@@ -41,7 +48,8 @@ function highlightCode(code: string, lang?: string): string[] {
     return code.split('\n').map((line) => fg(palette.code)(line));
   }
   try {
-    const language = lang && cliHighlight.supportsLanguage(lang) ? lang : undefined;
+    const language =
+      lang && cliHighlight.supportsLanguage(lang) ? lang : undefined;
     const highlighted = cliHighlight.highlight(code, {
       language,
       ignoreIllegals: true,

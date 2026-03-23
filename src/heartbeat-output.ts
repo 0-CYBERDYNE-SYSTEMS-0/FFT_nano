@@ -9,7 +9,10 @@ function normalizeHeartbeatTokenMarkup(text: string): string {
 
 export function looksLikeJsonEventStream(text: string): boolean {
   if (!text.startsWith('{') || !text.includes('"type"')) return false;
-  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
   if (lines.length === 0) return false;
 
   let parsed = 0;
@@ -46,7 +49,10 @@ export function isHeartbeatAckOnly(text: string): boolean {
   if (normalized === HEARTBEAT_TOKEN) return true;
 
   const withoutPrefix = normalized
-    .replace(new RegExp(`^${HEARTBEAT_TOKEN}[\\s.!?,:;\\-\\]\\[(){}"']*`, 'i'), '')
+    .replace(
+      new RegExp(`^${HEARTBEAT_TOKEN}[\\s.!?,:;\\-\\]\\[(){}"']*`, 'i'),
+      '',
+    )
     .trim();
   return withoutPrefix.length === 0;
 }

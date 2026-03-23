@@ -82,7 +82,9 @@ export class HomeAssistantAdapter {
       ),
     );
     this.endpointCandidates =
-      normalizedCandidates.length > 0 ? normalizedCandidates : [normalizedPrimary];
+      normalizedCandidates.length > 0
+        ? normalizedCandidates
+        : [normalizedPrimary];
     this.activeBaseUrl = this.endpointCandidates[0];
     this.token = token;
   }
@@ -98,11 +100,18 @@ export class HomeAssistantAdapter {
     };
   }
 
-  private async fetchJson(pathname: string, init?: RequestInit): Promise<unknown> {
+  private async fetchJson(
+    pathname: string,
+    init?: RequestInit,
+  ): Promise<unknown> {
     await this.ensureEndpointReady();
 
     try {
-      return await this.fetchJsonWithEndpoint(this.activeBaseUrl, pathname, init);
+      return await this.fetchJsonWithEndpoint(
+        this.activeBaseUrl,
+        pathname,
+        init,
+      );
     } catch (error) {
       if (!this.shouldAttemptFailover(error)) {
         throw error;
@@ -123,7 +132,9 @@ export class HomeAssistantAdapter {
             failedEndpoint,
             candidateEndpoint: nextEndpoint,
             err:
-              probeError instanceof Error ? probeError.message : String(probeError),
+              probeError instanceof Error
+                ? probeError.message
+                : String(probeError),
           },
           'Home Assistant failover probe failed',
         );
@@ -224,9 +235,10 @@ export class HomeAssistantAdapter {
     }
 
     for (let offset = 1; offset < this.endpointCandidates.length; offset += 1) {
-      const candidate = this.endpointCandidates[
-        (idx + offset) % this.endpointCandidates.length
-      ];
+      const candidate =
+        this.endpointCandidates[
+          (idx + offset) % this.endpointCandidates.length
+        ];
       if (candidate !== failedEndpoint) return candidate;
     }
 
