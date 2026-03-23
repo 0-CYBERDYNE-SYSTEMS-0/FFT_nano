@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "Running pre-merge checks..."
+
+echo "  - Running secret scan..."
+npm run secret-scan
+
+echo "Pre-merge checks passed."
