@@ -1,0 +1,58 @@
+{
+  "milestone": "governance",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "npm test",
+      "exitCode": 0,
+      "summary": "All 264 tests passed"
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "npm run typecheck",
+      "exitCode": 0,
+      "summary": "TypeScript compilation successful"
+    },
+    "lint": {
+      "passed": true,
+      "command": "npm run format:check",
+      "exitCode": 0,
+      "summary": "All files conform to Prettier code style"
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added governance verification checklist with OSS requirements for issue templates, PR templates, GitHub Actions, and git hooks",
+      "sourceFeature": "verify-governance"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add guidance section for validation workers: When running npm run secret-scan during verification tasks, ignore false positives from .factory/validation/ directory. Validation reports contain personal paths in transcript metadata (mission dir, worker session IDs) which is expected and not a security concern.",
+      "evidence": "Feature verify-governance worker correctly identified that secret-scan reports personal paths in .factory/validation/ reports as a pre-existing infrastructure issue, unrelated to governance artifacts being verified.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Worker skill (mission-worker-base + worker) provides clear guidance for verification-only features",
+      "reason": "positive feedback on existing skills - no action needed"
+    },
+    {
+      "observation": "Governance verification commands are properly documented in .factory/services.yaml",
+      "reason": "confirmation that existing documentation is adequate - no action needed"
+    }
+  ],
+  "previousRound": null
+}
