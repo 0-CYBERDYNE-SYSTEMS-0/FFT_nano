@@ -1,1 +1,0 @@
-"""TypeScript React detector package."""

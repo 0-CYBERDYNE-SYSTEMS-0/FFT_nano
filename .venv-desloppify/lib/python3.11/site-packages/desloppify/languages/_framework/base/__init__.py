@@ -1,1 +1,0 @@
-"""Shared framework base package."""
