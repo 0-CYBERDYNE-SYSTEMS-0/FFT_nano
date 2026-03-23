@@ -5,7 +5,7 @@ import { resolveDockerVisibleCommand } from '../src/sandbox.js';
 
 test('resolveDockerVisibleCommand prefers in-container pi binary for host absolute pi paths', () => {
   assert.equal(
-    resolveDockerVisibleCommand('/Users/test/project/node_modules/.bin/pi'),
+    resolveDockerVisibleCommand('/home/user/project/node_modules/.bin/pi'),
     'pi',
   );
   assert.equal(
