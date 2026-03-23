@@ -1,0 +1,75 @@
+{
+  "assertionId": "VAL-DOCS-004",
+  "assertionDescription": "CONTRIBUTING.md exists with accurate branch protection and merge requirements",
+  "testingSurface": "documentation-files",
+  "isolationContext": {
+    "type": "read-only-file-access",
+    "basePath": "/Users/scrimwiggins/fft_nano",
+    "filesUnderTest": [
+      "CONTRIBUTING.md",
+      ".github/workflows/release-readiness.yml"
+    ]
+  },
+  "testProcedure": [
+    "1. Verified CONTRIBUTING.md exists and is readable",
+    "2. Confirmed CONTRIBUTING.md contains accurate branch protection settings:",
+    "   - Require PR before merging",
+    "   - 1+ approving reviews required",
+    "   - Require review from Code Owners",
+    "   - Dismiss stale reviews when new commits are pushed",
+    "3. Verified required status checks documentation:",
+    "   - secret-scan (GitHub Actions)",
+    "   - quick-checks (GitHub Actions)",
+    "   - full-checks (GitHub Actions)",
+    "   - Require branches to be up to date before merging",
+    "4. Confirmed signed commits requirement",
+    "5. Verified merge queue documentation (max 2 jobs)",
+    "6. Checked local development hooks documentation:",
+    "   - pre-commit: npm run typecheck and npm test",
+    "   - pre-push: typecheck, test, and secret-scan",
+    "   - pre-merge-commit: npm run secret-scan",
+    "7. Verified CI/CD pipeline documentation matches actual workflow",
+    "8. Cross-referenced CONTRIBUTING.md claims with .github/workflows/release-readiness.yml"
+  ],
+  "observations": [
+    "CONTRIBUTING.md is present (2,458 bytes)",
+    "Branch Protection section clearly documents all required GitHub settings",
+    "Status checks (secret-scan, quick-checks, full-checks) are documented",
+    "Local development hooks are explained with their purposes",
+    "CI/CD pipeline section explains the three-tier check system",
+    "Preventing Future Merge Issues section provides helpful guidance",
+    "Verified workflow file contains secret-scan, quick-checks, and full-checks jobs",
+    "Contributing guidelines are product-focused (preserves security model, understandable code)",
+    "Accepted contributions are clearly defined (bug fixes, security fixes, farm-assistant features, docs)",
+    "Contributions to avoid are specified (platform/framework work without user value)"
+  ],
+  "evidence": {
+    "filesVerified": [
+      "CONTRIBUTING.md (2,458 bytes)",
+      ".github/workflows/release-readiness.yml"
+    ],
+    "branchProtectionSettings": [
+      "Require PR before merging",
+      "1+ approving reviews",
+      "Review from Code Owners",
+      "Dismiss stale reviews",
+      "Require status checks: secret-scan, quick-checks, full-checks",
+      "Branches up to date before merging",
+      "Require signed commits",
+      "Include admin enforcement",
+      "Merge queue with max 2 jobs"
+    ],
+    "workflowChecksVerified": [
+      "secret-scan job exists",
+      "quick-checks job exists",
+      "full-checks job exists",
+      "full-checks depends on secret-scan and quick-checks"
+    ]
+  },
+  "verdict": "pass",
+  "reasoning": "CONTRIBUTING.md exists with comprehensive and accurate branch protection documentation. All required status checks (secret-scan, quick-checks, full-checks) are documented and match the actual GitHub Actions workflow (.github/workflows/release-readiness.yml). Local development hooks are explained. Merge requirements are clear and appropriate for OSS project governance.",
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["ls", "grep", "cat"],
+  "testingDurationSeconds": 30
+}
