@@ -1,0 +1,34 @@
+{
+  "milestone": "testing",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 6,
+    "passed": 5,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-TEST-001",
+    "VAL-TEST-002",
+    "VAL-TEST-004",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-TEST-003",
+      "reason": "npm run release-check fails on secret-scan step due to validation artifacts in .factory/validation/ directory containing personal absolute paths. These are validation report JSON files from previous mission milestones (repo-foundation, security, documentation, governance), not actual source code. The fresh clone test (VAL-TEST-004) confirms the actual source code is clean with no PII or secrets. This is a false positive caused by secret-scan.sh not excluding the .factory/validation/ directory."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "discoveredIssues": [
+    {
+      "severity": "non_blocking",
+      "description": "secret-scan.sh script does not exclude .factory/validation/ directory, causing false positives on validation report artifacts. The validation reports contain personal absolute paths (basePath, workingDirectory, evidenceDirectory fields) as part of their normal operation, but these are infrastructure artifacts, not source code.",
+      "suggestedFix": "Update scripts/secret-scan.sh to exclude .factory/validation/ directory from path pattern matching. Add ':(exclude).factory/validation/' to the git grep command for user-specific absolute path detection. This allows validation reports to be committed without triggering false positives while still catching actual PII in source code."
+    }
+  ],
+  "previousRound": null
+}
