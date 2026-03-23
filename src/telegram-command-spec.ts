@@ -6,6 +6,7 @@ export const TELEGRAM_COMMON_COMMANDS = [
   { command: 'model', description: 'Show/set model override' },
   { command: 'think', description: 'Show/set thinking level' },
   { command: 'reasoning', description: 'Show/set reasoning visibility' },
+  { command: 'delivery', description: 'Show/set Telegram text delivery mode' },
   { command: 'verbose', description: 'Cycle or set tool progress mode' },
   { command: 'new', description: 'Start a fresh session' },
   { command: 'reset', description: 'Reset session (alias for /new)' },
@@ -45,6 +46,8 @@ export type TelegramCommandName =
   | '/t'
   | '/reasoning'
   | '/reason'
+  | '/delivery'
+  | '/text_delivery'
   | '/verbose'
   | '/v'
   | '/new'
@@ -82,6 +85,8 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/t',
   '/reasoning',
   '/reason',
+  '/delivery',
+  '/text_delivery',
   '/verbose',
   '/v',
   '/new',
@@ -127,6 +132,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/model [provider/model|reset] - show/set chat model',
     '/think [off|minimal|low|medium|high|xhigh] - set thinking level',
     '/reasoning [off|on|stream] - set reasoning visibility mode',
+    '/delivery [off|partial|block|draft|persistent] - set Telegram text delivery mode',
     '/verbose [/v] [off|new|all|verbose] - cycle or set tool progress mode',
     '/new - start fresh session on next run',
     '/reset - alias for /new',

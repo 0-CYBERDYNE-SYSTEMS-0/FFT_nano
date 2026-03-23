@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   createTelegramBot,
+  isTelegramPrivateChatJid,
   isTelegramJid,
   normalizeTelegramDraftText,
   parseTelegramChatId,
@@ -21,6 +22,8 @@ test('parseTelegramChatId rejects non-telegram jid', () => {
   assert.equal(parseTelegramChatId('telegram:'), null);
   assert.equal(isTelegramJid('telegram:42'), true);
   assert.equal(isTelegramJid('foo:42'), false);
+  assert.equal(isTelegramPrivateChatJid('telegram:42'), true);
+  assert.equal(isTelegramPrivateChatJid('telegram:-1001234'), false);
 });
 
 test('splitTelegramText keeps short text unchanged', () => {

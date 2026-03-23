@@ -66,6 +66,13 @@ export function parseTelegramChatId(jid: string): string | null {
   return chatId ? chatId : null;
 }
 
+export function isTelegramPrivateChatJid(jid: string): boolean {
+  const chatId = parseTelegramChatId(jid);
+  if (!chatId) return false;
+  const numericChatId = Number(chatId);
+  return Number.isInteger(numericChatId) && numericChatId > 0;
+}
+
 export interface TelegramEntity {
   type: string;
   offset: number;

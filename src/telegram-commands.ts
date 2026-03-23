@@ -130,6 +130,7 @@ export interface TelegramCommandDeps {
   runPiListModels: (searchText: string) => { text: string };
   normalizeThinkLevel: (value: string) => string | null | undefined;
   normalizeReasoningLevel: (value: string) => string | null | undefined;
+  normalizeTelegramDeliveryMode: (value: string) => string | null | undefined;
   parseQueueArgs: (value: string) => {
     reset?: boolean;
     mode?: string;
@@ -241,6 +242,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         case 'show-models-for-provider':
         case 'show-think':
         case 'show-reasoning':
+        case 'show-delivery':
         case 'show-verbose':
         case 'show-queue':
         case 'show-subagents':
@@ -298,6 +300,15 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           });
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
             kind: 'show-reasoning',
+          });
+          return;
+        case 'set-delivery':
+          deps.updateChatRunPreferences(q.chatJid, (prefs) => {
+            prefs.telegramDeliveryMode = settingsAction.value;
+            return prefs;
+          });
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-delivery',
           });
           return;
         case 'set-verbose':
@@ -759,6 +770,47 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           : normalized === 'stream'
             ? 'Reasoning stream enabled for this chat.'
             : 'Reasoning visibility enabled for this chat.',
+      );
+      return true;
+    }
+
+    if (cmd === '/delivery' || cmd === '/text_delivery') {
+      const argText = rest.join(' ').trim();
+      const current = deps.state.chatRunPreferences[m.chatJid]?.telegramDeliveryMode || 'partial';
+      if (!argText) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        if (deps.state.telegramBot) {
+          await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-delivery' });
+        } else {
+          await deps.sendMessage(
+            m.chatJid,
+            [
+              `Current Telegram delivery mode: ${current}`,
+              'Valid modes: off, partial, block, draft, persistent',
+            ].join('\n'),
+          );
+        }
+        return true;
+      }
+
+      const normalized = deps.normalizeTelegramDeliveryMode(argText);
+      if (!normalized) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid delivery mode');
+        await deps.sendMessage(
+          m.chatJid,
+          'Unrecognized delivery mode. Valid: off, partial, block, draft, persistent',
+        );
+        return true;
+      }
+
+      deps.updateChatRunPreferences(m.chatJid, (prefs) => {
+        prefs.telegramDeliveryMode = normalized;
+        return prefs;
+      });
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      await deps.sendMessage(
+        m.chatJid,
+        `Delivery mode set to ${normalized} for this chat.`,
       );
       return true;
     }

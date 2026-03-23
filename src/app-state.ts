@@ -29,6 +29,7 @@ export interface ActiveCoderRun {
 
 export type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
+export type TelegramDeliveryMode = 'off' | 'partial' | 'block' | 'draft' | 'persistent';
 export type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -43,6 +44,7 @@ export interface ChatRunPreferences {
   model?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
+  telegramDeliveryMode?: TelegramDeliveryMode;
   verboseMode?: VerboseMode;
   queueMode?: QueueMode;
   queueDebounceMs?: number;
@@ -86,6 +88,8 @@ export type TelegramSettingsPanelAction =
   | { kind: 'set-think'; value: ThinkLevel }
   | { kind: 'show-reasoning' }
   | { kind: 'set-reasoning'; value: ReasoningLevel }
+  | { kind: 'show-delivery' }
+  | { kind: 'set-delivery'; value: TelegramDeliveryMode }
   | { kind: 'show-verbose' }
   | { kind: 'set-verbose'; value: VerboseMode }
   | { kind: 'show-queue' }
