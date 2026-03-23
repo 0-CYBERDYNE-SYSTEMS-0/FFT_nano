@@ -23,8 +23,9 @@ Options:
   --api-key <token>         Provider API key for selected auth choice
   --remote-url <url>        Remote gateway URL (remote mode)
   --gateway-port <port>     Gateway/TUI port hint
-  --telegram-token <token>  Telegram bot token
-  --whatsapp-enabled <0|1>  Enable WhatsApp channel toggle
+  --telegram-token <token>       Telegram bot token
+  --telegram-main-chat-id <id>   Pre-set Telegram main chat ID (skips /main claim)
+  --whatsapp-enabled <0|1>       Enable WhatsApp channel toggle
   --install-daemon          Install/start service after onboarding
   --no-install-daemon       Skip service install/start
   --hatch <choice>          tui|web|later
@@ -79,6 +80,7 @@ API_KEY_ARG=""
 REMOTE_URL_ARG=""
 GATEWAY_PORT_ARG=""
 TELEGRAM_TOKEN_ARG=""
+TELEGRAM_MAIN_CHAT_ID_ARG=""
 WHATSAPP_ENABLED_ARG=""
 HATCH_ARG=""
 SKIP_CHANNELS=0
@@ -156,6 +158,11 @@ while [[ $# -gt 0 ]]; do
     --telegram-token)
       [[ $# -ge 2 ]] || fail "--telegram-token requires a value"
       TELEGRAM_TOKEN_ARG="$2"
+      shift 2
+      ;;
+    --telegram-main-chat-id)
+      [[ $# -ge 2 ]] || fail "--telegram-main-chat-id requires a value"
+      TELEGRAM_MAIN_CHAT_ID_ARG="$2"
       shift 2
       ;;
     --whatsapp-enabled)
@@ -550,6 +557,9 @@ if [[ -n "$GATEWAY_PORT_ARG" ]]; then
 fi
 if [[ -n "$TELEGRAM_TOKEN_ARG" ]]; then
   onboard_args+=(--telegram-token "$TELEGRAM_TOKEN_ARG")
+fi
+if [[ -n "$TELEGRAM_MAIN_CHAT_ID_ARG" ]]; then
+  onboard_args+=(--telegram-main-chat-id "$TELEGRAM_MAIN_CHAT_ID_ARG")
 fi
 if [[ -n "$WHATSAPP_ENABLED_ARG" ]]; then
   onboard_args+=(--whatsapp-enabled "$WHATSAPP_ENABLED_ARG")

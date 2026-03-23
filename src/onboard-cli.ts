@@ -53,6 +53,7 @@ export interface OnboardCliOptions {
   skipUi: boolean;
   hatch?: OnboardHatchChoice;
   telegramToken?: string;
+  telegramMainChatId?: string;
   whatsappEnabled?: boolean;
   json: boolean;
 }
@@ -126,6 +127,7 @@ function usage(): string {
     '  --skip-ui                    Skip hatch UI prompts',
     '  --hatch <tui|web|later>',
     '  --telegram-token <token>',
+    '  --telegram-main-chat-id <id> Pre-set main chat ID (skips /main claim)',
     '  --whatsapp-enabled <0|1|true|false>',
     '  --json                       Output JSON summary',
   ].join('\n');
@@ -322,6 +324,11 @@ export function parseOnboardArgs(argv: string[]): OnboardCliOptions {
       i += 1;
       continue;
     }
+    if (arg === '--telegram-main-chat-id') {
+      options.telegramMainChatId = parseFlagValue(argv, i).trim();
+      i += 1;
+      continue;
+    }
     if (arg === '--whatsapp-enabled') {
       options.whatsappEnabled = parseBooleanValue(parseFlagValue(argv, i));
       i += 1;
@@ -501,6 +508,7 @@ async function resolveWizardSelections(
   installDaemon: boolean;
   hatch: OnboardHatchChoice;
   telegramToken?: string;
+  telegramMainChatId?: string;
   whatsappEnabled?: boolean;
 }> {
   if (opts.nonInteractive) {
@@ -525,6 +533,7 @@ async function resolveWizardSelections(
       installDaemon,
       hatch,
       telegramToken: opts.telegramToken?.trim() || undefined,
+      telegramMainChatId: opts.telegramMainChatId?.trim() || undefined,
       whatsappEnabled: opts.whatsappEnabled,
     };
   }
@@ -773,6 +782,9 @@ export async function runOnboarding(opts: OnboardCliOptions): Promise<OnboardSum
     if (!opts.skipChannels) {
       if (wizard.telegramToken !== undefined) {
         updates.TELEGRAM_BOT_TOKEN = wizard.telegramToken;
+      }
+      if (wizard.telegramMainChatId !== undefined) {
+        updates.TELEGRAM_MAIN_CHAT_ID = wizard.telegramMainChatId;
       }
       if (typeof wizard.whatsappEnabled === 'boolean') {
         updates.WHATSAPP_ENABLED = wizard.whatsappEnabled ? '1' : '0';
