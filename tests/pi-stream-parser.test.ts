@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createToolTrackerState,
   extractAssistantTextDeltaFromPiEvent,
+  extractThinkingDeltaFromPiEvent,
   extractToolDeltaFromPiEvent,
 } from '../src/pi-stream-parser.js';
 
@@ -117,4 +118,33 @@ test('extractToolDeltaFromPiEvent surfaces tool errors', () => {
     args: '{"path":"/tmp/missing.txt"}',
     error: 'ENOENT',
   });
+});
+
+test('extractThinkingDeltaFromPiEvent extracts thinking_delta events', () => {
+  assert.equal(
+    extractThinkingDeltaFromPiEvent({ type: 'thinking_delta', thinking: 'let me think' }),
+    'let me think',
+  );
+  assert.equal(
+    extractThinkingDeltaFromPiEvent({ type: 'thinking_delta', delta: 'more thought' }),
+    'more thought',
+  );
+});
+
+test('extractThinkingDeltaFromPiEvent extracts content_block_delta with thinking', () => {
+  assert.equal(
+    extractThinkingDeltaFromPiEvent({
+      type: 'content_block_delta',
+      delta: { type: 'thinking_delta', thinking: 'reasoning here' },
+    }),
+    'reasoning here',
+  );
+});
+
+test('extractThinkingDeltaFromPiEvent returns null for text events', () => {
+  assert.equal(
+    extractThinkingDeltaFromPiEvent({ type: 'text_delta', delta: 'hello' }),
+    null,
+  );
+  assert.equal(extractThinkingDeltaFromPiEvent(null), null);
 });

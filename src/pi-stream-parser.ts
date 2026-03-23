@@ -20,6 +20,22 @@ export interface ToolTrackerState {
   pendingQueue: PendingToolExecution[];
 }
 
+function extractBlocksByType(content: unknown, targetType: string): string {
+  if (!Array.isArray(content)) return '';
+
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const record = block as Record<string, unknown>;
+    const blockType = typeof record.type === 'string' ? record.type : '';
+    if (blockType !== targetType) continue;
+    if (typeof record.text === 'string') parts.push(record.text);
+    else if (typeof record.content === 'string') parts.push(record.content);
+    else if (typeof record.thinking === 'string') parts.push(record.thinking);
+  }
+  return parts.join('');
+}
+
 function extractTextFromContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -44,6 +60,11 @@ function extractTextFromContent(content: unknown): string {
   }
 
   return parts.join('');
+}
+
+function extractThinkingFromContent(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return extractBlocksByType(content, 'thinking');
 }
 
 function readString(record: Record<string, unknown>, keys: string[]): string | undefined {
@@ -226,6 +247,36 @@ export function extractAssistantTextDeltaFromPiEvent(event: unknown): TextDelta 
     const text = extractTextFromContent((message as Record<string, unknown>).content);
     if (!text) return null;
     return { kind: 'replace', text };
+  }
+
+  return null;
+}
+
+export function extractThinkingDeltaFromPiEvent(event: unknown): string | null {
+  if (!event || typeof event !== 'object') return null;
+  const evt = event as Record<string, unknown>;
+  const type = typeof evt.type === 'string' ? evt.type : '';
+
+  if (type === 'thinking_delta' && typeof evt.thinking === 'string') {
+    return evt.thinking;
+  }
+  if (type === 'thinking_delta' && typeof evt.delta === 'string') {
+    return evt.delta;
+  }
+
+  if (type === 'content_block_delta') {
+    const delta = evt.delta as Record<string, unknown> | undefined;
+    if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+      return delta.thinking;
+    }
+  }
+
+  if (type === 'message_end') {
+    const message = evt.message;
+    if (!message || typeof message !== 'object') return null;
+    const content = (message as Record<string, unknown>).content;
+    const thinking = extractThinkingFromContent(content);
+    return thinking || null;
   }
 
   return null;

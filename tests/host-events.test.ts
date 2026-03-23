@@ -7,31 +7,30 @@ import {
   invokeHostEventHandlerSafely,
 } from '../src/runtime/host-events.js';
 
-test('HostEventBus emits to subscribers and supports unsubscribe', () => {
-  const hub = new HostEventBus();
+test('HostEventBus publishes to subscribers and supports unsubscribe', () => {
+  const bus = new HostEventBus();
   const seen: string[] = [];
 
-  const unsubscribe = hub.subscribe((event) => {
+  const unsubscribe = bus.subscribe((event) => {
     seen.push(event.kind);
   });
 
-  hub.publish({
+  bus.publish({
     kind: 'telegram_preview_requested',
     id: 'evt-1',
     createdAt: '2026-03-21T00:00:00.000Z',
-    source: 'test',
+    source: 'pi-runner',
     chatJid: 'telegram:1',
     requestId: 'run-1',
     text: 'hello',
   });
   unsubscribe();
-  hub.publish({
+  bus.publish({
     kind: 'chat_delivery_requested',
     id: 'evt-2',
     createdAt: '2026-03-21T00:00:01.000Z',
-    source: 'test',
+    source: 'pi-runner',
     chatJid: 'telegram:1',
-    requestId: 'run-1',
     text: 'done',
   });
 
@@ -43,13 +42,13 @@ test('invokeHostEventHandlerSafely catches async delivery failures', async () =>
 
   invokeHostEventHandlerSafely(
     async () => {
-      throw new Error('telegram failed');
+      throw new Error('delivery failed');
     },
     {
       kind: 'chat_delivery_requested',
       id: 'evt-1',
       createdAt: '2026-03-21T00:00:00.000Z',
-      source: 'test',
+      source: 'pi-runner',
       chatJid: 'telegram:1',
       text: 'hello',
     },
@@ -59,7 +58,7 @@ test('invokeHostEventHandlerSafely catches async delivery failures', async () =>
   );
 
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(seen, ['telegram failed']);
+  assert.deepEqual(seen, ['delivery failed']);
 });
 
 test('createOrderedHostEventProcessor preserves event order across async handlers', async () => {
@@ -83,7 +82,7 @@ test('createOrderedHostEventProcessor preserves event order across async handler
     kind: 'telegram_preview_requested',
     id: 'evt-1',
     createdAt: '2026-03-21T00:00:00.000Z',
-    source: 'test',
+    source: 'pi-runner',
     chatJid: 'telegram:1',
     requestId: 'run-1',
     text: 'preview',
@@ -92,7 +91,7 @@ test('createOrderedHostEventProcessor preserves event order across async handler
     kind: 'chat_delivery_requested',
     id: 'evt-2',
     createdAt: '2026-03-21T00:00:01.000Z',
-    source: 'test',
+    source: 'pi-runner',
     chatJid: 'telegram:1',
     requestId: 'run-1',
     text: 'final',

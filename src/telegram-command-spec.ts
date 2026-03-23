@@ -6,6 +6,7 @@ export const TELEGRAM_COMMON_COMMANDS = [
   { command: 'model', description: 'Show/set model override' },
   { command: 'think', description: 'Show/set thinking level' },
   { command: 'reasoning', description: 'Show/set reasoning visibility' },
+  { command: 'delivery', description: 'Show/set Telegram text delivery mode' },
   { command: 'verbose', description: 'Cycle or set tool progress mode' },
   { command: 'new', description: 'Start a fresh session' },
   { command: 'reset', description: 'Reset session (alias for /new)' },
@@ -22,6 +23,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'restart', description: 'Alias for /gateway restart' },
   { command: 'setup', description: 'Open runtime setup wizard for provider/model/key' },
   { command: 'coder', description: 'Delegate coding execution' },
+  { command: 'coding', description: 'Alias for /coder' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
   { command: 'tasks', description: 'List scheduled tasks' },
@@ -44,6 +46,8 @@ export type TelegramCommandName =
   | '/t'
   | '/reasoning'
   | '/reason'
+  | '/delivery'
+  | '/text_delivery'
   | '/verbose'
   | '/v'
   | '/new'
@@ -65,6 +69,7 @@ export type TelegramCommandName =
   | '/reload'
   | '/panel'
   | '/coder'
+  | '/coding'
   | '/coder-plan'
   | '/coder_plan'
   | '/freechat';
@@ -80,6 +85,8 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/t',
   '/reasoning',
   '/reason',
+  '/delivery',
+  '/text_delivery',
   '/verbose',
   '/v',
   '/new',
@@ -101,6 +108,7 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/reload',
   '/panel',
   '/coder',
+  '/coding',
   '/coder-plan',
   '/coder_plan',
   '/freechat',
@@ -124,6 +132,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/model [provider/model|reset] - show/set chat model',
     '/think [off|minimal|low|medium|high|xhigh] - set thinking level',
     '/reasoning [off|on|stream] - set reasoning visibility mode',
+    '/delivery [off|partial|block|draft|persistent] - set Telegram text delivery mode',
     '/verbose [/v] [off|new|all|verbose] - cycle or set tool progress mode',
     '/new - start fresh session on next run',
     '/reset - alias for /new',
@@ -159,6 +168,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/reload - refresh command menus and group metadata',
     '/panel - open admin quick actions',
     '/coder <task> - explicit delegated coding run',
+    '/coding <task> - alias for /coder',
     '/coder-plan <task> - explicit delegated planning run',
     '/subagents list|stop|spawn - manage delegated subagent runs',
   ].join('\n');

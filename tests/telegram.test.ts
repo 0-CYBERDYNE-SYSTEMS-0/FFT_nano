@@ -3,13 +3,14 @@ import test from 'node:test';
 
 import {
   createTelegramBot,
+  isTelegramPrivateChatJid,
   isTelegramJid,
   normalizeTelegramDraftText,
   parseTelegramChatId,
   splitTelegramText,
   splitTelegramTextForHtmlLimit,
 } from '../src/telegram.js';
-import { markdownToTelegramHtml } from '../src/telegram-format.js';
+import { markdownToTelegramHtml, rebalanceHtmlChunks } from '../src/telegram-format.js';
 
 test('parseTelegramChatId parses valid telegram jid', () => {
   assert.equal(parseTelegramChatId('telegram:12345'), '12345');
@@ -21,6 +22,8 @@ test('parseTelegramChatId rejects non-telegram jid', () => {
   assert.equal(parseTelegramChatId('telegram:'), null);
   assert.equal(isTelegramJid('telegram:42'), true);
   assert.equal(isTelegramJid('foo:42'), false);
+  assert.equal(isTelegramPrivateChatJid('telegram:42'), true);
+  assert.equal(isTelegramPrivateChatJid('telegram:-1001234'), false);
 });
 
 test('splitTelegramText keeps short text unchanged', () => {
@@ -62,6 +65,38 @@ test('splitTelegramTextForHtmlLimit re-splits chunks that expand after markdown-
     const html = markdownToTelegramHtml(part);
     assert.ok(html.length <= 256);
   }
+});
+
+test('rebalanceHtmlChunks closes unclosed tags at chunk boundary', () => {
+  const chunks = ['Hello <b>bold', ' text</b> world'];
+  const balanced = rebalanceHtmlChunks(chunks);
+  assert.deepEqual(balanced, ['Hello <b>bold</b>', '<b> text</b> world']);
+});
+
+test('rebalanceHtmlChunks handles nested tags', () => {
+  const chunks = ['<b><i>nested', ' content</i></b>'];
+  const balanced = rebalanceHtmlChunks(chunks);
+  assert.deepEqual(balanced, ['<b><i>nested</i></b>', '<b><i> content</i></b>']);
+});
+
+test('rebalanceHtmlChunks passes through balanced chunks unchanged', () => {
+  const chunks = ['<b>complete</b>', 'no tags here'];
+  const balanced = rebalanceHtmlChunks(chunks);
+  assert.deepEqual(balanced, chunks);
+});
+
+test('rebalanceHtmlChunks handles tg-spoiler tags', () => {
+  const chunks = ['Before <tg-spoiler>secret', ' revealed</tg-spoiler> after'];
+  const balanced = rebalanceHtmlChunks(chunks);
+  assert.deepEqual(balanced, [
+    'Before <tg-spoiler>secret</tg-spoiler>',
+    '<tg-spoiler> revealed</tg-spoiler> after',
+  ]);
+});
+
+test('rebalanceHtmlChunks returns single chunk unchanged', () => {
+  const chunks = ['<b>unclosed'];
+  assert.deepEqual(rebalanceHtmlChunks(chunks), chunks);
 });
 
 test('normalizeTelegramDraftText keeps short text unchanged', () => {

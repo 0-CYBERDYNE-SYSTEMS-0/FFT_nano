@@ -334,10 +334,56 @@ export function chunkTelegramMarkdownText(text: string, limit: number): string[]
   return chunks;
 }
 
+const TELEGRAM_HTML_TAGS = ['b', 'i', 's', 'code', 'pre', 'tg-spoiler', 'a'];
+
+export function rebalanceHtmlChunks(chunks: string[]): string[] {
+  if (chunks.length <= 1) return chunks;
+
+  const tagPattern = new RegExp(
+    `<(/?)(${TELEGRAM_HTML_TAGS.join('|')})(\\s[^>]*)?>`,
+    'gi',
+  );
+
+  const result: string[] = [];
+  const carryOver: string[] = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    let chunk = chunks[i];
+
+    if (carryOver.length > 0) {
+      chunk = carryOver.map((tag) => `<${tag}>`).join('') + chunk;
+      carryOver.length = 0;
+    }
+
+    const stack: string[] = [];
+    let match: RegExpMatchArray | null;
+    const allMatches = chunk.matchAll(tagPattern);
+    for (match of allMatches) {
+      const isClose = match[1] === '/';
+      const tag = match[2].toLowerCase();
+      if (isClose) {
+        const idx = stack.lastIndexOf(tag);
+        if (idx !== -1) stack.splice(idx, 1);
+      } else {
+        stack.push(tag);
+      }
+    }
+
+    if (stack.length > 0 && i < chunks.length - 1) {
+      chunk += [...stack].reverse().map((t) => `</${t}>`).join('');
+      carryOver.push(...stack);
+    }
+
+    result.push(chunk);
+  }
+
+  return result;
+}
+
 export function splitTelegramText(text: string, maxLen: number): string[] {
   if (!text) return [''];
   const markdownChunks = chunkTelegramMarkdownText(text, maxLen);
-  if (markdownChunks.length > 0) return markdownChunks;
+  if (markdownChunks.length > 0) return rebalanceHtmlChunks(markdownChunks);
   const plain = chunkPlainText(text, maxLen);
   return plain.length > 0 ? plain : [''];
 }

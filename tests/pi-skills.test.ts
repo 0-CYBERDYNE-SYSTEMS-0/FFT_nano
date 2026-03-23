@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  buildSkillCatalogEntries,
   REQUIRED_PROJECT_PI_SKILLS,
   resolveProjectRuntimeSkillsDir,
   syncProjectPiSkillsToGroupPiHome,
@@ -231,6 +232,31 @@ test('non-required project custom skill without sections syncs with warning only
       ),
       true,
     );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildSkillCatalogEntries returns compact summaries without full skill bodies', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-skill-catalog-'));
+
+  try {
+    const skillsRoot = path.join(tempRoot, 'skills');
+    const skillDir = path.join(skillsRoot, 'fft-debug');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      requiredSkillMarkdown(
+        'fft-debug',
+        'Long body text that should never be emitted as a full skill body.\n'.repeat(10),
+      ),
+    );
+
+    const catalog = buildSkillCatalogEntries([skillsRoot], { maxChars: 6000 });
+    assert.equal(catalog.length, 1);
+    assert.equal(catalog[0]?.name, 'fft-debug');
+    assert.match(catalog[0]?.whenToUse || '', /test coverage/i);
+    assert.doesNotMatch(catalog[0]?.whenToUse || '', /Long body text/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

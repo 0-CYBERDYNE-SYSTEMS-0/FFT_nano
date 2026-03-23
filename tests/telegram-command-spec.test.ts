@@ -20,6 +20,9 @@ test('Telegram command normalization accepts aliases and bot-suffixed forms', ()
   assert.equal(normalizeTelegramCommandToken('/restart@TestBot'), '/restart');
   assert.equal(normalizeTelegramCommandToken('/gateway:restart'), '/gateway');
   assert.equal(normalizeTelegramCommandToken('/coder-plan@TestBot'), '/coder-plan');
+  assert.equal(normalizeTelegramCommandToken('/coding@TestBot'), '/coding');
+  assert.equal(normalizeTelegramCommandToken('/delivery@TestBot'), '/delivery');
+  assert.equal(normalizeTelegramCommandToken('/text_delivery@TestBot'), '/text_delivery');
   assert.equal(normalizeTelegramCommandToken('/t'), '/t');
   assert.equal(normalizeTelegramCommandToken('/reason'), '/reason');
 });
@@ -28,6 +31,8 @@ test('main chat help includes admin restart alias and non-main help does not', (
   const mainHelp = formatHelpText(true);
   const nonMainHelp = formatHelpText(false);
 
+  assert.match(mainHelp, /\/delivery \[off\|partial\|block\|draft\|persistent\]/);
+  assert.match(nonMainHelp, /\/delivery \[off\|partial\|block\|draft\|persistent\]/);
   assert.match(mainHelp, /\/restart - alias for \/gateway restart/);
   assert.match(mainHelp, /\/setup \[cancel\] - runtime setup wizard for provider\/model\/key/);
   assert.doesNotMatch(nonMainHelp, /\/restart - alias for \/gateway restart/);

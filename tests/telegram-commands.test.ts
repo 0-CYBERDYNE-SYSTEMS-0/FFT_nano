@@ -53,6 +53,20 @@ function createBaseDeps(): TelegramCommandDeps {
     runPiListModels: () => ({ text: 'models' }),
     normalizeThinkLevel: () => null,
     normalizeReasoningLevel: () => null,
+    normalizeTelegramDeliveryMode: (value) =>
+      (
+        {
+          off: 'off',
+          partial: 'partial',
+          block: 'block',
+          draft: 'draft',
+          native: 'draft',
+          progress: 'partial',
+          live: 'partial',
+          persistent: 'persistent',
+          final: 'off',
+        } as Record<string, string>
+      )[value.trim().toLowerCase()] ?? null,
     parseQueueArgs: () => ({}),
     parseVerboseDirective: () => ({ kind: 'none' }),
     describeVerboseMode: () => 'verbose',
@@ -86,6 +100,7 @@ function createBaseDeps(): TelegramCommandDeps {
     emitTuiAgentEvent: () => {},
     getSessionKeyForChat: (chatJid) => chatJid,
     runAgent: async () => ({ ok: true, result: 'done', streamed: false }),
+    runCodingTask: async () => ({ ok: true, result: 'done', streamed: false }),
     setTyping: async () => {},
     persistAssistantHistory: () => {},
     sendAgentResultMessage: async () => {},
@@ -166,7 +181,7 @@ test('handleTelegramCommand registers spawned subagent runs in both active maps'
   };
   deps.isMainChat = () => true;
   deps.activeChatRunsById = new Map();
-  deps.runAgent = () =>
+  deps.runCodingTask = () =>
     new Promise((resolve) => {
       resolveRun = resolve;
     });
@@ -185,4 +200,95 @@ test('handleTelegramCommand registers spawned subagent runs in both active maps'
 
   resolveRun?.({ ok: true, result: 'done', streamed: false });
   await commandPromise;
+});
+
+test('handleTelegramCommand opens delivery panel when called without args', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    panels: Array<{ chatJid: string; panel: { kind: string } }>;
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/delivery',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(deps.panels, [
+    { chatJid: 'telegram:1', panel: { kind: 'show-delivery' } },
+  ]);
+});
+
+test('handleTelegramCommand normalizes delivery aliases to canonical persisted values', async () => {
+  const updates: Array<Record<string, any>> = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.updateChatRunPreferences = (_chatJid, updater) => {
+    updates.push(updater({}));
+  };
+  deps.state.chatRunPreferences['telegram:1'] = {};
+  deps.normalizeTelegramCommandToken = (value) => value.split('@')[0]!.toLowerCase();
+  (deps as any).normalizeTelegramDeliveryMode = (value: string) =>
+    ({
+      off: 'off',
+      partial: 'partial',
+      block: 'block',
+      draft: 'draft',
+      native: 'draft',
+      progress: 'partial',
+      live: 'partial',
+      persistent: 'persistent',
+      final: 'off',
+    })[value];
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/delivery progress',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(updates, [{ telegramDeliveryMode: 'partial' }]);
+  assert.match(deps.sent[0]?.text || '', /Delivery mode set to partial/i);
+});
+
+test('handleTelegramCommand accepts the native Telegram draft delivery mode', async () => {
+  const updates: Array<Record<string, any>> = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.updateChatRunPreferences = (_chatJid, updater) => {
+    updates.push(updater({}));
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/delivery draft',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(updates, [{ telegramDeliveryMode: 'draft' }]);
+  assert.match(deps.sent[0]?.text || '', /Delivery mode set to draft/i);
+});
+
+test('handleTelegramCommand reports canonical delivery modes in help text', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.state.chatRunPreferences['telegram:1'] = { telegramDeliveryMode: 'block' } as any;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/delivery final',
+  });
+
+  assert.equal(handled, true);
+  assert.match(deps.sent[0]?.text || '', /Delivery mode set to off/i);
 });

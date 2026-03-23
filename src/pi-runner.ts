@@ -21,14 +21,30 @@ import {
 import { logger } from './logger.js';
 import { getMemoryBackend } from './memory-backend.js';
 import { MEMORY_RETRIEVAL_GATE_ENABLED } from './config.js';
-import { syncProjectPiSkillsToGroupPiHome } from './pi-skills.js';
+import {
+  buildSkillCatalogEntries,
+  syncProjectPiSkillsToGroupPiHome,
+  type SkillSyncResult,
+} from './pi-skills.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
 import { parsePiJsonOutput, type PiToolExecution } from './pi-json-parser.js';
 import {
+  determinePromptPreflightDecision,
+  hashPromptContent,
+  readPromptRuntimeState,
+  resolvePromptPreflightOutcome,
+  writePromptManifest,
+  writePromptRuntimeState,
+  type PromptCacheEntry,
+  type PromptPreflightDecision,
+  type PromptRuntimeState,
+} from './prompt-lifecycle.js';
+import {
   createToolTrackerState,
   extractAssistantTextDeltaFromPiEvent,
+  extractThinkingDeltaFromPiEvent,
   extractToolDeltaFromPiEvent,
 } from './pi-stream-parser.js';
 import { getPiApiKeyOverride } from './provider-auth.js';
@@ -36,7 +52,8 @@ import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox } from './sandbox.js';
 import type { RegisteredGroup } from './types.js';
-import { piRuntimeEvents } from './app-state.js';
+import { hostEventBus } from './app-state.js';
+import { createHostEventId } from './runtime/host-events.js';
 
 export interface ContainerInput {
   prompt: string;
@@ -56,6 +73,11 @@ export interface ContainerInput {
   reasoningLevel?: 'off' | 'on' | 'stream';
   verboseMode?: 'off' | 'new' | 'all' | 'verbose';
   noContinue?: boolean;
+  toolMode?: 'default' | 'read_only' | 'full';
+  workspaceDirOverride?: string;
+  showReasoning?: boolean;
+  skipPromptPreflight?: boolean;
+  suppressPreviewStreaming?: boolean;
 }
 
 export interface ContainerOutput {
@@ -63,12 +85,20 @@ export interface ContainerOutput {
   result: string | null;
   error?: string;
   streamed?: boolean;
+  toolExecutions?: PiToolExecution[];
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
     provider?: string;
     model?: string;
+  };
+  promptSummary?: {
+    cacheHit: boolean;
+    preflightDecision: PromptPreflightDecision;
+    manifestPath: string;
+    finalPromptChars: number;
+    basePromptHash: string;
   };
 }
 
@@ -214,13 +244,17 @@ function ensureMainWorkspaceSeed(): void {
   ensureMemoryScaffold(MAIN_GROUP_FOLDER);
 }
 
-function resolveWorkspacePaths(group: RegisteredGroup, isMain: boolean): WorkspacePaths & {
+function resolveWorkspacePaths(
+  group: RegisteredGroup,
+  isMain: boolean,
+  workspaceDirOverride?: string,
+): WorkspacePaths & {
   piHomeDir: string;
   piAgentDir: string;
 } {
-  const groupDir = isMain
+  const groupDir = workspaceDirOverride || (isMain
     ? MAIN_WORKSPACE_DIR
-    : resolveGroupFolderPath(group.folder);
+    : resolveGroupFolderPath(group.folder));
   const globalDir = path.join(GROUPS_DIR, 'global');
   const ipcDir = resolveGroupIpcPath(group.folder);
   const piHomeDir = path.join(DATA_DIR, 'pi', group.folder, '.pi');
@@ -240,11 +274,31 @@ function ensureGroupDirs(wp: ReturnType<typeof resolveWorkspacePaths>, groupFold
   else ensureMemoryScaffold(groupFolder);
 }
 
+function resolvePromptRuntimeStatePath(piHomeDir: string): string {
+  return path.join(piHomeDir, 'fft_nano', 'prompt-state.json');
+}
+
+function resolveLatestPromptManifestPath(groupDir: string): string {
+  return path.join(groupDir, 'logs', 'system-prompt.latest.json');
+}
+
+function resolvePerRequestPromptManifestPath(
+  groupDir: string,
+  requestId: string | undefined,
+): string {
+  const safeId = (requestId || `run-${Date.now()}`).replace(/[^a-zA-Z0-9._-]+/g, '-');
+  return path.join(groupDir, 'logs', 'system-prompts', `${safeId}.json`);
+}
+
+function isOverflowStyleError(stderr: string): boolean {
+  return /payload too large|context length exceeded|maximum context length|token limit/i.test(stderr);
+}
+
 function syncSkills(
   group: RegisteredGroup,
   piHomeDir: string,
   isMain: boolean,
-): void {
+): SkillSyncResult {
   const projectRoot = process.cwd();
   const runtimeSkillSourceDirs = isMain
     ? [path.join(MAIN_WORKSPACE_DIR, 'skills')]
@@ -270,6 +324,7 @@ function syncSkills(
       'Skipped invalid Pi skills during sync',
     );
   }
+  return skillSync;
 }
 
 function buildPiArgs(params: {
@@ -299,13 +354,18 @@ function buildPiArgs(params: {
 
   args.push('--append-system-prompt', systemPrompt);
 
-  if (isForceDelegateHint(codingHint)) {
+  if (input.toolMode === 'read_only') {
+    args.push('--tools', 'read,grep,find,ls');
+  } else if (input.toolMode === 'full') {
+    args.push('--tools', 'read,bash,edit,write,grep,find,ls');
+  } else if (isForceDelegateHint(codingHint)) {
     const mode = codingHint === 'force_delegate_plan' ? 'plan' : 'execute';
-    if (mode === 'plan') {
-      args.push('--tools', 'read,grep,find,ls');
-    } else {
-      args.push('--tools', 'read,bash,edit,write,grep,find,ls');
-    }
+    args.push(
+      '--tools',
+      mode === 'plan'
+        ? 'read,grep,find,ls'
+        : 'read,bash,edit,write,grep,find,ls',
+    );
   } else {
     args.push('--tools', 'read,bash,edit,write,grep,find,ls');
   }
@@ -384,37 +444,222 @@ export async function runContainerAgent(
   }
 
   const isMain = input.isMain;
-  const wp = resolveWorkspacePaths(group, isMain);
+  const wp = resolveWorkspacePaths(group, isMain, input.workspaceDirOverride);
   ensureGroupDirs(wp, group.folder, isMain);
-  syncSkills(group, wp.piHomeDir, isMain);
+  const skillSync = syncSkills(group, wp.piHomeDir, isMain);
+  const secrets = {
+    ...collectRuntimeSecrets(projectRoot),
+    ...(input.secrets || {}),
+  };
+  const promptStatePath = resolvePromptRuntimeStatePath(wp.piHomeDir);
+  let promptState = readPromptRuntimeState(promptStatePath);
 
-  const secrets = collectRuntimeSecrets(projectRoot);
-  const systemPromptBuild = buildSystemPrompt(
-    {
-      groupFolder: input.groupFolder,
-      chatJid: input.chatJid,
-      isMain,
-      isScheduledTask: input.isScheduledTask,
-      assistantName: input.assistantName,
-      provider: input.provider,
-      model: input.model,
-      thinkLevel: input.thinkLevel,
-      reasoningLevel: input.reasoningLevel,
-      noContinue: input.noContinue,
-      memoryContext: payload.memoryContext,
-      codingHint,
-      requestId: input.requestId,
-      extraSystemPrompt: input.extraSystemPrompt,
-    },
-    wp,
-  );
+  const skillCatalog = buildSkillCatalogEntries(skillSync.sourceDirs, {
+    maxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
+  });
+
+  const baseInput = {
+    groupFolder: input.groupFolder,
+    chatJid: input.chatJid,
+    isMain,
+    isScheduledTask: input.isScheduledTask,
+    assistantName: input.assistantName,
+    provider: input.provider,
+    model: input.model,
+    thinkLevel: input.thinkLevel,
+    reasoningLevel: input.reasoningLevel,
+    noContinue: input.noContinue,
+    memoryContext: payload.memoryContext,
+    codingHint,
+    requestId: input.requestId,
+    extraSystemPrompt: input.extraSystemPrompt,
+    skillCatalog,
+  } as const;
+
+  const cachedBase = PARITY_CONFIG.prompt.cacheEnabled
+    ? promptState.cacheEntries[`${isMain ? 'main' : 'group'}:${input.isScheduledTask ? 'minimal' : 'full'}:${codingHint}`]
+    : undefined;
+  let systemPromptBuild = buildSystemPrompt(baseInput, wp, {
+    delegationExtensionAvailable: true,
+    skillCatalogMaxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
+    cachedBaseLayer: cachedBase
+      ? {
+          key: cachedBase.key,
+          hash: cachedBase.hash,
+          content: cachedBase.content,
+        }
+      : null,
+  });
+
+  const isHeartbeatRun = (input.requestId || '').startsWith('heartbeat-');
+  const promptRunMode: 'interactive' | 'scheduled' | 'heartbeat' = input.isScheduledTask
+    ? 'scheduled'
+    : isHeartbeatRun
+      ? 'heartbeat'
+      : 'interactive';
+  const promptPreflightInput = {
+    preflightRebaseEnabled:
+      input.skipPromptPreflight !== true && PARITY_CONFIG.prompt.preflightRebaseEnabled,
+    flushEnabled:
+      input.skipPromptPreflight !== true && PARITY_CONFIG.memory.flushBeforeCompaction.enabled,
+    softTokenThreshold: PARITY_CONFIG.prompt.softTokenThreshold,
+    hardTokenThreshold: PARITY_CONFIG.prompt.hardTokenThreshold,
+    currentPromptChars: systemPromptBuild.report.totalChars,
+    runMode: promptRunMode,
+  };
+
+  const preflightOutcome = await resolvePromptPreflightOutcome({
+    input: promptPreflightInput,
+    state: promptState,
+    executeFlush: promptPreflightInput.flushEnabled
+      ? async () => {
+          const flushCfg = PARITY_CONFIG.memory.flushBeforeCompaction;
+          const flushPrompt = [
+            '[MEMORY FLUSH BEFORE PROMPT REBASE]',
+            flushCfg.systemPrompt,
+            flushCfg.prompt,
+          ].join('\n');
+          const flushRequestId = `${input.requestId || `run-${Date.now()}`}-prompt-flush`;
+          logger.info(
+            { group: group.name, requestId: input.requestId, flushRequestId },
+            'Running prompt preflight memory flush',
+          );
+          const flushOutput = await runContainerAgent(
+            group,
+            {
+              ...input,
+              prompt: flushPrompt,
+              requestId: flushRequestId,
+              codingHint: 'none',
+              noContinue: false,
+              verboseMode: 'off',
+              showReasoning: false,
+              skipPromptPreflight: true,
+              suppressPreviewStreaming: true,
+            },
+            abortSignal,
+          );
+          if (flushOutput.status !== 'success') {
+            logger.warn(
+              {
+                group: group.name,
+                requestId: input.requestId,
+                flushRequestId,
+                error: flushOutput.error,
+              },
+              'Prompt preflight memory flush failed',
+            );
+            return null;
+          }
+          return readPromptRuntimeState(promptStatePath);
+        }
+      : undefined,
+  });
+  promptState = preflightOutcome.state;
+  let preflightDecision = preflightOutcome.decision;
+  if (preflightOutcome.flushed) {
+    writePromptRuntimeState(promptStatePath, promptState);
+  }
+
+  let effectiveInputNoContinue = input.noContinue === true;
+  if (preflightDecision === 'rebase_session') {
+    effectiveInputNoContinue = true;
+    systemPromptBuild = buildSystemPrompt(
+      {
+        ...baseInput,
+        noContinue: true,
+      },
+      wp,
+      {
+        delegationExtensionAvailable: true,
+        skillCatalogMaxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
+        cachedBaseLayer: cachedBase
+          ? {
+              key: cachedBase.key,
+              hash: cachedBase.hash,
+              content: cachedBase.content,
+            }
+          : null,
+      },
+    );
+  }
+
   const systemPrompt = systemPromptBuild.text;
+  const latestManifestPath = resolveLatestPromptManifestPath(groupDir);
+  if (PARITY_CONFIG.prompt.persistLatestManifest) {
+    writePromptManifest(latestManifestPath, systemPromptBuild.report);
+  }
+  if (!PARITY_CONFIG.prompt.manifestPerRequestInDebugOnly || process.env.LOG_LEVEL === 'debug') {
+    writePromptManifest(
+      resolvePerRequestPromptManifestPath(groupDir, input.requestId),
+      systemPromptBuild.report,
+    );
+  }
+  if (preflightDecision === 'abort') {
+    logger.error(
+      {
+        group: group.name,
+        promptStatePath,
+        currentPromptChars: systemPromptBuild.report.totalChars,
+      },
+      'Prompt preflight aborted run',
+    );
+    return {
+      status: 'error',
+      result: null,
+      error: 'Prompt runtime state is corrupted or preflight thresholds are invalid. Remove or repair the prompt state file before retrying.',
+      promptSummary: {
+        cacheHit: systemPromptBuild.report.cacheHit,
+        preflightDecision,
+        manifestPath: latestManifestPath,
+        finalPromptChars: systemPromptBuild.report.totalChars,
+        basePromptHash: systemPromptBuild.report.basePromptHash,
+      },
+    };
+  }
+
+  const cacheSlotKey = `${isMain ? 'main' : 'group'}:${systemPromptBuild.report.mode}:${codingHint}`;
+  const nextPromptState: PromptRuntimeState = {
+    ...promptState,
+    lastPreflightDecision: preflightDecision,
+    lastManifestPath: latestManifestPath,
+    cacheEntries: {
+      ...promptState.cacheEntries,
+    },
+  };
+  if (PARITY_CONFIG.prompt.cacheEnabled) {
+    const baseLayer = systemPromptBuild.report.layers.find((layer) => layer.id === 'base');
+    if (baseLayer) {
+      const cacheEntry: PromptCacheEntry = {
+        key: systemPromptBuild.report.baseCacheKey,
+        hash: hashPromptContent(baseLayer.content),
+        content: baseLayer.content,
+        manifest: systemPromptBuild.report,
+        builtAt: new Date().toISOString(),
+      };
+      nextPromptState.cacheEntries[cacheSlotKey] = cacheEntry;
+    }
+  }
+  if (preflightDecision === 'flush_then_continue') {
+    nextPromptState.flushedEpoch = promptState.sessionEpoch;
+  }
+  if (preflightDecision === 'rebase_session') {
+    nextPromptState.sessionEpoch = (promptState.sessionEpoch || 0) + 1;
+    nextPromptState.flushedEpoch = undefined;
+    nextPromptState.lastRebaseAt = new Date().toISOString();
+    nextPromptState.lastOverflowAt = undefined;
+  }
+  writePromptRuntimeState(promptStatePath, nextPromptState);
+
   logger.debug(
     {
       group: group.name,
       mode: systemPromptBuild.report.mode,
       chars: systemPromptBuild.report.totalChars,
       contextEntries: systemPromptBuild.report.contextEntries.length,
+      cacheHit: systemPromptBuild.report.cacheHit,
+      preflightDecision,
+      skillCatalogCount: systemPromptBuild.report.skillsCatalog.count,
     },
     'System prompt built',
   );
@@ -503,13 +748,16 @@ export async function runContainerAgent(
       let stderr = '';
       let lineBuffer = '';
       let assistantSoFar = '';
+      let thinkingSoFar = '';
       let streamedDraft = false;
       let stdoutTruncated = false;
       const toolTracker = createToolTrackerState();
 
-      const isHeartbeatRun = input.requestId?.startsWith('heartbeat-');
       const canStreamTelegramDraft =
-        isTelegramChatJid(input.chatJid) && !input.isScheduledTask && !isHeartbeatRun;
+        isTelegramChatJid(input.chatJid) &&
+        !input.isScheduledTask &&
+        !isHeartbeatRun &&
+        input.suppressPreviewStreaming !== true;
       const draftId = deriveTelegramDraftId(
         `${input.chatJid}:${input.requestId || `run-${Date.now()}`}`,
       );
@@ -523,17 +771,25 @@ export async function runContainerAgent(
         if (!canStreamTelegramDraft || !assistantSoFar) return;
         const now = Date.now();
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
-        const nextDraftText = normalizeTelegramDraftText(assistantSoFar);
+        let previewText = assistantSoFar;
+        if (input.showReasoning && thinkingSoFar) {
+          const thinkingBlock = thinkingSoFar.length > 600
+            ? `...${thinkingSoFar.slice(-597)}`
+            : thinkingSoFar;
+          previewText = `Reasoning:\n\`\`\`\n${thinkingBlock}\n\`\`\`\n\n${assistantSoFar}`;
+        }
+        const nextDraftText = normalizeTelegramDraftText(previewText);
         if (nextDraftText === lastDraftText) return;
         const requestId = (input.requestId || '').trim();
         if (!requestId) return;
-        piRuntimeEvents.emit({
-          kind: 'telegram_preview_update',
-          payload: {
-            chatJid: input.chatJid,
-            requestId,
-            text: nextDraftText,
-          },
+        hostEventBus.publish({
+          kind: 'telegram_preview_requested',
+          id: createHostEventId('preview'),
+          createdAt: new Date(now).toISOString(),
+          source: 'pi-runner',
+          chatJid: input.chatJid,
+          requestId,
+          text: nextDraftText,
         });
         streamedDraft = true;
         lastDraftSentAt = now;
@@ -545,8 +801,18 @@ export async function runContainerAgent(
         if (!trimmed) return;
         try {
           const event = JSON.parse(trimmed) as unknown;
+          if (event && typeof event === 'object') {
+            const evtType = (event as Record<string, unknown>).type;
+            if (typeof evtType === 'string' && /tool/i.test(evtType)) {
+              logger.debug({ evtType, group: group.name }, 'Pi stdout tool event');
+            }
+          }
           const toolDelta = extractToolDeltaFromPiEvent(event, toolTracker);
           if (toolDelta) {
+            logger.debug(
+              { toolName: toolDelta.toolName, status: toolDelta.status, group: group.name },
+              'Parsed tool delta from Pi stdout',
+            );
             if (toolDelta.status === 'start' && toolDelta.args) {
               const audit = auditToolExecution(toolDelta.toolName, toolDelta.args);
               if (audit.flagged) {
@@ -565,6 +831,13 @@ export async function runContainerAgent(
               ...(toolDelta.output ? { output: toolDelta.output } : {}),
               ...(toolDelta.error ? { error: toolDelta.error } : {}),
             });
+          }
+          if (input.showReasoning) {
+            const thinkingDelta = extractThinkingDeltaFromPiEvent(event);
+            if (thinkingDelta) {
+              thinkingSoFar += thinkingDelta;
+              maybeSendDraft(false);
+            }
           }
           const delta = extractAssistantTextDeltaFromPiEvent(event);
           if (delta) {
@@ -666,8 +939,8 @@ export async function runContainerAgent(
 
     const doRun = async () => {
       try {
-        let res = input.noContinue ? await runPi(false) : await runPi(true);
-        if (!input.noContinue && res.code !== 0) {
+        let res = effectiveInputNoContinue ? await runPi(false) : await runPi(true);
+        if (!effectiveInputNoContinue && res.code !== 0) {
           const looksLikeNoSession = /no\s+previous\s+session|no\s+session/i.test(res.stderr);
           if (looksLikeNoSession) res = await runPi(false);
         }
@@ -679,6 +952,14 @@ export async function runContainerAgent(
         const duration = Date.now() - startTime;
 
         if (res.code !== 0) {
+          const failedState: PromptRuntimeState = {
+            ...readPromptRuntimeState(promptStatePath),
+            lastPreflightDecision: preflightDecision,
+            ...(isOverflowStyleError(res.stderr)
+              ? { lastOverflowAt: new Date().toISOString() }
+              : {}),
+          };
+          writePromptRuntimeState(promptStatePath, failedState);
           logger.error(
             { group: group.name, code: res.code, duration, stderr: res.stderr.slice(-500) },
             'Pi exited with error',
@@ -711,26 +992,28 @@ export async function runContainerAgent(
           let sent = false;
 
           if (result.length <= maxInline) {
-            piRuntimeEvents.emit({
-              kind: 'agent_message',
-              payload: {
-                chatJid: input.chatJid,
-                text: result,
-                ...(input.requestId ? { requestId: input.requestId } : {}),
-              },
+            hostEventBus.publish({
+              kind: 'chat_delivery_requested',
+              id: createHostEventId('deliver'),
+              createdAt: new Date().toISOString(),
+              source: 'pi-runner',
+              chatJid: input.chatJid,
+              text: result,
+              ...(input.requestId ? { requestId: input.requestId } : {}),
             });
             sent = true;
           } else {
             const filePath = path.join(outDir, `${rid}.md`);
             try { fs.writeFileSync(filePath, result); } catch { /* ignore */ }
             const preview = result.slice(0, Math.min(1200, result.length));
-            piRuntimeEvents.emit({
-              kind: 'agent_message',
-              payload: {
-                chatJid: input.chatJid,
-                text: `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
-                ...(input.requestId ? { requestId: input.requestId } : {}),
-              },
+            hostEventBus.publish({
+              kind: 'chat_delivery_requested',
+              id: createHostEventId('deliver'),
+              createdAt: new Date().toISOString(),
+              source: 'pi-runner',
+              chatJid: input.chatJid,
+              text: `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
+              ...(input.requestId ? { requestId: input.requestId } : {}),
             });
             sent = true;
           }
@@ -746,11 +1029,27 @@ export async function runContainerAgent(
           'Pi run completed',
         );
 
+        const successState = readPromptRuntimeState(promptStatePath);
+        successState.lastTotalTokens = parsed.usage?.totalTokens;
+        successState.lastOverflowAt = undefined;
+        if (effectiveInputNoContinue) {
+          successState.sessionEpoch = Math.max(successState.sessionEpoch || 0, 1);
+        }
+        writePromptRuntimeState(promptStatePath, successState);
+
         finish({
           status: 'success',
           result: finalResult,
           streamed: finalStreamed,
+          toolExecutions: parsed.toolExecutions,
           usage: parsed.usage,
+          promptSummary: {
+            cacheHit: systemPromptBuild.report.cacheHit,
+            preflightDecision,
+            manifestPath: latestManifestPath,
+            finalPromptChars: systemPromptBuild.report.totalChars,
+            basePromptHash: systemPromptBuild.report.basePromptHash,
+          },
         });
       } catch (err) {
         clearTimeout(timeoutHandle);

@@ -1,9 +1,8 @@
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { TelegramBot, TelegramInlineKeyboard } from './telegram.js';
+import { HostEventBus } from './runtime/host-events.js';
 import type { RegisteredGroup } from './types.js';
-import { PiRuntimeEventHub } from './pi-runtime-events.js';
 import { TelegramPreviewRegistry } from './telegram-streaming.js';
-import { TuiRuntimeEventHub } from './tui/runtime-events.js';
 import type { TuiGatewayServer } from './tui/gateway-server.js';
 import type { WebControlCenterServer } from './web/control-center-server.js';
 import type { VerboseMode } from './verbose-mode.js';
@@ -19,10 +18,18 @@ export interface ActiveCoderRun {
   chatJid: string;
   groupName: string;
   startedAt: number;
+  parentRequestId?: string;
+  backend?: 'pi';
+  route?: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+  state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
+  worktreePath?: string;
+  childRunIds?: string[];
+  abortController?: AbortController;
 }
 
 export type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
+export type TelegramDeliveryMode = 'off' | 'partial' | 'block' | 'draft' | 'persistent';
 export type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -37,6 +44,7 @@ export interface ChatRunPreferences {
   model?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
+  telegramDeliveryMode?: TelegramDeliveryMode;
   verboseMode?: VerboseMode;
   queueMode?: QueueMode;
   queueDebounceMs?: number;
@@ -44,6 +52,7 @@ export interface ChatRunPreferences {
   queueDrop?: QueueDropPolicy;
   freeChat?: boolean;
   nextRunNoContinue?: boolean;
+  showReasoning?: boolean;
 }
 
 export interface ChatUsageStats {
@@ -79,6 +88,8 @@ export type TelegramSettingsPanelAction =
   | { kind: 'set-think'; value: ThinkLevel }
   | { kind: 'show-reasoning' }
   | { kind: 'set-reasoning'; value: ReasoningLevel }
+  | { kind: 'show-delivery' }
+  | { kind: 'set-delivery'; value: TelegramDeliveryMode }
   | { kind: 'show-verbose' }
   | { kind: 'set-verbose'; value: VerboseMode }
   | { kind: 'show-queue' }
@@ -194,8 +205,7 @@ export const telegramSettingsPanelActions = new Map<
   { chatJid: string; action: TelegramSettingsPanelAction; expiresAt: number }
 >();
 export const telegramSetupInputStates = new Map<string, TelegramSetupInputState>();
-export const piRuntimeEvents = new PiRuntimeEventHub();
-export const tuiRuntimeEvents = new TuiRuntimeEventHub();
+export const hostEventBus = new HostEventBus();
 export const telegramToolProgressRuns = new Map<string, TelegramToolProgressState>();
 
 // ---------------------------------------------------------------------------

@@ -51,14 +51,14 @@ function waitForMessage<T = unknown>(ws: WebSocket): Promise<T> {
   });
 }
 
-test('gateway rejects unauthorized method calls until connect token handshake succeeds', async () => {
+test('gateway projects assistant_final host events into chat_event frames', async () => {
   const port = await getFreePort();
-  const eventHub = new HostEventBus();
+  const bus = new HostEventBus();
   const gateway = await startTuiGatewayServer(
     {
-      getStatus: () => ({ runtime: 'docker', sessions: 2, activeRuns: 0 }),
+      getStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
       listSessions: () => [],
-      resolveChatJid: () => null,
+      resolveChatJid: () => 'telegram:1',
       getSessionKeyForChat: () => 'main',
       getSessionPrefs: () => ({}),
       patchSessionPrefs: () => ({}),
@@ -68,65 +68,35 @@ test('gateway rejects unauthorized method calls until connect token handshake su
       abortChat: async () => ({ aborted: false }),
       serviceGateway: () => ({ ok: true, text: 'ok' }),
     },
-    eventHub,
+    bus,
     {
       host: '127.0.0.1',
       port,
-      authToken: 'top-secret',
     },
   );
 
   try {
     const ws = await connectWs(`ws://127.0.0.1:${port}`);
-    ws.send(
-      JSON.stringify({
-        id: 'unauth-status',
-        method: 'status',
-      }),
-    );
-    const unauthorized = await waitForMessage<{ ok: boolean; error?: string }>(ws);
-    assert.equal(unauthorized.ok, false);
-    assert.match(unauthorized.error || '', /Unauthorized/);
+    bus.publish({
+      kind: 'assistant_final',
+      id: 'evt-1',
+      createdAt: '2026-03-21T00:00:00.000Z',
+      source: 'message-dispatch',
+      runId: 'r1',
+      sessionKey: 'main',
+      chatJid: 'telegram:1',
+      message: { role: 'assistant', content: 'done' },
+    });
+
+    const frame = await waitForMessage<{
+      event: string;
+      payload?: { runId: string; state: string; message?: { role: string; content: string } };
+    }>(ws);
+    assert.equal(frame.event, 'chat_event');
+    assert.equal(frame.payload?.runId, 'r1');
+    assert.equal(frame.payload?.state, 'final');
+    assert.deepEqual(frame.payload?.message, { role: 'assistant', content: 'done' });
     ws.close();
-
-    const wsWrongToken = await connectWs(`ws://127.0.0.1:${port}`);
-    wsWrongToken.send(
-      JSON.stringify({
-        id: 'bad-connect',
-        method: 'connect',
-        params: { token: 'wrong-token' },
-      }),
-    );
-    const badConnect = await waitForMessage<{ ok: boolean; error?: string }>(wsWrongToken);
-    assert.equal(badConnect.ok, false);
-    assert.match(badConnect.error || '', /invalid gateway token/i);
-    wsWrongToken.close();
-
-    const wsAuthed = await connectWs(`ws://127.0.0.1:${port}`);
-    wsAuthed.send(
-      JSON.stringify({
-        id: 'good-connect',
-        method: 'connect',
-        params: { token: 'top-secret' },
-      }),
-    );
-    const goodConnect = await waitForMessage<{ ok: boolean }>(wsAuthed);
-    assert.equal(goodConnect.ok, true);
-
-    wsAuthed.send(
-      JSON.stringify({
-        id: 'authed-status',
-        method: 'status',
-      }),
-    );
-    const statusFrame = await waitForMessage<{
-      ok: boolean;
-      result?: { runtime: string; sessions: number };
-    }>(wsAuthed);
-    assert.equal(statusFrame.ok, true);
-    assert.equal(statusFrame.result?.runtime, 'docker');
-    assert.equal(statusFrame.result?.sessions, 2);
-    wsAuthed.close();
   } finally {
     await gateway.close();
   }

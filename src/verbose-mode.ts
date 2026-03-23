@@ -22,9 +22,9 @@ export function getEffectiveVerboseMode(mode: VerboseMode | undefined): VerboseM
 
 export function describeVerboseMode(mode: VerboseMode): string {
   if (mode === 'off') return 'Tool progress: OFF — silent mode, just the final response.';
-  if (mode === 'new') return 'Tool progress: NEW — show each new tool and skip repeats.';
-  if (mode === 'all') return 'Tool progress: ALL — show every tool call with a short preview.';
-  return 'Tool progress: VERBOSE — full args, results, and debug logs.';
+  if (mode === 'new') return 'Tool progress: NEW — emoji reactions show which tool is running.';
+  if (mode === 'all') return 'Tool progress: ALL — emoji reactions + tool trail in the preview.';
+  return 'Tool progress: VERBOSE — separate message with full tool details.';
 }
 
 export function cycleVerboseMode(mode: VerboseMode | undefined): VerboseMode {
