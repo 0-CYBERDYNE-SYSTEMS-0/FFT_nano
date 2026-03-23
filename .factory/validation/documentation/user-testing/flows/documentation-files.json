@@ -1,0 +1,76 @@
+{
+  "assertionId": "VAL-DOCS-001",
+  "assertionDescription": "README.md provides accurate installation, usage, and contribution instructions suitable for OSS",
+  "testingSurface": "documentation-files",
+  "isolationContext": {
+    "type": "read-only-file-access",
+    "basePath": "/Users/scrimwiggins/fft_nano",
+    "filesUnderTest": [
+      "README.md",
+      "CONTRIBUTING.md",
+      "docs-site/docs.md"
+    ]
+  },
+  "testProcedure": [
+    "1. Verified README.md exists and is readable",
+    "2. Confirmed README.md contains all required OSS sections:",
+    "   - Quickstart with onboard-all.sh command",
+    "   - Architecture overview",
+    "   - Platform notes",
+    "   - Telegram/WhatsApp operations",
+    "   - Coding delegation (/coder command)",
+    "   - Main workspace and heartbeat documentation",
+    "   - Pi-Native skills section",
+    "   - Operations and debugging guidance",
+    "   - Development checks (typecheck, test, lint)",
+    "   - Release checks documentation",
+    "   - Distribution policy",
+    "3. Verified cross-references between README.md and docs-site/docs.md are consistent",
+    "4. Confirmed Quickstart commands match (onboard-all.sh, fft tui, fft doctor)",
+    "5. Verified runtime mode documentation (Docker default, host optional)",
+    "6. Checked that project description matches across all documentation files"
+  ],
+  "observations": [
+    "README.md is comprehensive with 580 lines covering all major aspects",
+    "Quickstart section clearly shows canonical install path using ./scripts/onboard-all.sh",
+    "Architecture section describes single-process Node.js host with container isolation",
+    "Telegram and WhatsApp operations are documented with configuration examples",
+    "Coding delegation via /coder command is explained",
+    "Main workspace (~/nano) and heartbeat system are documented",
+    "Pi-Native skills section explains both setup-only and runtime skills",
+    "Development checks (npm run typecheck, npm test, npm run format:check) are listed",
+    "Release check documentation references docs/RELEASE.md",
+    "Distribution policy clarifies GitHub Releases as official channel",
+    "docs-site/docs.md cross-references are consistent with README.md",
+    "All commands and configuration examples are accurate and up-to-date"
+  ],
+  "evidence": {
+    "filesVerified": [
+      "README.md (20,385 bytes, 580 lines)",
+      "CONTRIBUTING.md (2,458 bytes)",
+      "docs-site/docs.md (2,655 bytes)"
+    ],
+    "keySectionsFound": [
+      "Quickstart (Primary UX Path)",
+      "What It Does",
+      "Project Status",
+      "Quickstart commands verified",
+      "Architecture overview",
+      "Telegram Operations",
+      "Coding Delegation",
+      "Main Workspace/Heartbeat",
+      "Pi-Native Skills",
+      "Operations/Debugging",
+      "Development Checks",
+      "Release Checks",
+      "Distribution Policy"
+    ],
+    "crossReferenceChecks": "All cross-references between README.md and docs-site/docs.md are consistent"
+  },
+  "verdict": "pass",
+  "reasoning": "README.md provides accurate, comprehensive OSS documentation covering installation (onboard-all.sh), usage (fft commands, Telegram/WhatsApp setup), contribution guidelines (via CONTRIBUTING.md reference), and all required sections. No inaccurate claims detected. Cross-references are consistent across documentation files.",
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["ls", "head", "grep", "cat"],
+  "testingDurationSeconds": 45
+}
