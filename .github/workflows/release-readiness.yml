@@ -5,7 +5,12 @@ on:
     branches: [main]
   push:
     branches: [main]
+  merge_group:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   secret-scan:
@@ -26,9 +31,8 @@ jobs:
       - name: Enforce repo secret policy scan
         run: ./scripts/secret-scan.sh
 
-  release-checks:
+  quick-checks:
     runs-on: ubuntu-latest
-    needs: secret-scan
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,4 +40,22 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      - run: npm run release-check
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Secret scan
+        run: npm run secret-scan
+      - name: Skill validation
+        run: npm run validate:skills
+
+  full-checks:
+    runs-on: ubuntu-latest
+    needs: [secret-scan, quick-checks]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Release checks
+        run: npm run release-check

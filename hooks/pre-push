@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "Running pre-push checks..."
+
+echo "  - Running typecheck..."
+npm run typecheck
+
+echo "  - Running tests..."
+npm test
+
+echo "  - Running secret scan..."
+npm run secret-scan
+
+echo "Pre-push checks passed."
