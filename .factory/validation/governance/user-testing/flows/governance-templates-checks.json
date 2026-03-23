@@ -1,0 +1,136 @@
+{
+  "groupId": "governance-templates-checks",
+  "testedAt": "2026-03-23T18:23:00Z",
+  "isolation": {
+    "workingDirectory": "/Users/scrimwiggins/fft_nano",
+    "testingSurface": "repository-state",
+    "repository": "FFT_nano",
+    "branch": "main"
+  },
+  "toolsUsed": ["ls", "cat", "grep", "git"],
+  "assertions": [
+    {
+      "id": "VAL-GOV-001",
+      "title": "Issue templates present",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check .github/ISSUE_TEMPLATE/ directory exists",
+          "expected": "Directory exists with template files",
+          "observed": "Directory exists with bug_report.yml, config.yml, and feature_request.yml"
+        },
+        {
+          "action": "Verify bug_report.yml content",
+          "expected": "Appropriate bug report template with required fields",
+          "observed": "Template includes: version, platform, summary, reproduction steps, logs, impact dropdown, and security reference"
+        },
+        {
+          "action": "Verify feature_request.yml content",
+          "expected": "Appropriate feature request template with required fields",
+          "observed": "Template includes: problem statement, proposed solution, alternatives, and breaking change risk dropdown"
+        }
+      ],
+      "evidence": {
+        "directoryListing": ".github/ISSUE_TEMPLATE/ contains bug_report.yml, config.yml, feature_request.yml",
+        "templates": [
+          "evidence/governance/governance-templates-checks/VAL-GOV-001-bug-report-template.yml",
+          "evidence/governance/governance-templates-checks/VAL-GOV-001-feature-request-template.yml"
+        ],
+        "validation": "Both templates are well-structured with appropriate YAML schema, required field validations, and OSS-appropriate guidance"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GOV-002",
+      "title": "PR template present",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check .github/PULL_REQUEST_TEMPLATE.md exists",
+          "expected": "File exists with PR guidance",
+          "observed": "File exists at .github/PULL_REQUEST_TEMPLATE.md"
+        },
+        {
+          "action": "Verify PR template content",
+          "expected": "Provides useful guidance for contributors",
+          "observed": "Template includes: type of change checklist (Skill, Fix, Simplification, Release), description section, skill-specific checklist, and release hygiene reminder about CHANGELOG.md"
+        }
+      ],
+      "evidence": {
+        "filePath": ".github/PULL_REQUEST_TEMPLATE.md",
+        "templateContent": "evidence/governance/governance-templates-checks/VAL-GOV-002-pr-template.md",
+        "validation": "Template provides clear guidance for PR contributors, distinguishes between skill PRs and source code changes, and reminds about CHANGELOG.md updates"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GOV-003",
+      "title": "GitHub Actions OSS-appropriate",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "List all workflow files in .github/workflows/",
+          "expected": "Find workflow files to analyze",
+          "observed": "Found 2 workflows: release-readiness.yml, skills-only.yml"
+        },
+        {
+          "action": "Analyze release-readiness.yml for hardcoded secrets",
+          "expected": "No hardcoded credentials, use GitHub secrets syntax",
+          "observed": "Uses ${{ secrets.VAR }} syntax where needed, no inline credentials found. All external tools (gitleaks) use official GitHub Actions."
+        },
+        {
+          "action": "Analyze skills-only.yml for hardcoded secrets",
+          "expected": "No hardcoded credentials, use GitHub secrets syntax",
+          "observed": "Uses GitHub Actions context syntax, no hardcoded API keys or tokens. Uses standard permissions (contents: read, issues: write, pull-requests: write)."
+        }
+      ],
+      "evidence": {
+        "workflowsAnalyzed": [
+          ".github/workflows/release-readiness.yml",
+          ".github/workflows/skills-only.yml"
+        ],
+        "analysisReport": "evidence/governance/governance-templates-checks/VAL-GOV-003-workflows-analysis.txt",
+        "validation": "Both workflows use GitHub secrets syntax ${{ ... }}, no hardcoded credentials detected, all external dependencies use official GitHub Actions, workflows are declarative and public-suitable"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GOV-004",
+      "title": "Git hooks tracked",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check hooks/ directory exists in repository",
+          "expected": "Directory exists with hook files",
+          "observed": "hooks/ directory exists at repository root with pre-commit, pre-merge-commit, pre-push files"
+        },
+        {
+          "action": "Verify required hook files are present",
+          "expected": "pre-commit, pre-merge-commit, pre-push all exist",
+          "observed": "All three required hooks exist and are executable bash scripts"
+        },
+        {
+          "action": "Confirm hooks are tracked by git",
+          "expected": "Hooks show up in git ls-files",
+          "observed": "git ls-files hooks/ returned all three hooks, confirming they are tracked"
+        },
+        {
+          "action": "Verify hooks are not in .gitignore",
+          "expected": "hooks/ not ignored",
+          "observed": "No hooks/ entry found in .gitignore"
+        }
+      ],
+      "evidence": {
+        "hooksDirectory": "hooks/ exists at repository root",
+        "gitTracked": "git ls-files hooks/ returned: hooks/pre-commit, hooks/pre-merge-commit, hooks/pre-push",
+        "notIgnored": "grep -n '^hooks/' .gitignore returned no matches",
+        "hookContents": "evidence/governance/governance-templates-checks/VAL-GOV-004-git-hooks-tracked.txt",
+        "validation": "All three hooks exist, are executable, are tracked by git, are not ignored, and provide appropriate validation (typecheck, tests, secret-scan)"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "All 4 governance assertions passed: VAL-GOV-001 (issue templates), VAL-GOV-002 (PR template), VAL-GOV-003 (GitHub Actions OSS-appropriate), VAL-GOV-004 (git hooks tracked). The repository has comprehensive OSS governance with well-structured templates, clean workflows without hardcoded secrets, and tracked git hooks for contributor validation."
+}

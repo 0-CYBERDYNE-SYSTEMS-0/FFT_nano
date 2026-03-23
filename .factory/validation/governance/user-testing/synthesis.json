@@ -1,0 +1,30 @@
+{
+  "milestone": "governance",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-GOV-001",
+    "VAL-GOV-002",
+    "VAL-GOV-003",
+    "VAL-GOV-004"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "flowReports": [
+    ".factory/validation/governance/user-testing/flows/governance-templates-checks.json"
+  ],
+  "evidenceDirectory": "/Users/scrimwiggins/.factory/missions/8381dd5f-818e-4615-a331-82ad72015753/evidence/governance/governance-templates-checks/",
+  "appliedUpdates": [],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["ls", "cat", "grep", "git"],
+  "summary": "All 4 governance assertions passed. The repository has comprehensive OSS governance structures in place: well-structured issue templates (bug_report.yml, feature_request.yml), clear PR template with change type guidance, GitHub Actions workflows that use secrets syntax without hardcoded credentials, and tracked git hooks (pre-commit, pre-merge-commit, pre-push) for contributor validation.",
+  "previousRound": null,
+  "testedAt": "2026-03-23T18:23:00Z"
+}
