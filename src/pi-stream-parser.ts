@@ -1,4 +1,6 @@
-export type TextDelta = { kind: 'append'; text: string } | { kind: 'replace'; text: string };
+export type TextDelta =
+  | { kind: 'append'; text: string }
+  | { kind: 'replace'; text: string };
 export interface ToolDelta {
   index: number;
   toolName: string;
@@ -67,7 +69,10 @@ function extractThinkingFromContent(content: unknown): string {
   return extractBlocksByType(content, 'thinking');
 }
 
-function readString(record: Record<string, unknown>, keys: string[]): string | undefined {
+function readString(
+  record: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -126,16 +131,24 @@ function extractToolArgs(evt: Record<string, unknown>): string | undefined {
 
 function extractToolError(evt: Record<string, unknown>): string | undefined {
   const direct =
-    readString(evt, ['errorMessage', 'error_message', 'errorText', 'message']) ||
-    summarizeValue(evt.error, 320);
+    readString(evt, [
+      'errorMessage',
+      'error_message',
+      'errorText',
+      'message',
+    ]) || summarizeValue(evt.error, 320);
   if (direct) return direct;
 
   const result = evt.result;
   if (result && typeof result === 'object') {
     const nested = result as Record<string, unknown>;
     return (
-      readString(nested, ['errorMessage', 'error_message', 'errorText', 'message']) ||
-      summarizeValue(nested.error, 320)
+      readString(nested, [
+        'errorMessage',
+        'error_message',
+        'errorText',
+        'message',
+      ]) || summarizeValue(nested.error, 320)
     );
   }
   return undefined;
@@ -171,7 +184,8 @@ function isToolEndEvent(type: string): boolean {
 function isToolError(evt: Record<string, unknown>): boolean {
   if (evt.isError === true || evt.is_error === true) return true;
   const status = readString(evt, ['status']);
-  if (status && ['error', 'failed', 'failure'].includes(status.toLowerCase())) return true;
+  if (status && ['error', 'failed', 'failure'].includes(status.toLowerCase()))
+    return true;
   const stopReason = readString(evt, ['stopReason', 'stop_reason']);
   if (stopReason && stopReason.toLowerCase() === 'error') return true;
   return false;
@@ -218,7 +232,9 @@ function extractAssistantTextDelta(event: unknown): TextDelta | null {
   return null;
 }
 
-export function extractAssistantTextDeltaFromPiEvent(event: unknown): TextDelta | null {
+export function extractAssistantTextDeltaFromPiEvent(
+  event: unknown,
+): TextDelta | null {
   if (!event || typeof event !== 'object') return null;
   const evt = event as Record<string, unknown>;
   const type = typeof evt.type === 'string' ? evt.type : '';
@@ -244,7 +260,9 @@ export function extractAssistantTextDeltaFromPiEvent(event: unknown): TextDelta 
     const message = evt.message;
     if (!message || typeof message !== 'object') return null;
     if ((message as Record<string, unknown>).role !== 'assistant') return null;
-    const text = extractTextFromContent((message as Record<string, unknown>).content);
+    const text = extractTextFromContent(
+      (message as Record<string, unknown>).content,
+    );
     if (!text) return null;
     return { kind: 'replace', text };
   }
@@ -266,7 +284,10 @@ export function extractThinkingDeltaFromPiEvent(event: unknown): string | null {
 
   if (type === 'content_block_delta') {
     const delta = evt.delta as Record<string, unknown> | undefined;
-    if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+    if (
+      delta?.type === 'thinking_delta' &&
+      typeof delta.thinking === 'string'
+    ) {
       return delta.thinking;
     }
   }

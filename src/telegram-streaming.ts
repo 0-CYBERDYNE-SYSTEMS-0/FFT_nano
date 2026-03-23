@@ -34,7 +34,10 @@ export type TelegramStreamState =
   | TelegramBlockStreamState
   | TelegramDraftStreamState;
 
-export function getTelegramPreviewRunKey(chatJid: string, requestId: string): string {
+export function getTelegramPreviewRunKey(
+  chatJid: string,
+  requestId: string,
+): string {
   return `${chatJid}:${requestId}`;
 }
 
@@ -49,7 +52,10 @@ export function resolveTelegramStreamCompletionState(params: {
     return { effectiveStreamed: true, messagePreviewState: null };
   }
   if (params.previewState) {
-    return { effectiveStreamed: true, messagePreviewState: params.previewState };
+    return {
+      effectiveStreamed: true,
+      messagePreviewState: params.previewState,
+    };
   }
   return { effectiveStreamed: false, messagePreviewState: null };
 }
@@ -71,7 +77,8 @@ export function computePersistentPreviewDelivery(params: {
   }
   if (!previousText) {
     return {
-      deliveryText: nextStateText.length >= MIN_PREVIEW_CHARS ? nextStateText : null,
+      deliveryText:
+        nextStateText.length >= MIN_PREVIEW_CHARS ? nextStateText : null,
       nextStateText,
     };
   }
@@ -87,7 +94,9 @@ export function computePersistentPreviewDelivery(params: {
 
   return {
     deliveryText:
-      nextStateText.length >= MIN_PREVIEW_CHARS ? `Updated draft:\n${nextStateText}` : null,
+      nextStateText.length >= MIN_PREVIEW_CHARS
+        ? `Updated draft:\n${nextStateText}`
+        : null,
     nextStateText,
   };
 }
@@ -141,7 +150,10 @@ const BLOCK_STREAM_MIN_CHARS = 800;
 const BLOCK_STREAM_MAX_CHARS = 1200;
 const BLOCK_STREAM_IDLE_MS = 1000;
 
-function takeBlockChunk(text: string, maxChars: number): { chunk: string; rest: string } {
+function takeBlockChunk(
+  text: string,
+  maxChars: number,
+): { chunk: string; rest: string } {
   if (text.length <= maxChars) return { chunk: text, rest: '' };
 
   let cut = text.lastIndexOf('\n\n', maxChars);
@@ -172,12 +184,14 @@ function drainBlockPending(params: {
   let remainingText = params.pendingText;
   const deliveryTexts: string[] = [];
   while (remainingText) {
-    if (!params.forceFlush && remainingText.length < params.minChunkChars) break;
+    if (!params.forceFlush && remainingText.length < params.minChunkChars)
+      break;
     const { chunk, rest } = takeBlockChunk(remainingText, params.maxChunkChars);
     if (!chunk) break;
     deliveryTexts.push(chunk);
     remainingText = rest;
-    if (!params.forceFlush && remainingText.length < params.minChunkChars) break;
+    if (!params.forceFlush && remainingText.length < params.minChunkChars)
+      break;
   }
   return { deliveryTexts, remainingText };
 }
@@ -209,8 +223,14 @@ export function computeBlockStreamDelivery(params: {
   nextState: TelegramBlockStreamState | null;
 } {
   const now = params.now ?? Date.now();
-  const minChunkChars = Math.max(1, params.minChunkChars ?? BLOCK_STREAM_MIN_CHARS);
-  const maxChunkChars = Math.max(minChunkChars, params.maxChunkChars ?? BLOCK_STREAM_MAX_CHARS);
+  const minChunkChars = Math.max(
+    1,
+    params.minChunkChars ?? BLOCK_STREAM_MIN_CHARS,
+  );
+  const maxChunkChars = Math.max(
+    minChunkChars,
+    params.maxChunkChars ?? BLOCK_STREAM_MAX_CHARS,
+  );
   const idleMs = Math.max(0, params.idleMs ?? BLOCK_STREAM_IDLE_MS);
   const nextText = normalizeTelegramDraftText(params.nextText);
   const previousState = params.previousState || null;
@@ -244,7 +264,8 @@ export function computeBlockStreamDelivery(params: {
         ...previousState,
         pendingText: flushed.remainingText,
         updatedAt: now,
-        lastSentAt: flushed.deliveryTexts.length > 0 ? now : previousState.lastSentAt,
+        lastSentAt:
+          flushed.deliveryTexts.length > 0 ? now : previousState.lastSentAt,
       },
     };
   }
@@ -280,7 +301,8 @@ export function computeBlockStreamDelivery(params: {
       nextState: {
         ...nextState,
         pendingText: flushed.remainingText,
-        lastSentAt: flushed.deliveryTexts.length > 0 ? now : nextState.lastSentAt,
+        lastSentAt:
+          flushed.deliveryTexts.length > 0 ? now : nextState.lastSentAt,
       },
     };
   }
@@ -313,7 +335,8 @@ export function computeBlockStreamDelivery(params: {
         ...previousState,
         pendingText: flushed.remainingText,
         updatedAt: now,
-        lastSentAt: flushed.deliveryTexts.length > 0 ? now : previousState.lastSentAt,
+        lastSentAt:
+          flushed.deliveryTexts.length > 0 ? now : previousState.lastSentAt,
       },
     };
   }
@@ -419,7 +442,10 @@ class BaseTelegramStreamRegistry {
   private readonly disabledUntil = new Map<string, number>();
   private readonly streamStates = new Map<string, TelegramStreamState>();
   private readonly completedRuns = new Map<string, number>();
-  private readonly failureCounts = new Map<string, { count: number; retryAfter: number }>();
+  private readonly failureCounts = new Map<
+    string,
+    { count: number; retryAfter: number }
+  >();
   private readonly pendingReactions = new Map<string, string | null>();
   private readonly toolTrails = new Map<string, string[]>();
 
@@ -442,7 +468,10 @@ class BaseTelegramStreamRegistry {
     this.disabledUntil.set(runKey, now + DISABLE_TTL_MS);
   }
 
-  recordFailure(runKey: string, now = Date.now()): { count: number; disabled: boolean } {
+  recordFailure(
+    runKey: string,
+    now = Date.now(),
+  ): { count: number; disabled: boolean } {
     const existing = this.failureCounts.get(runKey);
     const count = (existing?.count ?? 0) + 1;
     if (count >= MAX_FAILURES_BEFORE_DISABLE) {
@@ -450,7 +479,8 @@ class BaseTelegramStreamRegistry {
       this.disable(runKey, now);
       return { count, disabled: true };
     }
-    const backoffMs = BACKOFF_STEPS_MS[Math.min(count - 1, BACKOFF_STEPS_MS.length - 1)];
+    const backoffMs =
+      BACKOFF_STEPS_MS[Math.min(count - 1, BACKOFF_STEPS_MS.length - 1)];
     this.failureCounts.set(runKey, { count, retryAfter: now + backoffMs });
     return { count, disabled: false };
   }
@@ -500,7 +530,11 @@ class BaseTelegramStreamRegistry {
   getPreviewState(runKey: string): TelegramMessagePreviewState | undefined {
     const state = this.streamStates.get(runKey);
     return state?.mode === 'message'
-      ? { messageId: state.messageId, lastText: state.lastText, updatedAt: state.updatedAt }
+      ? {
+          messageId: state.messageId,
+          lastText: state.lastText,
+          updatedAt: state.updatedAt,
+        }
       : undefined;
   }
 
@@ -557,7 +591,11 @@ class BaseTelegramStreamRegistry {
     const state = this.streamStates.get(runKey);
     this.streamStates.delete(runKey);
     return state?.mode === 'message'
-      ? { messageId: state.messageId, lastText: state.lastText, updatedAt: state.updatedAt }
+      ? {
+          messageId: state.messageId,
+          lastText: state.lastText,
+          updatedAt: state.updatedAt,
+        }
       : null;
   }
 
@@ -595,7 +633,9 @@ class BaseTelegramStreamRegistry {
       }
     }
     while (this.streamStates.size > this.maxStates) {
-      const oldestKey = this.streamStates.keys().next().value as string | undefined;
+      const oldestKey = this.streamStates.keys().next().value as
+        | string
+        | undefined;
       if (!oldestKey) break;
       this.streamStates.delete(oldestKey);
     }
@@ -640,7 +680,10 @@ export async function updateTelegramPreview(params: {
       params.registry.clearDraftState(runKey);
     }
 
-    if ((!state || state.mode !== 'message') && nextText.length < MIN_PREVIEW_CHARS) {
+    if (
+      (!state || state.mode !== 'message') &&
+      nextText.length < MIN_PREVIEW_CHARS
+    ) {
       return { runKey, sent: false, disabled: false };
     }
 
@@ -655,7 +698,11 @@ export async function updateTelegramPreview(params: {
     }
 
     if (state?.mode === 'message') {
-      await params.bot.editStreamMessage(params.chatJid, state.messageId, nextText);
+      await params.bot.editStreamMessage(
+        params.chatJid,
+        state.messageId,
+        nextText,
+      );
       params.registry.setStreamState(runKey, {
         mode: 'message',
         messageId: state.messageId,
@@ -663,10 +710,18 @@ export async function updateTelegramPreview(params: {
         updatedAt: now,
       });
       params.registry.clearFailures(runKey);
-      return { runKey, sent: true, disabled: false, messageId: state.messageId };
+      return {
+        runKey,
+        sent: true,
+        disabled: false,
+        messageId: state.messageId,
+      };
     }
 
-    const messageId = await params.bot.sendStreamMessage(params.chatJid, nextText);
+    const messageId = await params.bot.sendStreamMessage(
+      params.chatJid,
+      nextText,
+    );
     params.registry.setStreamState(runKey, {
       mode: 'message',
       messageId,
@@ -727,7 +782,10 @@ export async function updateTelegramDraftPreview(params: {
     }
 
     if (existingDraftState && existingDraftState.lastText === nextText) {
-      params.registry.setDraftState(runKey, { ...existingDraftState, updatedAt: now });
+      params.registry.setDraftState(runKey, {
+        ...existingDraftState,
+        updatedAt: now,
+      });
       return {
         runKey,
         sent: false,

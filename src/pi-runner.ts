@@ -63,7 +63,11 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
-  codingHint?: 'none' | 'auto' | 'force_delegate_execute' | 'force_delegate_plan';
+  codingHint?:
+    | 'none'
+    | 'auto'
+    | 'force_delegate_execute'
+    | 'force_delegate_plan';
   requestId?: string;
   memoryContext?: string;
   extraSystemPrompt?: string;
@@ -112,10 +116,14 @@ export interface ContainerRuntimeEvent {
   error?: string;
 }
 
-type CodingHint = 'none' | 'auto' | 'force_delegate_execute' | 'force_delegate_plan';
+type CodingHint =
+  | 'none'
+  | 'auto'
+  | 'force_delegate_execute'
+  | 'force_delegate_plan';
 
 function normalizeCodingHint(value: ContainerInput['codingHint']): CodingHint {
-  if (value === 'force_delegate' as string) return 'force_delegate_execute';
+  if (value === ('force_delegate' as string)) return 'force_delegate_execute';
   if (
     value === 'auto' ||
     value === 'force_delegate_execute' ||
@@ -142,7 +150,10 @@ export function normalizeTelegramDraftText(text: string): string {
   const normalized = text.replace(/\r\n/g, '\n');
   if (!normalized) return '.';
   if (normalized.length <= TELEGRAM_DRAFT_MAX_LEN) return normalized;
-  const suffixLen = Math.max(1, TELEGRAM_DRAFT_MAX_LEN - TELEGRAM_DRAFT_PREFIX.length);
+  const suffixLen = Math.max(
+    1,
+    TELEGRAM_DRAFT_MAX_LEN - TELEGRAM_DRAFT_PREFIX.length,
+  );
   return `${TELEGRAM_DRAFT_PREFIX}${normalized.slice(-suffixLen)}`;
 }
 
@@ -157,7 +168,11 @@ export function deriveTelegramDraftId(seed: string): number {
   return (raw % 2_000_000_000) + 1;
 }
 
-function writeIpcFile(dir: string, prefix: string, payload: Record<string, unknown>): boolean {
+function writeIpcFile(
+  dir: string,
+  prefix: string,
+  payload: Record<string, unknown>,
+): boolean {
   try {
     fs.mkdirSync(dir, { recursive: true });
     const ts = Date.now();
@@ -189,18 +204,32 @@ function stripDotEnvQuotes(raw: string): string {
   return v;
 }
 
-export function collectRuntimeSecrets(projectRoot: string): Record<string, string> {
+export function collectRuntimeSecrets(
+  projectRoot: string,
+): Record<string, string> {
   const envFile = path.join(projectRoot, '.env');
   const allowedVars = [
-    'PI_BASE_URL', 'PI_API_KEY', 'PI_MODEL', 'PI_API',
+    'PI_BASE_URL',
+    'PI_API_KEY',
+    'PI_MODEL',
+    'PI_API',
     'FFT_NANO_RUNTIME_PROVIDER_PRESET',
-    'OPENAI_API_KEY', 'OPENAI_BASE_URL',
-    'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY',
-    'GROQ_API_KEY', 'ZAI_API_KEY', 'MINIMAX_API_KEY',
-    'KIMI_API_KEY', 'MODAL_API_KEY', 'NVIDIA_API_KEY',
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL',
+    'ANTHROPIC_API_KEY',
+    'GEMINI_API_KEY',
+    'OPENROUTER_API_KEY',
+    'GROQ_API_KEY',
+    'ZAI_API_KEY',
+    'MINIMAX_API_KEY',
+    'KIMI_API_KEY',
+    'MODAL_API_KEY',
+    'NVIDIA_API_KEY',
     'FFT_NANO_DRY_RUN',
-    'HA_URL', 'HA_TOKEN',
-    'FFT_NANO_PROMPT_FILE_MAX_CHARS', 'FFT_NANO_PROMPT_TOTAL_MAX_CHARS',
+    'HA_URL',
+    'HA_TOKEN',
+    'FFT_NANO_PROMPT_FILE_MAX_CHARS',
+    'FFT_NANO_PROMPT_TOTAL_MAX_CHARS',
   ] as const;
 
   const fromDotEnv: Record<string, string> = {};
@@ -229,7 +258,9 @@ export function collectRuntimeSecrets(projectRoot: string): Record<string, strin
   }
 
   merged.TZ = TIMEZONE;
-  merged.FFT_NANO_PROMPT_FILE_MAX_CHARS = String(PARITY_CONFIG.workspace.bootstrapMaxChars);
+  merged.FFT_NANO_PROMPT_FILE_MAX_CHARS = String(
+    PARITY_CONFIG.workspace.bootstrapMaxChars,
+  );
   merged.FFT_NANO_PROMPT_TOTAL_MAX_CHARS = String(
     PARITY_CONFIG.workspace.bootstrapTotalMaxChars,
   );
@@ -252,9 +283,9 @@ function resolveWorkspacePaths(
   piHomeDir: string;
   piAgentDir: string;
 } {
-  const groupDir = workspaceDirOverride || (isMain
-    ? MAIN_WORKSPACE_DIR
-    : resolveGroupFolderPath(group.folder));
+  const groupDir =
+    workspaceDirOverride ||
+    (isMain ? MAIN_WORKSPACE_DIR : resolveGroupFolderPath(group.folder));
   const globalDir = path.join(GROUPS_DIR, 'global');
   const ipcDir = resolveGroupIpcPath(group.folder);
   const piHomeDir = path.join(DATA_DIR, 'pi', group.folder, '.pi');
@@ -263,7 +294,11 @@ function resolveWorkspacePaths(
   return { groupDir, globalDir, ipcDir, piHomeDir, piAgentDir };
 }
 
-function ensureGroupDirs(wp: ReturnType<typeof resolveWorkspacePaths>, groupFolder: string, isMain: boolean): void {
+function ensureGroupDirs(
+  wp: ReturnType<typeof resolveWorkspacePaths>,
+  groupFolder: string,
+  isMain: boolean,
+): void {
   fs.mkdirSync(wp.groupDir, { recursive: true });
   fs.mkdirSync(wp.piHomeDir, { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'messages'), { recursive: true });
@@ -286,12 +321,17 @@ function resolvePerRequestPromptManifestPath(
   groupDir: string,
   requestId: string | undefined,
 ): string {
-  const safeId = (requestId || `run-${Date.now()}`).replace(/[^a-zA-Z0-9._-]+/g, '-');
+  const safeId = (requestId || `run-${Date.now()}`).replace(
+    /[^a-zA-Z0-9._-]+/g,
+    '-',
+  );
   return path.join(groupDir, 'logs', 'system-prompts', `${safeId}.json`);
 }
 
 function isOverflowStyleError(stderr: string): boolean {
-  return /payload too large|context length exceeded|maximum context length|token limit/i.test(stderr);
+  return /payload too large|context length exceeded|maximum context length|token limit/i.test(
+    stderr,
+  );
 }
 
 function syncSkills(
@@ -336,7 +376,8 @@ function buildPiArgs(params: {
   piAgentDir: string;
   secrets: Record<string, string>;
 }): string[] {
-  const { systemPrompt, prompt, useContinue, input, codingHint, secrets } = params;
+  const { systemPrompt, prompt, useContinue, input, codingHint, secrets } =
+    params;
   const args: string[] = ['--mode', 'json'];
   if (useContinue) args.push('-c');
 
@@ -420,7 +461,10 @@ export async function runContainerAgent(
     groupDir = resolveGroupFolderPath(group.folder);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    logger.error({ groupName: group.name, groupFolder: group.folder, error }, 'Rejected run for invalid group folder');
+    logger.error(
+      { groupName: group.name, groupFolder: group.folder, error },
+      'Rejected run for invalid group folder',
+    );
     return { status: 'error', result: null, error };
   }
 
@@ -435,7 +479,11 @@ export async function runContainerAgent(
         payload = { ...input, memoryContext: memory.context };
       }
       logger.debug(
-        { group: group.name, chunksTotal: memory.chunksTotal, selectedK: memory.selectedK },
+        {
+          group: group.name,
+          chunksTotal: memory.chunksTotal,
+          selectedK: memory.selectedK,
+        },
         'Built retrieval-gated memory context',
       );
     } catch (err) {
@@ -477,7 +525,9 @@ export async function runContainerAgent(
   } as const;
 
   const cachedBase = PARITY_CONFIG.prompt.cacheEnabled
-    ? promptState.cacheEntries[`${isMain ? 'main' : 'group'}:${input.isScheduledTask ? 'minimal' : 'full'}:${codingHint}`]
+    ? promptState.cacheEntries[
+        `${isMain ? 'main' : 'group'}:${input.isScheduledTask ? 'minimal' : 'full'}:${codingHint}`
+      ]
     : undefined;
   let systemPromptBuild = buildSystemPrompt(baseInput, wp, {
     delegationExtensionAvailable: true,
@@ -492,16 +542,19 @@ export async function runContainerAgent(
   });
 
   const isHeartbeatRun = (input.requestId || '').startsWith('heartbeat-');
-  const promptRunMode: 'interactive' | 'scheduled' | 'heartbeat' = input.isScheduledTask
-    ? 'scheduled'
-    : isHeartbeatRun
-      ? 'heartbeat'
-      : 'interactive';
+  const promptRunMode: 'interactive' | 'scheduled' | 'heartbeat' =
+    input.isScheduledTask
+      ? 'scheduled'
+      : isHeartbeatRun
+        ? 'heartbeat'
+        : 'interactive';
   const promptPreflightInput = {
     preflightRebaseEnabled:
-      input.skipPromptPreflight !== true && PARITY_CONFIG.prompt.preflightRebaseEnabled,
+      input.skipPromptPreflight !== true &&
+      PARITY_CONFIG.prompt.preflightRebaseEnabled,
     flushEnabled:
-      input.skipPromptPreflight !== true && PARITY_CONFIG.memory.flushBeforeCompaction.enabled,
+      input.skipPromptPreflight !== true &&
+      PARITY_CONFIG.memory.flushBeforeCompaction.enabled,
     softTokenThreshold: PARITY_CONFIG.prompt.softTokenThreshold,
     hardTokenThreshold: PARITY_CONFIG.prompt.hardTokenThreshold,
     currentPromptChars: systemPromptBuild.report.totalChars,
@@ -589,7 +642,10 @@ export async function runContainerAgent(
   if (PARITY_CONFIG.prompt.persistLatestManifest) {
     writePromptManifest(latestManifestPath, systemPromptBuild.report);
   }
-  if (!PARITY_CONFIG.prompt.manifestPerRequestInDebugOnly || process.env.LOG_LEVEL === 'debug') {
+  if (
+    !PARITY_CONFIG.prompt.manifestPerRequestInDebugOnly ||
+    process.env.LOG_LEVEL === 'debug'
+  ) {
     writePromptManifest(
       resolvePerRequestPromptManifestPath(groupDir, input.requestId),
       systemPromptBuild.report,
@@ -607,7 +663,8 @@ export async function runContainerAgent(
     return {
       status: 'error',
       result: null,
-      error: 'Prompt runtime state is corrupted or preflight thresholds are invalid. Remove or repair the prompt state file before retrying.',
+      error:
+        'Prompt runtime state is corrupted or preflight thresholds are invalid. Remove or repair the prompt state file before retrying.',
       promptSummary: {
         cacheHit: systemPromptBuild.report.cacheHit,
         preflightDecision,
@@ -628,7 +685,9 @@ export async function runContainerAgent(
     },
   };
   if (PARITY_CONFIG.prompt.cacheEnabled) {
-    const baseLayer = systemPromptBuild.report.layers.find((layer) => layer.id === 'base');
+    const baseLayer = systemPromptBuild.report.layers.find(
+      (layer) => layer.id === 'base',
+    );
     if (baseLayer) {
       const cacheEntry: PromptCacheEntry = {
         key: systemPromptBuild.report.baseCacheKey,
@@ -668,7 +727,15 @@ export async function runContainerAgent(
     ? `[SCHEDULED TASK]\n${input.prompt}`
     : input.prompt;
 
-  if (['1', 'true', 'yes'].includes((secrets.FFT_NANO_DRY_RUN || process.env.FFT_NANO_DRY_RUN || '').toLowerCase())) {
+  if (
+    ['1', 'true', 'yes'].includes(
+      (
+        secrets.FFT_NANO_DRY_RUN ||
+        process.env.FFT_NANO_DRY_RUN ||
+        ''
+      ).toLowerCase(),
+    )
+  ) {
     return {
       status: 'success',
       result: `DRY_RUN: received ${prompt.length} chars for ${input.chatJid}`,
@@ -685,7 +752,9 @@ export async function runContainerAgent(
     if (!activeChild || activeChild.killed) return;
     activeChild.kill('SIGTERM');
     const ref = activeChild;
-    setTimeout(() => { if (!ref.killed) ref.kill('SIGKILL'); }, 5_000);
+    setTimeout(() => {
+      if (!ref.killed) ref.kill('SIGKILL');
+    }, 5_000);
   };
 
   const STDERR_MAX_SIZE = 1_048_576; // 1 MB
@@ -695,7 +764,8 @@ export async function runContainerAgent(
     return {
       status: 'error',
       result: null,
-      error: 'pi binary not found on PATH and no repo-local fallback exists. Set PI_PATH or install pi globally.',
+      error:
+        'pi binary not found on PATH and no repo-local fallback exists. Set PI_PATH or install pi globally.',
     };
   }
 
@@ -717,7 +787,16 @@ export async function runContainerAgent(
       });
 
       const hostPassthrough: Record<string, string> = {};
-      for (const key of ['PATH', 'HOME', 'TZ', 'TERM', 'LANG', 'SHELL', 'USER', 'TMPDIR'] as const) {
+      for (const key of [
+        'PATH',
+        'HOME',
+        'TZ',
+        'TERM',
+        'LANG',
+        'SHELL',
+        'USER',
+        'TMPDIR',
+      ] as const) {
         const v = process.env[key];
         if (v) hostPassthrough[key] = v;
       }
@@ -763,7 +842,10 @@ export async function runContainerAgent(
       );
       const draftMinIntervalMs = Math.max(
         400,
-        Number.parseInt(process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '1000', 10) || 1000,
+        Number.parseInt(
+          process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '1000',
+          10,
+        ) || 1000,
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
@@ -773,9 +855,10 @@ export async function runContainerAgent(
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
         let previewText = assistantSoFar;
         if (input.showReasoning && thinkingSoFar) {
-          const thinkingBlock = thinkingSoFar.length > 600
-            ? `...${thinkingSoFar.slice(-597)}`
-            : thinkingSoFar;
+          const thinkingBlock =
+            thinkingSoFar.length > 600
+              ? `...${thinkingSoFar.slice(-597)}`
+              : thinkingSoFar;
           previewText = `Reasoning:\n\`\`\`\n${thinkingBlock}\n\`\`\`\n\n${assistantSoFar}`;
         }
         const nextDraftText = normalizeTelegramDraftText(previewText);
@@ -804,20 +887,34 @@ export async function runContainerAgent(
           if (event && typeof event === 'object') {
             const evtType = (event as Record<string, unknown>).type;
             if (typeof evtType === 'string' && /tool/i.test(evtType)) {
-              logger.debug({ evtType, group: group.name }, 'Pi stdout tool event');
+              logger.debug(
+                { evtType, group: group.name },
+                'Pi stdout tool event',
+              );
             }
           }
           const toolDelta = extractToolDeltaFromPiEvent(event, toolTracker);
           if (toolDelta) {
             logger.debug(
-              { toolName: toolDelta.toolName, status: toolDelta.status, group: group.name },
+              {
+                toolName: toolDelta.toolName,
+                status: toolDelta.status,
+                group: group.name,
+              },
               'Parsed tool delta from Pi stdout',
             );
             if (toolDelta.status === 'start' && toolDelta.args) {
-              const audit = auditToolExecution(toolDelta.toolName, toolDelta.args);
+              const audit = auditToolExecution(
+                toolDelta.toolName,
+                toolDelta.args,
+              );
               if (audit.flagged) {
                 logger.warn(
-                  { group: group.name, tool: toolDelta.toolName, reason: audit.reason },
+                  {
+                    group: group.name,
+                    tool: toolDelta.toolName,
+                    reason: audit.reason,
+                  },
                   'Destructive command detected',
                 );
               }
@@ -939,9 +1036,12 @@ export async function runContainerAgent(
 
     const doRun = async () => {
       try {
-        let res = effectiveInputNoContinue ? await runPi(false) : await runPi(true);
+        let res = effectiveInputNoContinue
+          ? await runPi(false)
+          : await runPi(true);
         if (!effectiveInputNoContinue && res.code !== 0) {
-          const looksLikeNoSession = /no\s+previous\s+session|no\s+session/i.test(res.stderr);
+          const looksLikeNoSession =
+            /no\s+previous\s+session|no\s+session/i.test(res.stderr);
           if (looksLikeNoSession) res = await runPi(false);
         }
 
@@ -961,7 +1061,12 @@ export async function runContainerAgent(
           };
           writePromptRuntimeState(promptStatePath, failedState);
           logger.error(
-            { group: group.name, code: res.code, duration, stderr: res.stderr.slice(-500) },
+            {
+              group: group.name,
+              code: res.code,
+              duration,
+              stderr: res.stderr.slice(-500),
+            },
             'Pi exited with error',
           );
           finish({
@@ -979,7 +1084,11 @@ export async function runContainerAgent(
         });
         const result = isTelegramChatJid(input.chatJid)
           ? parsed.result
-          : appendToolVerboseSection(parsed.result, input.verboseMode, parsed.toolExecutions);
+          : appendToolVerboseSection(
+              parsed.result,
+              input.verboseMode,
+              parsed.toolExecutions,
+            );
 
         let finalResult: string | null = result;
         let finalStreamed = res.streamedDraft;
@@ -1004,7 +1113,11 @@ export async function runContainerAgent(
             sent = true;
           } else {
             const filePath = path.join(outDir, `${rid}.md`);
-            try { fs.writeFileSync(filePath, result); } catch { /* ignore */ }
+            try {
+              fs.writeFileSync(filePath, result);
+            } catch {
+              /* ignore */
+            }
             const preview = result.slice(0, Math.min(1200, result.length));
             hostEventBus.publish({
               kind: 'chat_delivery_requested',
@@ -1033,7 +1146,10 @@ export async function runContainerAgent(
         successState.lastTotalTokens = parsed.usage?.totalTokens;
         successState.lastOverflowAt = undefined;
         if (effectiveInputNoContinue) {
-          successState.sessionEpoch = Math.max(successState.sessionEpoch || 0, 1);
+          successState.sessionEpoch = Math.max(
+            successState.sessionEpoch || 0,
+            1,
+          );
         }
         writePromptRuntimeState(promptStatePath, successState);
 
@@ -1086,7 +1202,10 @@ export function writeTasksSnapshot(
   try {
     groupIpcDir = resolveGroupIpcPath(groupFolder);
   } catch (err) {
-    logger.warn({ groupFolder, err }, 'Skipping tasks snapshot for invalid group folder');
+    logger.warn(
+      { groupFolder, err },
+      'Skipping tasks snapshot for invalid group folder',
+    );
     return;
   }
   fs.mkdirSync(groupIpcDir, { recursive: true });
@@ -1114,7 +1233,10 @@ export function writeGroupsSnapshot(
   try {
     groupIpcDir = resolveGroupIpcPath(groupFolder);
   } catch (err) {
-    logger.warn({ groupFolder, err }, 'Skipping groups snapshot for invalid group folder');
+    logger.warn(
+      { groupFolder, err },
+      'Skipping groups snapshot for invalid group folder',
+    );
     return;
   }
   fs.mkdirSync(groupIpcDir, { recursive: true });
@@ -1122,6 +1244,10 @@ export function writeGroupsSnapshot(
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
   fs.writeFileSync(
     groupsFile,
-    JSON.stringify({ groups: visibleGroups, lastSync: new Date().toISOString() }, null, 2),
+    JSON.stringify(
+      { groups: visibleGroups, lastSync: new Date().toISOString() },
+      null,
+      2,
+    ),
   );
 }

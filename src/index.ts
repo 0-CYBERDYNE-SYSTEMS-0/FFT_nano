@@ -139,7 +139,10 @@ import {
   type CodingWorkerRequest,
 } from './coding-orchestrator.js';
 import { executeFarmAction } from './farm-action-gateway.js';
-import { startFarmStateCollector, stopFarmStateCollector } from './farm-state-collector.js';
+import {
+  startFarmStateCollector,
+  stopFarmStateCollector,
+} from './farm-state-collector.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
@@ -155,7 +158,10 @@ import {
   parseVerboseDirective,
   type VerboseMode,
 } from './verbose-mode.js';
-import { resolveCronExecutionPlan, resolveCronPolicy } from './cron/adapters.js';
+import {
+  resolveCronExecutionPlan,
+  resolveCronPolicy,
+} from './cron/adapters.js';
 import type { CronV2Schedule } from './cron/types.js';
 import {
   isHeartbeatFileEffectivelyEmpty,
@@ -212,7 +218,10 @@ import {
   wrapLegacyTaskEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
-import { createMessageDispatcher, finalizeCompletedRun } from './message-dispatch.js';
+import {
+  createMessageDispatcher,
+  finalizeCompletedRun,
+} from './message-dispatch.js';
 import { createTelegramCommandHandlers } from './telegram-commands.js';
 import {
   state,
@@ -265,10 +274,16 @@ const TELEGRAM_AUTO_REGISTER = !['0', 'false', 'no'].includes(
 const HEARTBEAT_PROMPT = PARITY_CONFIG.heartbeat.prompt;
 const HEARTBEAT_INTERVAL_MS =
   parseDurationMs(PARITY_CONFIG.heartbeat.every || '30m') || 30 * 60 * 1000;
-const HEARTBEAT_ENABLED = PARITY_CONFIG.heartbeat.enabled && HEARTBEAT_INTERVAL_MS > 0;
+const HEARTBEAT_ENABLED =
+  PARITY_CONFIG.heartbeat.enabled && HEARTBEAT_INTERVAL_MS > 0;
 const HEARTBEAT_ACTIVE_HOURS_RAW = resolveHeartbeatActiveHoursRaw();
-const HEARTBEAT_ACK_MAX_CHARS = Math.max(0, PARITY_CONFIG.heartbeat.ackMaxChars || 300);
-const HEARTBEAT_ACTIVE_HOURS = parseHeartbeatActiveHours(HEARTBEAT_ACTIVE_HOURS_RAW);
+const HEARTBEAT_ACK_MAX_CHARS = Math.max(
+  0,
+  PARITY_CONFIG.heartbeat.ackMaxChars || 300,
+);
+const HEARTBEAT_ACTIVE_HOURS = parseHeartbeatActiveHours(
+  HEARTBEAT_ACTIVE_HOURS_RAW,
+);
 const HEARTBEAT_TARGET = PARITY_CONFIG.heartbeat.target;
 const HEARTBEAT_TARGET_TO = PARITY_CONFIG.heartbeat.to;
 const HEARTBEAT_TARGET_ACCOUNT_ID = PARITY_CONFIG.heartbeat.accountId;
@@ -278,7 +293,10 @@ const HEARTBEAT_INCLUDE_REASONING = PARITY_CONFIG.heartbeat.includeReasoning;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_PERSISTENT_PREVIEW_TTL_MS = 30 * 60 * 1000;
-const telegramPersistentPreviewTexts = new Map<string, { lastText: string; updatedAt: number }>();
+const telegramPersistentPreviewTexts = new Map<
+  string,
+  { lastText: string; updatedAt: number }
+>();
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
 interface GitInfo {
   branch?: string;
@@ -328,7 +346,10 @@ function getTuiSessionPrefs(chatJid: string): TuiSessionPrefs {
   return getTuiSessionPrefsCore(getChatPrefsRuntime(), chatJid);
 }
 
-function patchTuiSessionPrefs(chatJid: string, patch: TuiSessionPrefs): TuiSessionPrefs {
+function patchTuiSessionPrefs(
+  chatJid: string,
+  patch: TuiSessionPrefs,
+): TuiSessionPrefs {
   return patchTuiSessionPrefsCore(getChatPrefsRuntime(), chatJid, patch);
 }
 
@@ -357,7 +378,10 @@ function updateChatUsage(
   updateChatUsageCore(getChatPrefsRuntime(), chatJid, usage);
 }
 
-function formatUsageText(chatJid: string, scope: 'chat' | 'all' = 'chat'): string {
+function formatUsageText(
+  chatJid: string,
+  scope: 'chat' | 'all' = 'chat',
+): string {
   return formatUsageTextCore(getChatPrefsRuntime(), chatJid, scope);
 }
 
@@ -406,18 +430,23 @@ function loadState(): void {
   state.lastTimestamp = loaded.last_timestamp || '';
   state.lastAgentTimestamp = loaded.last_agent_timestamp || {};
   state.chatRunPreferences = Object.fromEntries(
-    Object.entries(loaded.chat_run_preferences || {}).map(([chatJid, prefs]) => {
-      const nextPrefs: ChatRunPreferences = { ...prefs };
-      const normalizedDelivery = prefs.telegramDeliveryMode
-        ? normalizeTelegramDeliveryMode(prefs.telegramDeliveryMode)
-        : undefined;
-      if (normalizedDelivery === 'partial' || normalizedDelivery === undefined) {
-        delete nextPrefs.telegramDeliveryMode;
-      } else {
-        nextPrefs.telegramDeliveryMode = normalizedDelivery;
-      }
-      return [chatJid, nextPrefs];
-    }),
+    Object.entries(loaded.chat_run_preferences || {}).map(
+      ([chatJid, prefs]) => {
+        const nextPrefs: ChatRunPreferences = { ...prefs };
+        const normalizedDelivery = prefs.telegramDeliveryMode
+          ? normalizeTelegramDeliveryMode(prefs.telegramDeliveryMode)
+          : undefined;
+        if (
+          normalizedDelivery === 'partial' ||
+          normalizedDelivery === undefined
+        ) {
+          delete nextPrefs.telegramDeliveryMode;
+        } else {
+          nextPrefs.telegramDeliveryMode = normalizedDelivery;
+        }
+        return [chatJid, nextPrefs];
+      },
+    ),
   );
   state.chatUsageStats = loaded.chat_usage_stats || {};
   const rawRegisteredGroups = loadJson<Record<string, RegisteredGroup>>(
@@ -463,7 +492,10 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   }
 
   state.registeredGroups[jid] = group;
-  saveJson(path.join(DATA_DIR, 'registered_groups.json'), state.registeredGroups);
+  saveJson(
+    path.join(DATA_DIR, 'registered_groups.json'),
+    state.registeredGroups,
+  );
 
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
@@ -735,8 +767,10 @@ function resolveMainOnboardingGate(chatJid: string): {
   pending: boolean;
 } {
   if (!isMainChat(chatJid)) return { active: false, pending: false };
-  if (PARITY_CONFIG.workspace.skipBootstrap) return { active: false, pending: false };
-  if (!PARITY_CONFIG.workspace.enforceBootstrapGate) return { active: false, pending: false };
+  if (PARITY_CONFIG.workspace.skipBootstrap)
+    return { active: false, pending: false };
+  if (!PARITY_CONFIG.workspace.enforceBootstrapGate)
+    return { active: false, pending: false };
 
   // Ensure first-message gate checks observe freshly seeded bootstrap state.
   ensureMainWorkspaceBootstrap({ workspaceDir: MAIN_WORKSPACE_DIR });
@@ -744,7 +778,8 @@ function resolveMainOnboardingGate(chatJid: string): {
   if (!status.pending) return { active: false, pending: false };
 
   const enforceForWorkspace =
-    status.gateEligible || PARITY_CONFIG.workspace.enforceBootstrapGateForExisting;
+    status.gateEligible ||
+    PARITY_CONFIG.workspace.enforceBootstrapGateForExisting;
   return {
     active: enforceForWorkspace,
     pending: true,
@@ -752,7 +787,9 @@ function resolveMainOnboardingGate(chatJid: string): {
 }
 
 function isCoderDelegationCommand(content: string): boolean {
-  return /^\/(?:coder|coding|coder-plan|coder_plan)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(content.trim());
+  return /^\/(?:coder|coding|coder-plan|coder_plan)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(
+    content.trim(),
+  );
 }
 
 function onboardingCommandBlockedText(): string {
@@ -836,9 +873,13 @@ function resolveHeartbeatTargetJid(mainChatJid: string): string | null {
   }
   if (explicitTarget === 'telegram') {
     if (HEARTBEAT_TARGET_TO?.trim()) {
-      return parseTelegramTargetJid(HEARTBEAT_TARGET_TO) || findMainTelegramChatJid();
+      return (
+        parseTelegramTargetJid(HEARTBEAT_TARGET_TO) || findMainTelegramChatJid()
+      );
     }
-    return heartbeatLastTargetByChannel.get('telegram') || findMainTelegramChatJid();
+    return (
+      heartbeatLastTargetByChannel.get('telegram') || findMainTelegramChatJid()
+    );
   }
   if (explicitTarget === 'whatsapp') {
     if (HEARTBEAT_TARGET_TO?.trim()) {
@@ -851,7 +892,8 @@ function resolveHeartbeatTargetJid(mainChatJid: string): string | null {
   if (explicitTarget === 'chat') {
     if (!HEARTBEAT_TARGET_TO?.trim()) return mainChatJid;
     const raw = HEARTBEAT_TARGET_TO.trim();
-    if (raw.startsWith('telegram:')) return parseTelegramTargetJid(raw) || mainChatJid;
+    if (raw.startsWith('telegram:'))
+      return parseTelegramTargetJid(raw) || mainChatJid;
     if (raw.includes('@')) return raw;
     const asTelegram = parseTelegramTargetJid(raw);
     if (asTelegram) return asTelegram;
@@ -906,7 +948,11 @@ async function maybeRunBootMdOnce(): Promise<void> {
       workspaceDir: MAIN_WORKSPACE_DIR,
       bootHash,
     });
-    if (run.ok && run.result?.trim() && !/^BOOT_OK\b/i.test(run.result.trim())) {
+    if (
+      run.ok &&
+      run.result?.trim() &&
+      !/^BOOT_OK\b/i.test(run.result.trim())
+    ) {
       await sendMessage(mainChatJid, `[BOOT]\n${run.result.trim()}`);
       rememberHeartbeatTarget(mainChatJid);
     }
@@ -930,7 +976,9 @@ function resolveChatJidForSessionKey(sessionKey: string): string | null {
 }
 
 function buildTuiSessionList(): TuiSessionSummary[] {
-  const chatByJid = new Map(getAllChats().map((chat) => [chat.jid, chat] as const));
+  const chatByJid = new Map(
+    getAllChats().map((chat) => [chat.jid, chat] as const),
+  );
   const sessions: TuiSessionSummary[] = [];
 
   for (const [jid, group] of Object.entries(state.registeredGroups)) {
@@ -961,7 +1009,10 @@ function normalizeAssistantHistoryContent(content: string): string {
   return content;
 }
 
-function getTuiSessionHistory(chatJid: string, limit: number): SessionHistoryMessage[] {
+function getTuiSessionHistory(
+  chatJid: string,
+  limit: number,
+): SessionHistoryMessage[] {
   const rows = getChatHistory(chatJid, limit);
   return rows.map((row) => {
     const role = row.is_from_me ? 'assistant' : 'user';
@@ -986,8 +1037,8 @@ function emitTuiChatEvent(payload: {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
-      provider?: string;
-      model?: string;
+    provider?: string;
+    model?: string;
   };
 }): void {
   const createdAt = new Date().toISOString();
@@ -1053,7 +1104,11 @@ function makeRunId(prefix = 'run'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function persistAssistantHistory(chatJid: string, text: string, runId?: string): string {
+function persistAssistantHistory(
+  chatJid: string,
+  text: string,
+  runId?: string,
+): string {
   if (!state.registeredGroups[chatJid]) return '';
   const timestamp = new Date().toISOString();
   const content = text.startsWith(`${ASSISTANT_NAME}:`)
@@ -1072,7 +1127,11 @@ function persistAssistantHistory(chatJid: string, text: string, runId?: string):
   return timestamp;
 }
 
-function persistTuiUserHistory(chatJid: string, text: string, runId: string): string {
+function persistTuiUserHistory(
+  chatJid: string,
+  text: string,
+  runId: string,
+): string {
   const timestamp = new Date().toISOString();
   if (state.registeredGroups[chatJid]) {
     storeHostMessage({
@@ -1113,7 +1172,10 @@ function resolveHeartbeatActiveHoursRaw(): string | undefined {
   return `${cfg.activeHours.start}-${cfg.activeHours.end}@${timezone}`;
 }
 
-function resetTuiSession(chatJid: string, reason: string): { ok: boolean; reason: string } {
+function resetTuiSession(
+  chatJid: string,
+  reason: string,
+): { ok: boolean; reason: string } {
   patchTuiSessionPrefs(chatJid, { noContinueNext: true });
   return { ok: true, reason };
 }
@@ -1123,8 +1185,7 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
   if (!piExecutable) {
     return {
       ok: false,
-      text:
-        'Model listing is unavailable: `pi` was not found on PATH and no repo-local fallback exists at node_modules/.bin/pi. Run setup or install dependencies.',
+      text: 'Model listing is unavailable: `pi` was not found on PATH and no repo-local fallback exists at node_modules/.bin/pi. Run setup or install dependencies.',
     };
   }
 
@@ -1164,10 +1225,15 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
     };
   }
 
-  const bounded = out.length > 12000 ? `${out.slice(0, 12000)}\n\n...output truncated...` : out;
+  const bounded =
+    out.length > 12000
+      ? `${out.slice(0, 12000)}\n\n...output truncated...`
+      : out;
   return {
     ok: true,
-    text: trimmed ? `Models matching "${trimmed}":\n${bounded}` : `Available models:\n${bounded}`,
+    text: trimmed
+      ? `Models matching "${trimmed}":\n${bounded}`
+      : `Available models:\n${bounded}`,
   };
 }
 
@@ -1186,7 +1252,9 @@ function parsePiModelListOutput(output: string): PiModelEntry[] {
     .filter((entry) => entry.provider.length > 0 && entry.model.length > 0);
 }
 
-function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
+function loadPiModels(
+  forceRefresh = false,
+): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
   if (
     !forceRefresh &&
     state.piModelsCache &&
@@ -1200,8 +1268,7 @@ function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[]
   if (!piExecutable) {
     return {
       ok: false,
-      text:
-        'Model picker is unavailable because `pi` is not installed for the running service.',
+      text: 'Model picker is unavailable because `pi` is not installed for the running service.',
     };
   }
 
@@ -1211,12 +1278,14 @@ function loadPiModels(forceRefresh = false): { ok: true; entries: PiModelEntry[]
     maxBuffer: 4 * 1024 * 1024,
   });
   const entries =
-    !result.error && result.status === 0 ? parsePiModelListOutput(result.stdout || '') : [];
+    !result.error && result.status === 0
+      ? parsePiModelListOutput(result.stdout || '')
+      : [];
   const piFailureText = result.error
     ? `Failed to load models from ${piExecutable}: ${result.error.message}`
     : result.status !== 0
-      ? ((result.stderr || result.stdout || '').trim() ||
-          `pi --list-models exited with code ${result.status ?? 'unknown'}`)
+      ? (result.stderr || result.stdout || '').trim() ||
+        `pi --list-models exited with code ${result.status ?? 'unknown'}`
       : 'Model picker is unavailable because pi returned no models.';
 
   // Append locally available Ollama models
@@ -1264,14 +1333,19 @@ function getRuntimeConfigSummaryLines(): string[] {
   ];
 }
 
-function persistRuntimeConfigUpdates(updates: Record<string, string | undefined>): void {
+function persistRuntimeConfigUpdates(
+  updates: Record<string, string | undefined>,
+): void {
   const envPath = getDefaultDotEnvPath(process.cwd());
   upsertDotEnv(envPath, updates);
   applyProcessEnvUpdates(updates);
   state.piModelsCache = null;
 }
 
-function setTelegramSetupInputState(chatJid: string, kind: TelegramSetupInputKind): void {
+function setTelegramSetupInputState(
+  chatJid: string,
+  kind: TelegramSetupInputKind,
+): void {
   telegramSetupInputStates.set(chatJid, {
     kind,
     expiresAt: Date.now() + TELEGRAM_SETUP_INPUT_TTL_MS,
@@ -1282,7 +1356,9 @@ function clearTelegramSetupInputState(chatJid: string): void {
   telegramSetupInputStates.delete(chatJid);
 }
 
-function getTelegramSetupInputState(chatJid: string): TelegramSetupInputState | null {
+function getTelegramSetupInputState(
+  chatJid: string,
+): TelegramSetupInputState | null {
   const current = telegramSetupInputStates.get(chatJid);
   if (!current) return null;
   if (current.expiresAt <= Date.now()) {
@@ -1377,7 +1453,9 @@ function buildTelegramSetupProviderPanel(chatJid: string): {
   rows.push([
     {
       text: 'Home',
-      callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-setup-home' }),
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-setup-home',
+      }),
     },
   ]);
   return {
@@ -1492,15 +1570,24 @@ function buildTelegramSetupModelPanel(
   }
 
   const snapshot = resolveRuntimeConfigSnapshot(getRuntimeConfigEnv());
-  const totalPages = Math.max(1, Math.ceil(models.length / TELEGRAM_MODEL_PANEL_PAGE_SIZE));
+  const totalPages = Math.max(
+    1,
+    Math.ceil(models.length / TELEGRAM_MODEL_PANEL_PAGE_SIZE),
+  );
   const safePage = Math.max(0, Math.min(page, totalPages - 1));
   const start = safePage * TELEGRAM_MODEL_PANEL_PAGE_SIZE;
-  const pageModels = models.slice(start, start + TELEGRAM_MODEL_PANEL_PAGE_SIZE);
+  const pageModels = models.slice(
+    start,
+    start + TELEGRAM_MODEL_PANEL_PAGE_SIZE,
+  );
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < pageModels.length; i += 2) {
     rows.push(
       pageModels.slice(i, i + 2).map((model) => ({
-        text: snapshot.model === model ? `* ${truncateButtonLabel(model)}` : truncateButtonLabel(model),
+        text:
+          snapshot.model === model
+            ? `* ${truncateButtonLabel(model)}`
+            : truncateButtonLabel(model),
         callbackData: registerTelegramSettingsPanelAction(chatJid, {
           kind: 'set-setup-model',
           preset,
@@ -1595,7 +1682,9 @@ function buildTelegramSetupEndpointPanel(chatJid: string): {
       [
         {
           text: 'Home',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-setup-home' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-setup-home',
+          }),
         },
       ],
     ],
@@ -1633,7 +1722,9 @@ function buildTelegramSetupApiKeyPanel(chatJid: string): {
       [
         {
           text: 'Home',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-setup-home' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-setup-home',
+          }),
         },
       ],
     ],
@@ -1698,7 +1789,10 @@ function buildTelegramSettingsHomePanel(chatJid: string): {
   keyboard: TelegramInlineKeyboard;
 } {
   return {
-    text: ['Runtime controls for this chat:', ...formatTelegramSettingsPanelSummary(chatJid)].join('\n'),
+    text: [
+      'Runtime controls for this chat:',
+      ...formatTelegramSettingsPanelSummary(chatJid),
+    ].join('\n'),
     keyboard: [
       [
         {
@@ -1709,23 +1803,31 @@ function buildTelegramSettingsHomePanel(chatJid: string): {
         },
         {
           text: 'Think',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-think' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-think',
+          }),
         },
       ],
       [
         {
           text: 'Queue',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-queue' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-queue',
+          }),
         },
         {
           text: 'Delivery',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-delivery' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-delivery',
+          }),
         },
       ],
       [
         {
           text: 'Fresh Next Run',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'trigger-new' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'trigger-new',
+          }),
         },
         {
           text: 'Reasoning',
@@ -1735,7 +1837,9 @@ function buildTelegramSettingsHomePanel(chatJid: string): {
         },
         {
           text: 'Verbose',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-verbose' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-verbose',
+          }),
         },
       ],
       [
@@ -1759,13 +1863,25 @@ function buildTelegramModelProviderPanel(chatJid: string): {
   if (!loaded.ok) {
     return {
       text: `Model picker error:\n${loaded.text}`,
-      keyboard: [[{ text: 'Back', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]],
+      keyboard: [
+        [
+          {
+            text: 'Back',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-home',
+            }),
+          },
+        ],
+      ],
     };
   }
 
   const providerCounts = new Map<string, number>();
   for (const entry of loaded.entries) {
-    providerCounts.set(entry.provider, (providerCounts.get(entry.provider) || 0) + 1);
+    providerCounts.set(
+      entry.provider,
+      (providerCounts.get(entry.provider) || 0) + 1,
+    );
   }
   const providers = Array.from(providerCounts.entries()).sort((a, b) =>
     a[0].localeCompare(b[0]),
@@ -1784,9 +1900,19 @@ function buildTelegramModelProviderPanel(chatJid: string): {
       })),
     );
   }
-  rows.push([{ text: 'Back', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+  rows.push([
+    {
+      text: 'Back',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-home',
+      }),
+    },
+  ]);
   return {
-    text: ['Select a provider:', ...formatTelegramSettingsPanelSummary(chatJid)].join('\n'),
+    text: [
+      'Select a provider:',
+      ...formatTelegramSettingsPanelSummary(chatJid),
+    ].join('\n'),
     keyboard: rows,
   };
 }
@@ -1800,7 +1926,16 @@ function buildTelegramProviderModelPanel(
   if (!loaded.ok) {
     return {
       text: `Model picker error:\n${loaded.text}`,
-      keyboard: [[{ text: 'Back', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]],
+      keyboard: [
+        [
+          {
+            text: 'Back',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-home',
+            }),
+          },
+        ],
+      ],
     };
   }
   const models = loaded.entries
@@ -1808,10 +1943,16 @@ function buildTelegramProviderModelPanel(
     .map((entry) => entry.model)
     .sort((a, b) => a.localeCompare(b));
 
-  const totalPages = Math.max(1, Math.ceil(models.length / TELEGRAM_MODEL_PANEL_PAGE_SIZE));
+  const totalPages = Math.max(
+    1,
+    Math.ceil(models.length / TELEGRAM_MODEL_PANEL_PAGE_SIZE),
+  );
   const safePage = Math.max(0, Math.min(page, totalPages - 1));
   const start = safePage * TELEGRAM_MODEL_PANEL_PAGE_SIZE;
-  const pageModels = models.slice(start, start + TELEGRAM_MODEL_PANEL_PAGE_SIZE);
+  const pageModels = models.slice(
+    start,
+    start + TELEGRAM_MODEL_PANEL_PAGE_SIZE,
+  );
   const current = getEffectiveModelLabel(chatJid);
 
   const rows: TelegramInlineKeyboard = [];
@@ -1821,7 +1962,9 @@ function buildTelegramProviderModelPanel(
         const full = `${provider}/${model}`;
         const selected = current === full;
         return {
-          text: selected ? `* ${truncateButtonLabel(model)}` : truncateButtonLabel(model),
+          text: selected
+            ? `* ${truncateButtonLabel(model)}`
+            : truncateButtonLabel(model),
           callbackData: registerTelegramSettingsPanelAction(chatJid, {
             kind: 'set-model',
             provider,
@@ -1873,7 +2016,14 @@ function buildTelegramProviderModelPanel(
       }),
     },
   ]);
-  rows.push([{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+  rows.push([
+    {
+      text: 'Home',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-home',
+      }),
+    },
+  ]);
 
   return {
     text: [
@@ -1885,19 +2035,39 @@ function buildTelegramProviderModelPanel(
   };
 }
 
-function buildThinkPanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
+function buildThinkPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
   const current = state.chatRunPreferences[chatJid]?.thinkLevel || 'off';
-  const levels: ThinkLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+  const levels: ThinkLevel[] = [
+    'off',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+  ];
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < levels.length; i += 2) {
     rows.push(
       levels.slice(i, i + 2).map((value) => ({
         text: value === current ? `* ${value}` : value,
-        callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'set-think', value }),
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'set-think',
+          value,
+        }),
       })),
     );
   }
-  rows.push([{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+  rows.push([
+    {
+      text: 'Home',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-home',
+      }),
+    },
+  ]);
   return {
     text: `Select thinking level:\nCurrent: ${current}`,
     keyboard: rows,
@@ -1920,7 +2090,14 @@ function buildReasoningPanel(chatJid: string): {
           value,
         }),
       })),
-      [{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }],
+      [
+        {
+          text: 'Home',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-home',
+          }),
+        },
+      ],
     ],
   };
 }
@@ -1929,8 +2106,15 @@ function buildDeliveryPanel(chatJid: string): {
   text: string;
   keyboard: TelegramInlineKeyboard;
 } {
-  const current = state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
-  const modes: TelegramDeliveryMode[] = ['partial', 'block', 'draft', 'off', 'persistent'];
+  const current =
+    state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
+  const modes: TelegramDeliveryMode[] = [
+    'partial',
+    'block',
+    'draft',
+    'off',
+    'persistent',
+  ];
   return {
     text: [
       'Select Telegram text delivery mode:',
@@ -1950,13 +2134,25 @@ function buildDeliveryPanel(chatJid: string): {
           value,
         }),
       })),
-      [{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }],
+      [
+        {
+          text: 'Home',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-home',
+          }),
+        },
+      ],
     ],
   };
 }
 
-function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
-  const current = getEffectiveVerboseMode(state.chatRunPreferences[chatJid]?.verboseMode);
+function buildVerbosePanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const current = getEffectiveVerboseMode(
+    state.chatRunPreferences[chatJid]?.verboseMode,
+  );
   const levels: VerboseMode[] = ['off', 'new', 'all', 'verbose'];
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < levels.length; i += 2) {
@@ -1973,7 +2169,9 @@ function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramI
   rows.push([
     {
       text: 'Home',
-      callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }),
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-home',
+      }),
     },
   ]);
   return {
@@ -1986,15 +2184,27 @@ function buildVerbosePanel(chatJid: string): { text: string; keyboard: TelegramI
   };
 }
 
-function buildQueuePanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
+function buildQueuePanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
   const prefs = state.chatRunPreferences[chatJid] || {};
   const current = prefs.queueMode || 'collect';
-  const modes: QueueMode[] = ['collect', 'followup', 'interrupt', 'steer', 'steer-backlog'];
+  const modes: QueueMode[] = [
+    'collect',
+    'followup',
+    'interrupt',
+    'steer',
+    'steer-backlog',
+  ];
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < modes.length; i += 2) {
     rows.push(
       modes.slice(i, i + 2).map((value) => ({
-        text: value === current ? `* ${truncateButtonLabel(value, 24)}` : truncateButtonLabel(value, 24),
+        text:
+          value === current
+            ? `* ${truncateButtonLabel(value, 24)}`
+            : truncateButtonLabel(value, 24),
         callbackData: registerTelegramSettingsPanelAction(chatJid, {
           kind: 'set-queue-mode',
           value,
@@ -2002,7 +2212,14 @@ function buildQueuePanel(chatJid: string): { text: string; keyboard: TelegramInl
       })),
     );
   }
-  rows.push([{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }]);
+  rows.push([
+    {
+      text: 'Home',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-home',
+      }),
+    },
+  ]);
   return {
     text: [
       'Select queue mode:',
@@ -2017,7 +2234,10 @@ function buildQueuePanel(chatJid: string): { text: string; keyboard: TelegramInl
   };
 }
 
-function buildSubagentsPanel(chatJid: string): { text: string; keyboard: TelegramInlineKeyboard } {
+function buildSubagentsPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
   const text = [
     'Subagent controls:',
     formatActiveSubagentsText(),
@@ -2030,7 +2250,9 @@ function buildSubagentsPanel(chatJid: string): { text: string; keyboard: Telegra
       [
         {
           text: 'Refresh',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-subagents' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-subagents',
+          }),
         },
         {
           text: 'Stop Current',
@@ -2050,16 +2272,19 @@ function buildSubagentsPanel(chatJid: string): { text: string; keyboard: Telegra
         },
         {
           text: 'Home',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }),
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-home',
+          }),
         },
       ],
     ],
   };
 }
 
-function runGatewayServiceCommand(
-  action: 'status' | 'restart' | 'doctor',
-): { ok: boolean; text: string } {
+function runGatewayServiceCommand(action: 'status' | 'restart' | 'doctor'): {
+  ok: boolean;
+  text: string;
+} {
   if (action === 'doctor') {
     const result = spawnSync('npm', ['run', 'doctor'], {
       encoding: 'utf8',
@@ -2077,17 +2302,25 @@ function runGatewayServiceCommand(
       .join('\n')
       .trim();
     const bounded =
-      output.length > 12000 ? `${output.slice(0, 12000)}\n\n...output truncated...` : output;
+      output.length > 12000
+        ? `${output.slice(0, 12000)}\n\n...output truncated...`
+        : output;
     if (result.status !== 0 && result.status !== 1) {
       return {
         ok: false,
-        text: bounded || `Doctor command failed with exit code ${result.status ?? 'unknown'}.`,
+        text:
+          bounded ||
+          `Doctor command failed with exit code ${result.status ?? 'unknown'}.`,
       };
     }
     const warn = result.status === 1;
     return {
       ok: true,
-      text: bounded || (warn ? 'Doctor completed with warnings.' : 'Doctor command completed.'),
+      text:
+        bounded ||
+        (warn
+          ? 'Doctor completed with warnings.'
+          : 'Doctor command completed.'),
     };
   }
 
@@ -2137,18 +2370,18 @@ function runGatewayServiceCommand(
   }
 
   if (result.status !== 0) {
-    const needsPrivileges = /root privileges|sudo|permission denied|operation not permitted|bootstrap failed|input\/output error/i.test(
-      bounded,
-    );
+    const needsPrivileges =
+      /root privileges|sudo|permission denied|operation not permitted|bootstrap failed|input\/output error/i.test(
+        bounded,
+      );
     const guidance = needsPrivileges
       ? '\n\nThis action likely needs interactive host privileges. Run ./scripts/service.sh <action> (or fft service <action>) directly in a shell with required permissions.'
       : '';
     return {
       ok: false,
-      text:
-        (bounded
-          ? `${bounded}${guidance}`
-          : `Gateway service command failed with exit code ${result.status ?? 'unknown'}.${guidance}`),
+      text: bounded
+        ? `${bounded}${guidance}`
+        : `Gateway service command failed with exit code ${result.status ?? 'unknown'}.${guidance}`,
     };
   }
 
@@ -2197,7 +2430,10 @@ function formatStatusText(chatJid?: string): string {
     }
     const activeRun = activeChatRuns.get(chatJid);
     if (activeRun) {
-      const ageSeconds = Math.max(0, Math.floor((now - activeRun.startedAt) / 1000));
+      const ageSeconds = Math.max(
+        0,
+        Math.floor((now - activeRun.startedAt) / 1000),
+      );
       lines.push(`- chat_run_active: yes (${ageSeconds}s)`);
     } else {
       lines.push('- chat_run_active: no');
@@ -2252,13 +2488,17 @@ function formatTaskRunsText(taskId: string, limit = 10): string {
     const err = row.error ? ` err=${row.error.slice(0, 120)}` : '';
     return `- ${row.run_at} [${row.status}] duration_ms=${row.duration_ms}${err}`;
   });
-  return [`Task runs for ${taskId} (latest ${safeLimit}):`, ...lines].join('\n');
+  return [`Task runs for ${taskId} (latest ${safeLimit}):`, ...lines].join(
+    '\n',
+  );
 }
 
 function formatTasksText(mode: 'list' | 'due' = 'list'): string {
   const tasks = mode === 'due' ? getDueTasks() : getAllTasks();
   if (tasks.length === 0) {
-    return mode === 'due' ? 'No due tasks right now.' : 'No scheduled tasks found.';
+    return mode === 'due'
+      ? 'No due tasks right now.'
+      : 'No scheduled tasks found.';
   }
   const lines = tasks.slice(0, 30).map((task) => {
     const nextRun = task.next_run || 'n/a';
@@ -2309,7 +2549,11 @@ function resolveTelegramSettingsPanel(
     case 'show-model-providers':
       return buildTelegramModelProviderPanel(chatJid);
     case 'show-models-for-provider':
-      return buildTelegramProviderModelPanel(chatJid, action.provider, action.page);
+      return buildTelegramProviderModelPanel(
+        chatJid,
+        action.provider,
+        action.page,
+      );
     case 'show-think':
       return buildThinkPanel(chatJid);
     case 'show-reasoning':
@@ -2343,7 +2587,11 @@ async function sendTelegramSettingsPanel(
 ): Promise<void> {
   if (!state.telegramBot) return;
   const panel = resolveTelegramSettingsPanel(chatJid, action);
-  await state.telegramBot.sendMessageWithKeyboard(chatJid, panel.text, panel.keyboard);
+  await state.telegramBot.sendMessageWithKeyboard(
+    chatJid,
+    panel.text,
+    panel.keyboard,
+  );
 }
 
 async function editTelegramSettingsPanel(
@@ -2353,7 +2601,12 @@ async function editTelegramSettingsPanel(
 ): Promise<void> {
   if (!state.telegramBot) return;
   const panel = resolveTelegramSettingsPanel(chatJid, action);
-  await state.telegramBot.editMessageWithKeyboard(chatJid, messageId, panel.text, panel.keyboard);
+  await state.telegramBot.editMessageWithKeyboard(
+    chatJid,
+    messageId,
+    panel.text,
+    panel.keyboard,
+  );
 }
 
 async function promptTelegramSetupInput(
@@ -2363,13 +2616,18 @@ async function promptTelegramSetupInput(
 ): Promise<void> {
   clearTelegramSetupInputState(chatJid);
   setTelegramSetupInputState(chatJid, kind);
-  await sendMessage(chatJid, `${prompt}\n\nNext plain-text message will be captured. Send /setup cancel to abort.`);
+  await sendMessage(
+    chatJid,
+    `${prompt}\n\nNext plain-text message will be captured. Send /setup cancel to abort.`,
+  );
 }
 
 function formatActiveSubagentsText(): string {
   const runs: string[] = [];
   const now = Date.now();
-  for (const run of Array.from(activeCoderRuns.values()).sort((a, b) => a.startedAt - b.startedAt)) {
+  for (const run of Array.from(activeCoderRuns.values()).sort(
+    (a, b) => a.startedAt - b.startedAt,
+  )) {
     const age = Math.max(0, Math.floor((now - run.startedAt) / 1000));
     runs.push(
       `- request=${run.requestId} mode=${run.mode} state=${run.state || 'running'} backend=${run.backend || 'pi'} age=${age}s chat=${run.chatJid}${run.parentRequestId ? ` parent=${run.parentRequestId}` : ''}${run.worktreePath ? ` worktree=${run.worktreePath}` : ''}`,
@@ -2379,7 +2637,8 @@ function formatActiveSubagentsText(): string {
   return ['Active subagent runs:', ...runs].join('\n');
 }
 
-let codingOrchestrator: ReturnType<typeof createCodingOrchestrator> | null = null;
+let codingOrchestrator: ReturnType<typeof createCodingOrchestrator> | null =
+  null;
 
 function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
   if (!codingOrchestrator) {
@@ -2395,13 +2654,15 @@ function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
 }
 
 async function runCodingTask(
-  params: Omit<CodingWorkerRequest, 'workspaceRoot'> & { workspaceRoot?: string },
+  params: Omit<CodingWorkerRequest, 'workspaceRoot'> & {
+    workspaceRoot?: string;
+  },
 ) {
-  const workspaceRoot = params.workspaceRoot || (
-    params.group.folder === MAIN_GROUP_FOLDER
+  const workspaceRoot =
+    params.workspaceRoot ||
+    (params.group.folder === MAIN_GROUP_FOLDER
       ? MAIN_WORKSPACE_DIR
-      : resolveGroupFolderPath(params.group.folder)
-  );
+      : resolveGroupFolderPath(params.group.folder));
   return getCodingOrchestrator().runTask({
     ...params,
     workspaceRoot,
@@ -2440,7 +2701,9 @@ async function maybeRunCompactionMemoryFlush(
     flushCfg.systemPrompt,
     flushCfg.prompt,
   ].join('\n');
-  const prefs: ChatRunPreferences = { ...(state.chatRunPreferences[chatJid] || {}) };
+  const prefs: ChatRunPreferences = {
+    ...(state.chatRunPreferences[chatJid] || {}),
+  };
   delete prefs.nextRunNoContinue;
 
   const run = await runAgent(
@@ -2491,7 +2754,9 @@ async function runCompactionForChat(
     .filter(Boolean)
     .join('\n');
 
-  const prefs: ChatRunPreferences = { ...(state.chatRunPreferences[chatJid] || {}) };
+  const prefs: ChatRunPreferences = {
+    ...(state.chatRunPreferences[chatJid] || {}),
+  };
   delete prefs.nextRunNoContinue;
   const abortController = new AbortController();
   const activeRun: ActiveChatRun = {
@@ -2535,7 +2800,10 @@ async function runCompactionForChat(
       return current;
     });
 
-    const preview = summary.length > 1200 ? `${summary.slice(0, 1200)}\n\n...truncated...` : summary;
+    const preview =
+      summary.length > 1200
+        ? `${summary.slice(0, 1200)}\n\n...truncated...`
+        : summary;
     return [
       `Compaction complete (${compactRequestId}).`,
       'Saved summary to /workspace/group/MEMORY.md and scheduled fresh next session.',
@@ -2603,7 +2871,9 @@ async function persistTelegramMedia(
   }
 
   try {
-    const downloaded = await state.telegramBot.downloadFile(message.media.fileId);
+    const downloaded = await state.telegramBot.downloadFile(
+      message.media.fileId,
+    );
     if (downloaded.data.length > TELEGRAM_MEDIA_MAX_BYTES) {
       const mb = (downloaded.data.length / (1024 * 1024)).toFixed(1);
       const maxMb = TELEGRAM_MEDIA_MAX_MB.toFixed(0);
@@ -2612,7 +2882,11 @@ async function persistTelegramMedia(
         `Attachment rejected (${mb} MB). Max allowed is ${maxMb} MB.`,
       );
       logger.warn(
-        { chatJid: message.chatJid, type: message.media.type, size: downloaded.data.length },
+        {
+          chatJid: message.chatJid,
+          type: message.media.type,
+          size: downloaded.data.length,
+        },
         'Telegram media rejected by downloaded size',
       );
       return `${message.content}\n[Attachment rejected: size exceeds limit]`;
@@ -2677,7 +2951,9 @@ async function refreshTelegramCommandMenus(): Promise<void> {
     }));
 
     const mainTelegramJid = findMainTelegramChatJid();
-    const mainChatId = mainTelegramJid ? parseTelegramChatId(mainTelegramJid) : null;
+    const mainChatId = mainTelegramJid
+      ? parseTelegramChatId(mainTelegramJid)
+      : null;
 
     try {
       await state.telegramBot.deleteCommands({ type: 'default' });
@@ -2694,20 +2970,29 @@ async function refreshTelegramCommandMenus(): Promise<void> {
       );
     }
 
-    if (state.lastTelegramMenuMainChatId && state.lastTelegramMenuMainChatId !== mainChatId) {
+    if (
+      state.lastTelegramMenuMainChatId &&
+      state.lastTelegramMenuMainChatId !== mainChatId
+    ) {
       try {
         await state.telegramBot.setCommands(common, {
           type: 'chat',
           chatId: state.lastTelegramMenuMainChatId,
         });
       } catch (err) {
-        logger.debug({ err }, 'Failed resetting previous main Telegram command scope');
+        logger.debug(
+          { err },
+          'Failed resetting previous main Telegram command scope',
+        );
       }
     }
 
     if (mainChatId) {
       try {
-        await state.telegramBot.setCommands(admin, { type: 'chat', chatId: mainChatId });
+        await state.telegramBot.setCommands(admin, {
+          type: 'chat',
+          chatId: mainChatId,
+        });
       } catch (err) {
         logger.warn(
           { err, mainChatId },
@@ -2740,10 +3025,7 @@ function logTelegramCommandAudit(
   allowed: boolean,
   reason: string,
 ): void {
-  logger.info(
-    { chatJid, command, allowed, reason },
-    'Telegram command audit',
-  );
+  logger.info({ chatJid, command, allowed, reason }, 'Telegram command audit');
 }
 
 const telegramCommandHandlers = createTelegramCommandHandlers({
@@ -2825,12 +3107,10 @@ async function handleTelegramCallbackQuery(
   await telegramCommandHandlers.handleTelegramCallbackQuery(q);
 }
 
-async function handleTelegramSetupInput(
-  m: {
-    chatJid: string;
-    content: string;
-  },
-): Promise<boolean> {
+async function handleTelegramSetupInput(m: {
+  chatJid: string;
+  content: string;
+}): Promise<boolean> {
   return telegramCommandHandlers.handleTelegramSetupInput(m);
 }
 
@@ -2941,7 +3221,9 @@ const appRuntime = createAppRuntime({
     state.lastTimestamp = value;
   },
   saveState,
-  isWithinHeartbeatActiveHoursInvalid: !!(HEARTBEAT_ACTIVE_HOURS_RAW?.trim() && !HEARTBEAT_ACTIVE_HOURS),
+  isWithinHeartbeatActiveHoursInvalid: !!(
+    HEARTBEAT_ACTIVE_HOURS_RAW?.trim() && !HEARTBEAT_ACTIVE_HOURS
+  ),
   acquireSingletonLock,
   ensureContainerSystemRunning: () => appRuntime.ensureContainerSystemRunning(),
   initDatabase,
@@ -2973,7 +3255,10 @@ async function runDirectSessionTurn(params: {
   text: string;
   runId: string;
   deliver: boolean;
-}): Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }> {
+}): Promise<{
+  runId: string;
+  status: 'started' | 'queued' | 'already_running';
+}> {
   return messageDispatcher.runDirectSessionTurn(params);
 }
 
@@ -2997,7 +3282,7 @@ async function runAgent(
     provider?: string;
     model?: string;
   };
-  }> {
+}> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
 
   // Update tasks snapshot for container to read (filtered by group)
@@ -3056,7 +3341,8 @@ async function runAgent(
             model_override: runtimePrefs.model || null,
             think_level: runtimePrefs.thinkLevel || null,
             reasoning_level: runtimePrefs.reasoningLevel || null,
-            telegram_delivery_mode: runtimePrefs.telegramDeliveryMode || 'partial',
+            telegram_delivery_mode:
+              runtimePrefs.telegramDeliveryMode || 'partial',
             verbose_mode: runtimePrefs.verboseMode || null,
             container_runtime: runtime,
           },
@@ -3083,7 +3369,8 @@ async function runAgent(
       noContinue: runtimePrefs.nextRunNoContinue === true,
       suppressPreviewStreaming: runtimePrefs.telegramDeliveryMode === 'off',
       showReasoning:
-        runtimePrefs.showReasoning === true || runtimePrefs.reasoningLevel === 'stream',
+        runtimePrefs.showReasoning === true ||
+        runtimePrefs.reasoningLevel === 'stream',
     };
 
     const sessionKey = getSessionKeyForChat(chatJid);
@@ -3116,13 +3403,18 @@ async function runAgent(
           if (event.kind !== 'tool' || !requestId) return;
           hadToolSideEffects = true;
           if (isTelegramJid(chatJid)) {
-            queueTelegramToolProgressUpdate(chatJid, requestId, runPrefs.verboseMode, {
-              toolName: event.toolName,
-              status: event.status,
-              ...(event.args ? { args: event.args } : {}),
-              ...(event.output ? { output: event.output } : {}),
-              ...(event.error ? { error: event.error } : {}),
-            });
+            queueTelegramToolProgressUpdate(
+              chatJid,
+              requestId,
+              runPrefs.verboseMode,
+              {
+                toolName: event.toolName,
+                status: event.status,
+                ...(event.args ? { args: event.args } : {}),
+                ...(event.output ? { output: event.output } : {}),
+                ...(event.error ? { error: event.error } : {}),
+              },
+            );
           }
           emitTuiToolEvent({
             runId: requestId,
@@ -3145,7 +3437,10 @@ async function runAgent(
     let output = await executeRun(runtimePrefs);
 
     if (output.status === 'error') {
-      if (typeof output.error === 'string' && /aborted by user/i.test(output.error)) {
+      if (
+        typeof output.error === 'string' &&
+        /aborted by user/i.test(output.error)
+      ) {
         return { result: null, streamed: false, ok: true };
       }
       if (options.suppressErrorReply) {
@@ -3236,12 +3531,14 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
       activeRuns: activeChatRunsById.size,
     }),
     listSessions: () => buildTuiSessionList(),
-    resolveChatJid: (sessionKey: string) => resolveChatJidForSessionKey(sessionKey),
+    resolveChatJid: (sessionKey: string) =>
+      resolveChatJidForSessionKey(sessionKey),
     getSessionKeyForChat: (chatJid: string) => getSessionKeyForChat(chatJid),
     getSessionPrefs: (chatJid: string) => getTuiSessionPrefs(chatJid),
     patchSessionPrefs: (chatJid: string, patch: TuiSessionPrefs) =>
       patchTuiSessionPrefs(chatJid, patch),
-    resetSession: (chatJid: string, reason: string) => resetTuiSession(chatJid, reason),
+    resetSession: (chatJid: string, reason: string) =>
+      resetTuiSession(chatJid, reason),
     getHistory: async (chatJid: string, limit: number) =>
       getTuiSessionHistory(chatJid, limit),
     sendChat: async ({ chatJid, message, runId, deliver }) =>
@@ -3306,7 +3603,10 @@ async function startTuiGatewayService(): Promise<void> {
     );
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    logger.error({ err: error }, 'TUI gateway failed to start; continuing without TUI surface');
+    logger.error(
+      { err: error },
+      'TUI gateway failed to start; continuing without TUI surface',
+    );
   }
 }
 
@@ -3386,7 +3686,10 @@ async function stopWebControlCenterService(): Promise<void> {
   }
 }
 
-async function sendTelegramAgentReply(chatJid: string, text: string): Promise<void> {
+async function sendTelegramAgentReply(
+  chatJid: string,
+  text: string,
+): Promise<void> {
   if (!state.telegramBot) {
     await sendMessage(chatJid, text);
     return;
@@ -3485,7 +3788,10 @@ async function sendAgentResultMessage(
 async function sendMessage(jid: string, text: string): Promise<void> {
   if (isTelegramJid(jid)) {
     if (!state.telegramBot) {
-      logger.error({ jid }, 'Telegram message send requested but Telegram is not configured');
+      logger.error(
+        { jid },
+        'Telegram message send requested but Telegram is not configured',
+      );
       return;
     }
     try {
@@ -3498,7 +3804,10 @@ async function sendMessage(jid: string, text: string): Promise<void> {
   }
 
   if (!state.sock) {
-    logger.error({ jid }, 'WhatsApp message send requested but WhatsApp is not connected');
+    logger.error(
+      { jid },
+      'WhatsApp message send requested but WhatsApp is not connected',
+    );
     return;
   }
   try {
@@ -3520,7 +3829,10 @@ const TELEGRAM_TOOL_EMOJIS: Record<string, string> = {
   search: '🤓',
 };
 
-function getTelegramToolProgressKey(chatJid: string, requestId: string): string {
+function getTelegramToolProgressKey(
+  chatJid: string,
+  requestId: string,
+): string {
   return `${chatJid}::${requestId}`;
 }
 
@@ -3534,13 +3846,24 @@ function extractToolProgressPreview(args?: string): string | null {
   if (!args) return null;
   try {
     const parsed = JSON.parse(args) as Record<string, unknown>;
-    for (const key of ['command', 'path', 'url', 'query', 'pattern', 'task', 'prompt', 'message']) {
+    for (const key of [
+      'command',
+      'path',
+      'url',
+      'query',
+      'pattern',
+      'task',
+      'prompt',
+      'message',
+    ]) {
       const value = parsed[key];
       if (typeof value === 'string' && value.trim()) {
         return truncateToolProgressPreview(value);
       }
     }
-    const firstString = Object.values(parsed).find((value) => typeof value === 'string' && value.trim());
+    const firstString = Object.values(parsed).find(
+      (value) => typeof value === 'string' && value.trim(),
+    );
     if (typeof firstString === 'string') {
       return truncateToolProgressPreview(firstString);
     }
@@ -3581,10 +3904,15 @@ function buildTelegramToolProgressLine(
         : `${emoji} ${event.toolName}\n${truncateToolProgressPreview(event.args, 200)}`;
     }
     const preview = extractToolProgressPreview(event.args);
-    return preview ? `${emoji} ${event.toolName}: "${preview}"` : `${emoji} ${event.toolName}...`;
+    return preview
+      ? `${emoji} ${event.toolName}: "${preview}"`
+      : `${emoji} ${event.toolName}...`;
   }
   if (event.status === 'error') {
-    const preview = truncateToolProgressPreview(event.error || event.output || 'tool failed', 120);
+    const preview = truncateToolProgressPreview(
+      event.error || event.output || 'tool failed',
+      120,
+    );
     return `⚠️ ${event.toolName} error: ${preview}`;
   }
   if (mode === 'verbose' && event.output) {
@@ -3605,9 +3933,11 @@ function queueTelegramToolProgressReaction(
   const preview = telegramPreviewRegistry.getPreviewState(streamKey);
 
   const emoji =
-    event.status === 'start' ? (TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥')
-    : event.status === 'error' ? '💔'
-    : null;
+    event.status === 'start'
+      ? TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥'
+      : event.status === 'error'
+        ? '💔'
+        : null;
 
   if (!preview) {
     logger.debug(
@@ -3623,7 +3953,10 @@ function queueTelegramToolProgressReaction(
     'Applying tool reaction to preview message',
   );
   bot.setMessageReaction(chatJid, preview.messageId, emoji).catch((err) => {
-    logger.warn({ chatJid, messageId: preview.messageId, emoji, err }, 'setMessageReaction failed');
+    logger.warn(
+      { chatJid, messageId: preview.messageId, emoji, err },
+      'setMessageReaction failed',
+    );
   });
 }
 
@@ -3655,7 +3988,11 @@ function queueTelegramToolProgressUpdate(
 
     progress.chain = progress.chain
       .then(async () => {
-        const line = buildTelegramToolProgressLine(event, effectiveMode, progress.lastToolName);
+        const line = buildTelegramToolProgressLine(
+          event,
+          effectiveMode,
+          progress.lastToolName,
+        );
         if (!line) return;
         if (event.status === 'start') {
           progress.lastToolName = event.toolName;
@@ -3669,7 +4006,10 @@ function queueTelegramToolProgressUpdate(
         await bot.editStreamMessage(chatJid, progress.messageId, text);
       })
       .catch((err) => {
-        logger.warn({ chatJid, requestId, err }, 'Failed to update Telegram tool progress');
+        logger.warn(
+          { chatJid, requestId, err },
+          'Failed to update Telegram tool progress',
+        );
       });
     return;
   }
@@ -3679,12 +4019,20 @@ function queueTelegramToolProgressUpdate(
   if (effectiveMode === 'all' && event.status === 'start') {
     const streamKey = getTelegramHostStreamKey(chatJid, requestId);
     const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
-    telegramPreviewRegistry.appendToolTrail(streamKey, `${emoji}${event.toolName}`);
+    telegramPreviewRegistry.appendToolTrail(
+      streamKey,
+      `${emoji}${event.toolName}`,
+    );
     const preview = telegramPreviewRegistry.getPreviewState(streamKey);
     if (preview) {
       const footer = telegramPreviewRegistry.getToolTrailFooter(streamKey);
       if (footer) {
-        bot.editStreamMessage(chatJid, preview.messageId, `${preview.lastText}\n\n${footer}`)
+        bot
+          .editStreamMessage(
+            chatJid,
+            preview.messageId,
+            `${preview.lastText}\n\n${footer}`,
+          )
           .catch(() => {});
       }
     }
@@ -3781,30 +4129,42 @@ function getTelegramHostStreamKey(chatJid: string, requestId: string): string {
   return getTelegramPreviewRunKey(chatJid, requestId);
 }
 
-function noteTelegramHostCompletedRun(chatJid: string, requestId: string): void {
-  telegramPreviewRegistry.noteCompleted(getTelegramHostStreamKey(chatJid, requestId));
+function noteTelegramHostCompletedRun(
+  chatJid: string,
+  requestId: string,
+): void {
+  telegramPreviewRegistry.noteCompleted(
+    getTelegramHostStreamKey(chatJid, requestId),
+  );
 }
 
 function consumeTelegramHostCompletedRun(
   chatJid: string,
   requestId: string,
 ): boolean {
-  return telegramPreviewRegistry.consumeCompleted(getTelegramHostStreamKey(chatJid, requestId));
+  return telegramPreviewRegistry.consumeCompleted(
+    getTelegramHostStreamKey(chatJid, requestId),
+  );
 }
 
 function consumeTelegramHostStreamState(
   chatJid: string,
   requestId: string,
 ): TelegramMessagePreviewState | null {
-  telegramPersistentPreviewTexts.delete(getTelegramHostStreamKey(chatJid, requestId));
-  return telegramPreviewRegistry.consumePreviewState(getTelegramHostStreamKey(chatJid, requestId));
+  telegramPersistentPreviewTexts.delete(
+    getTelegramHostStreamKey(chatJid, requestId),
+  );
+  return telegramPreviewRegistry.consumePreviewState(
+    getTelegramHostStreamKey(chatJid, requestId),
+  );
 }
 
 function pruneTelegramHostStreamedRuns(): void {
   telegramPreviewRegistry.prune();
   const staleCutoff = Date.now() - TELEGRAM_PERSISTENT_PREVIEW_TTL_MS;
   for (const [runKey, preview] of telegramPersistentPreviewTexts.entries()) {
-    if (preview.updatedAt <= staleCutoff) telegramPersistentPreviewTexts.delete(runKey);
+    if (preview.updatedAt <= staleCutoff)
+      telegramPersistentPreviewTexts.delete(runKey);
   }
 }
 
@@ -3828,7 +4188,10 @@ async function deliverRuntimeAgentMessage(params: {
       : undefined;
 
   if (isTelegramJid(params.chatJid) && requestId) {
-    const previewState = consumeTelegramHostStreamState(params.chatJid, requestId);
+    const previewState = consumeTelegramHostStreamState(
+      params.chatJid,
+      requestId,
+    );
     noteTelegramHostCompletedRun(params.chatJid, requestId);
     if (previewState) {
       const finalized = await finalizeTelegramPreviewMessage(
@@ -3862,7 +4225,10 @@ async function prepareTelegramCompletionState(params: {
       getTelegramHostStreamKey(params.chatJid, params.runId),
     );
     return {
-      externallyCompleted: consumeTelegramHostCompletedRun(params.chatJid, params.runId),
+      externallyCompleted: consumeTelegramHostCompletedRun(
+        params.chatJid,
+        params.runId,
+      ),
       previewState: null,
     };
   }
@@ -3877,7 +4243,8 @@ async function prepareTelegramCompletionState(params: {
       for (const text of finalized.deliveryTexts) {
         await state.telegramBot.sendMessage(params.chatJid, text);
       }
-      if (finalized.nextState) telegramPreviewRegistry.setBlockState(runKey, finalized.nextState);
+      if (finalized.nextState)
+        telegramPreviewRegistry.setBlockState(runKey, finalized.nextState);
       else telegramPreviewRegistry.clearBlockState(runKey);
       return {
         externallyCompleted: finalized.completed,
@@ -3893,7 +4260,10 @@ async function prepareTelegramCompletionState(params: {
     });
     telegramPersistentPreviewTexts.delete(runKey);
     if (finalized.deliveryText) {
-      await state.telegramBot.sendMessage(params.chatJid, finalized.deliveryText);
+      await state.telegramBot.sendMessage(
+        params.chatJid,
+        finalized.deliveryText,
+      );
     }
     return {
       externallyCompleted: finalized.completed,
@@ -3902,7 +4272,10 @@ async function prepareTelegramCompletionState(params: {
   }
 
   return {
-    externallyCompleted: consumeTelegramHostCompletedRun(params.chatJid, params.runId),
+    externallyCompleted: consumeTelegramHostCompletedRun(
+      params.chatJid,
+      params.runId,
+    ),
     previewState: consumeTelegramHostStreamState(params.chatJid, params.runId),
   };
 }
@@ -3917,10 +4290,14 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       const deliveryMode = getTelegramDeliveryMode(event.chatJid);
       if (deliveryMode === 'off') return;
 
-      const streamKey = getTelegramPreviewRunKey(event.chatJid, event.requestId);
+      const streamKey = getTelegramPreviewRunKey(
+        event.chatJid,
+        event.requestId,
+      );
       if (deliveryMode === 'persistent') {
         pruneTelegramHostStreamedRuns();
-        const previousText = telegramPersistentPreviewTexts.get(streamKey)?.lastText;
+        const previousText =
+          telegramPersistentPreviewTexts.get(streamKey)?.lastText;
         const delivery = computePersistentPreviewDelivery({
           previousText,
           nextText: event.text,
@@ -3930,7 +4307,10 @@ async function processHostEvent(event: HostEvent): Promise<void> {
           updatedAt: Date.now(),
         });
         if (delivery.deliveryText) {
-          await state.telegramBot.sendMessage(event.chatJid, delivery.deliveryText);
+          await state.telegramBot.sendMessage(
+            event.chatJid,
+            delivery.deliveryText,
+          );
         }
         return;
       }
@@ -3941,7 +4321,8 @@ async function processHostEvent(event: HostEvent): Promise<void> {
           previousState: telegramPreviewRegistry.getBlockState(streamKey),
           nextText: event.text,
         });
-        if (delivery.nextState) telegramPreviewRegistry.setBlockState(streamKey, delivery.nextState);
+        if (delivery.nextState)
+          telegramPreviewRegistry.setBlockState(streamKey, delivery.nextState);
         else telegramPreviewRegistry.clearBlockState(streamKey);
         for (const text of delivery.deliveryTexts) {
           await state.telegramBot.sendMessage(event.chatJid, text);
@@ -3949,7 +4330,10 @@ async function processHostEvent(event: HostEvent): Promise<void> {
         return;
       }
 
-      if (deliveryMode === 'draft' && canUseTelegramNativeDraft(event.chatJid)) {
+      if (
+        deliveryMode === 'draft' &&
+        canUseTelegramNativeDraft(event.chatJid)
+      ) {
         const sendResult = await updateTelegramDraftPreview({
           bot: state.telegramBot,
           registry: telegramPreviewRegistry,
@@ -3957,7 +4341,8 @@ async function processHostEvent(event: HostEvent): Promise<void> {
           requestId: event.requestId,
           draftId: deriveTelegramDraftId(streamKey),
           text: event.text,
-          toolTrailFooter: telegramPreviewRegistry.getToolTrailFooter(streamKey),
+          toolTrailFooter:
+            telegramPreviewRegistry.getToolTrailFooter(streamKey),
         });
         if (sendResult.error) {
           logger.warn(
@@ -3973,7 +4358,8 @@ async function processHostEvent(event: HostEvent): Promise<void> {
         return;
       }
 
-      const toolTrailFooter = telegramPreviewRegistry.getToolTrailFooter(streamKey);
+      const toolTrailFooter =
+        telegramPreviewRegistry.getToolTrailFooter(streamKey);
       const sendResult = await updateTelegramPreview({
         bot: state.telegramBot,
         registry: telegramPreviewRegistry,
@@ -3994,11 +4380,13 @@ async function processHostEvent(event: HostEvent): Promise<void> {
         );
       }
       if (sendResult.pendingReaction !== undefined && sendResult.messageId) {
-        state.telegramBot.setMessageReaction(
-          event.chatJid,
-          sendResult.messageId,
-          sendResult.pendingReaction,
-        ).catch(() => {});
+        state.telegramBot
+          .setMessageReaction(
+            event.chatJid,
+            sendResult.messageId,
+            sendResult.pendingReaction,
+          )
+          .catch(() => {});
       }
       return;
     }
@@ -4069,7 +4457,10 @@ function startIpcWatcher(): void {
   const processHostEventOrdered = createOrderedHostEventProcessor(
     processHostEvent,
     (err, event) => {
-      logger.error({ err, kind: event.kind }, 'Unhandled host event delivery failure');
+      logger.error(
+        { err, kind: event.kind },
+        'Unhandled host event delivery failure',
+      );
     },
   );
   hostEventBus.subscribe((event) => {
@@ -4120,7 +4511,10 @@ function startIpcWatcher(): void {
                     'IPC message translated to host event',
                   );
                 } else if (outcome === 'ignored_draft') {
-                  logger.debug({ file, sourceGroup }, 'Ignoring legacy draft IPC file');
+                  logger.debug(
+                    { file, sourceGroup },
+                    'Ignoring legacy draft IPC file',
+                  );
                 } else {
                   logger.warn(
                     { sourceGroup, file },
@@ -4213,7 +4607,10 @@ function startIpcWatcher(): void {
               );
               fs.mkdirSync(resultDir, { recursive: true });
 
-              if (request.type === 'farm_action' || request.type === 'memory_action') {
+              if (
+                request.type === 'farm_action' ||
+                request.type === 'memory_action'
+              ) {
                 const resultPath = path.join(
                   resultDir,
                   `${request.requestId}.json`,
@@ -4559,12 +4956,17 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
 
   const group = state.registeredGroups[mainChatJid];
   if (!group || group.folder !== MAIN_GROUP_FOLDER) {
-    logHeartbeatSkip('main-group-not-registered', { chatJid: mainChatJid, reason });
+    logHeartbeatSkip('main-group-not-registered', {
+      chatJid: mainChatJid,
+      reason,
+    });
     return;
   }
   if (
     !shouldBypassEmptyHeartbeatSkip(reason) &&
-    isHeartbeatFileEffectivelyEmpty(path.join(MAIN_WORKSPACE_DIR, 'HEARTBEAT.md'))
+    isHeartbeatFileEffectivelyEmpty(
+      path.join(MAIN_WORKSPACE_DIR, 'HEARTBEAT.md'),
+    )
   ) {
     logHeartbeatSkip('empty-heartbeat-file', { chatJid: mainChatJid, reason });
     return;
@@ -4661,7 +5063,10 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
         await sendMessage(destination, `Reasoning:\n${reasoning}`);
       }
     }
-    heartbeatLastSent.set(mainChatJid, { text: normalized.text, sentAt: nowMs });
+    heartbeatLastSent.set(mainChatJid, {
+      text: normalized.text,
+      sentAt: nowMs,
+    });
   } catch (err) {
     logger.warn({ err, chatJid: mainChatJid }, 'Heartbeat run failed');
   } finally {
@@ -4696,7 +5101,10 @@ function stopFarmServicesForShutdown(signal: string): void {
   appRuntime.stopFarmServicesForShutdown(signal);
 }
 
-async function shutdownAndExit(signal: string, exitCode: number): Promise<void> {
+async function shutdownAndExit(
+  signal: string,
+  exitCode: number,
+): Promise<void> {
   await appRuntime.shutdownAndExit(signal, exitCode);
 }
 

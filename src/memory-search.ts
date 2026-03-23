@@ -1,10 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import {
-  searchMessagesByFts,
-  type TranscriptSearchRow,
-} from './db.js';
+import { searchMessagesByFts, type TranscriptSearchRow } from './db.js';
 import {
   isAllowedMemoryRelativePath,
   resolveAllowedMemoryFilePath,
@@ -81,7 +78,10 @@ function tokenize(text: string): string[] {
 }
 
 function splitLongSegment(segment: string): string[] {
-  const lines = segment.split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = segment
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
   const out: string[] = [];
   let buffer = '';
 
@@ -94,7 +94,8 @@ function splitLongSegment(segment: string): string[] {
   for (const line of lines) {
     if (line.length <= MAX_CHUNK_CHARS) {
       if (!buffer) buffer = line;
-      else if (buffer.length + 1 + line.length <= MAX_CHUNK_CHARS) buffer += `\n${line}`;
+      else if (buffer.length + 1 + line.length <= MAX_CHUNK_CHARS)
+        buffer += `\n${line}`;
       else {
         pushBuffer();
         buffer = line;
@@ -165,7 +166,11 @@ function chunkMemoryText(text: string): string[] {
   return chunks;
 }
 
-function lexicalScore(queryTokens: string[], queryText: string, chunkText: string): number {
+function lexicalScore(
+  queryTokens: string[],
+  queryText: string,
+  chunkText: string,
+): number {
   if (queryTokens.length === 0) return 0;
 
   const querySet = new Set(queryTokens);
@@ -181,7 +186,8 @@ function lexicalScore(queryTokens: string[], queryText: string, chunkText: strin
   const coverage = overlap / querySet.size;
   const density = overlap / Math.max(chunkSet.size, 1);
   const phraseBonus =
-    queryText.length >= 18 && chunkText.toLowerCase().includes(queryText.toLowerCase())
+    queryText.length >= 18 &&
+    chunkText.toLowerCase().includes(queryText.toLowerCase())
       ? 0.35
       : 0;
   return coverage * 2 + density + phraseBonus;
@@ -212,12 +218,17 @@ function listMarkdownFiles(dir: string): string[] {
   return out;
 }
 
-function collectDocumentFiles(groupFolder: string): Array<{ abs: string; rel: string }> {
+function collectDocumentFiles(
+  groupFolder: string,
+): Array<{ abs: string; rel: string }> {
   const workspace = resolveGroupWorkspaceDir(groupFolder);
   const files = new Set<string>();
   const primaryMemoryPath = resolveMemoryPath(groupFolder);
   const legacyMemoryPath = path.join(workspace, 'memory.md');
-  if (fs.existsSync(primaryMemoryPath) && fs.statSync(primaryMemoryPath).isFile()) {
+  if (
+    fs.existsSync(primaryMemoryPath) &&
+    fs.statSync(primaryMemoryPath).isFile()
+  ) {
     files.add(path.resolve(primaryMemoryPath));
   } else if (
     fs.existsSync(legacyMemoryPath) &&
@@ -276,7 +287,9 @@ export function searchDocumentMemory(input: {
       if (score <= 0) continue;
       // Prefer dedicated memory root files over memory/* notes.
       const pathBonus =
-        chunk.relPath === 'MEMORY.md' || chunk.relPath === 'memory.md' ? 0.2 : 0;
+        chunk.relPath === 'MEMORY.md' || chunk.relPath === 'memory.md'
+          ? 0.2
+          : 0;
       scored.push({ chunk, score: score + pathBonus });
     }
   }

@@ -46,7 +46,10 @@ export interface PromptPreflightInput {
 
 type PromptPreflightBaseInput = Omit<
   PromptPreflightInput,
-  'stateCorrupted' | 'previousTotalTokens' | 'overflowDetected' | 'alreadyFlushedEpoch'
+  | 'stateCorrupted'
+  | 'previousTotalTokens'
+  | 'overflowDetected'
+  | 'alreadyFlushedEpoch'
 >;
 
 const STATE_VERSION = 1;
@@ -69,13 +72,18 @@ export function determinePromptPreflightDecision(
 ): PromptPreflightDecision {
   if (!input.preflightRebaseEnabled) return 'continue';
   if (input.stateCorrupted) return 'abort';
-  if (input.hardTokenThreshold <= 0 || input.hardTokenThreshold < input.softTokenThreshold) {
+  if (
+    input.hardTokenThreshold <= 0 ||
+    input.hardTokenThreshold < input.softTokenThreshold
+  ) {
     return 'abort';
   }
   if (input.overflowDetected) return 'rebase_session';
 
   const previous = input.previousTotalTokens || 0;
-  const promptTokenEstimate = Math.ceil(Math.max(0, input.currentPromptChars || 0) / 4);
+  const promptTokenEstimate = Math.ceil(
+    Math.max(0, input.currentPromptChars || 0) / 4,
+  );
   const reserve =
     input.runMode === 'interactive'
       ? 4_000
@@ -84,11 +92,18 @@ export function determinePromptPreflightDecision(
         : 500;
   const projected = previous + promptTokenEstimate + reserve;
 
-  if (previous >= input.hardTokenThreshold || projected >= input.hardTokenThreshold) {
+  if (
+    previous >= input.hardTokenThreshold ||
+    projected >= input.hardTokenThreshold
+  ) {
     return 'rebase_session';
   }
-  if (previous >= input.softTokenThreshold || projected >= input.softTokenThreshold) {
-    if (input.flushEnabled && !input.alreadyFlushedEpoch) return 'flush_then_continue';
+  if (
+    previous >= input.softTokenThreshold ||
+    projected >= input.softTokenThreshold
+  ) {
+    if (input.flushEnabled && !input.alreadyFlushedEpoch)
+      return 'flush_then_continue';
     return 'rebase_session';
   }
   return 'continue';
@@ -167,15 +182,19 @@ export function readPromptRuntimeState(statePath: string): PromptRuntimeState {
       version: STATE_VERSION,
       corrupted: false,
       sessionEpoch:
-        typeof parsed.sessionEpoch === 'number' && Number.isFinite(parsed.sessionEpoch)
+        typeof parsed.sessionEpoch === 'number' &&
+        Number.isFinite(parsed.sessionEpoch)
           ? Math.max(0, Math.floor(parsed.sessionEpoch))
           : 0,
       lastTotalTokens:
-        typeof parsed.lastTotalTokens === 'number' && Number.isFinite(parsed.lastTotalTokens)
+        typeof parsed.lastTotalTokens === 'number' &&
+        Number.isFinite(parsed.lastTotalTokens)
           ? Math.max(0, Math.floor(parsed.lastTotalTokens))
           : undefined,
       lastOverflowAt:
-        typeof parsed.lastOverflowAt === 'string' ? parsed.lastOverflowAt : undefined,
+        typeof parsed.lastOverflowAt === 'string'
+          ? parsed.lastOverflowAt
+          : undefined,
       lastPreflightDecision:
         parsed.lastPreflightDecision === 'continue' ||
         parsed.lastPreflightDecision === 'flush_then_continue' ||
@@ -184,11 +203,16 @@ export function readPromptRuntimeState(statePath: string): PromptRuntimeState {
           ? parsed.lastPreflightDecision
           : undefined,
       lastRebaseAt:
-        typeof parsed.lastRebaseAt === 'string' ? parsed.lastRebaseAt : undefined,
+        typeof parsed.lastRebaseAt === 'string'
+          ? parsed.lastRebaseAt
+          : undefined,
       lastManifestPath:
-        typeof parsed.lastManifestPath === 'string' ? parsed.lastManifestPath : undefined,
+        typeof parsed.lastManifestPath === 'string'
+          ? parsed.lastManifestPath
+          : undefined,
       flushedEpoch:
-        typeof parsed.flushedEpoch === 'number' && Number.isFinite(parsed.flushedEpoch)
+        typeof parsed.flushedEpoch === 'number' &&
+        Number.isFinite(parsed.flushedEpoch)
           ? Math.max(0, Math.floor(parsed.flushedEpoch))
           : undefined,
       cacheEntries:
@@ -216,5 +240,9 @@ export function writePromptManifest(
   manifest: SystemPromptReport,
 ): void {
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+  fs.writeFileSync(
+    manifestPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf-8',
+  );
 }

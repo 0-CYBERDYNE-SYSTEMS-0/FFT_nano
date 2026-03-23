@@ -7,7 +7,11 @@ import {
   FARM_STATE_MEDIUM_MS,
   FARM_STATE_SLOW_MS,
 } from './config.js';
-import { HomeAssistantAdapter, type CalendarEvent, type HAEntity } from './home-assistant.js';
+import {
+  HomeAssistantAdapter,
+  type CalendarEvent,
+  type HAEntity,
+} from './home-assistant.js';
 import { logger } from './logger.js';
 
 type AlertSeverity = 'info' | 'warning' | 'critical';
@@ -41,7 +45,10 @@ interface CurrentLedger {
   stale: boolean;
   lastSuccessfulPoll: string | null;
   haEndpoint?: string;
-  entities: Record<string, Pick<HAEntity, 'state' | 'attributes' | 'last_changed'>>;
+  entities: Record<
+    string,
+    Pick<HAEntity, 'state' | 'attributes' | 'last_changed'>
+  >;
   alerts: Array<Pick<DerivedAlert, 'id' | 'severity' | 'since' | 'entity'>>;
   context: FarmContext;
 }
@@ -85,14 +92,18 @@ function findEntitiesByRegex(
   entities: Record<string, HAEntity>,
   pattern: RegExp,
 ): HAEntity[] {
-  return Object.values(entities).filter((entity) => pattern.test(entity.entity_id));
+  return Object.values(entities).filter((entity) =>
+    pattern.test(entity.entity_id),
+  );
 }
 
 function getFirstEntityByRegex(
   entities: Record<string, HAEntity>,
   pattern: RegExp,
 ): HAEntity | undefined {
-  return Object.values(entities).find((entity) => pattern.test(entity.entity_id));
+  return Object.values(entities).find((entity) =>
+    pattern.test(entity.entity_id),
+  );
 }
 
 function computeAverage(values: number[]): number {
@@ -141,7 +152,10 @@ function deriveAlerts(
     const state = entity.state.toLowerCase();
     const since = entity.last_changed || nowIso;
 
-    if (/frost/.test(entityId) && ['on', 'true', '1', 'detected'].includes(state)) {
+    if (
+      /frost/.test(entityId) &&
+      ['on', 'true', '1', 'detected'].includes(state)
+    ) {
       alerts.push({
         id: 'frost_risk',
         severity: 'warning',
@@ -157,7 +171,9 @@ function deriveAlerts(
       ['on', 'true', '1', 'detected', 'problem', 'open'].includes(state)
     ) {
       const severity: AlertSeverity =
-        /(alarm|fire|critical|smoke|intrusion)/.test(entityId) ? 'critical' : 'warning';
+        /(alarm|fire|critical|smoke|intrusion)/.test(entityId)
+          ? 'critical'
+          : 'warning';
       const id = entityId.replace(/[^a-zA-Z0-9]+/g, '_');
       alerts.push({
         id,
@@ -204,9 +220,15 @@ function deriveContext(
       : 'normal';
 
   let suggestedTheme: FarmContext['suggestedTheme'];
-  if (alerts.some((alert) => alert.id === 'frost_risk') || /frost|snow|freez/.test(weatherCondition)) {
+  if (
+    alerts.some((alert) => alert.id === 'frost_risk') ||
+    /frost|snow|freez/.test(weatherCondition)
+  ) {
     suggestedTheme = 'frost';
-  } else if (/(storm|rain|thunder|hail)/.test(weatherCondition) || alertLevel === 'critical') {
+  } else if (
+    /(storm|rain|thunder|hail)/.test(weatherCondition) ||
+    alertLevel === 'critical'
+  ) {
     suggestedTheme = 'storm';
   } else if (season === 'fall') {
     suggestedTheme = 'harvest';
@@ -266,8 +288,15 @@ function ensureTelemetryFileForDate(now: Date): string {
   const day = now.toISOString().slice(0, 10);
   const activePath = path.join(FARM_STATE_DIR, 'telemetry.ndjson');
 
-  if (activeTelemetryDay && activeTelemetryDay !== day && fs.existsSync(activePath)) {
-    const rotatedPath = path.join(FARM_STATE_DIR, `telemetry-${activeTelemetryDay}.ndjson`);
+  if (
+    activeTelemetryDay &&
+    activeTelemetryDay !== day &&
+    fs.existsSync(activePath)
+  ) {
+    const rotatedPath = path.join(
+      FARM_STATE_DIR,
+      `telemetry-${activeTelemetryDay}.ndjson`,
+    );
     if (fs.existsSync(rotatedPath)) {
       const existing = fs.readFileSync(activePath, 'utf-8');
       if (existing) {
@@ -283,7 +312,10 @@ function ensureTelemetryFileForDate(now: Date): string {
   return activePath;
 }
 
-function appendTelemetry(nowIso: string, entities: Record<string, HAEntity>): void {
+function appendTelemetry(
+  nowIso: string,
+  entities: Record<string, HAEntity>,
+): void {
   const now = new Date(nowIso);
   const activePath = ensureTelemetryFileForDate(now);
 
@@ -292,14 +324,20 @@ function appendTelemetry(nowIso: string, entities: Record<string, HAEntity>): vo
     .filter((value): value is number => value !== null);
 
   const solarKw =
-    parseNumericState(getFirstEntityByRegex(entities, /sensor\..*(solar|pv).*(kw|power)/i)) ||
-    0;
+    parseNumericState(
+      getFirstEntityByRegex(entities, /sensor\..*(solar|pv).*(kw|power)/i),
+    ) || 0;
   const batteryPct =
-    parseNumericState(getFirstEntityByRegex(entities, /sensor\..*battery.*(pct|percent|level)?/i)) ||
-    0;
+    parseNumericState(
+      getFirstEntityByRegex(
+        entities,
+        /sensor\..*battery.*(pct|percent|level)?/i,
+      ),
+    ) || 0;
   const waterTotal =
-    parseNumericState(getFirstEntityByRegex(entities, /sensor\..*(water.*total|total.*water)/i)) ||
-    0;
+    parseNumericState(
+      getFirstEntityByRegex(entities, /sensor\..*(water.*total|total.*water)/i),
+    ) || 0;
 
   const telemetry = {
     t: nowIso,
@@ -312,8 +350,13 @@ function appendTelemetry(nowIso: string, entities: Record<string, HAEntity>): vo
   fs.appendFileSync(activePath, `${JSON.stringify(telemetry)}\n`);
 }
 
-function updateAlertsSnapshot(alerts: DerivedAlert[], nowIso: string): {
-  active: Array<Pick<DerivedAlert, 'id' | 'severity' | 'since' | 'message' | 'entity'>>;
+function updateAlertsSnapshot(
+  alerts: DerivedAlert[],
+  nowIso: string,
+): {
+  active: Array<
+    Pick<DerivedAlert, 'id' | 'severity' | 'since' | 'message' | 'entity'>
+  >;
   resolved: Array<{ id: string; resolvedAt: string }>;
 } {
   const current = new Map<string, DerivedAlert>();
@@ -377,7 +420,10 @@ async function runFastLoop(): Promise<void> {
     await writeCurrentSnapshot(false);
     appendTelemetry(nowIso, latestEntities);
   } catch (err) {
-    logger.warn({ err }, 'Farm state fast collector failed; writing stale snapshot');
+    logger.warn(
+      { err },
+      'Farm state fast collector failed; writing stale snapshot',
+    );
     await writeCurrentSnapshot(true);
     throw err;
   }
@@ -492,7 +538,9 @@ async function runSlowLoop(): Promise<void> {
   }
 
   today.sort((a, b) => a.start.localeCompare(b.start));
-  upcoming.sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`));
+  upcoming.sort((a, b) =>
+    `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`),
+  );
 
   atomicWriteJson(path.join(FARM_STATE_DIR, 'calendar.json'), {
     timestamp: nowIso,
@@ -520,7 +568,10 @@ function scheduleLoop(
     } catch (err) {
       failureCount += 1;
       nextDelay = Math.min(60000, 5000 * 2 ** (failureCount - 1));
-      logger.warn({ err, loopName, failureCount, nextDelay }, 'Farm state collector loop error');
+      logger.warn(
+        { err, loopName, failureCount, nextDelay },
+        'Farm state collector loop error',
+      );
     }
 
     if (!running || cancelled) return;

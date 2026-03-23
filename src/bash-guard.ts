@@ -12,8 +12,14 @@ export const DESTRUCTIVE_PATTERNS: DestructivePattern[] = [
   { pattern: /\bmkfs\b/i, description: 'mkfs (format filesystem)' },
   { pattern: /\bchmod\s+\S*-\S*R\S*\s+777\b/i, description: 'chmod -R 777' },
   { pattern: /\bchmod\s+\S*-\S*R\S*\s+000\b/i, description: 'chmod -R 000' },
-  { pattern: /\bchown\s+\S*-\S*R/i, description: 'chown -R (recursive ownership change)' },
-  { pattern: /\bgit\s+clean\s+\S*-\S*f/i, description: 'git clean -f (delete untracked files)' },
+  {
+    pattern: /\bchown\s+\S*-\S*R/i,
+    description: 'chown -R (recursive ownership change)',
+  },
+  {
+    pattern: /\bgit\s+clean\s+\S*-\S*f/i,
+    description: 'git clean -f (delete untracked files)',
+  },
   { pattern: /\bgit\s+reset\s+--hard\b/i, description: 'git reset --hard' },
   { pattern: /\bgit\s+push\s+--force\b/i, description: 'git push --force' },
   { pattern: /\bgit\s+push\s+\S*-f\b/i, description: 'git push -f' },

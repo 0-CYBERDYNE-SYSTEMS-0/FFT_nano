@@ -17,7 +17,8 @@ export const WORKSPACE_TEMPLATE_FILENAMES = [
   'MEMORY.md',
 ] as const;
 
-export type WorkspaceTemplateFileName = (typeof WORKSPACE_TEMPLATE_FILENAMES)[number];
+export type WorkspaceTemplateFileName =
+  (typeof WORKSPACE_TEMPLATE_FILENAMES)[number];
 
 const REQUIRED_BASE_FILES: WorkspaceTemplateFileName[] = [
   'AGENTS.md',
@@ -62,8 +63,14 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '- Prefer deterministic, testable changes.',
     '- Keep user-facing updates concise and concrete.',
   ].join('\n'),
-  'SOUL.md': ['# SOUL', '', 'You are concise, practical, and technically rigorous.'].join('\n'),
-  'USER.md': ['# USER', '', 'Primary operator: [set during onboarding].'].join('\n'),
+  'SOUL.md': [
+    '# SOUL',
+    '',
+    'You are concise, practical, and technically rigorous.',
+  ].join('\n'),
+  'USER.md': ['# USER', '', 'Primary operator: [set during onboarding].'].join(
+    '\n',
+  ),
   'IDENTITY.md': [
     '# IDENTITY',
     '',
@@ -77,7 +84,11 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '- Prefer deterministic, testable changes.',
     '- Ask clarifying questions before high-impact external actions.',
   ].join('\n'),
-  'TOOLS.md': ['# TOOLS', '', 'Local operator notes for tool conventions go here.'].join('\n'),
+  'TOOLS.md': [
+    '# TOOLS',
+    '',
+    'Local operator notes for tool conventions go here.',
+  ].join('\n'),
   'HEARTBEAT.md': [
     '# HEARTBEAT',
     '',
@@ -102,9 +113,11 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '- Keep the flow practical and concise.',
     '- Delete this file after the ritual is complete.',
   ].join('\n'),
-  'MEMORY.md': ['# MEMORY', '', 'Durable facts, decisions, and compaction summaries belong here.'].join(
-    '\n',
-  ),
+  'MEMORY.md': [
+    '# MEMORY',
+    '',
+    'Durable facts, decisions, and compaction summaries belong here.',
+  ].join('\n'),
 };
 
 function stripFrontMatter(content: string): string {
@@ -123,7 +136,9 @@ function readIfExists(filePath: string): string | null {
   }
 }
 
-function resolveWorkspaceTemplateDir(explicitTemplateDir?: string): string | null {
+function resolveWorkspaceTemplateDir(
+  explicitTemplateDir?: string,
+): string | null {
   const envTemplateDir = process.env.FFT_NANO_WORKSPACE_TEMPLATE_DIR?.trim();
   const candidates = [
     explicitTemplateDir?.trim(),
@@ -137,7 +152,9 @@ function resolveWorkspaceTemplateDir(explicitTemplateDir?: string): string | nul
   return null;
 }
 
-function loadTemplates(explicitTemplateDir?: string): Record<WorkspaceTemplateFileName, string> {
+function loadTemplates(
+  explicitTemplateDir?: string,
+): Record<WorkspaceTemplateFileName, string> {
   const templateDir = resolveWorkspaceTemplateDir(explicitTemplateDir);
   const out = { ...DEFAULT_TEMPLATE_BODIES };
   if (!templateDir) return out;
@@ -152,7 +169,11 @@ function loadTemplates(explicitTemplateDir?: string): Record<WorkspaceTemplateFi
 }
 
 function resolveWorkspaceStatePath(workspaceDir: string): string {
-  return path.join(workspaceDir, WORKSPACE_STATE_DIRNAME, WORKSPACE_STATE_FILENAME);
+  return path.join(
+    workspaceDir,
+    WORKSPACE_STATE_DIRNAME,
+    WORKSPACE_STATE_FILENAME,
+  );
 }
 
 function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
@@ -164,7 +185,9 @@ function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
     return {
       version: WORKSPACE_STATE_VERSION,
       bootstrapSeededAt:
-        typeof parsed.bootstrapSeededAt === 'string' ? parsed.bootstrapSeededAt : undefined,
+        typeof parsed.bootstrapSeededAt === 'string'
+          ? parsed.bootstrapSeededAt
+          : undefined,
       onboardingCompletedAt:
         typeof parsed.onboardingCompletedAt === 'string'
           ? parsed.onboardingCompletedAt
@@ -178,16 +201,17 @@ function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
           ? parsed.bootExecutedAt
           : undefined,
       bootHash:
-        typeof parsed.bootHash === 'string'
-          ? parsed.bootHash
-          : undefined,
+        typeof parsed.bootHash === 'string' ? parsed.bootHash : undefined,
     };
   } catch {
     return { version: WORKSPACE_STATE_VERSION };
   }
 }
 
-function writeWorkspaceState(workspaceDir: string, state: WorkspaceOnboardingState): void {
+function writeWorkspaceState(
+  workspaceDir: string,
+  state: WorkspaceOnboardingState,
+): void {
   const statePath = resolveWorkspaceStatePath(workspaceDir);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now().toString(36)}`;
@@ -195,7 +219,9 @@ function writeWorkspaceState(workspaceDir: string, state: WorkspaceOnboardingSta
   fs.renameSync(tmpPath, statePath);
 }
 
-export function readMainWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
+export function readMainWorkspaceState(
+  workspaceDir: string,
+): WorkspaceOnboardingState {
   return readWorkspaceState(workspaceDir);
 }
 
@@ -213,11 +239,15 @@ export interface MainWorkspaceOnboardingStatus {
   gateEligible: boolean;
 }
 
-export function getMainWorkspaceOnboardingStatus(workspaceDir: string): MainWorkspaceOnboardingStatus {
+export function getMainWorkspaceOnboardingStatus(
+  workspaceDir: string,
+): MainWorkspaceOnboardingStatus {
   const state = readWorkspaceState(workspaceDir);
   const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
   const bootstrapExists = fs.existsSync(bootstrapPath);
-  const pending = bootstrapExists || (!!state.bootstrapSeededAt && !state.onboardingCompletedAt);
+  const pending =
+    bootstrapExists ||
+    (!!state.bootstrapSeededAt && !state.onboardingCompletedAt);
   return {
     state,
     bootstrapExists,
@@ -226,7 +256,9 @@ export function getMainWorkspaceOnboardingStatus(workspaceDir: string): MainWork
   };
 }
 
-export function isMainWorkspaceOnboardingPending(workspaceDir: string): boolean {
+export function isMainWorkspaceOnboardingPending(
+  workspaceDir: string,
+): boolean {
   return getMainWorkspaceOnboardingStatus(workspaceDir).pending;
 }
 
@@ -236,7 +268,10 @@ export function computeBootFileHash(content: string): string {
 
 function writeFileIfMissing(filePath: string, body: string): boolean {
   if (fs.existsSync(filePath)) return false;
-  fs.writeFileSync(filePath, `${body.trimEnd()}\n`, { encoding: 'utf-8', flag: 'wx' });
+  fs.writeFileSync(filePath, `${body.trimEnd()}\n`, {
+    encoding: 'utf-8',
+    flag: 'wx',
+  });
   return true;
 }
 
@@ -270,7 +305,10 @@ export function ensureMainWorkspaceBootstrap(params: {
     writeFileIfMissing(filePath, templates[fileName]);
   }
   if (PARITY_CONFIG.workspace.enableBootMd) {
-    writeFileIfMissing(path.join(workspaceDir, 'BOOT.md'), templates['BOOT.md']);
+    writeFileIfMissing(
+      path.join(workspaceDir, 'BOOT.md'),
+      templates['BOOT.md'],
+    );
   }
 
   let state = readWorkspaceState(workspaceDir);
@@ -287,11 +325,19 @@ export function ensureMainWorkspaceBootstrap(params: {
     patchState({ bootstrapSeededAt: nowIso() });
   }
 
-  if (!state.onboardingCompletedAt && state.bootstrapSeededAt && !bootstrapExists) {
+  if (
+    !state.onboardingCompletedAt &&
+    state.bootstrapSeededAt &&
+    !bootstrapExists
+  ) {
     patchState({ onboardingCompletedAt: nowIso() });
   }
 
-  if (!state.bootstrapSeededAt && !state.onboardingCompletedAt && !bootstrapExists) {
+  if (
+    !state.bootstrapSeededAt &&
+    !state.onboardingCompletedAt &&
+    !bootstrapExists
+  ) {
     const userPath = path.join(workspaceDir, 'USER.md');
     const identityPath = path.join(workspaceDir, 'IDENTITY.md');
     const userCurrent = (readIfExists(userPath) || '').trimEnd();
@@ -299,11 +345,15 @@ export function ensureMainWorkspaceBootstrap(params: {
     const userTemplate = templates['USER.md'].trimEnd();
     const identityTemplate = templates['IDENTITY.md'].trimEnd();
 
-    const onboardingAlreadyDone = userCurrent !== userTemplate || identityCurrent !== identityTemplate;
+    const onboardingAlreadyDone =
+      userCurrent !== userTemplate || identityCurrent !== identityTemplate;
     if (onboardingAlreadyDone) {
       patchState({ onboardingCompletedAt: nowIso() });
     } else {
-      const createdBootstrap = writeFileIfMissing(bootstrapPath, templates['BOOTSTRAP.md']);
+      const createdBootstrap = writeFileIfMissing(
+        bootstrapPath,
+        templates['BOOTSTRAP.md'],
+      );
       bootstrapExists = fs.existsSync(bootstrapPath);
       if (createdBootstrap && !state.bootstrapGateEligibleAt) {
         patchState({ bootstrapGateEligibleAt: nowIso() });
@@ -336,7 +386,10 @@ export function completeMainWorkspaceOnboarding(
 
   const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
   const state = readWorkspaceState(workspaceDir);
-  const next: WorkspaceOnboardingState = { ...state, version: WORKSPACE_STATE_VERSION };
+  const next: WorkspaceOnboardingState = {
+    ...state,
+    version: WORKSPACE_STATE_VERSION,
+  };
   const bootstrapExists = fs.existsSync(bootstrapPath);
 
   if (params.removeBootstrapFile !== false && bootstrapExists) {

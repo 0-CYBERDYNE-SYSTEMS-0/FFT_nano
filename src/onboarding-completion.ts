@@ -17,7 +17,10 @@ export function extractOnboardingCompletion(text: string | null): {
   }
 
   const cleanedLines = lines.slice(0, lastNonEmpty);
-  while (cleanedLines.length > 0 && !cleanedLines[cleanedLines.length - 1]?.trim()) {
+  while (
+    cleanedLines.length > 0 &&
+    !cleanedLines[cleanedLines.length - 1]?.trim()
+  ) {
     cleanedLines.pop();
   }
   const cleaned = cleanedLines.join('\n').trim();

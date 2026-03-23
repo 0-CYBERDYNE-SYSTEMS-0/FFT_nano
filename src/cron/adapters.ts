@@ -2,7 +2,12 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { PARITY_CONFIG, TIMEZONE } from '../config.js';
 import { ScheduledTask } from '../types.js';
-import { CronV2Delivery, CronV2ExecutionPlan, CronV2Policy, CronV2Schedule } from './types.js';
+import {
+  CronV2Delivery,
+  CronV2ExecutionPlan,
+  CronV2Policy,
+  CronV2Schedule,
+} from './types.js';
 
 export interface ScheduleTaskIpcPayload {
   schedule_type?: string;
@@ -27,7 +32,8 @@ export interface ScheduleTaskIpcPayload {
 }
 
 function parseFiniteInt(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.floor(value);
+  if (typeof value === 'number' && Number.isFinite(value))
+    return Math.floor(value);
   if (typeof value === 'string') {
     const parsed = Number.parseInt(value, 10);
     if (Number.isFinite(parsed)) return parsed;
@@ -38,7 +44,8 @@ function parseFiniteInt(value: unknown): number | undefined {
 function parseBool(value: unknown): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value > 0;
-  if (typeof value === 'string') return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+  if (typeof value === 'string')
+    return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
   return false;
 }
 
@@ -64,7 +71,10 @@ function parseScheduleObject(raw: unknown): CronV2Schedule | null {
     return {
       kind: 'every',
       everyMs,
-      anchorMs: typeof schedule.anchorMs === 'number' ? Math.floor(schedule.anchorMs) : undefined,
+      anchorMs:
+        typeof schedule.anchorMs === 'number'
+          ? Math.floor(schedule.anchorMs)
+          : undefined,
     };
   }
   if (schedule.kind === 'cron' && typeof schedule.expr === 'string') {
@@ -72,7 +82,10 @@ function parseScheduleObject(raw: unknown): CronV2Schedule | null {
       kind: 'cron',
       expr: schedule.expr,
       tz: typeof schedule.tz === 'string' ? schedule.tz : undefined,
-      staggerMs: typeof schedule.staggerMs === 'number' ? Math.max(0, Math.floor(schedule.staggerMs)) : undefined,
+      staggerMs:
+        typeof schedule.staggerMs === 'number'
+          ? Math.max(0, Math.floor(schedule.staggerMs))
+          : undefined,
     };
   }
   return null;
@@ -80,11 +93,15 @@ function parseScheduleObject(raw: unknown): CronV2Schedule | null {
 
 function normalizeDelivery(payload: ScheduleTaskIpcPayload): CronV2Delivery {
   const modeRaw = payload.delivery?.mode || payload.delivery_mode;
-  const mode = modeRaw === 'announce' || modeRaw === 'webhook' || modeRaw === 'none' ? modeRaw : 'none';
+  const mode =
+    modeRaw === 'announce' || modeRaw === 'webhook' || modeRaw === 'none'
+      ? modeRaw
+      : 'none';
   const channelRaw = payload.delivery?.channel || payload.delivery_channel;
   const channel = channelRaw === 'chat' ? 'chat' : undefined;
   const to = payload.delivery?.to || payload.delivery_to;
-  const webhookUrl = payload.delivery?.webhookUrl || payload.delivery_webhook_url;
+  const webhookUrl =
+    payload.delivery?.webhookUrl || payload.delivery_webhook_url;
   return {
     mode,
     channel,
@@ -96,13 +113,13 @@ function normalizeDelivery(payload: ScheduleTaskIpcPayload): CronV2Delivery {
 function hasExplicitDelivery(payload: ScheduleTaskIpcPayload): boolean {
   return Boolean(
     payload.delivery_mode ||
-      payload.delivery_channel ||
-      payload.delivery_to ||
-      payload.delivery_webhook_url ||
-      payload.delivery?.mode ||
-      payload.delivery?.channel ||
-      payload.delivery?.to ||
-      payload.delivery?.webhookUrl,
+    payload.delivery_channel ||
+    payload.delivery_to ||
+    payload.delivery_webhook_url ||
+    payload.delivery?.mode ||
+    payload.delivery?.channel ||
+    payload.delivery?.to ||
+    payload.delivery?.webhookUrl,
   );
 }
 
@@ -122,7 +139,9 @@ export function resolveCronExecutionPlan(
   if (scheduleObj) {
     if (scheduleObj.kind === 'at') {
       if (hasTimezoneSuffix(scheduleObj.at)) {
-        throw new Error('schedule.at must be local time without timezone suffix');
+        throw new Error(
+          'schedule.at must be local time without timezone suffix',
+        );
       }
       const when = new Date(scheduleObj.at);
       if (Number.isNaN(when.getTime())) {
@@ -168,7 +187,11 @@ export function resolveCronExecutionPlan(
       tz: TIMEZONE,
       currentDate: new Date(nowMs),
     });
-    return { scheduleType, scheduleValue, nextRun: interval.next().toISOString() };
+    return {
+      scheduleType,
+      scheduleValue,
+      nextRun: interval.next().toISOString(),
+    };
   }
   if (scheduleType === 'interval') {
     const ms = Number.parseInt(scheduleValue, 10);
@@ -183,29 +206,39 @@ export function resolveCronExecutionPlan(
   }
   if (scheduleType === 'once') {
     if (hasTimezoneSuffix(scheduleValue)) {
-      throw new Error('once schedule must be local time without timezone suffix');
+      throw new Error(
+        'once schedule must be local time without timezone suffix',
+      );
     }
     const when = new Date(scheduleValue);
     if (Number.isNaN(when.getTime())) {
       throw new Error('Invalid once timestamp');
     }
-    return { scheduleType, scheduleValue: when.toISOString(), nextRun: when.toISOString() };
+    return {
+      scheduleType,
+      scheduleValue: when.toISOString(),
+      nextRun: when.toISOString(),
+    };
   }
   throw new Error('Unsupported schedule type');
 }
 
-export function resolveCronPolicy(payload: ScheduleTaskIpcPayload): CronV2Policy {
+export function resolveCronPolicy(
+  payload: ScheduleTaskIpcPayload,
+): CronV2Policy {
   const sessionTarget =
     payload.session_target === 'main' || payload.session_target === 'isolated'
       ? payload.session_target
       : 'isolated';
-  const wakeMode = payload.wake_mode === 'now' || payload.wake_mode === 'next-heartbeat'
-    ? payload.wake_mode
-    : 'next-heartbeat';
+  const wakeMode =
+    payload.wake_mode === 'now' || payload.wake_mode === 'next-heartbeat'
+      ? payload.wake_mode
+      : 'next-heartbeat';
   const timeoutSeconds = parseFiniteInt(payload.timeout_seconds);
   const timeoutMaxSeconds = Math.max(
     60,
-    parseFiniteInt(process.env.FFT_NANO_TASK_TIMEOUT_MAX_SECONDS) || 24 * 60 * 60,
+    parseFiniteInt(process.env.FFT_NANO_TASK_TIMEOUT_MAX_SECONDS) ||
+      24 * 60 * 60,
   );
   const staggerMs = parseFiniteInt(payload.stagger_ms);
 

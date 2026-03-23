@@ -1,7 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 
-import { FEATURE_FARM, FFT_PROFILE, PROFILE_DETECTION, type FFTProfile } from './profile.js';
+import {
+  FEATURE_FARM,
+  FFT_PROFILE,
+  PROFILE_DETECTION,
+  type FFTProfile,
+} from './profile.js';
 
 interface CliArgs {
   command: 'status' | 'set' | 'apply';
@@ -72,7 +77,11 @@ function upsertEnvValue(envPath: string, key: string, value: string): void {
   });
 
   if (!updated) next.push(`${key}=${value}`);
-  fs.writeFileSync(envPath, `${next.filter((line, idx, arr) => !(idx === arr.length - 1 && line === '')).join('\n')}\n`, 'utf-8');
+  fs.writeFileSync(
+    envPath,
+    `${next.filter((line, idx, arr) => !(idx === arr.length - 1 && line === '')).join('\n')}\n`,
+    'utf-8',
+  );
 }
 
 function applyProfileToEnv(profile: FFTProfile, envPath: string): void {
@@ -129,14 +138,20 @@ function main(): void {
 
     if (args.command === 'apply') {
       if (args.profile === 'farm') {
-        console.log('Applied farm profile flags. Next: restart service to enable farm runtime paths.');
+        console.log(
+          'Applied farm profile flags. Next: restart service to enable farm runtime paths.',
+        );
       } else {
-        console.log('Applied core profile flags. Next: restart service to run core runtime paths.');
+        console.log(
+          'Applied core profile flags. Next: restart service to run core runtime paths.',
+        );
       }
       return;
     }
 
-    console.log(`Set profile=${args.profile}${args.writeEnv ? ' (persisted in .env)' : ''}`);
+    console.log(
+      `Set profile=${args.profile}${args.writeEnv ? ' (persisted in .env)' : ''}`,
+    );
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     console.error('');

@@ -166,7 +166,10 @@ function ensureWithinRoot(rootPath: string, subPath: string): string {
   return resolved;
 }
 
-function ensureRealPathWithinRoot(rootPath: string, candidatePath: string): string {
+function ensureRealPathWithinRoot(
+  rootPath: string,
+  candidatePath: string,
+): string {
   const resolvedReal = fs.realpathSync(candidatePath);
   const rootReal = fs.realpathSync(rootPath);
   const rel = path.relative(rootReal, resolvedReal);
@@ -193,7 +196,10 @@ function ensureWritePathWithinRoot(rootPath: string, filePath: string): void {
   ensureRealPathWithinRoot(rootPath, filePath);
 }
 
-function ensureWritableParentDirWithinRoot(rootPath: string, filePath: string): void {
+function ensureWritableParentDirWithinRoot(
+  rootPath: string,
+  filePath: string,
+): void {
   const rootReal = fs.realpathSync(rootPath);
   const targetDir = path.dirname(filePath);
   const relDir = path.relative(rootPath, targetDir);
@@ -246,13 +252,17 @@ function listDirectoryEntries(dirPath: string): Array<{
         modifiedAt: stat.mtime.toISOString(),
       };
     })
-    .filter((entry): entry is {
-      name: string;
-      relPath: string;
-      kind: 'file' | 'dir';
-      size: number;
-      modifiedAt: string;
-    } => entry !== null)
+    .filter(
+      (
+        entry,
+      ): entry is {
+        name: string;
+        relPath: string;
+        kind: 'file' | 'dir';
+        size: number;
+        modifiedAt: string;
+      } => entry !== null,
+    )
     .sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -275,7 +285,10 @@ function parseSkillDescription(raw: string): string {
   const headingMatch = text.match(/^#\s+(.+)$/m);
   if (headingMatch?.[1]) return headingMatch[1].trim();
 
-  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  const firstLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
   return firstLine || '';
 }
 
@@ -295,7 +308,10 @@ function scanSkillsCatalogForRoot(root: NormalizedFileRoot): Array<{
   let visitedDirs = 0;
 
   while (queue.length > 0) {
-    if (visitedDirs >= MAX_SKILLS_SCAN_DIRS || entries.length >= MAX_SKILLS_RESULTS_PER_ROOT) {
+    if (
+      visitedDirs >= MAX_SKILLS_SCAN_DIRS ||
+      entries.length >= MAX_SKILLS_RESULTS_PER_ROOT
+    ) {
       break;
     }
     const relDir = queue.shift() || '.';
@@ -308,19 +324,23 @@ function scanSkillsCatalogForRoot(root: NormalizedFileRoot): Array<{
     }
     visitedDirs += 1;
 
-    const hasSkill = dirEntries.some((entry) => entry.isFile() && entry.name === 'SKILL.md');
+    const hasSkill = dirEntries.some(
+      (entry) => entry.isFile() && entry.name === 'SKILL.md',
+    );
     if (hasSkill) {
-      const skillRelPath = normalizeRelPosix(path.posix.join(relDir === '.' ? '' : relDir, 'SKILL.md'));
+      const skillRelPath = normalizeRelPosix(
+        path.posix.join(relDir === '.' ? '' : relDir, 'SKILL.md'),
+      );
       const skillPath = ensureWithinRoot(root.path, skillRelPath);
       let description = '';
       try {
-        description = parseSkillDescription(fs.readFileSync(skillPath, 'utf-8'));
+        description = parseSkillDescription(
+          fs.readFileSync(skillPath, 'utf-8'),
+        );
       } catch {
         description = '';
       }
-      const name = relDir === '.'
-        ? root.label
-        : path.basename(relDir);
+      const name = relDir === '.' ? root.label : path.basename(relDir);
       entries.push({
         name,
         path: skillRelPath,
@@ -332,7 +352,9 @@ function scanSkillsCatalogForRoot(root: NormalizedFileRoot): Array<{
     for (const entry of dirEntries) {
       if (!entry.isDirectory()) continue;
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-      const childRel = normalizeRelPosix(path.posix.join(relDir === '.' ? '' : relDir, entry.name));
+      const childRel = normalizeRelPosix(
+        path.posix.join(relDir === '.' ? '' : relDir, entry.name),
+      );
       queue.push(childRel);
     }
   }
@@ -372,14 +394,10 @@ function resolveGatewayWsUrl(
   const hostHeader = req.headers.host || '';
   const hostFromHeader = hostHeader.split(':')[0]?.trim();
   const selectedHost =
-    gateway.host === '0.0.0.0'
-      ? hostFromHeader || '127.0.0.1'
-      : gateway.host;
+    gateway.host === '0.0.0.0' ? hostFromHeader || '127.0.0.1' : gateway.host;
 
   const xfProtoRaw = req.headers['x-forwarded-proto'];
-  const xfProto = Array.isArray(xfProtoRaw)
-    ? xfProtoRaw[0]
-    : xfProtoRaw;
+  const xfProto = Array.isArray(xfProtoRaw) ? xfProtoRaw[0] : xfProtoRaw;
   const protocol = (xfProto || '').toLowerCase() === 'https' ? 'wss' : 'ws';
   return `${protocol}://${selectedHost}:${gateway.port}`;
 }
@@ -434,7 +452,9 @@ export async function startWebControlCenterServer(
     })
     .filter((root): root is NormalizedFileRoot => root !== null);
   const fileRootsById = new Map(fileRoots.map((root) => [root.id, root]));
-  const skillsRoots = fileRoots.filter((root) => root.id.toLowerCase().includes('skill'));
+  const skillsRoots = fileRoots.filter((root) =>
+    root.id.toLowerCase().includes('skill'),
+  );
   const indexPath = path.join(staticDir, 'index.html');
   if (!fs.existsSync(indexPath)) {
     throw new Error(
@@ -508,9 +528,7 @@ export async function startWebControlCenterServer(
         const target = (url.searchParams.get('target') || 'host').toLowerCase();
         const lines = parseLineCount(url.searchParams.get('lines'));
         const fileName =
-          target === 'error'
-            ? 'fft_nano.error.log'
-            : 'fft_nano.log';
+          target === 'error' ? 'fft_nano.error.log' : 'fft_nano.log';
         const filePath = path.join(logsDir, fileName);
         const text = tailFile(filePath, lines);
         sendJson(res, 200, {
@@ -549,7 +567,10 @@ export async function startWebControlCenterServer(
           ? skillsRoots.filter((root) => root.id === rootFilter)
           : skillsRoots;
         if (rootFilter && roots.length === 0) {
-          sendJson(res, 400, { ok: false, error: `Unknown skill root: ${rootFilter}` });
+          sendJson(res, 400, {
+            ok: false,
+            error: `Unknown skill root: ${rootFilter}`,
+          });
           return;
         }
 
@@ -557,7 +578,8 @@ export async function startWebControlCenterServer(
           const skills = scanSkillsCatalogForRoot(root)
             .filter((entry) => {
               if (!query) return true;
-              const haystack = `${entry.name} ${entry.path} ${entry.description}`.toLowerCase();
+              const haystack =
+                `${entry.name} ${entry.path} ${entry.description}`.toLowerCase();
               return haystack.includes(query);
             })
             .map((entry) => ({
@@ -586,7 +608,10 @@ export async function startWebControlCenterServer(
         const rootId = (url.searchParams.get('root') || '').trim();
         const root = fileRootsById.get(rootId);
         if (!root) {
-          sendJson(res, 400, { ok: false, error: `Unknown file root: ${rootId}` });
+          sendJson(res, 400, {
+            ok: false,
+            error: `Unknown file root: ${rootId}`,
+          });
           return;
         }
         const relPath = normalizeSubPath(url.searchParams.get('path') || '.');
@@ -597,12 +622,18 @@ export async function startWebControlCenterServer(
           );
           const stat = fs.statSync(dirPath);
           if (!stat.isDirectory()) {
-            sendJson(res, 400, { ok: false, error: 'Requested path is not a directory' });
+            sendJson(res, 400, {
+              ok: false,
+              error: 'Requested path is not a directory',
+            });
             return;
           }
           const entries = listDirectoryEntries(dirPath).map((entry) => ({
             ...entry,
-            relPath: path.posix.join(relPath === '.' ? '' : relPath, entry.relPath),
+            relPath: path.posix.join(
+              relPath === '.' ? '' : relPath,
+              entry.relPath,
+            ),
           }));
           sendJson(res, 200, {
             ok: true,
@@ -627,7 +658,10 @@ export async function startWebControlCenterServer(
         const rootId = (url.searchParams.get('root') || '').trim();
         const root = fileRootsById.get(rootId);
         if (!root) {
-          sendJson(res, 400, { ok: false, error: `Unknown file root: ${rootId}` });
+          sendJson(res, 400, {
+            ok: false,
+            error: `Unknown file root: ${rootId}`,
+          });
           return;
         }
         const relPath = normalizeSubPath(url.searchParams.get('path') || '');
@@ -638,7 +672,10 @@ export async function startWebControlCenterServer(
           );
           const stat = fs.statSync(filePath);
           if (!stat.isFile()) {
-            sendJson(res, 400, { ok: false, error: 'Requested path is not a file' });
+            sendJson(res, 400, {
+              ok: false,
+              error: 'Requested path is not a file',
+            });
             return;
           }
           if (stat.size > MAX_FILE_READ_BYTES) {
@@ -680,7 +717,10 @@ export async function startWebControlCenterServer(
           const rootId = (body.root || '').trim();
           const root = fileRootsById.get(rootId);
           if (!root) {
-            sendJson(res, 400, { ok: false, error: `Unknown file root: ${rootId}` });
+            sendJson(res, 400, {
+              ok: false,
+              error: `Unknown file root: ${rootId}`,
+            });
             return;
           }
           const relPath = normalizeSubPath(body.path || '');
@@ -720,18 +760,17 @@ export async function startWebControlCenterServer(
     }
 
     const normalizedPath =
-      requestPath === '/'
-        ? 'index.html'
-        : requestPath.replace(/^\/+/, '');
+      requestPath === '/' ? 'index.html' : requestPath.replace(/^\/+/, '');
     const candidatePath = path.resolve(staticDir, normalizedPath);
     if (!candidatePath.startsWith(staticDir)) {
       sendJson(res, 403, { ok: false, error: 'Forbidden' });
       return;
     }
 
-    const servePath = fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()
-      ? candidatePath
-      : indexPath;
+    const servePath =
+      fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()
+        ? candidatePath
+        : indexPath;
 
     const ext = path.extname(servePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';

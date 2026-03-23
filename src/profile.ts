@@ -31,8 +31,10 @@ function hasFarmEnvSignals(env: NodeJS.ProcessEnv): string[] {
 
   if (farmEnabled === true) reasons.push('FARM_STATE_ENABLED=true');
   if (featureFarm === true) reasons.push('FEATURE_FARM=true');
-  if ((env.FARM_PROFILE_PATH || '').trim()) reasons.push('FARM_PROFILE_PATH set');
-  if ((env.FFT_DASHBOARD_REPO_PATH || '').trim()) reasons.push('FFT_DASHBOARD_REPO_PATH set');
+  if ((env.FARM_PROFILE_PATH || '').trim())
+    reasons.push('FARM_PROFILE_PATH set');
+  if ((env.FFT_DASHBOARD_REPO_PATH || '').trim())
+    reasons.push('FFT_DASHBOARD_REPO_PATH set');
   if ((env.HA_TOKEN || '').trim()) reasons.push('HA_TOKEN set');
 
   return reasons;
@@ -62,7 +64,10 @@ function hasFarmArtifacts(projectRoot: string): string[] {
   return reasons;
 }
 
-function resolveProfile(): { profile: FFTProfile; detection: ProfileDetection } {
+function resolveProfile(): {
+  profile: FFTProfile;
+  detection: ProfileDetection;
+} {
   const explicit = normalizeProfile(process.env.FFT_PROFILE);
   if (explicit) {
     return {
@@ -88,7 +93,10 @@ function resolveProfile(): { profile: FFTProfile; detection: ProfileDetection } 
 
   return {
     profile: 'core',
-    detection: { source: 'default', reason: 'no farm env or artifacts detected' },
+    detection: {
+      source: 'default',
+      reason: 'no farm env or artifacts detected',
+    },
   };
 }
 
@@ -97,4 +105,5 @@ const featureFarmOverride = parseBool(process.env.FEATURE_FARM);
 
 export const FFT_PROFILE: FFTProfile = profileResolution.profile;
 export const PROFILE_DETECTION: ProfileDetection = profileResolution.detection;
-export const FEATURE_FARM: boolean = featureFarmOverride ?? FFT_PROFILE === 'farm';
+export const FEATURE_FARM: boolean =
+  featureFarmOverride ?? FFT_PROFILE === 'farm';

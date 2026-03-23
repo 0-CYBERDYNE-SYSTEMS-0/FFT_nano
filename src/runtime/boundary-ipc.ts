@@ -15,7 +15,9 @@ export interface BoundaryEnvelope<TPayload = unknown> {
 }
 
 export interface BoundaryActionEnvelope<
-  TPayload extends FarmActionRequest | MemoryActionRequest = FarmActionRequest | MemoryActionRequest,
+  TPayload extends FarmActionRequest | MemoryActionRequest =
+    | FarmActionRequest
+    | MemoryActionRequest,
 > extends BoundaryEnvelope<TPayload> {
   kind: 'action';
   resultPath: string;
@@ -40,7 +42,9 @@ export function wrapLegacyMessageEnvelope(
   const raw = payload as Record<string, unknown>;
   if (typeof raw.type !== 'string' || !raw.type.trim()) return null;
   const requestId =
-    typeof raw.requestId === 'string' && raw.requestId.trim() ? raw.requestId.trim() : undefined;
+    typeof raw.requestId === 'string' && raw.requestId.trim()
+      ? raw.requestId.trim()
+      : undefined;
   return {
     id: createEnvelopeId('message', sourceGroup, requestId, createdAt),
     kind: 'message',
@@ -60,7 +64,9 @@ export function wrapLegacyTaskEnvelope(
   const raw = payload as Record<string, unknown>;
   if (typeof raw.type !== 'string' || !raw.type.trim()) return null;
   const requestId =
-    typeof raw.taskId === 'string' && raw.taskId.trim() ? raw.taskId.trim() : undefined;
+    typeof raw.taskId === 'string' && raw.taskId.trim()
+      ? raw.taskId.trim()
+      : undefined;
   return {
     id: createEnvelopeId('task', sourceGroup, requestId, createdAt),
     kind: 'task',
@@ -96,9 +102,13 @@ export function translateLegacyMessageToHostEvent(
   const payload = envelope.payload;
   if (payload.type === 'telegram_draft_update') return null;
   if (payload.type !== 'message') return null;
-  if (typeof payload.chatJid !== 'string' || typeof payload.text !== 'string') return null;
+  if (typeof payload.chatJid !== 'string' || typeof payload.text !== 'string')
+    return null;
   const targetGroup = registeredGroups[payload.chatJid];
-  if (!isMain && (!targetGroup || targetGroup.folder !== envelope.sourceGroup)) {
+  if (
+    !isMain &&
+    (!targetGroup || targetGroup.folder !== envelope.sourceGroup)
+  ) {
     return null;
   }
   return {
@@ -126,7 +136,11 @@ export async function dispatchLegacyMessageEnvelope(
   isMain: boolean,
   dispatch: (event: HostEvent) => Promise<void> | void,
 ): Promise<LegacyMessageDispatchResult> {
-  const event = translateLegacyMessageToHostEvent(envelope, registeredGroups, isMain);
+  const event = translateLegacyMessageToHostEvent(
+    envelope,
+    registeredGroups,
+    isMain,
+  );
   if (!event) {
     return envelope.payload.type === 'telegram_draft_update'
       ? 'ignored_draft'

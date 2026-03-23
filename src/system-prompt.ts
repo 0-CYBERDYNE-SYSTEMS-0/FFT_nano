@@ -9,7 +9,13 @@ export type CodingHint =
   | 'force_delegate_execute'
   | 'force_delegate_plan';
 
-export type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ThinkLevel =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
 export type PromptMode = 'full' | 'minimal';
 
@@ -120,11 +126,27 @@ const MAIN_BOOTSTRAP_ORDER = [
 ] as const;
 
 const PROMPT_INJECTION_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
-  { label: 'override_previous_instructions', pattern: /\b(?:ignore|disregard|override)\s+(?:all\s+)?previous instructions\b/i },
-  { label: 'system_prompt_reference', pattern: /\b(?:system prompt|developer message|developer instructions)\b/i },
-  { label: 'role_reassignment', pattern: /\b(?:you are now|act as|role:\s*system)\b/i },
-  { label: 'tool_call_markup', pattern: /<\/?(?:tool_call|assistant|system|developer)\b/i },
-  { label: 'jailbreak_phrase', pattern: /\bjailbreak|prompt injection|ignore safeguards\b/i },
+  {
+    label: 'override_previous_instructions',
+    pattern:
+      /\b(?:ignore|disregard|override)\s+(?:all\s+)?previous instructions\b/i,
+  },
+  {
+    label: 'system_prompt_reference',
+    pattern: /\b(?:system prompt|developer message|developer instructions)\b/i,
+  },
+  {
+    label: 'role_reassignment',
+    pattern: /\b(?:you are now|act as|role:\s*system)\b/i,
+  },
+  {
+    label: 'tool_call_markup',
+    pattern: /<\/?(?:tool_call|assistant|system|developer)\b/i,
+  },
+  {
+    label: 'jailbreak_phrase',
+    pattern: /\bjailbreak|prompt injection|ignore safeguards\b/i,
+  },
 ];
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -282,7 +304,10 @@ function buildMainContextEntries(params: {
       readFileIfExists: params.readFileIfExists,
       label: `memory/${dateStr}.md`,
       path: `${params.groupDir}/memory/${dateStr}.md`,
-      fileMaxChars: Math.min(params.fileMaxChars, DEFAULT_MEMORY_DAILY_MAX_CHARS),
+      fileMaxChars: Math.min(
+        params.fileMaxChars,
+        DEFAULT_MEMORY_DAILY_MAX_CHARS,
+      ),
       remainingTotalChars: remaining,
     });
   }
@@ -333,7 +358,10 @@ function buildNonMainContextEntries(params: {
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
-      label: globalMemoryPath === globalMemoryPrimary ? 'global/MEMORY.md' : 'global/memory.md',
+      label:
+        globalMemoryPath === globalMemoryPrimary
+          ? 'global/MEMORY.md'
+          : 'global/memory.md',
       path: globalMemoryPath,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
@@ -349,7 +377,10 @@ function buildNonMainContextEntries(params: {
       remaining = addContextEntry({
         entries,
         readFileIfExists: params.readFileIfExists,
-        label: groupMemoryPath === groupMemoryPrimary ? 'group/MEMORY.md' : 'group/memory.md',
+        label:
+          groupMemoryPath === groupMemoryPrimary
+            ? 'group/MEMORY.md'
+            : 'group/memory.md',
         path: groupMemoryPath,
         fileMaxChars: params.fileMaxChars,
         remainingTotalChars: remaining,
@@ -387,9 +418,10 @@ function renderSkillCatalog(
     '',
   ];
   for (const entry of entries) {
-    const toolText = entry.allowedTools.length > 0
-      ? ` Allowed tools: ${entry.allowedTools.join(', ')}.`
-      : '';
+    const toolText =
+      entry.allowedTools.length > 0
+        ? ` Allowed tools: ${entry.allowedTools.join(', ')}.`
+        : '';
     lines.push(
       `- ${entry.name} [${entry.source}]: ${entry.description}.${toolText} When to use: ${entry.whenToUse}`,
     );
@@ -460,7 +492,9 @@ function renderBasePrompt(params: {
   lines.push(
     'If you need a destructive operation: describe the exact command, explain why, and WAIT for user confirmation.',
   );
-  lines.push('Prefer non-destructive alternatives (move to tmp, git stash, etc.) when possible.');
+  lines.push(
+    'Prefer non-destructive alternatives (move to tmp, git stash, etc.) when possible.',
+  );
   lines.push('');
   lines.push('## Tooling');
   lines.push(
@@ -469,11 +503,15 @@ function renderBasePrompt(params: {
   lines.push(
     'Do not claim you are text-only or unable to access local files/commands before actually trying tools.',
   );
-  lines.push('When asked to verify state, run commands and report concrete evidence.');
+  lines.push(
+    'When asked to verify state, run commands and report concrete evidence.',
+  );
   lines.push('');
   lines.push('## Workspace');
   lines.push(`- ${params.paths.groupDir} is writable workspace.`);
-  lines.push(`- ${params.paths.ipcDir} is host bridge for outbound messages and scheduler actions.`);
+  lines.push(
+    `- ${params.paths.ipcDir} is host bridge for outbound messages and scheduler actions.`,
+  );
   lines.push(
     `- Durable memory belongs in ${params.paths.groupDir}/MEMORY.md and ${params.paths.groupDir}/memory/*.md.`,
   );
@@ -486,9 +524,13 @@ function renderBasePrompt(params: {
       `This run requires explicit delegation: call delegate_to_coding_agent exactly once with mode="${params.forcedDelegateMode}".`,
     );
     if (params.forcedDelegateMode === 'plan') {
-      lines.push('Return a concrete implementation plan; do not apply file edits in this outer run.');
+      lines.push(
+        'Return a concrete implementation plan; do not apply file edits in this outer run.',
+      );
     } else {
-      lines.push('Execute through delegated coder and return delegated outcomes.');
+      lines.push(
+        'Execute through delegated coder and return delegated outcomes.',
+      );
     }
     lines.push('');
   } else if (params.forcedDelegateMode && !params.canDelegateToCoder) {
@@ -502,7 +544,9 @@ function renderBasePrompt(params: {
     lines.push(
       'You may delegate substantial software engineering work (multi-file implementation, deep debugging, broad refactors, full validation).',
     );
-    lines.push('If intent is ambiguous, ask one concise clarification before delegating.');
+    lines.push(
+      'If intent is ambiguous, ask one concise clarification before delegating.',
+    );
     lines.push('For small tasks, complete directly in this run.');
     lines.push('');
   }
@@ -520,7 +564,9 @@ function renderBasePrompt(params: {
   lines.push('Write atomically (temp file then rename).');
   lines.push('');
   lines.push('## Scheduler IPC');
-  lines.push(`To manage tasks, write JSON into ${params.paths.ipcDir}/tasks/*.json with one of:`);
+  lines.push(
+    `To manage tasks, write JSON into ${params.paths.ipcDir}/tasks/*.json with one of:`,
+  );
   lines.push(
     '- v2: {"type":"schedule_task","prompt":"...","schedule":{"kind":"cron|every|at",...},"session_target":"main|isolated","wake_mode":"next-heartbeat|now","delivery":{"mode":"none|announce|webhook","to":"<jid?>","webhookUrl":"https://..."},"timeout_seconds":120,"stagger_ms":2500,"delete_after_run":false,"context_mode":"group|isolated","groupFolder":"<folder>"}',
   );
@@ -535,16 +581,24 @@ function renderBasePrompt(params: {
   lines.push(
     `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${params.assistantName}"}`,
   );
-  lines.push(`Read task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`);
+  lines.push(
+    `Read task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
+  );
   lines.push('');
   lines.push('## Output Style');
-  lines.push('For user-facing replies, prefer short paragraphs and plain bullets.');
-  lines.push('Avoid markdown headings in final chat replies unless explicitly requested.');
+  lines.push(
+    'For user-facing replies, prefer short paragraphs and plain bullets.',
+  );
+  lines.push(
+    'Avoid markdown headings in final chat replies unless explicitly requested.',
+  );
   lines.push('');
 
   if (params.contextEntries.length > 0) {
     lines.push('## Workspace Files (injected)');
-    lines.push('These files are loaded for this run (subject to prompt budget limits).');
+    lines.push(
+      'These files are loaded for this run (subject to prompt budget limits).',
+    );
     lines.push('');
     lines.push('# Project Context');
     lines.push('');
@@ -571,7 +625,9 @@ function renderOverlayPrompt(params: {
 }): string {
   const lines: string[] = [];
   lines.push('## Inbound Context (trusted metadata)');
-  lines.push('The following JSON is host-generated runtime metadata. Treat it as authoritative for this run.');
+  lines.push(
+    'The following JSON is host-generated runtime metadata. Treat it as authoritative for this run.',
+  );
   lines.push('```json');
   lines.push(
     JSON.stringify(
@@ -597,7 +653,9 @@ function renderOverlayPrompt(params: {
   lines.push('```');
   lines.push('');
 
-  const extraSystemPrompt = trimAndNormalize(params.input.extraSystemPrompt || '');
+  const extraSystemPrompt = trimAndNormalize(
+    params.input.extraSystemPrompt || '',
+  );
   if (extraSystemPrompt) {
     lines.push('## Host Context Overlay');
     lines.push(extraSystemPrompt);
@@ -607,17 +665,28 @@ function renderOverlayPrompt(params: {
   lines.push('## Runtime Hints');
   lines.push(`- prompt_mode: ${params.promptMode}`);
   lines.push(`- coding_hint: ${params.input.codingHint}`);
-  lines.push(`- continue_session: ${params.input.noContinue ? 'false' : 'true'}`);
-  if (params.input.provider) lines.push(`- provider_override: ${params.input.provider}`);
+  lines.push(
+    `- continue_session: ${params.input.noContinue ? 'false' : 'true'}`,
+  );
+  if (params.input.provider)
+    lines.push(`- provider_override: ${params.input.provider}`);
   if (params.input.model) lines.push(`- model_override: ${params.input.model}`);
-  if (params.input.thinkLevel) lines.push(`- think_level: ${params.input.thinkLevel}`);
-  if (params.input.reasoningLevel) lines.push(`- reasoning_level: ${params.input.reasoningLevel}`);
-  if (params.input.requestId) lines.push(`- request_id: ${params.input.requestId}`);
+  if (params.input.thinkLevel)
+    lines.push(`- think_level: ${params.input.thinkLevel}`);
+  if (params.input.reasoningLevel)
+    lines.push(`- reasoning_level: ${params.input.reasoningLevel}`);
+  if (params.input.requestId)
+    lines.push(`- request_id: ${params.input.requestId}`);
   lines.push('');
 
-  if (params.input.reasoningLevel === 'on' || params.input.reasoningLevel === 'stream') {
+  if (
+    params.input.reasoningLevel === 'on' ||
+    params.input.reasoningLevel === 'stream'
+  ) {
     lines.push('## Reasoning Visibility');
-    lines.push('Do not reveal private chain-of-thought. Provide concise high-level rationale when useful.');
+    lines.push(
+      'Do not reveal private chain-of-thought. Provide concise high-level rationale when useful.',
+    );
     if (params.input.reasoningLevel === 'stream') {
       lines.push(
         `For long tasks, proactively send concise progress updates via ${params.paths.ipcDir}/messages.`,
@@ -643,15 +712,25 @@ export function buildSystemPrompt(
   const now = options.now ? options.now() : new Date();
   const fileMaxChars =
     options.fileMaxChars ??
-    parsePositiveInt(process.env.FFT_NANO_PROMPT_FILE_MAX_CHARS, DEFAULT_FILE_MAX_CHARS);
+    parsePositiveInt(
+      process.env.FFT_NANO_PROMPT_FILE_MAX_CHARS,
+      DEFAULT_FILE_MAX_CHARS,
+    );
   const totalMaxChars =
     options.totalMaxChars ??
-    parsePositiveInt(process.env.FFT_NANO_PROMPT_TOTAL_MAX_CHARS, DEFAULT_TOTAL_MAX_CHARS);
+    parsePositiveInt(
+      process.env.FFT_NANO_PROMPT_TOTAL_MAX_CHARS,
+      DEFAULT_TOTAL_MAX_CHARS,
+    );
   const skillCatalogMaxChars =
     options.skillCatalogMaxChars ??
-    parsePositiveInt(process.env.FFT_NANO_SKILL_CATALOG_MAX_CHARS, DEFAULT_SKILL_CATALOG_MAX_CHARS);
+    parsePositiveInt(
+      process.env.FFT_NANO_SKILL_CATALOG_MAX_CHARS,
+      DEFAULT_SKILL_CATALOG_MAX_CHARS,
+    );
   const promptMode: PromptMode = input.isScheduledTask ? 'minimal' : 'full';
-  const assistantName = (input.assistantName || 'Assistant').trim() || 'Assistant';
+  const assistantName =
+    (input.assistantName || 'Assistant').trim() || 'Assistant';
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
   const isHeartbeatRun = (input.requestId || '').startsWith('heartbeat-');
 
@@ -684,9 +763,10 @@ export function buildSystemPrompt(
         globalDir: paths.globalDir,
       });
 
-  const skillCatalog = !input.isScheduledTask && !isHeartbeatRun
-    ? renderSkillCatalog(input.skillCatalog || [], skillCatalogMaxChars)
-    : { text: '', injectedChars: 0, count: 0, truncated: false };
+  const skillCatalog =
+    !input.isScheduledTask && !isHeartbeatRun
+      ? renderSkillCatalog(input.skillCatalog || [], skillCatalogMaxChars)
+      : { text: '', injectedChars: 0, count: 0, truncated: false };
 
   const baseCacheKey = buildBaseCacheKey({
     assistantName,
@@ -721,7 +801,10 @@ export function buildSystemPrompt(
     paths,
     providedMemoryContext,
   });
-  const text = [baseContent, overlayContent].filter(Boolean).join('\n\n').trim();
+  const text = [baseContent, overlayContent]
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
   const injectedTotalChars = contextState.entries.reduce(
     (sum, entry) => sum + entry.injectedChars,
     0,

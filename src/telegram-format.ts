@@ -8,7 +8,10 @@ type FenceSpan = {
 };
 
 function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function escapeHtmlAttr(text: string): string {
@@ -50,7 +53,10 @@ function parseFenceSpans(buffer: string): FenceSpan[] {
           marker,
           indent,
         };
-      } else if (open.markerChar === markerChar && markerLen >= open.markerLen) {
+      } else if (
+        open.markerChar === markerChar &&
+        markerLen >= open.markerLen
+      ) {
         spans.push({
           start: open.start,
           end: lineEnd,
@@ -81,7 +87,10 @@ function parseFenceSpans(buffer: string): FenceSpan[] {
   return spans;
 }
 
-function findFenceSpanAt(spans: FenceSpan[], index: number): FenceSpan | undefined {
+function findFenceSpanAt(
+  spans: FenceSpan[],
+  index: number,
+): FenceSpan | undefined {
   return spans.find((span) => index > span.start && index < span.end);
 }
 
@@ -101,14 +110,20 @@ function renderInlineMarkdown(markdown: string): string {
 
   text = escapeHtml(text);
 
-  text = text.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, label: string, href: string) => {
-    const unescapedHref = href.replace(/&amp;/g, '&');
-    return `<a href="${escapeHtmlAttr(unescapedHref)}">${label}</a>`;
-  });
+  text = text.replace(
+    /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_m, label: string, href: string) => {
+      const unescapedHref = href.replace(/&amp;/g, '&');
+      return `<a href="${escapeHtmlAttr(unescapedHref)}">${label}</a>`;
+    },
+  );
   text = text.replace(/\*\*([^\n*][^*\n]*?)\*\*/g, '<b>$1</b>');
   text = text.replace(/__([^\n_][^_\n]*?)__/g, '<b>$1</b>');
   text = text.replace(/~~([^\n~][^~\n]*?)~~/g, '<s>$1</s>');
-  text = text.replace(/\|\|([^\n|][^|\n]*?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
+  text = text.replace(
+    /\|\|([^\n|][^|\n]*?)\|\|/g,
+    '<tg-spoiler>$1</tg-spoiler>',
+  );
 
   text = text.replace(/@@TGCODE(\d+)@@/g, (_m, rawIndex: string) => {
     const idx = Number.parseInt(rawIndex, 10);
@@ -212,8 +227,9 @@ function scanParenAwareBreakpoints(
 }
 
 function pickSafeBreakIndex(window: string, spans: FenceSpan[]): number {
-  const { lastNewline, lastWhitespace } = scanParenAwareBreakpoints(window, (idx) =>
-    isSafeFenceBreak(spans, idx),
+  const { lastNewline, lastWhitespace } = scanParenAwareBreakpoints(
+    window,
+    (idx) => isSafeFenceBreak(spans, idx),
   );
   if (lastNewline > 0) return lastNewline;
   if (lastWhitespace > 0) return lastWhitespace;
@@ -238,8 +254,12 @@ function chunkPlainText(text: string, limit: number): string[] {
     const chunk = rawChunk.trimEnd();
     if (chunk.length > 0) chunks.push(chunk);
 
-    const brokeOnSeparator = breakIdx < remaining.length && /\s/.test(remaining[breakIdx]);
-    const nextStart = Math.min(remaining.length, breakIdx + (brokeOnSeparator ? 1 : 0));
+    const brokeOnSeparator =
+      breakIdx < remaining.length && /\s/.test(remaining[breakIdx]);
+    const nextStart = Math.min(
+      remaining.length,
+      breakIdx + (brokeOnSeparator ? 1 : 0),
+    );
     remaining = remaining.slice(nextStart).trimStart();
   }
 
@@ -247,7 +267,10 @@ function chunkPlainText(text: string, limit: number): string[] {
   return chunks;
 }
 
-export function chunkTelegramMarkdownText(text: string, limit: number): string[] {
+export function chunkTelegramMarkdownText(
+  text: string,
+  limit: number,
+): string[] {
   if (!text) return [];
   if (limit <= 0) return [text];
   if (text.length <= limit) return [text];
@@ -282,7 +305,10 @@ export function chunkTelegramMarkdownText(text: string, limit: number): string[]
         const maxIdxIfAlreadyNewline = limit - closeLine.length;
 
         let pickedNewline = false;
-        let lastNewline = remaining.lastIndexOf('\n', Math.max(0, maxIdxIfAlreadyNewline - 1));
+        let lastNewline = remaining.lastIndexOf(
+          '\n',
+          Math.max(0, maxIdxIfAlreadyNewline - 1),
+        );
         while (lastNewline !== -1) {
           const candidateBreak = lastNewline + 1;
           if (candidateBreak < minProgressIdx) break;
@@ -308,19 +334,27 @@ export function chunkTelegramMarkdownText(text: string, limit: number): string[]
 
       const fenceAtBreak = findFenceSpanAt(spans, breakIdx);
       fenceToSplit =
-        fenceAtBreak && fenceAtBreak.start === initialFence.start ? fenceAtBreak : undefined;
+        fenceAtBreak && fenceAtBreak.start === initialFence.start
+          ? fenceAtBreak
+          : undefined;
     }
 
     let rawChunk = remaining.slice(0, breakIdx);
     if (!rawChunk) break;
 
-    const brokeOnSeparator = breakIdx < remaining.length && /\s/.test(remaining[breakIdx]);
-    const nextStart = Math.min(remaining.length, breakIdx + (brokeOnSeparator ? 1 : 0));
+    const brokeOnSeparator =
+      breakIdx < remaining.length && /\s/.test(remaining[breakIdx]);
+    const nextStart = Math.min(
+      remaining.length,
+      breakIdx + (brokeOnSeparator ? 1 : 0),
+    );
     let next = remaining.slice(nextStart);
 
     if (fenceToSplit) {
       const closeLine = `${fenceToSplit.indent}${fenceToSplit.marker}`;
-      rawChunk = rawChunk.endsWith('\n') ? `${rawChunk}${closeLine}` : `${rawChunk}\n${closeLine}`;
+      rawChunk = rawChunk.endsWith('\n')
+        ? `${rawChunk}${closeLine}`
+        : `${rawChunk}\n${closeLine}`;
       next = `${fenceToSplit.openLine}\n${next}`;
     } else {
       next = stripLeadingNewlines(next);
@@ -370,7 +404,10 @@ export function rebalanceHtmlChunks(chunks: string[]): string[] {
     }
 
     if (stack.length > 0 && i < chunks.length - 1) {
-      chunk += [...stack].reverse().map((t) => `</${t}>`).join('');
+      chunk += [...stack]
+        .reverse()
+        .map((t) => `</${t}>`)
+        .join('');
       carryOver.push(...stack);
     }
 

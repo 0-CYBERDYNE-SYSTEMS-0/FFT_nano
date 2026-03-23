@@ -20,16 +20,32 @@ export interface ActiveCoderRun {
   startedAt: number;
   parentRequestId?: string;
   backend?: 'pi';
-  route?: 'coder_execute' | 'coder_plan' | 'auto_execute' | 'subagent_execute' | 'subagent_plan';
+  route?:
+    | 'coder_execute'
+    | 'coder_plan'
+    | 'auto_execute'
+    | 'subagent_execute'
+    | 'subagent_plan';
   state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
   worktreePath?: string;
   childRunIds?: string[];
   abortController?: AbortController;
 }
 
-export type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ThinkLevel =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
-export type TelegramDeliveryMode = 'off' | 'partial' | 'block' | 'draft' | 'persistent';
+export type TelegramDeliveryMode =
+  | 'off'
+  | 'partial'
+  | 'block'
+  | 'draft'
+  | 'persistent';
 export type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -37,7 +53,13 @@ export type QueueMode =
   | 'steer'
   | 'steer-backlog';
 export type QueueDropPolicy = 'old' | 'new' | 'summarize';
-export type PanelScope = 'home' | 'models' | 'think' | 'reasoning' | 'verbose' | 'queue';
+export type PanelScope =
+  | 'home'
+  | 'models'
+  | 'think'
+  | 'reasoning'
+  | 'verbose'
+  | 'queue';
 
 export interface ChatRunPreferences {
   provider?: string;
@@ -71,7 +93,11 @@ export interface PiModelEntry {
   model: string;
 }
 
-export type TelegramSetupInputKind = 'provider' | 'model' | 'endpoint' | 'api-key';
+export type TelegramSetupInputKind =
+  | 'provider'
+  | 'model'
+  | 'endpoint'
+  | 'api-key';
 
 export interface TelegramSetupInputState {
   kind: TelegramSetupInputKind;
@@ -160,8 +186,10 @@ export interface TelegramToolProgressState {
 
 const TELEGRAM_DRAFT_DISABLE_MS = Math.max(
   60_000,
-  Number.parseInt(process.env.FFT_NANO_TELEGRAM_DRAFT_DISABLE_MS || '1800000', 10) ||
-    1_800_000,
+  Number.parseInt(
+    process.env.FFT_NANO_TELEGRAM_DRAFT_DISABLE_MS || '1800000',
+    10,
+  ) || 1_800_000,
 );
 
 export const state = {
@@ -193,20 +221,35 @@ export const state = {
 export const activeCoderRuns = new Map<string, ActiveCoderRun>();
 export const activeChatRuns = new Map<string, ActiveChatRun>();
 export const activeChatRunsById = new Map<string, ActiveChatRun>();
-export const tuiMessageQueue = new Map<string, Array<{ text: string; runId: string; deliver: boolean }>>();
+export const tuiMessageQueue = new Map<
+  string,
+  Array<{ text: string; runId: string; deliver: boolean }>
+>();
 export const telegramPreviewRegistry = new TelegramPreviewRegistry(
   TELEGRAM_DRAFT_DISABLE_MS,
 );
-export const heartbeatLastSent = new Map<string, { text: string; sentAt: number }>();
-export const heartbeatLastTargetByChannel = new Map<'telegram' | 'whatsapp', string>();
+export const heartbeatLastSent = new Map<
+  string,
+  { text: string; sentAt: number }
+>();
+export const heartbeatLastTargetByChannel = new Map<
+  'telegram' | 'whatsapp',
+  string
+>();
 export const compactionMemoryFlushMarkers = new Map<string, number>();
 export const telegramSettingsPanelActions = new Map<
   string,
   { chatJid: string; action: TelegramSettingsPanelAction; expiresAt: number }
 >();
-export const telegramSetupInputStates = new Map<string, TelegramSetupInputState>();
+export const telegramSetupInputStates = new Map<
+  string,
+  TelegramSetupInputState
+>();
 export const hostEventBus = new HostEventBus();
-export const telegramToolProgressRuns = new Map<string, TelegramToolProgressState>();
+export const telegramToolProgressRuns = new Map<
+  string,
+  TelegramToolProgressState
+>();
 
 // ---------------------------------------------------------------------------
 // Constants that were interleaved with state in index.ts

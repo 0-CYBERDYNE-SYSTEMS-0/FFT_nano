@@ -56,6 +56,8 @@ export function resolveTaskResumeNextRun(
   if (task.next_run && !isNaN(Date.parse(task.next_run))) {
     return task.next_run;
   }
-  return computeTaskNextRun(task.schedule_type, task.schedule_value, nowMs) ||
-    new Date(nowMs).toISOString();
+  return (
+    computeTaskNextRun(task.schedule_type, task.schedule_value, nowMs) ||
+    new Date(nowMs).toISOString()
+  );
 }

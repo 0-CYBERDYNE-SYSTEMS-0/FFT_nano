@@ -49,7 +49,9 @@ const DEFAULT_PROVIDER = process.env.PI_API || '(provider)';
 const DEFAULT_MODEL = process.env.PI_MODEL || '(model)';
 const DEFAULT_GATEWAY_URL = `ws://127.0.0.1:${process.env.FFT_NANO_TUI_PORT || '28989'}`;
 const DEFAULT_GATEWAY_TOKEN =
-  process.env.FFT_NANO_TUI_AUTH_TOKEN || process.env.FFT_NANO_WEB_AUTH_TOKEN || '';
+  process.env.FFT_NANO_TUI_AUTH_TOKEN ||
+  process.env.FFT_NANO_WEB_AUTH_TOKEN ||
+  '';
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'help', description: 'Show slash command help' },
@@ -102,7 +104,9 @@ function asString(value: unknown): string {
 }
 
 function asNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function parseCommand(input: string): { name: string; args: string } {
@@ -115,7 +119,9 @@ function parseCommand(input: string): { name: string; args: string } {
   };
 }
 
-function parseChatMessage(message: unknown): { role: string; text: string } | null {
+function parseChatMessage(
+  message: unknown,
+): { role: string; text: string } | null {
   if (!message || typeof message !== 'object') return null;
   const rec = message as Record<string, unknown>;
   const role = typeof rec.role === 'string' ? rec.role : '';
@@ -191,8 +197,8 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
             activeRunId = evt.runId;
             setActivityStatus('running');
             chatLog.addUser(message.text);
-          }
-          else if (message.role === 'assistant') chatLog.finalizeAssistant(message.text, evt.runId);
+          } else if (message.role === 'assistant')
+            chatLog.finalizeAssistant(message.text, evt.runId);
           else chatLog.addSystem(message.text);
           tui.requestRender();
           return;
@@ -237,14 +243,20 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
       }
 
       if (frame.event === 'agent_event') {
-        const evt = frame.payload as AgentEventPayload & { sessionKey?: string };
+        const evt = frame.payload as AgentEventPayload & {
+          sessionKey?: string;
+        };
         if (!evt) return;
         if (evt.sessionKey && evt.sessionKey !== sessionKey) return;
         if (activeRunId && evt.runId !== activeRunId) return;
 
         if (evt.stream === 'tool') {
           if ((sessionPrefs.verboseMode || 'all') === 'off') return;
-          chatLog.upsertToolEvent(evt.runId, evt.data, sessionPrefs.verboseMode || 'all');
+          chatLog.upsertToolEvent(
+            evt.runId,
+            evt.data,
+            sessionPrefs.verboseMode || 'all',
+          );
           tui.requestRender();
           return;
         }
@@ -368,12 +380,17 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   };
 
   const loadSessions = async () => {
-    const res = await client.request<{ sessions: TuiSessionSummary[] }>('sessions.list', {});
+    const res = await client.request<{ sessions: TuiSessionSummary[] }>(
+      'sessions.list',
+      {},
+    );
     availableSessions = Array.isArray(res.sessions) ? res.sessions : [];
   };
 
   const findSession = (key: string): TuiSessionSummary | null => {
-    return availableSessions.find((session) => session.sessionKey === key) || null;
+    return (
+      availableSessions.find((session) => session.sessionKey === key) || null
+    );
   };
 
   const loadHistory = async (limit = 120) => {
@@ -388,28 +405,36 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
     chatLog.clearAll();
     for (const message of res.messages) {
       if (message.role === 'user') chatLog.addUser(message.text);
-      else if (message.role === 'assistant') chatLog.finalizeAssistant(message.text);
+      else if (message.role === 'assistant')
+        chatLog.finalizeAssistant(message.text);
       else chatLog.addSystem(message.text);
     }
   };
 
   const sendMessage = async (text: string): Promise<SendMessageStatus> => {
     setActivityStatus('sending');
-    const res = await client.request<{ runId: string; status: string }>('chat.send', {
-      sessionKey,
-      message: text,
-      deliver,
-    });
+    const res = await client.request<{ runId: string; status: string }>(
+      'chat.send',
+      {
+        sessionKey,
+        message: text,
+        deliver,
+      },
+    );
     const runId = asString(res.runId) || null;
     const status = asString(res.status) || 'started';
 
     if (status === 'queued') {
-      chatLog.addSystem('message queued; will process when current run completes.');
+      chatLog.addSystem(
+        'message queued; will process when current run completes.',
+      );
       return 'queued';
     }
     if (status === 'already_running') {
       if (runId) activeRunId = runId;
-      chatLog.addSystem('run already in progress; message was not sent. Press Esc or /abort, then resend.');
+      chatLog.addSystem(
+        'run already in progress; message was not sent. Press Esc or /abort, then resend.',
+      );
       setActivityStatus('running');
       return 'busy';
     }
@@ -490,7 +515,9 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
 
       case 'history': {
         const parsed = Number.parseInt(args || '120', 10);
-        const limit = Number.isFinite(parsed) ? Math.max(1, Math.min(400, parsed)) : 120;
+        const limit = Number.isFinite(parsed)
+          ? Math.max(1, Math.min(400, parsed))
+          : 120;
         await loadHistory(limit);
         break;
       }
@@ -504,7 +531,11 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         if (slash > 0) {
           const provider = args.slice(0, slash).trim();
           const model = args.slice(slash + 1).trim();
-          await client.request('sessions.patch', { sessionKey, provider, model });
+          await client.request('sessions.patch', {
+            sessionKey,
+            provider,
+            model,
+          });
           sessionPrefs.provider = provider;
           sessionPrefs.model = model;
         } else {
@@ -517,15 +548,22 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
 
       case 'think': {
         if (!args) {
-          chatLog.addSystem('usage: /think <off|minimal|low|medium|high|xhigh>');
+          chatLog.addSystem(
+            'usage: /think <off|minimal|low|medium|high|xhigh>',
+          );
           break;
         }
         const normalized = normalizeThinkLevel(args);
         if (!normalized) {
-          chatLog.addSystem('usage: /think <off|minimal|low|medium|high|xhigh>');
+          chatLog.addSystem(
+            'usage: /think <off|minimal|low|medium|high|xhigh>',
+          );
           break;
         }
-        await client.request('sessions.patch', { sessionKey, thinkLevel: normalized });
+        await client.request('sessions.patch', {
+          sessionKey,
+          thinkLevel: normalized,
+        });
         sessionPrefs.thinkLevel = normalized === 'off' ? undefined : normalized;
         updateFooter();
         break;
@@ -545,7 +583,8 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           sessionKey,
           reasoningLevel: normalized,
         });
-        sessionPrefs.reasoningLevel = normalized === 'off' ? undefined : normalized;
+        sessionPrefs.reasoningLevel =
+          normalized === 'off' ? undefined : normalized;
         updateFooter();
         break;
       }
@@ -562,7 +601,8 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           sessionKey,
           verboseMode: normalized,
         });
-        sessionPrefs.verboseMode = normalized === 'off' ? undefined : normalized;
+        sessionPrefs.verboseMode =
+          normalized === 'off' ? undefined : normalized;
         chatLog.addSystem(describeVerboseMode(normalized));
         updateFooter();
         break;
@@ -591,20 +631,25 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
             ? 'restart'
             : actionRaw === 'doctor'
               ? 'doctor'
-            : actionRaw === 'status'
-              ? 'status'
-              : null;
+              : actionRaw === 'status'
+                ? 'status'
+                : null;
         if (!action) {
           chatLog.addSystem('usage: /gateway <status|restart|doctor>');
           break;
         }
 
         if (action === 'restart') {
-          chatLog.addSystem('Restarting gateway service. Expect disconnect while host restarts.');
+          chatLog.addSystem(
+            'Restarting gateway service. Expect disconnect while host restarts.',
+          );
         }
-        const result = await client.request<{ ok: boolean; text: string }>('gateway.service', {
-          action,
-        });
+        const result = await client.request<{ ok: boolean; text: string }>(
+          'gateway.service',
+          {
+            action,
+          },
+        );
         if (result.ok) {
           chatLog.addSystem(`gateway ${action}:\n${result.text}`);
         } else {
@@ -627,16 +672,21 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           break;
         }
         {
-          const res = await client.request<{ aborted?: boolean }>('chat.abort', {
-            sessionKey,
-            runId: activeRunId,
-          });
+          const res = await client.request<{ aborted?: boolean }>(
+            'chat.abort',
+            {
+              sessionKey,
+              runId: activeRunId,
+            },
+          );
           if (res.aborted) {
             chatLog.addSystem('abort signal sent');
           } else {
             activeRunId = null;
             setActivityStatus('idle');
-            chatLog.addSystem('No matching active run on host; cleared local run lock.');
+            chatLog.addSystem(
+              'No matching active run on host; cleared local run lock.',
+            );
           }
         }
         break;
@@ -660,7 +710,9 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
       editor.setText('');
       void handleCommand(value)
         .catch((err) => {
-          chatLog.addSystem(`error: ${err instanceof Error ? err.message : String(err)}`);
+          chatLog.addSystem(
+            `error: ${err instanceof Error ? err.message : String(err)}`,
+          );
           setActivityStatus('error');
         })
         .finally(() => {
@@ -678,7 +730,9 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         editor.setText(value);
       })
       .catch((err) => {
-        chatLog.addSystem(`error: ${err instanceof Error ? err.message : String(err)}`);
+        chatLog.addSystem(
+          `error: ${err instanceof Error ? err.message : String(err)}`,
+        );
         setActivityStatus('error');
       })
       .finally(() => {
@@ -689,12 +743,17 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   editor.onEscape = () => {
     if (!activeRunId) return;
     void client
-      .request<{ aborted?: boolean }>('chat.abort', { sessionKey, runId: activeRunId })
+      .request<{ aborted?: boolean }>('chat.abort', {
+        sessionKey,
+        runId: activeRunId,
+      })
       .then((res: { aborted?: boolean }) => {
         if (!res.aborted) {
           activeRunId = null;
           setActivityStatus('idle');
-          chatLog.addSystem('No matching active run on host; cleared local run lock.');
+          chatLog.addSystem(
+            'No matching active run on host; cleared local run lock.',
+          );
         }
       })
       .catch(() => undefined)

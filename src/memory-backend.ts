@@ -6,7 +6,10 @@ import {
   searchTranscriptMemory,
   type MemorySourceFilter,
 } from './memory-search.js';
-import { buildMemoryContext, type MemoryContextBuildResult } from './memory-retrieval.js';
+import {
+  buildMemoryContext,
+  type MemoryContextBuildResult,
+} from './memory-retrieval.js';
 import type { MemorySearchHit, RegisteredGroup } from './types.js';
 
 export interface MemorySearchInput {
@@ -32,7 +35,10 @@ export interface MemoryBackend {
     content: string;
   };
   search(input: MemorySearchInput): MemorySearchHit[];
-  buildContext(input: { groupFolder: string; prompt: string }): MemoryContextBuildResult;
+  buildContext(input: {
+    groupFolder: string;
+    prompt: string;
+  }): MemoryContextBuildResult;
 }
 
 function getChatJidsForGroup(
@@ -90,7 +96,10 @@ export class LexicalMemoryBackend implements MemoryBackend {
     return mergeAndRankMemoryHits(hits, input.topK);
   }
 
-  buildContext(input: { groupFolder: string; prompt: string }): MemoryContextBuildResult {
+  buildContext(input: {
+    groupFolder: string;
+    prompt: string;
+  }): MemoryContextBuildResult {
     return buildMemoryContext(input);
   }
 }

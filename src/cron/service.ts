@@ -2,7 +2,13 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, GROUPS_DIR, MAIN_GROUP_FOLDER, PARITY_CONFIG, TIMEZONE } from '../config.js';
+import {
+  DATA_DIR,
+  GROUPS_DIR,
+  MAIN_GROUP_FOLDER,
+  PARITY_CONFIG,
+  TIMEZONE,
+} from '../config.js';
 import { runContainerAgent, writeTasksSnapshot } from '../pi-runner.js';
 import {
   deleteTask,
@@ -32,7 +38,10 @@ let schedulerTimer: NodeJS.Timeout | null = null;
 let schedulerTickActive = false;
 
 export function computeErrorBackoffMs(consecutiveErrors: number): number {
-  const idx = Math.min(Math.max(consecutiveErrors, 1) - 1, ERROR_BACKOFF_MS.length - 1);
+  const idx = Math.min(
+    Math.max(consecutiveErrors, 1) - 1,
+    ERROR_BACKOFF_MS.length - 1,
+  );
   return ERROR_BACKOFF_MS[idx];
 }
 
@@ -89,7 +98,10 @@ function isRecurringTopOfHourExpression(expr: string): boolean {
   return false;
 }
 
-function computeDeterministicCronOffsetMs(task: ScheduledTask, expr: string): number {
+function computeDeterministicCronOffsetMs(
+  task: ScheduledTask,
+  expr: string,
+): number {
   if (!PARITY_CONFIG.cron.deterministicTopOfHourStagger.enabled) return 0;
   if (!isRecurringTopOfHourExpression(expr)) return 0;
   const maxMs = PARITY_CONFIG.cron.deterministicTopOfHourStagger.maxMs;
@@ -110,15 +122,19 @@ export function resolveTaskNextRun(
   if (task.schedule_type === 'once') {
     nextRun = null;
   } else if (task.schedule_type === 'interval') {
-    const intervalMs = schedule.kind === 'every' && schedule.everyMs
-      ? schedule.everyMs
-      : Number.parseInt(task.schedule_value, 10);
+    const intervalMs =
+      schedule.kind === 'every' && schedule.everyMs
+        ? schedule.everyMs
+        : Number.parseInt(task.schedule_value, 10);
     if (Number.isFinite(intervalMs) && intervalMs > 0) {
       nextRun = new Date(nowMs + intervalMs).toISOString();
     }
   } else if (task.schedule_type === 'cron') {
     try {
-      const expr = schedule.kind === 'cron' && schedule.expr ? schedule.expr : task.schedule_value;
+      const expr =
+        schedule.kind === 'cron' && schedule.expr
+          ? schedule.expr
+          : task.schedule_value;
       const interval = CronExpressionParser.parse(expr, {
         tz: schedule.tz || TIMEZONE,
         currentDate: new Date(nowMs),
@@ -129,7 +145,9 @@ export function resolveTaskNextRun(
       }
       const offsetMs = computeDeterministicCronOffsetMs(task, expr);
       if (offsetMs > 0) {
-        nextRun = new Date(new Date(naturalNext).getTime() + offsetMs).toISOString();
+        nextRun = new Date(
+          new Date(naturalNext).getTime() + offsetMs,
+        ).toISOString();
       } else {
         nextRun = naturalNext;
       }
@@ -150,7 +168,9 @@ export function resolveTaskNextRun(
   return nextRun;
 }
 
-export function getTaskDeliveryMode(task: ScheduledTask): 'none' | 'announce' | 'webhook' {
+export function getTaskDeliveryMode(
+  task: ScheduledTask,
+): 'none' | 'announce' | 'webhook' {
   return task.delivery_mode === 'announce' || task.delivery_mode === 'webhook'
     ? task.delivery_mode
     : 'none';
@@ -220,7 +240,10 @@ function armSchedulerTimer(deps: CronServiceDependencies): void {
   const nextDue = getNextDueTaskTime();
   const nowMs = Date.now();
   const delayMs = nextDue
-    ? Math.max(0, Math.min(new Date(nextDue).getTime() - nowMs, MAX_TIMER_DELAY_MS))
+    ? Math.max(
+        0,
+        Math.min(new Date(nextDue).getTime() - nowMs, MAX_TIMER_DELAY_MS),
+      )
     : IDLE_POLL_MS;
 
   schedulerTimer = setTimeout(() => {
@@ -235,10 +258,17 @@ export async function runScheduledTaskV2(
 ): Promise<void> {
   const startedAt = Date.now();
   const groups = deps.registeredGroups();
-  const group = Object.values(groups).find((entry) => entry.folder === task.group_folder);
+  const group = Object.values(groups).find(
+    (entry) => entry.folder === task.group_folder,
+  );
   if (!group) {
     const consecutiveErrors = (task.consecutive_errors || 0) + 1;
-    const nextRun = resolveTaskNextRun(task, Date.now(), true, consecutiveErrors);
+    const nextRun = resolveTaskNextRun(
+      task,
+      Date.now(),
+      true,
+      consecutiveErrors,
+    );
     const status = nextRun ? 'active' : 'completed';
 
     logTaskRun({
@@ -280,7 +310,8 @@ export async function runScheduledTaskV2(
     })),
   );
 
-  const staggerMs = task.stagger_ms && task.stagger_ms > 0 ? task.stagger_ms : 0;
+  const staggerMs =
+    task.stagger_ms && task.stagger_ms > 0 ? task.stagger_ms : 0;
   if (staggerMs > 0) {
     const waitMs = Math.floor(Math.random() * staggerMs);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -288,7 +319,9 @@ export async function runScheduledTaskV2(
 
   const abortController = new AbortController();
   const timeoutSeconds =
-    task.timeout_seconds && task.timeout_seconds > 0 ? task.timeout_seconds : null;
+    task.timeout_seconds && task.timeout_seconds > 0
+      ? task.timeout_seconds
+      : null;
   let timeoutHandle: NodeJS.Timeout | null = null;
   if (timeoutSeconds) {
     timeoutHandle = setTimeout(() => {
@@ -333,7 +366,12 @@ export async function runScheduledTaskV2(
       ? outputResult.slice(0, 400)
       : 'Completed';
   const consecutiveErrors = hadError ? (task.consecutive_errors || 0) + 1 : 0;
-  const nextRun = resolveTaskNextRun(task, Date.now(), hadError, consecutiveErrors);
+  const nextRun = resolveTaskNextRun(
+    task,
+    Date.now(),
+    hadError,
+    consecutiveErrors,
+  );
   const status = nextRun ? 'active' : 'completed';
 
   logTaskRun({
@@ -345,11 +383,7 @@ export async function runScheduledTaskV2(
     error: outputError,
   });
 
-  if (
-    task.schedule_type === 'once' &&
-    task.delete_after_run &&
-    !hadError
-  ) {
+  if (task.schedule_type === 'once' && task.delete_after_run && !hadError) {
     deleteTask(task.id);
   } else {
     updateTaskAfterRunV2({
@@ -361,14 +395,21 @@ export async function runScheduledTaskV2(
     });
   }
 
-  await deliverTaskOutcome(task, hadError, hadError ? outputError : outputResult, deps);
+  await deliverTaskOutcome(
+    task,
+    hadError,
+    hadError ? outputError : outputResult,
+    deps,
+  );
 
   if (shouldTriggerWakeNow(task)) {
     deps.requestHeartbeatNow?.(`cron:${task.id}`);
   }
 }
 
-export async function runCronSchedulerTick(deps: CronServiceDependencies): Promise<void> {
+export async function runCronSchedulerTick(
+  deps: CronServiceDependencies,
+): Promise<void> {
   if (schedulerTickActive) {
     armSchedulerTimer(deps);
     return;

@@ -41,7 +41,11 @@ export interface AppRuntimeDeps {
   handleTelegramCallbackQuery: (event: any) => Promise<void>;
   handleTelegramSetupInput: (event: any) => Promise<boolean>;
   handleTelegramCommand: (event: any) => Promise<boolean>;
-  storeChatMetadata: (chatJid: string, timestamp: string, chatName?: string) => void;
+  storeChatMetadata: (
+    chatJid: string,
+    timestamp: string,
+    chatName?: string,
+  ) => void;
   maybeRegisterTelegramChat: (chatJid: string, chatName: string) => boolean;
   isMainChat: (chatJid: string) => boolean;
   persistTelegramMedia: (event: any) => Promise<string>;
@@ -53,7 +57,9 @@ export interface AppRuntimeDeps {
     warn?: (payload: unknown, message?: string) => void;
     fatal?: (payload: unknown, message?: string) => void;
   };
-  useMultiFileAuthState?: (authDir: string) => Promise<{ state: any; saveCreds: () => void }>;
+  useMultiFileAuthState?: (
+    authDir: string,
+  ) => Promise<{ state: any; saveCreds: () => void }>;
   makeWASocket?: (params: any) => any;
   makeCacheableSignalKeyStore?: (keys: any, logger: any) => any;
   browsers?: { macOS: (name: string) => unknown };
@@ -65,7 +71,12 @@ export interface AppRuntimeDeps {
   startIpcWatcher?: () => void;
   startMessageLoop?: () => Promise<void>;
   requestHeartbeatNow?: (reason?: string) => void;
-  storeMessage?: (message: any, chatJid: string, fromMe: boolean, senderName?: string) => void;
+  storeMessage?: (
+    message: any,
+    chatJid: string,
+    fromMe: boolean,
+    senderName?: string,
+  ) => void;
   translateJid?: (jid: string) => string;
   processMessage?: (msg: any) => Promise<boolean>;
   getNewMessages?: (
@@ -131,7 +142,9 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       if (await deps.handleTelegramSetupInput(m)) return;
       if (await deps.handleTelegramCommand(m)) return;
       if (deps.state.registeredGroups[m.chatJid]) {
-        const finalContent = m.media ? await deps.persistTelegramMedia(m) : m.content;
+        const finalContent = m.media
+          ? await deps.persistTelegramMedia(m)
+          : m.content;
         deps.storeTextMessage({
           id: m.id,
           chatJid: m.chatJid,
@@ -149,12 +162,17 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
   }
 
   async function connectWhatsApp(): Promise<void> {
-    if (!deps.useMultiFileAuthState || !deps.makeWASocket || !deps.makeCacheableSignalKeyStore) {
+    if (
+      !deps.useMultiFileAuthState ||
+      !deps.makeWASocket ||
+      !deps.makeCacheableSignalKeyStore
+    ) {
       throw new Error('WhatsApp runtime dependencies are not configured');
     }
     const authDir = path.join(deps.constants.storeDir || 'data', 'auth');
     fs.mkdirSync(authDir, { recursive: true });
-    const { state: authState, saveCreds } = await deps.useMultiFileAuthState(authDir);
+    const { state: authState, saveCreds } =
+      await deps.useMultiFileAuthState(authDir);
 
     deps.state.sock = deps.makeWASocket({
       auth: {
@@ -180,8 +198,11 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       }
 
       if (connection === 'close') {
-        const reason = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)
-          ?.output?.statusCode;
+        const reason = (
+          lastDisconnect?.error as
+            | { output?: { statusCode?: number } }
+            | undefined
+        )?.output?.statusCode;
         const shouldReconnect = reason !== deps.disconnectReason?.loggedOut;
         deps.logger.info?.({ reason, shouldReconnect }, 'Connection closed');
         if (shouldReconnect) {
@@ -193,27 +214,44 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
         }
       } else if (connection === 'open') {
         deps.logger.info?.('Connected to WhatsApp');
-        deps.state.sock.sendPresenceUpdate('available').catch((err: unknown) => {
-          deps.logger.debug?.({ err }, 'Failed to set initial available presence');
-        });
+        deps.state.sock
+          .sendPresenceUpdate('available')
+          .catch((err: unknown) => {
+            deps.logger.debug?.(
+              { err },
+              'Failed to set initial available presence',
+            );
+          });
         if (deps.state.sock.user) {
           const phoneUser = deps.state.sock.user.id.split(':')[0];
           const lidUser = deps.state.sock.user.lid?.split(':')[0];
           if (lidUser && phoneUser) {
             deps.state.lidToPhoneMap ||= {};
             deps.state.lidToPhoneMap[lidUser] = `${phoneUser}@s.whatsapp.net`;
-            deps.logger.debug?.({ lidUser, phoneUser }, 'LID to phone mapping set');
+            deps.logger.debug?.(
+              { lidUser, phoneUser },
+              'LID to phone mapping set',
+            );
           }
         }
         deps.maybeRegisterWhatsAppMainChat?.();
-        deps.syncGroupMetadata?.().catch((err) => deps.logger.error?.({ err }, 'Initial group sync failed'));
+        deps
+          .syncGroupMetadata?.()
+          .catch((err) =>
+            deps.logger.error?.({ err }, 'Initial group sync failed'),
+          );
         if (!deps.state.groupSyncTimerStarted) {
           deps.state.groupSyncTimerStarted = true;
-          setInterval(() => {
-            deps.syncGroupMetadata?.().catch((err) =>
-              deps.logger.error?.({ err }, 'Periodic group sync failed'),
-            );
-          }, deps.constants.groupSyncIntervalMs || 24 * 60 * 60 * 1000);
+          setInterval(
+            () => {
+              deps
+                .syncGroupMetadata?.()
+                .catch((err) =>
+                  deps.logger.error?.({ err }, 'Periodic group sync failed'),
+                );
+            },
+            deps.constants.groupSyncIntervalMs || 24 * 60 * 60 * 1000,
+          );
         }
         deps.startSchedulerLoop?.({
           sendMessage: deps.sendMessage,
@@ -221,40 +259,62 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
           requestHeartbeatNow: deps.requestHeartbeatNow,
         });
         deps.startIpcWatcher?.();
-        void deps.startMessageLoop?.().catch((err) =>
-          deps.logger.fatal?.({ err }, 'Message loop crashed unexpectedly'),
-        );
+        void deps
+          .startMessageLoop?.()
+          .catch((err) =>
+            deps.logger.fatal?.({ err }, 'Message loop crashed unexpectedly'),
+          );
       }
     });
 
     deps.state.sock.ev.on('creds.update', saveCreds);
-    deps.state.sock.ev.on('messages.upsert', ({ messages }: { messages: any[] }) => {
-      for (const msg of messages) {
-        if (!msg.message) continue;
-        const rawJid = msg.key.remoteJid;
-        if (!rawJid || rawJid === 'status@broadcast') continue;
-        const chatJid = deps.translateJid ? deps.translateJid(rawJid) : rawJid;
-        const timestamp = new Date(Number(msg.messageTimestamp) * 1000).toISOString();
-        deps.storeChatMetadata(chatJid, timestamp);
-        if (deps.state.registeredGroups[chatJid]) {
-          deps.storeMessage?.(msg, chatJid, msg.key.fromMe || false, msg.pushName || undefined);
+    deps.state.sock.ev.on(
+      'messages.upsert',
+      ({ messages }: { messages: any[] }) => {
+        for (const msg of messages) {
+          if (!msg.message) continue;
+          const rawJid = msg.key.remoteJid;
+          if (!rawJid || rawJid === 'status@broadcast') continue;
+          const chatJid = deps.translateJid
+            ? deps.translateJid(rawJid)
+            : rawJid;
+          const timestamp = new Date(
+            Number(msg.messageTimestamp) * 1000,
+          ).toISOString();
+          deps.storeChatMetadata(chatJid, timestamp);
+          if (deps.state.registeredGroups[chatJid]) {
+            deps.storeMessage?.(
+              msg,
+              chatJid,
+              msg.key.fromMe || false,
+              msg.pushName || undefined,
+            );
+          }
         }
-      }
-    });
+      },
+    );
   }
 
   async function startMessageLoop(): Promise<void> {
     if (deps.state.messageLoopRunning) {
-      deps.logger.debug?.('Message loop already running, skipping duplicate start');
+      deps.logger.debug?.(
+        'Message loop already running, skipping duplicate start',
+      );
       return;
     }
     deps.state.messageLoopRunning = true;
-    deps.logger.info?.(`FFT_nano running (trigger: @${deps.constants.assistantName})`);
+    deps.logger.info?.(
+      `FFT_nano running (trigger: @${deps.constants.assistantName})`,
+    );
     while (true) {
       try {
         const jids = Object.keys(deps.state.registeredGroups);
         const { messages } = deps.getNewMessages
-          ? deps.getNewMessages(jids, deps.lastTimestamp?.() || '', deps.constants.assistantName)
+          ? deps.getNewMessages(
+              jids,
+              deps.lastTimestamp?.() || '',
+              deps.constants.assistantName,
+            )
           : { messages: [] };
         if (messages.length > 0) {
           deps.logger.info?.({ count: messages.length }, 'New messages');
@@ -263,20 +323,28 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
           try {
             const processed = await deps.processMessage?.(msg);
             if (!processed) {
-              deps.logger.debug?.({ msgId: msg.id, chatJid: msg.chat_jid }, 'Message processing deferred; retrying on next poll loop');
+              deps.logger.debug?.(
+                { msgId: msg.id, chatJid: msg.chat_jid },
+                'Message processing deferred; retrying on next poll loop',
+              );
               break;
             }
             deps.setLastTimestamp?.(msg.timestamp);
             deps.saveState?.();
           } catch (err) {
-            deps.logger.error?.({ err, msg: msg.id }, 'Error processing message, will retry');
+            deps.logger.error?.(
+              { err, msg: msg.id },
+              'Error processing message, will retry',
+            );
             break;
           }
         }
       } catch (err) {
         deps.logger.error?.({ err }, 'Error in message loop');
       }
-      await new Promise((resolve) => setTimeout(resolve, deps.constants.pollInterval || 1000));
+      await new Promise((resolve) =>
+        setTimeout(resolve, deps.constants.pollInterval || 1000),
+      );
     }
   }
 
@@ -303,14 +371,30 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       deps.logger.debug?.('Docker runtime available');
     } catch (err) {
       deps.logger.error?.({ err }, 'Docker runtime not available');
-      console.error('\n╔════════════════════════════════════════════════════════════════╗');
-      console.error('║  FATAL: Docker is required but is not available               ║');
-      console.error('║                                                                ║');
-      console.error('║  To fix:                                                       ║');
-      console.error('║  1. Install Docker (Desktop on macOS, engine on Linux/RPi)     ║');
-      console.error('║  2. Start the Docker daemon                                    ║');
-      console.error('║  3. Restart FFT_nano                                          ║');
-      console.error('╚════════════════════════════════════════════════════════════════╝\n');
+      console.error(
+        '\n╔════════════════════════════════════════════════════════════════╗',
+      );
+      console.error(
+        '║  FATAL: Docker is required but is not available               ║',
+      );
+      console.error(
+        '║                                                                ║',
+      );
+      console.error(
+        '║  To fix:                                                       ║',
+      );
+      console.error(
+        '║  1. Install Docker (Desktop on macOS, engine on Linux/RPi)     ║',
+      );
+      console.error(
+        '║  2. Start the Docker daemon                                    ║',
+      );
+      console.error(
+        '║  3. Restart FFT_nano                                          ║',
+      );
+      console.error(
+        '╚════════════════════════════════════════════════════════════════╝\n',
+      );
       throw new Error('Docker is required but not available');
     }
     try {
@@ -324,7 +408,10 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
         .filter((n) => n.startsWith('nanoclaw-'));
       if (stale.length > 0) {
         execSync(`docker rm ${stale.join(' ')}`, { stdio: 'pipe' });
-        deps.logger.info?.({ runtime, count: stale.length }, 'Cleaned up stale containers');
+        deps.logger.info?.(
+          { runtime, count: stale.length },
+          'Cleaned up stale containers',
+        );
       }
     } catch {
       // Ignore cleanup failures.
@@ -340,7 +427,10 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     }
   }
 
-  async function shutdownAndExit(signal: string, exitCode: number): Promise<void> {
+  async function shutdownAndExit(
+    signal: string,
+    exitCode: number,
+  ): Promise<void> {
     stopFarmServicesForShutdown(signal);
     await deps.stopWebControlCenterService?.();
     await deps.stopTuiGatewayService?.();
@@ -358,14 +448,19 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
 
   async function main(): Promise<void> {
     registerShutdownHandlers();
-    if (deps.constants.heartbeatActiveHoursRaw?.trim() && deps.isWithinHeartbeatActiveHoursInvalid) {
+    if (
+      deps.constants.heartbeatActiveHoursRaw?.trim() &&
+      deps.isWithinHeartbeatActiveHoursInvalid
+    ) {
       deps.logger.warn?.(
         { value: deps.constants.heartbeatActiveHoursRaw },
         'Ignoring invalid heartbeat active-hours format; expected HH:MM-HH:MM, Mon-Fri@HH:MM-HH:MM, or HH:MM-HH:MM@America/New_York',
       );
     }
     if (deps.constants.dataDir) {
-      deps.acquireSingletonLock?.(path.join(deps.constants.dataDir, 'fft_nano.lock'));
+      deps.acquireSingletonLock?.(
+        path.join(deps.constants.dataDir, 'fft_nano.lock'),
+      );
     }
     deps.ensureContainerSystemRunning?.();
     deps.initDatabase?.();
@@ -393,8 +488,14 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       !!deps.constants.farmStateEnabled &&
       deps.constants.whatsappEnabled === false &&
       !telegramEnabled;
-    if (deps.constants.whatsappEnabled === false && !telegramEnabled && !farmOnlyMode) {
-      throw new Error('No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.');
+    if (
+      deps.constants.whatsappEnabled === false &&
+      !telegramEnabled &&
+      !farmOnlyMode
+    ) {
+      throw new Error(
+        'No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.',
+      );
     }
     if (telegramEnabled) {
       await startTelegram();
@@ -407,10 +508,14 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       });
       deps.startIpcWatcher?.();
       deps.startHeartbeatLoop?.();
-      void startMessageLoop().catch((err) => deps.logger.fatal?.({ err }, 'Message loop crashed unexpectedly'));
+      void startMessageLoop().catch((err) =>
+        deps.logger.fatal?.({ err }, 'Message loop crashed unexpectedly'),
+      );
     }
     if (farmOnlyMode) {
-      deps.logger.info?.('Running in farm-state-only mode (no channels enabled)');
+      deps.logger.info?.(
+        'Running in farm-state-only mode (no channels enabled)',
+      );
     } else if (deps.constants.whatsappEnabled) {
       await connectWhatsApp();
       deps.startHeartbeatLoop?.();

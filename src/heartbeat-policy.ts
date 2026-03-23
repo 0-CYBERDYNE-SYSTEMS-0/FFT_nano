@@ -187,7 +187,10 @@ export function parseHeartbeatActiveHours(
   let timePart = value;
   let timezonePart: string | null = null;
 
-  const sections = value.split('@').map((part) => part.trim()).filter(Boolean);
+  const sections = value
+    .split('@')
+    .map((part) => part.trim())
+    .filter(Boolean);
   if (sections.length === 1) {
     timePart = sections[0];
   } else if (sections.length === 2) {
@@ -204,7 +207,9 @@ export function parseHeartbeatActiveHours(
     timezonePart = sections.slice(2).join('@');
   }
 
-  const [startText, endText] = timePart.split('-', 2).map((part) => part.trim());
+  const [startText, endText] = timePart
+    .split('-', 2)
+    .map((part) => part.trim());
   if (!startText || !endText) return null;
   const startMinute = parseTimeToMinute(startText);
   const endMinute = parseTimeToMinute(endText);
@@ -245,7 +250,8 @@ function getDatePartsForTimezone(
       hour12: false,
     });
     const parts = formatter.formatToParts(now);
-    const weekday = parts.find((part) => part.type === 'weekday')?.value?.toLowerCase() || '';
+    const weekday =
+      parts.find((part) => part.type === 'weekday')?.value?.toLowerCase() || '';
     const hour = Number.parseInt(
       parts.find((part) => part.type === 'hour')?.value || '',
       10,

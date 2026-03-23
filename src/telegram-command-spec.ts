@@ -19,9 +19,15 @@ export const TELEGRAM_COMMON_COMMANDS = [
 export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'main', description: 'Claim this chat as main/admin' },
   { command: 'freechat', description: 'Manage non-main free-chat allowlist' },
-  { command: 'gateway', description: 'Gateway service ops: /gateway status|restart|doctor' },
+  {
+    command: 'gateway',
+    description: 'Gateway service ops: /gateway status|restart|doctor',
+  },
   { command: 'restart', description: 'Alias for /gateway restart' },
-  { command: 'setup', description: 'Open runtime setup wizard for provider/model/key' },
+  {
+    command: 'setup',
+    description: 'Open runtime setup wizard for provider/model/key',
+  },
   { command: 'coder', description: 'Delegate coding execution' },
   { command: 'coding', description: 'Alias for /coder' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
@@ -114,7 +120,9 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/freechat',
 ]);
 
-export function normalizeTelegramCommandToken(token: string): TelegramCommandName | null {
+export function normalizeTelegramCommandToken(
+  token: string,
+): TelegramCommandName | null {
   if (!token.startsWith('/')) return null;
   const normalized = token.split('@')[0]?.toLowerCase();
   if (!normalized) return null;

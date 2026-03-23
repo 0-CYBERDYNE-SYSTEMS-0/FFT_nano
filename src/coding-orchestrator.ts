@@ -4,7 +4,11 @@ import os from 'os';
 import path from 'path';
 
 import type { RegisteredGroup } from './types.js';
-import type { ContainerInput, ContainerOutput, ContainerRuntimeEvent } from './pi-runner.js';
+import type {
+  ContainerInput,
+  ContainerOutput,
+  ContainerRuntimeEvent,
+} from './pi-runner.js';
 import { createHostEventId, type HostEvent } from './runtime/host-events.js';
 
 export type CodingWorkerRoute =
@@ -123,7 +127,9 @@ function summarizeText(text: string): string {
 }
 
 function sanitizePathToken(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'run';
+  return (
+    value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'run'
+  );
 }
 
 function commandFromArgs(rawArgs: string | undefined): string | null {
@@ -145,7 +151,9 @@ function commandFromArgs(rawArgs: string | undefined): string | null {
   return rawArgs.trim() || null;
 }
 
-function extractCommands(toolExecutions: ContainerOutput['toolExecutions']): string[] {
+function extractCommands(
+  toolExecutions: ContainerOutput['toolExecutions'],
+): string[] {
   const commands: string[] = [];
   for (const execution of toolExecutions || []) {
     const command = commandFromArgs(execution.args);
@@ -312,9 +320,13 @@ export async function createDefaultEphemeralWorktree(params: {
 }): Promise<EphemeralWorktree> {
   const workspaceRoot = path.resolve(params.sourceWorkspaceDir);
   const gitTopLevel = (
-    await runCommand('git', ['-C', workspaceRoot, 'rev-parse', '--show-toplevel'], {
-      signal: params.signal,
-    })
+    await runCommand(
+      'git',
+      ['-C', workspaceRoot, 'rev-parse', '--show-toplevel'],
+      {
+        signal: params.signal,
+      },
+    )
   ).stdout.trim();
   if (!gitTopLevel) {
     throw new Error(`Could not resolve git root for ${workspaceRoot}`);
@@ -327,9 +339,13 @@ export async function createDefaultEphemeralWorktree(params: {
     `${sanitizePathToken(params.requestId)}-${Date.now()}`,
   );
 
-  await runCommand('git', ['-C', gitTopLevel, 'worktree', 'add', '--detach', worktreePath, 'HEAD'], {
-    signal: params.signal,
-  });
+  await runCommand(
+    'git',
+    ['-C', gitTopLevel, 'worktree', 'add', '--detach', worktreePath, 'HEAD'],
+    {
+      signal: params.signal,
+    },
+  );
 
   const excludes = [
     '.git',
@@ -359,7 +375,14 @@ export async function createDefaultEphemeralWorktree(params: {
     worktreePath,
     cleanup: async () => {
       try {
-        await runCommand('git', ['-C', gitTopLevel, 'worktree', 'remove', '--force', worktreePath]);
+        await runCommand('git', [
+          '-C',
+          gitTopLevel,
+          'worktree',
+          'remove',
+          '--force',
+          worktreePath,
+        ]);
       } catch {
         fs.rmSync(worktreePath, { recursive: true, force: true });
       }
@@ -374,7 +397,11 @@ export async function createDefaultEphemeralWorktree(params: {
         .map((line) => line.replace(/^[A-Z? ]+\s+/, ''));
     },
     getDiffSummary: () => {
-      const summary = runCommandSync('git', ['diff', '--shortstat', 'HEAD'], worktreePath);
+      const summary = runCommandSync(
+        'git',
+        ['diff', '--shortstat', 'HEAD'],
+        worktreePath,
+      );
       if (summary.status !== 0) return '';
       return summary.stdout.trim();
     },
@@ -384,9 +411,12 @@ export async function createDefaultEphemeralWorktree(params: {
 export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
   runTask: (request: CodingWorkerRequest) => Promise<CodingTaskRunResult>;
 } {
-  const createEphemeralWorktree = deps.createEphemeralWorktree || createDefaultEphemeralWorktree;
+  const createEphemeralWorktree =
+    deps.createEphemeralWorktree || createDefaultEphemeralWorktree;
 
-  async function runTask(request: CodingWorkerRequest): Promise<CodingTaskRunResult> {
+  async function runTask(
+    request: CodingWorkerRequest,
+  ): Promise<CodingTaskRunResult> {
     const startedAt = new Date().toISOString();
     const childRunIds: string[] = [];
     let worktree: EphemeralWorktree | null = null;
@@ -510,7 +540,12 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           chatJid: request.originChatJid,
           ...(aborted ? { detail: message } : { errorMessage: message }),
         });
-        return createWorkerErrorResult(request, startedAt, message, aborted ? 'aborted' : 'error');
+        return createWorkerErrorResult(
+          request,
+          startedAt,
+          message,
+          aborted ? 'aborted' : 'error',
+        );
       }
 
       const commandsRun = extractCommands(output.toolExecutions);
@@ -576,7 +611,12 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         chatJid: request.originChatJid,
         ...(aborted ? { detail: message } : { errorMessage: message }),
       });
-      return createWorkerErrorResult(request, startedAt, message, aborted ? 'aborted' : 'error');
+      return createWorkerErrorResult(
+        request,
+        startedAt,
+        message,
+        aborted ? 'aborted' : 'error',
+      );
     } finally {
       deps.activeRuns.delete(request.requestId);
     }

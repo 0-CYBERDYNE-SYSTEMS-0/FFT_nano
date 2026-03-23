@@ -91,4 +91,3 @@ export function acquireSingletonLock(lockPath: string): void {
     process.exit(143);
   });
 }
-
