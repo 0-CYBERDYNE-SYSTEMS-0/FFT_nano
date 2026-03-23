@@ -4,6 +4,7 @@ import type {
   QueueDropPolicy,
   QueueMode,
   ReasoningLevel,
+  TelegramDeliveryMode,
   ThinkLevel,
 } from './app-state.js';
 import type { VerboseMode } from './verbose-mode.js';
@@ -45,6 +46,17 @@ export function normalizeReasoningLevel(raw: string): ReasoningLevel | undefined
   if (['off', 'false', 'no', '0'].includes(key)) return 'off';
   if (['on', 'true', 'yes', '1'].includes(key)) return 'on';
   if (['stream', 'streaming', 'live'].includes(key)) return 'stream';
+  return undefined;
+}
+
+export function normalizeTelegramDeliveryMode(raw: string): TelegramDeliveryMode | undefined {
+  const key = raw.trim().toLowerCase();
+  if (!key) return undefined;
+  if (['off', 'final', 'final-only', 'quiet'].includes(key)) return 'off';
+  if (['partial', 'progress', 'live'].includes(key)) return 'partial';
+  if (key === 'block') return 'block';
+  if (['draft', 'native', 'native-draft'].includes(key)) return 'draft';
+  if (['persistent', 'persist', 'transcript', 'append'].includes(key)) return 'persistent';
   return undefined;
 }
 
@@ -149,6 +161,9 @@ export function compactChatRunPreferences(prefs: ChatRunPreferences): ChatRunPre
   if (prefs.thinkLevel && prefs.thinkLevel !== 'off') next.thinkLevel = prefs.thinkLevel;
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
     next.reasoningLevel = prefs.reasoningLevel;
+  }
+  if (prefs.telegramDeliveryMode && prefs.telegramDeliveryMode !== 'partial') {
+    next.telegramDeliveryMode = prefs.telegramDeliveryMode;
   }
   if (prefs.showReasoning === true) {
     next.showReasoning = true;

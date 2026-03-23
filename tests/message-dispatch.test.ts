@@ -65,6 +65,35 @@ test('finalizeCompletedRun finalizes Telegram preview in place and skips duplica
   assert.equal(emitter.events.at(-1)?.kind, 'agent');
 });
 
+test('finalizeCompletedRun skips duplicate send when Telegram delivery already completed externally', async () => {
+  const emitter = createEmitter();
+  const sent: string[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-external',
+    sessionKey: 'telegram:1',
+    result: 'done',
+    streamed: true,
+    usage: { totalTokens: 10 },
+    abortSignal: new AbortController().signal,
+    externallyCompleted: true,
+    telegramPreviewState: null,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(sent, []);
+  assert.equal(emitter.events.at(-1)?.kind, 'agent');
+});
+
 test('finalizeCompletedRun deletes preview on abort and emits aborted state', async () => {
   const emitter = createEmitter();
   const deleted: number[] = [];

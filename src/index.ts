@@ -39,6 +39,7 @@ import {
 } from './config.js';
 import {
   AvailableGroup,
+  deriveTelegramDraftId,
   runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
@@ -77,6 +78,7 @@ import { acquireSingletonLock } from './singleton-lock.js';
 import {
   createTelegramBot,
   isTelegramJid,
+  isTelegramPrivateChatJid,
   parseTelegramChatId,
   splitTelegramText,
 } from './telegram.js';
@@ -118,6 +120,7 @@ import {
   formatUsageText as formatUsageTextCore,
   getEffectiveModelLabel as getEffectiveModelLabelCore,
   getTuiSessionPrefs as getTuiSessionPrefsCore,
+  normalizeTelegramDeliveryMode,
   normalizeReasoningLevel,
   normalizeThinkLevel,
   parseDurationMs,
@@ -187,9 +190,14 @@ import {
   type WebControlCenterServer,
 } from './web/control-center-server.js';
 import {
+  computeBlockStreamDelivery,
+  computePersistentPreviewDelivery,
+  finalizePersistentPreviewDelivery,
+  finalizeBlockStreamDelivery,
   getTelegramPreviewRunKey,
   resolveTelegramStreamCompletionState,
   type TelegramMessagePreviewState,
+  updateTelegramDraftPreview,
   updateTelegramPreview,
 } from './telegram-streaming.js';
 import {
@@ -231,6 +239,7 @@ import {
   type ActiveCoderRun,
   type ThinkLevel,
   type ReasoningLevel,
+  type TelegramDeliveryMode,
   type QueueMode,
   type QueueDropPolicy,
   type PanelScope,
@@ -268,6 +277,8 @@ const HEARTBEAT_SHOW_ALERTS = PARITY_CONFIG.heartbeat.visibility.showAlerts;
 const HEARTBEAT_INCLUDE_REASONING = PARITY_CONFIG.heartbeat.includeReasoning;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TELEGRAM_PERSISTENT_PREVIEW_TTL_MS = 30 * 60 * 1000;
+const telegramPersistentPreviewTexts = new Map<string, { lastText: string; updatedAt: number }>();
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
 interface GitInfo {
   branch?: string;
@@ -394,7 +405,20 @@ function loadState(): void {
   }>(statePath, {});
   state.lastTimestamp = loaded.last_timestamp || '';
   state.lastAgentTimestamp = loaded.last_agent_timestamp || {};
-  state.chatRunPreferences = loaded.chat_run_preferences || {};
+  state.chatRunPreferences = Object.fromEntries(
+    Object.entries(loaded.chat_run_preferences || {}).map(([chatJid, prefs]) => {
+      const nextPrefs: ChatRunPreferences = { ...prefs };
+      const normalizedDelivery = prefs.telegramDeliveryMode
+        ? normalizeTelegramDeliveryMode(prefs.telegramDeliveryMode)
+        : undefined;
+      if (normalizedDelivery === 'partial' || normalizedDelivery === undefined) {
+        delete nextPrefs.telegramDeliveryMode;
+      } else {
+        nextPrefs.telegramDeliveryMode = normalizedDelivery;
+      }
+      return [chatJid, nextPrefs];
+    }),
+  );
   state.chatUsageStats = loaded.chat_usage_stats || {};
   const rawRegisteredGroups = loadJson<Record<string, RegisteredGroup>>(
     path.join(DATA_DIR, 'registered_groups.json'),
@@ -1663,6 +1687,7 @@ function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
     `Model: ${getEffectiveModelLabel(chatJid)}`,
     `Think: ${prefs.thinkLevel || 'off'}`,
     `Reasoning: ${prefs.reasoningLevel || 'off'}`,
+    `Delivery: ${prefs.telegramDeliveryMode || 'partial'}`,
     `Tool progress: ${getEffectiveVerboseMode(prefs.verboseMode)}`,
     `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
   ];
@@ -1693,11 +1718,15 @@ function buildTelegramSettingsHomePanel(chatJid: string): {
           callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-queue' }),
         },
         {
-          text: 'Fresh Next Run',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'trigger-new' }),
+          text: 'Delivery',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-delivery' }),
         },
       ],
       [
+        {
+          text: 'Fresh Next Run',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'trigger-new' }),
+        },
         {
           text: 'Reasoning',
           callbackData: registerTelegramSettingsPanelAction(chatJid, {
@@ -1888,6 +1917,36 @@ function buildReasoningPanel(chatJid: string): {
         text: value === current ? `* ${value}` : value,
         callbackData: registerTelegramSettingsPanelAction(chatJid, {
           kind: 'set-reasoning',
+          value,
+        }),
+      })),
+      [{ text: 'Home', callbackData: registerTelegramSettingsPanelAction(chatJid, { kind: 'show-home' }) }],
+    ],
+  };
+}
+
+function buildDeliveryPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const current = state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
+  const modes: TelegramDeliveryMode[] = ['partial', 'block', 'draft', 'off', 'persistent'];
+  return {
+    text: [
+      'Select Telegram text delivery mode:',
+      `Current: ${current}`,
+      '',
+      'partial: one in-flight message may be edited during the run',
+      'block: append chunked draft blocks, never edit prior text',
+      'draft: Telegram-native draft stream in private chats, falls back to partial elsewhere',
+      'off: no visible preview, send only the completed final answer',
+      'persistent: append-only transcript, already visible text never leaves',
+    ].join('\n'),
+    keyboard: [
+      modes.map((value) => ({
+        text: value === current ? `* ${value}` : value,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'set-delivery',
           value,
         }),
       })),
@@ -2255,6 +2314,8 @@ function resolveTelegramSettingsPanel(
       return buildThinkPanel(chatJid);
     case 'show-reasoning':
       return buildReasoningPanel(chatJid);
+    case 'show-delivery':
+      return buildDeliveryPanel(chatJid);
     case 'show-verbose':
       return buildVerbosePanel(chatJid);
     case 'show-queue':
@@ -2717,6 +2778,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   runPiListModels,
   normalizeThinkLevel,
   normalizeReasoningLevel,
+  normalizeTelegramDeliveryMode,
   parseQueueArgs,
   parseVerboseDirective,
   describeVerboseMode,
@@ -2813,6 +2875,7 @@ const messageDispatcher = createMessageDispatcher({
   emitTuiChatEvent,
   emitTuiAgentEvent,
   isTelegramJid,
+  prepareTelegramCompletionState,
   consumeTelegramHostCompletedRun,
   consumeTelegramHostStreamState,
   resolveTelegramStreamCompletionState,
@@ -2993,6 +3056,7 @@ async function runAgent(
             model_override: runtimePrefs.model || null,
             think_level: runtimePrefs.thinkLevel || null,
             reasoning_level: runtimePrefs.reasoningLevel || null,
+            telegram_delivery_mode: runtimePrefs.telegramDeliveryMode || 'partial',
             verbose_mode: runtimePrefs.verboseMode || null,
             container_runtime: runtime,
           },
@@ -3017,6 +3081,7 @@ async function runAgent(
       reasoningLevel: runtimePrefs.reasoningLevel,
       verboseMode: runtimePrefs.verboseMode,
       noContinue: runtimePrefs.nextRunNoContinue === true,
+      suppressPreviewStreaming: runtimePrefs.telegramDeliveryMode === 'off',
       showReasoning:
         runtimePrefs.showReasoning === true || runtimePrefs.reasoningLevel === 'stream',
     };
@@ -3731,11 +3796,24 @@ function consumeTelegramHostStreamState(
   chatJid: string,
   requestId: string,
 ): TelegramMessagePreviewState | null {
+  telegramPersistentPreviewTexts.delete(getTelegramHostStreamKey(chatJid, requestId));
   return telegramPreviewRegistry.consumePreviewState(getTelegramHostStreamKey(chatJid, requestId));
 }
 
 function pruneTelegramHostStreamedRuns(): void {
   telegramPreviewRegistry.prune();
+  const staleCutoff = Date.now() - TELEGRAM_PERSISTENT_PREVIEW_TTL_MS;
+  for (const [runKey, preview] of telegramPersistentPreviewTexts.entries()) {
+    if (preview.updatedAt <= staleCutoff) telegramPersistentPreviewTexts.delete(runKey);
+  }
+}
+
+function getTelegramDeliveryMode(chatJid: string): TelegramDeliveryMode {
+  return state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
+}
+
+function canUseTelegramNativeDraft(chatJid: string): boolean {
+  return Boolean(state.telegramBot) && isTelegramPrivateChatJid(chatJid);
 }
 
 async function deliverRuntimeAgentMessage(params: {
@@ -3770,6 +3848,65 @@ async function deliverRuntimeAgentMessage(params: {
   });
 }
 
+async function prepareTelegramCompletionState(params: {
+  chatJid: string;
+  runId: string;
+  result: string | null;
+}): Promise<{
+  externallyCompleted: boolean;
+  previewState: TelegramMessagePreviewState | null;
+}> {
+  const deliveryMode = getTelegramDeliveryMode(params.chatJid);
+  if (deliveryMode === 'draft' && canUseTelegramNativeDraft(params.chatJid)) {
+    telegramPreviewRegistry.consumeDraftState(
+      getTelegramHostStreamKey(params.chatJid, params.runId),
+    );
+    return {
+      externallyCompleted: consumeTelegramHostCompletedRun(params.chatJid, params.runId),
+      previewState: null,
+    };
+  }
+  if (deliveryMode === 'block' && state.telegramBot && params.result) {
+    const runKey = getTelegramHostStreamKey(params.chatJid, params.runId);
+    const blockState = telegramPreviewRegistry.getBlockState(runKey);
+    if (blockState) {
+      const finalized = finalizeBlockStreamDelivery({
+        state: blockState,
+        finalText: params.result,
+      });
+      for (const text of finalized.deliveryTexts) {
+        await state.telegramBot.sendMessage(params.chatJid, text);
+      }
+      if (finalized.nextState) telegramPreviewRegistry.setBlockState(runKey, finalized.nextState);
+      else telegramPreviewRegistry.clearBlockState(runKey);
+      return {
+        externallyCompleted: finalized.completed,
+        previewState: null,
+      };
+    }
+  }
+  if (deliveryMode === 'persistent' && state.telegramBot && params.result) {
+    const runKey = getTelegramHostStreamKey(params.chatJid, params.runId);
+    const finalized = finalizePersistentPreviewDelivery({
+      previousText: telegramPersistentPreviewTexts.get(runKey)?.lastText,
+      finalText: params.result,
+    });
+    telegramPersistentPreviewTexts.delete(runKey);
+    if (finalized.deliveryText) {
+      await state.telegramBot.sendMessage(params.chatJid, finalized.deliveryText);
+    }
+    return {
+      externallyCompleted: finalized.completed,
+      previewState: null,
+    };
+  }
+
+  return {
+    externallyCompleted: consumeTelegramHostCompletedRun(params.chatJid, params.runId),
+    previewState: consumeTelegramHostStreamState(params.chatJid, params.runId),
+  };
+}
+
 async function processHostEvent(event: HostEvent): Promise<void> {
   switch (event.kind) {
     case 'telegram_preview_requested': {
@@ -3777,7 +3914,65 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       if (!isTelegramJid(event.chatJid)) return;
       if (!state.registeredGroups[event.chatJid]) return;
 
+      const deliveryMode = getTelegramDeliveryMode(event.chatJid);
+      if (deliveryMode === 'off') return;
+
       const streamKey = getTelegramPreviewRunKey(event.chatJid, event.requestId);
+      if (deliveryMode === 'persistent') {
+        pruneTelegramHostStreamedRuns();
+        const previousText = telegramPersistentPreviewTexts.get(streamKey)?.lastText;
+        const delivery = computePersistentPreviewDelivery({
+          previousText,
+          nextText: event.text,
+        });
+        telegramPersistentPreviewTexts.set(streamKey, {
+          lastText: delivery.nextStateText,
+          updatedAt: Date.now(),
+        });
+        if (delivery.deliveryText) {
+          await state.telegramBot.sendMessage(event.chatJid, delivery.deliveryText);
+        }
+        return;
+      }
+
+      if (deliveryMode === 'block') {
+        pruneTelegramHostStreamedRuns();
+        const delivery = computeBlockStreamDelivery({
+          previousState: telegramPreviewRegistry.getBlockState(streamKey),
+          nextText: event.text,
+        });
+        if (delivery.nextState) telegramPreviewRegistry.setBlockState(streamKey, delivery.nextState);
+        else telegramPreviewRegistry.clearBlockState(streamKey);
+        for (const text of delivery.deliveryTexts) {
+          await state.telegramBot.sendMessage(event.chatJid, text);
+        }
+        return;
+      }
+
+      if (deliveryMode === 'draft' && canUseTelegramNativeDraft(event.chatJid)) {
+        const sendResult = await updateTelegramDraftPreview({
+          bot: state.telegramBot,
+          registry: telegramPreviewRegistry,
+          chatJid: event.chatJid,
+          requestId: event.requestId,
+          draftId: deriveTelegramDraftId(streamKey),
+          text: event.text,
+          toolTrailFooter: telegramPreviewRegistry.getToolTrailFooter(streamKey),
+        });
+        if (sendResult.error) {
+          logger.warn(
+            {
+              chatJid: event.chatJid,
+              requestId: event.requestId,
+              runKey: sendResult.runKey,
+              err: sendResult.error,
+            },
+            'Telegram draft preview update failed; falling back to normal completion only for this run',
+          );
+        }
+        return;
+      }
+
       const toolTrailFooter = telegramPreviewRegistry.getToolTrailFooter(streamKey);
       const sendResult = await updateTelegramPreview({
         bot: state.telegramBot,

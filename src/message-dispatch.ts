@@ -198,6 +198,14 @@ export interface MessageDispatcherDeps {
   emitTuiChatEvent: (payload: any) => void;
   emitTuiAgentEvent: (payload: any) => void;
   isTelegramJid: (chatJid: string) => boolean;
+  prepareTelegramCompletionState?: (params: {
+    chatJid: string;
+    runId: string;
+    result: string | null;
+  }) => Promise<{
+    externallyCompleted: boolean;
+    previewState: TelegramMessagePreviewState | null;
+  }>;
   consumeTelegramHostCompletedRun: (chatJid: string, runId: string) => boolean;
   consumeTelegramHostStreamState: (chatJid: string, runId: string) => TelegramMessagePreviewState | null;
   resolveTelegramStreamCompletionState: (params: {
@@ -533,15 +541,24 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       }
     }
     if (ok) {
-      const externallyCompleted = deps.isTelegramJid(msg.chat_jid)
-        ? deps.consumeTelegramHostCompletedRun(msg.chat_jid, requestId)
-        : false;
-      const telegramStreamState = deps.isTelegramJid(msg.chat_jid)
-        ? deps.consumeTelegramHostStreamState(msg.chat_jid, requestId)
-        : null;
+      const completionState =
+        deps.isTelegramJid(msg.chat_jid) && deps.prepareTelegramCompletionState
+          ? await deps.prepareTelegramCompletionState({
+              chatJid: msg.chat_jid,
+              runId: requestId,
+              result,
+            })
+          : {
+              externallyCompleted: deps.isTelegramJid(msg.chat_jid)
+                ? deps.consumeTelegramHostCompletedRun(msg.chat_jid, requestId)
+                : false,
+              previewState: deps.isTelegramJid(msg.chat_jid)
+                ? deps.consumeTelegramHostStreamState(msg.chat_jid, requestId)
+                : null,
+            };
       const telegramCompletionState = deps.resolveTelegramStreamCompletionState({
-        externallyCompleted,
-        previewState: telegramStreamState,
+        externallyCompleted: completionState.externallyCompleted,
+        previewState: completionState.previewState,
       });
       streamed = telegramCompletionState.effectiveStreamed;
       const telegramPreviewState = telegramCompletionState.messagePreviewState;
@@ -553,7 +570,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         streamed,
         usage,
         abortSignal: abortController.signal,
-        externallyCompleted,
+        externallyCompleted: completionState.externallyCompleted,
         telegramPreviewState,
         timestampToPersist: msg.timestamp,
         updateChatUsage: deps.updateChatUsage,
@@ -706,15 +723,24 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           );
         }
       }
-      const externallyCompleted = deps.isTelegramJid(chatJid)
-        ? deps.consumeTelegramHostCompletedRun(chatJid, runId)
-        : false;
-      const telegramStreamState = deps.isTelegramJid(chatJid)
-        ? deps.consumeTelegramHostStreamState(chatJid, runId)
-        : null;
+      const completionState =
+        deps.isTelegramJid(chatJid) && deps.prepareTelegramCompletionState
+          ? await deps.prepareTelegramCompletionState({
+              chatJid,
+              runId,
+              result,
+            })
+          : {
+              externallyCompleted: deps.isTelegramJid(chatJid)
+                ? deps.consumeTelegramHostCompletedRun(chatJid, runId)
+                : false,
+              previewState: deps.isTelegramJid(chatJid)
+                ? deps.consumeTelegramHostStreamState(chatJid, runId)
+                : null,
+            };
       const telegramCompletionState = deps.resolveTelegramStreamCompletionState({
-        externallyCompleted,
-        previewState: telegramStreamState,
+        externallyCompleted: completionState.externallyCompleted,
+        previewState: completionState.previewState,
       });
       streamed = telegramCompletionState.effectiveStreamed;
       const telegramPreviewState = telegramCompletionState.messagePreviewState;
@@ -727,7 +753,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         usage,
         abortSignal: abortController.signal,
         deliverToChat: deliver,
-        externallyCompleted,
+        externallyCompleted: completionState.externallyCompleted,
         telegramPreviewState,
         updateChatUsage: deps.updateChatUsage,
         persistAssistantHistory: deps.persistAssistantHistory,
