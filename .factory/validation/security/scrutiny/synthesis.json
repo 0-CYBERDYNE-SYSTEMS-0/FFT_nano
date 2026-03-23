@@ -1,0 +1,50 @@
+{
+  "milestone": "security",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "npm test",
+      "exitCode": 0,
+      "observation": "All 264 tests passed successfully"
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "npm run typecheck",
+      "exitCode": 0,
+      "observation": "TypeScript compilation completed without errors"
+    },
+    "lint": {
+      "passed": false,
+      "command": "npm run format:check",
+      "exitCode": 1,
+      "observation": "Prettier format check failed with code style issues in 63 files. Run Prettier with --write to fix."
+    }
+  },
+  "reviewsSummary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [
+    {
+      "featureId": "scrutiny-validator-security",
+      "severity": "blocking",
+      "description": "Format check (Prettier) failed: 63 TypeScript files have code style issues. This is a blocking issue that must be fixed before proceeding to feature review.",
+      "suggestedFix": "Run 'npm run format' to automatically fix all formatting issues with Prettier, then verify with 'npm run format:check'."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "services.yaml",
+      "suggestion": "Add 'format' command to services.yaml validators. Currently services.yaml only has 'test', 'typecheck', 'build', 'lint' (which doesn't exist), 'secret-scan', 'release-check', and 'validate:skills'. The 'format:check' command should be added as a validator or the non-existent 'lint' entry should be replaced with 'format:check'.",
+      "evidence": "Scrutiny validation attempted to run 'npm run lint' which doesn't exist. The actual code style validator is 'npm run format:check'.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}
