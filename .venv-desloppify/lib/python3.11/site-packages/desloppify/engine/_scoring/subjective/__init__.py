@@ -1,2 +1,0 @@
-"""Subjective scoring internals."""
-
