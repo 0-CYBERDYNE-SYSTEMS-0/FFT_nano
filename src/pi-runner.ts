@@ -26,6 +26,7 @@ import {
   syncProjectPiSkillsToGroupPiHome,
   type SkillSyncResult,
 } from './pi-skills.js';
+import { normalizeTelegramDraftText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
@@ -141,20 +142,6 @@ function isForceDelegateHint(hint: CodingHint): boolean {
 
 function isTelegramChatJid(chatJid: string): boolean {
   return chatJid.startsWith('telegram:');
-}
-
-const TELEGRAM_DRAFT_PREFIX = '...';
-const TELEGRAM_DRAFT_MAX_LEN = 4096;
-
-export function normalizeTelegramDraftText(text: string): string {
-  const normalized = text.replace(/\r\n/g, '\n');
-  if (!normalized) return '.';
-  if (normalized.length <= TELEGRAM_DRAFT_MAX_LEN) return normalized;
-  const suffixLen = Math.max(
-    1,
-    TELEGRAM_DRAFT_MAX_LEN - TELEGRAM_DRAFT_PREFIX.length,
-  );
-  return `${TELEGRAM_DRAFT_PREFIX}${normalized.slice(-suffixLen)}`;
 }
 
 export function deriveTelegramDraftId(seed: string): number {

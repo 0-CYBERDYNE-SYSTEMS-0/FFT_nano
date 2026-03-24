@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  deriveTelegramDraftId,
-  normalizeTelegramDraftText,
-} from '../src/pi-runner.js';
+import { deriveTelegramDraftId } from '../src/pi-runner.js';
+import { normalizeTelegramDraftText } from '../src/telegram.js';
 
 test('deriveTelegramDraftId is stable and positive', () => {
   const a = deriveTelegramDraftId('telegram:1:req-1');
