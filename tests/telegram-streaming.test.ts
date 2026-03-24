@@ -368,3 +368,29 @@ test('finalizeBlockStreamDelivery flushes pending text and marks completion when
   assert.equal(result.completed, true);
   assert.equal(result.nextState, null);
 });
+
+test('consumePreviewState is atomic - second consume returns null (VAL-STATE-001)', () => {
+  const registry = new TelegramPreviewRegistry(60_000);
+  const runKey = getTelegramPreviewRunKey('telegram:1', 'run-atomic');
+
+  // Set up preview state
+  registry.setPreviewState(runKey, {
+    messageId: 555,
+    lastText: 'atomic test',
+    updatedAt: 2000,
+  });
+
+  // First consume should return the state
+  const firstConsume = registry.consumePreviewState(runKey);
+  assert.notEqual(firstConsume, null);
+  assert.equal(firstConsume?.messageId, 555);
+  assert.equal(firstConsume?.lastText, 'atomic test');
+
+  // Second consume should return null (state already consumed)
+  const secondConsume = registry.consumePreviewState(runKey);
+  assert.equal(secondConsume, null, 'Second consume should return null - state already consumed');
+
+  // Verify state is completely gone
+  const thirdConsume = registry.consumePreviewState(runKey);
+  assert.equal(thirdConsume, null, 'Third consume should also return null');
+});
