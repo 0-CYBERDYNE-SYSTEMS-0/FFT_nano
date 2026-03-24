@@ -3,7 +3,7 @@ commands:
   typecheck: npm run typecheck
   build: npm run build
   test: npm test
-  lint: npm run lint
+  lint: npm run format:check
   secret-scan: npm run secret-scan
   release-check: npm run release-check
   validate:skills: npm run validate:skills

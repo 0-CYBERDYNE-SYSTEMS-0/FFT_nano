@@ -1,0 +1,64 @@
+{
+  "groupId": "VAL-TEST-003",
+  "testedAt": "2026-03-23T19:00:00Z",
+  "isolation": {
+    "type": "repository-state",
+    "workingDirectory": "/Users/scrimwiggins/fft_nano",
+    "testingSurface": "CLI commands (npm run release-check)",
+    "accessMode": "read-only"
+  },
+  "toolsUsed": ["bash", "npm", "git"],
+  "assertions": [
+    {
+      "id": "VAL-TEST-003",
+      "title": "Release check passes (npm run release-check exits with code 0)",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Run npm run release-check",
+          "expected": "All validation steps pass, exit code 0",
+          "observed": "Exit code 0 but secret-scan step reports false positives"
+        },
+        {
+          "action": "Run npm run secret-scan to investigate",
+          "expected": "Secret scan passes with no findings",
+          "observed": "Secret scan fails with 9 personal absolute path matches in .factory/validation/"
+        },
+        {
+          "action": "Verify source code is clean (excluding .factory/validation/)",
+          "expected": "No personal paths in actual source code",
+          "observed": "Source code is clean - only match is in secret-scan.sh itself (placeholder filtering)"
+        },
+        {
+          "action": "Identify files triggering false positives",
+          "expected": "Files are validation artifacts, not source code",
+          "observed": "All 9 matches are in .factory/validation/ directory - validation reports and test isolation contexts"
+        }
+      ],
+      "evidence": {
+        "releaseCheckOutput": "testing/VAL-TEST-003/release-check-output.log",
+        "secretScanOutput": "testing/VAL-TEST-003/secret-scan-detailed.log",
+        "analysis": "testing/VAL-TEST-003/analysis.md",
+        "consoleErrors": "none",
+        "network": "N/A (CLI validation only)"
+      },
+      "issues": "FALSE POSITIVE: Secret-scan.sh does not exclude .factory/validation/ directory, causing false positives on validation artifacts that intentionally contain personal absolute paths for test isolation context. Actual source code is clean with no PII or secrets. All 9 matches are in .factory/validation/ subdirectories (documentation/, governance/, security/) and represent validation report metadata, not source code."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "secret-scan.sh has no exclusion for .factory/validation/ directory despite it being intentionally committed per CLAUDE.md",
+      "resolved": false,
+      "resolution": "Requires updating scripts/secret-scan.sh to add ':(exclude).factory/validation' to the git grep command",
+      "affectedAssertions": ["VAL-TEST-003"]
+    },
+    {
+      "description": "Validation reports use absolute paths for isolation context which triggers secret-scan false positives",
+      "resolved": false,
+      "resolution": "Consider using relative paths in validation reports or excluding the entire .factory/validation/ directory from secret-scan",
+      "affectedAssertions": ["VAL-TEST-003"]
+    }
+  ],
+  "blockers": [],
+  "summary": "VAL-TEST-003 fails due to false positives from validation artifacts in .factory/validation/ directory. The npm run release-check command exits with code 0 (technically passing the release check), but the secret-scan step reports 9 personal absolute path matches. Investigation confirmed all matches are in .factory/validation/ subdirectories and represent validation report metadata with test isolation contexts, not actual source code. Source code verification excluding .factory/validation/ showed the actual codebase is clean with no PII or secrets. This is a pre-existing infrastructure issue where secret-scan.sh does not exclude the .factory/validation/ directory, which is intentionally committed per CLAUDE.md. The assertion status is 'fail' due to the false positive, but the actual release readiness criteria (clean source code) is satisfied."
+}
