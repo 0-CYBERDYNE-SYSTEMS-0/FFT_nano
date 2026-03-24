@@ -3819,14 +3819,41 @@ async function sendMessage(jid: string, text: string): Promise<void> {
 }
 
 const TELEGRAM_TOOL_EMOJIS: Record<string, string> = {
+  // Terminal & shell
   bash: '⚡',
+  Bash: '⚡',
+  shell: '⚡',
+  // File read operations
   read: '👀',
+  Read: '👀',
+  // File write operations
   write: '✍️',
+  Write: '✍️',
+  // File edit operations
   edit: '✍️',
+  Edit: '✍️',
+  // Search operations
   grep: '🤓',
+  Grep: '🤓',
   find: '🤓',
+  Find: '🤓',
+  search: '🔍',
+  Search: '🔍',
+  // File system
   ls: '👀',
-  search: '🤓',
+  Ls: '👀',
+  glob: '📂',
+  Glob: '📂',
+  // Web operations
+  websearch: '🌐',
+  WebSearch: '🌐',
+  web_extract: '🔎',
+  WebExtract: '🔎',
+  // Task operations
+  todo: '📋',
+  Todo: '📋',
+  tasks: '📋',
+  Tasks: '📋',
 };
 
 function getTelegramToolProgressKey(
