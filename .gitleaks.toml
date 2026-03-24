@@ -1,14 +1,14 @@
 [ignore]
   # Data directories contain runtime files with example tokens
   paths = [
-    """^data/""",
-    """^groups/""",
-    """^store/""",
-    """^logs/""",
-    """^backups/""",
-    """^dist/""",
-    """^dist-web/""",
-    """^node_modules/""",
-    """^web/control-center/node_modules/""",
-    """\.git/""",
+    "data/",
+    "groups/",
+    "store/",
+    "logs/",
+    "backups/",
+    "dist/",
+    "dist-web/",
+    "node_modules/",
+    "web/control-center/node_modules/",
+    ".git/",
   ]
