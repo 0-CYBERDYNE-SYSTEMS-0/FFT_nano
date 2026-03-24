@@ -4106,7 +4106,7 @@ async function finalizeTelegramPreviewMessage(
       'Failed to finalize Telegram streaming preview in place',
     );
     await deleteTelegramPreviewMessage(chatJid, messageId);
-    return false;
+    return true;
   }
 
   for (const chunk of chunks.slice(1)) {
