@@ -42,4 +42,13 @@ if [[ -n "$CHAT_ID_MATCHES" ]]; then
   exit 1
 fi
 
+# Run gitleaks scan if available (mirrors CI behavior).
+if command -v gitleaks &>/dev/null; then
+  echo "Running gitleaks scan..."
+  if ! gitleaks detect --source . --redact --exit-code 0; then
+    echo "ERROR: Gitleaks found leaks."
+    exit 1
+  fi
+fi
+
 echo "Secret scan passed."
