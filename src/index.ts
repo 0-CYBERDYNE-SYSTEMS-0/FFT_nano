@@ -237,6 +237,7 @@ import {
   telegramSetupInputStates,
   hostEventBus,
   telegramToolProgressRuns,
+  lastToolNameByStream,
   TUI_SENDER_ID,
   TUI_SENDER_NAME,
   SERVICE_STARTED_AT,
@@ -4049,6 +4050,34 @@ function queueTelegramToolProgressUpdate(
     telegramPreviewRegistry.appendToolTrail(
       streamKey,
       `${emoji}${event.toolName}`,
+    );
+    const preview = telegramPreviewRegistry.getPreviewState(streamKey);
+    if (preview) {
+      const footer = telegramPreviewRegistry.getToolTrailFooter(streamKey);
+      if (footer) {
+        bot
+          .editStreamMessage(
+            chatJid,
+            preview.messageId,
+            `${preview.lastText}\n\n${footer}`,
+          )
+          .catch(() => {});
+      }
+    }
+  }
+
+  if (effectiveMode === 'new' && event.status === 'start') {
+    const streamKey = getTelegramHostStreamKey(chatJid, requestId);
+    // Deduplication: skip if same tool as last
+    const lastTool = lastToolNameByStream.get(streamKey);
+    if (event.toolName === lastTool) {
+      return;
+    }
+    lastToolNameByStream.set(streamKey, event.toolName);
+    const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
+    telegramPreviewRegistry.appendToolTrail(
+      streamKey,
+      `${emoji} ${event.toolName}`,
     );
     const preview = telegramPreviewRegistry.getPreviewState(streamKey);
     if (preview) {
