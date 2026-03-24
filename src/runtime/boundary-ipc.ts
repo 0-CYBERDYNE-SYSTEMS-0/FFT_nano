@@ -100,7 +100,6 @@ export function translateLegacyMessageToHostEvent(
   isMain: boolean,
 ): HostEvent | null {
   const payload = envelope.payload;
-  if (payload.type === 'telegram_draft_update') return null;
   if (payload.type !== 'message') return null;
   if (typeof payload.chatJid !== 'string' || typeof payload.text !== 'string')
     return null;
@@ -127,7 +126,6 @@ export function translateLegacyMessageToHostEvent(
 
 export type LegacyMessageDispatchResult =
   | 'delivered'
-  | 'ignored_draft'
   | 'ignored_invalid';
 
 export async function dispatchLegacyMessageEnvelope(
@@ -142,9 +140,7 @@ export async function dispatchLegacyMessageEnvelope(
     isMain,
   );
   if (!event) {
-    return envelope.payload.type === 'telegram_draft_update'
-      ? 'ignored_draft'
-      : 'ignored_invalid';
+    return 'ignored_invalid';
   }
   await dispatch(event);
   return 'delivered';
