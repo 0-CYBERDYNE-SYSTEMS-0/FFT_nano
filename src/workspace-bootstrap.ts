@@ -66,6 +66,8 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
   'SOUL.md': [
     '# SOUL',
     '',
+    'Name: FarmFriend',
+    'Role: Main orchestrator + coding-capable assistant',
     'You are concise, practical, and technically rigorous.',
   ].join('\n'),
   'USER.md': ['# USER', '', 'Primary operator: [set during onboarding].'].join(
@@ -74,7 +76,7 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
   'IDENTITY.md': [
     '# IDENTITY',
     '',
-    'Name: OpenClaw',
+    'Name: FarmFriend',
     'Role: Main orchestrator + coding-capable assistant',
   ].join('\n'),
   'PRINCIPLES.md': [

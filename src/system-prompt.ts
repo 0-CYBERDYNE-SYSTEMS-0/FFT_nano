@@ -348,6 +348,28 @@ function buildNonMainContextEntries(params: {
     });
   }
 
+  if (remaining > 0) {
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: 'global/PRINCIPLES.md',
+      path: `${params.globalDir}/PRINCIPLES.md`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+    });
+  }
+
+  if (remaining > 0) {
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: 'group/PRINCIPLES.md',
+      path: `${params.groupDir}/PRINCIPLES.md`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+    });
+  }
+
   if (params.includeMemoryFallback && remaining > 0) {
     const globalMemoryPrimary = `${params.globalDir}/MEMORY.md`;
     const globalMemoryLegacy = `${params.globalDir}/memory.md`;
@@ -730,7 +752,7 @@ export function buildSystemPrompt(
     );
   const promptMode: PromptMode = input.isScheduledTask ? 'minimal' : 'full';
   const assistantName =
-    (input.assistantName || 'Assistant').trim() || 'Assistant';
+    (input.assistantName || 'FarmFriend').trim() || 'FarmFriend';
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
   const isHeartbeatRun = (input.requestId || '').startsWith('heartbeat-');
 
