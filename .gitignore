@@ -75,3 +75,7 @@ agents-sdk-docs
 *.pyc
 .venv-desloppify/
 .desloppify/
+
+# Dev orchestration (orchestrator/droid infrastructure - local only)
+.factory/
+fft-experience/

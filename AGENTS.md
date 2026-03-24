@@ -111,6 +111,65 @@ Common failure modes:
 - Docker daemon unavailable: run `docker info` and start Docker Desktop/daemon if needed.
 
 ---
+## Development Workflow
+
+### Git Strategy: Main = Release
+
+The `main` branch is **clean and release-ready at all times**. Personal development happens in worktrees, never directly on main.
+
+**Key rules:**
+- Never commit personal paths, local data, or dev-only files to main
+- Run `npm run secret-scan` and `npm run release-check` before any significant change
+- Personal directories (`fft-experience/`, `.factory/`, `data/`, `groups/`) are gitignored
+
+### Worktrees for Development
+
+Create a worktree for each major feature or experiment:
+
+```bash
+# Create a new worktree for a feature
+git worktree add ../fft_nano-dev-<feature> -b feat/my-feature
+
+# Do your development there
+cd ../fft_nano-dev-<feature>
+
+# When done, merge back to main from the worktree
+git checkout main
+git merge feat/my-feature
+
+# Clean up worktree when done
+git worktree remove ../fft_nano-dev-<feature>
+git branch -d feat/my-feature
+```
+
+### Pre-Release Checklist
+
+Before tagging a release or merging to main:
+```bash
+npm run release-check   # typecheck, tests, secret-scan, pack
+npm run secret-scan     # verify no personal paths or secrets
+```
+
+### CI/CD
+
+**GitHub Actions (`.github/workflows/`):**
+
+1. **`release-readiness.yml`** - Runs on PR/push to main:
+   - TypeScript type check (`npm run typecheck`)
+   - All tests (`npm test`)
+   - Secret scan (`npm run secret-scan`)
+   - Skills validation (`npm run validate:skills`)
+   - Pack content check (`npm run pack`)
+
+2. **`skills-only.yml`** - Runs when only skills change:
+   - Skills validation only (faster, skips full test suite)
+
+**CI gates:**
+- All checks must pass before merging to main
+- Branch protection requires PR + passing status checks
+- No direct pushes to main allowed (after enabling branch protection)
+
+---
 |||<VIP_VIP_VIP>
 ## 🎯 Figure It out Directive
 
