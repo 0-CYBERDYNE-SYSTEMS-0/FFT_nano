@@ -441,6 +441,11 @@ function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
   ) {
     return true;
   }
+  if (
+    /You are FarmFriend: an agricultural assistant\./i.test(existingBody)
+  ) {
+    return true;
+  }
   return false;
 }
 
