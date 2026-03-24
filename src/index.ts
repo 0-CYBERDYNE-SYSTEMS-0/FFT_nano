@@ -4006,39 +4006,31 @@ function queueTelegramToolProgressUpdate(
 
   if (effectiveMode === 'off') return;
 
-  if (effectiveMode === 'verbose') {
-    const key = getTelegramToolProgressKey(chatJid, requestId);
-    const progress = telegramToolProgressRuns.get(key) || {
-      lines: [],
-      chain: Promise.resolve(),
-    };
-    telegramToolProgressRuns.set(key, progress);
-
-    progress.chain = progress.chain
-      .then(async () => {
-        const line = buildTelegramToolProgressLine(
-          event,
-          effectiveMode,
-          progress.lastToolName,
-        );
-        if (!line) return;
-        if (event.status === 'start') {
-          progress.lastToolName = event.toolName;
-        }
-        progress.lines.push(line);
-        const text = progress.lines.join('\n');
-        if (!progress.messageId) {
-          progress.messageId = await bot.sendStreamMessage(chatJid, text);
-          return;
-        }
-        await bot.editStreamMessage(chatJid, progress.messageId, text);
-      })
-      .catch((err) => {
-        logger.warn(
-          { chatJid, requestId, err },
-          'Failed to update Telegram tool progress',
-        );
-      });
+  // 'verbose' mode appends to preview trail (not separate message)
+  if (effectiveMode === 'verbose' && event.status === 'start') {
+    const streamKey = getTelegramHostStreamKey(chatJid, requestId);
+    const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
+    const preview = extractToolProgressPreview(event.args);
+    const argsPreview = preview
+      ? truncateToolProgressPreview(preview, 80)
+      : '';
+    const trailEntry = argsPreview
+      ? `${emoji} ${event.toolName}: "${argsPreview}"`
+      : `${emoji} ${event.toolName}`;
+    telegramPreviewRegistry.appendToolTrail(streamKey, trailEntry);
+    const previewState = telegramPreviewRegistry.getPreviewState(streamKey);
+    if (previewState) {
+      const footer = telegramPreviewRegistry.getToolTrailFooter(streamKey);
+      if (footer) {
+        bot
+          .editStreamMessage(
+            chatJid,
+            previewState.messageId,
+            `${previewState.lastText}\n\n${footer}`,
+          )
+          .catch(() => {});
+      }
+    }
     return;
   }
 
