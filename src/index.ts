@@ -4507,11 +4507,6 @@ function startIpcWatcher(): void {
                     { sourceGroup, requestId: envelope.requestId },
                     'IPC message translated to host event',
                   );
-                } else if (outcome === 'ignored_draft') {
-                  logger.debug(
-                    { file, sourceGroup },
-                    'Ignoring legacy draft IPC file',
-                  );
                 } else {
                   logger.warn(
                     { sourceGroup, file },
