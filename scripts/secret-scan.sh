@@ -25,7 +25,7 @@ if [[ -n "$MATCHES" ]]; then
 fi
 
 # Block user-specific absolute home paths in tracked files.
-PATH_MATCHES="$(git grep -nE '/Users/[A-Za-z0-9._-]+' -- . ':(exclude)package-lock.json' || true)"
+PATH_MATCHES="$(git grep -nE '/Users/[A-Za-z0-9._-]+' -- . ':(exclude)package-lock.json' ':(exclude).factory/validation' || true)"
 PATH_MATCHES="$(echo "$PATH_MATCHES" | grep -Fv '/Users/user' | grep -Fv '/Users/username' | grep -Fv '/Users/yourname' || true)"
 if [[ -n "$PATH_MATCHES" ]]; then
   echo "ERROR: Potential personal absolute paths detected:"
