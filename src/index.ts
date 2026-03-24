@@ -4041,7 +4041,7 @@ function queueTelegramToolProgressUpdate(
     const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
     telegramPreviewRegistry.appendToolTrail(
       streamKey,
-      `${emoji}${event.toolName}`,
+      `${emoji} ${event.toolName}`,
     );
     const preview = telegramPreviewRegistry.getPreviewState(streamKey);
     if (preview) {
