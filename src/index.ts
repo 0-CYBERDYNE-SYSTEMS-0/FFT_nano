@@ -4151,9 +4151,6 @@ function consumeTelegramHostStreamState(
   chatJid: string,
   requestId: string,
 ): TelegramMessagePreviewState | null {
-  telegramPersistentPreviewTexts.delete(
-    getTelegramHostStreamKey(chatJid, requestId),
-  );
   return telegramPreviewRegistry.consumePreviewState(
     getTelegramHostStreamKey(chatJid, requestId),
   );
