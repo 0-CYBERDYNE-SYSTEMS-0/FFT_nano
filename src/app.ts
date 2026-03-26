@@ -128,6 +128,11 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     });
 
     deps.state.telegramBot.startPolling(async (event: any) => {
+      deps.logger.debug?.(
+        { kind: event.kind, chatJid: event.chatJid, contentLength: event.content?.length },
+        'Telegram event received from polling',
+      );
+
       if (event.kind === 'callback_query') {
         await deps.handleTelegramCallbackQuery(event);
         return;

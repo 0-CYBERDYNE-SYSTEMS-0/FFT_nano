@@ -177,6 +177,7 @@ interface TelegramMessage {
   caption?: string;
   entities?: TelegramEntity[];
   caption_entities?: TelegramEntity[];
+  media_group_id?: string;
   chat: {
     id: number;
     title?: string;
@@ -683,6 +684,27 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   }
   const typingLoops = new Map<string, TypingLoopState>();
 
+  interface PendingMediaGroup {
+    messages: TelegramMessage[];
+    timeout: ReturnType<typeof setTimeout>;
+  }
+  const pendingMediaGroups = new Map<string, PendingMediaGroup>();
+  const MEDIA_GROUP_TIMEOUT_MS = 1500;
+
+  function combineMediaGroupMessages(messages: TelegramMessage[]): {
+    text: string;
+    caption: string;
+  } {
+    const sorted = [...messages].sort((a, b) => a.message_id - b.message_id);
+    let text = '';
+    let caption = '';
+    for (const msg of sorted) {
+      if (msg.text) text += msg.text;
+      if (msg.caption) caption += msg.caption;
+    }
+    return { text, caption };
+  }
+
   async function apiGet<T>(
     method: string,
     params: Record<string, string>,
@@ -913,6 +935,109 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     lastPersistedOffset = offset;
   }
 
+  async function processMessageEvent(
+    msg: TelegramMessage,
+    isEdited: boolean,
+    onEvent: (event: TelegramInboundEvent) => Promise<void>,
+  ): Promise<void> {
+    const chatId = String(msg.chat.id);
+    const chatJid = `${TELEGRAM_JID_PREFIX}${chatId}`;
+    const timestamp = new Date(msg.date * 1000).toISOString();
+    const chatName = getChatName(msg.chat);
+    const sender = msg.from
+      ? `${TELEGRAM_JID_PREFIX}${msg.from.id}`
+      : 'telegram:unknown';
+    const senderName = getSenderName(msg.from);
+    const messageType = buildMessageType(msg);
+    const media = buildMessageMedia(msg);
+
+    let content = buildMessageContent(msg, messageType);
+    if (messageType === 'text') {
+      content = normalizeMentionTrigger(
+        content,
+        msg.entities,
+        botUsername,
+        assistantName,
+        opts.triggerPattern,
+      );
+    } else if (!media && msg.caption) {
+      content = normalizeMentionTrigger(
+        content,
+        msg.caption_entities,
+        botUsername,
+        assistantName,
+        opts.triggerPattern,
+      );
+    }
+
+    if (!content) {
+      logger.debug(
+        {
+          chatJid,
+          messageId: msg.message_id,
+          messageType,
+          hasMedia: !!media,
+          hasText: !!msg.text,
+          hasCaption: !!msg.caption,
+          mediaGroupId: msg.media_group_id || 'none',
+        },
+        'Telegram message dropped: empty content after processing',
+      );
+      return;
+    }
+
+    logger.debug(
+      {
+        chatJid,
+        messageId: msg.message_id,
+        messageType,
+        contentLength: content.length,
+        mediaGroupId: msg.media_group_id || 'none',
+      },
+      'Telegram message dispatching',
+    );
+
+    await onEvent({
+      kind: 'message',
+      id: `${chatJid}:${msg.message_id}${isEdited ? ':edited' : ''}`,
+      messageId: msg.message_id,
+      chatJid,
+      chatName,
+      sender,
+      senderName,
+      content,
+      timestamp,
+      messageType,
+      media,
+    });
+  }
+
+  async function flushMediaGroup(
+    groupId: string,
+    onEvent: (event: TelegramInboundEvent) => Promise<void>,
+  ): Promise<void> {
+    const group = pendingMediaGroups.get(groupId);
+    if (!group || group.messages.length === 0) {
+      pendingMediaGroups.delete(groupId);
+      return;
+    }
+
+    const sorted = [...group.messages].sort(
+      (a, b) => a.message_id - b.message_id,
+    );
+    const combined = combineMediaGroupMessages(sorted);
+
+    const firstMsg = sorted[0];
+    const syntheticMsg: TelegramMessage = {
+      ...firstMsg,
+      text: combined.text || firstMsg.text,
+      caption: combined.caption || firstMsg.caption,
+    };
+
+    await processMessageEvent(syntheticMsg, false, onEvent);
+    pendingMediaGroups.delete(groupId);
+  }
+
   async function startPolling(
     onEvent: (event: TelegramInboundEvent) => Promise<void>,
   ): Promise<void> {
@@ -937,8 +1062,6 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
         for (const u of updates) {
           offset = Math.max(offset, u.update_id + 1);
-          // Persist immediately so commands that intentionally restart the host
-          // do not replay the same Telegram update on the next boot.
           persistOffset();
 
           if (u.callback_query?.message) {
@@ -973,51 +1096,36 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
           const msg = u.message || u.edited_message;
           if (!msg) continue;
 
-          const chatId = String(msg.chat.id);
-          const chatJid = `${TELEGRAM_JID_PREFIX}${chatId}`;
-          const timestamp = new Date(msg.date * 1000).toISOString();
-          const chatName = getChatName(msg.chat);
-          const sender = msg.from
-            ? `${TELEGRAM_JID_PREFIX}${msg.from.id}`
-            : 'telegram:unknown';
-          const senderName = getSenderName(msg.from);
-          const messageType = buildMessageType(msg);
-          const media = buildMessageMedia(msg);
+          if (msg.media_group_id) {
+            const groupId = msg.media_group_id;
+            logger.debug(
+              {
+                chatJid: `${TELEGRAM_JID_PREFIX}${msg.chat.id}`,
+                messageId: msg.message_id,
+                mediaGroupId: groupId,
+              },
+              'Telegram media group message received',
+            );
+            const existing = pendingMediaGroups.get(groupId);
 
-          let content = buildMessageContent(msg, messageType);
-          if (messageType === 'text') {
-            content = normalizeMentionTrigger(
-              content,
-              msg.entities,
-              botUsername,
-              assistantName,
-              opts.triggerPattern,
-            );
-          } else if (!media && msg.caption) {
-            content = normalizeMentionTrigger(
-              content,
-              msg.caption_entities,
-              botUsername,
-              assistantName,
-              opts.triggerPattern,
-            );
+            if (existing) {
+              existing.messages.push(msg);
+              clearTimeout(existing.timeout);
+              existing.timeout = setTimeout(() => {
+                void flushMediaGroup(groupId, onEvent);
+              }, MEDIA_GROUP_TIMEOUT_MS);
+            } else {
+              pendingMediaGroups.set(groupId, {
+                messages: [msg],
+                timeout: setTimeout(() => {
+                  void flushMediaGroup(groupId, onEvent);
+                }, MEDIA_GROUP_TIMEOUT_MS),
+              });
+            }
+            continue;
           }
 
-          if (!content) continue;
-
-          await onEvent({
-            kind: 'message',
-            id: `${chatJid}:${msg.message_id}`,
-            messageId: msg.message_id,
-            chatJid,
-            chatName,
-            sender,
-            senderName,
-            content,
-            timestamp,
-            messageType,
-            media,
-          });
+          await processMessageEvent(msg, !!u.edited_message, onEvent);
         }
 
         persistOffset();
