@@ -109,10 +109,25 @@ const SUBSTANTIAL_SCOPE_PATTERNS = [
   /\bplan and implement\b/,
 ] as const;
 
+// Patterns that indicate the user is NOT asking for coding help
+// These override auto-detection to prevent false positives
+const EXCLUDED_PATTERNS = [
+  /don't need to|doesn't need to|no need to|not asking you to/i,
+  /just (talk|chat|discuss|think|respond|answer|tell me|share)/i,
+  /self[- ]?(reflect|improvement|assessment|analysis|evaluation)/i,
+  /about yourself|about you|you as a|who you are|who are you/i,
+  /your (directives?|operating|skills?|abilities|capabilities|strengths?|superpower)/i,
+] as const;
+
 export function isSubstantialCodingTask(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   if (!normalized) return false;
   if (normalized.startsWith('/')) return false;
+
+  // Exclude meta/introspective messages that contain coding-related words but aren't asking for coding
+  for (const pattern of EXCLUDED_PATTERNS) {
+    if (pattern.test(normalized)) return false;
+  }
 
   const actionScore = CODING_ACTION_PATTERNS.reduce(
     (count, pattern) => count + (pattern.test(normalized) ? 1 : 0),

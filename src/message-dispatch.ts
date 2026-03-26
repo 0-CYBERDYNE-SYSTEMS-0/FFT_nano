@@ -556,6 +556,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       detail: 'running',
     });
     await deps.setTyping(msg.chat_jid, true);
+    deps.logger?.info?.(
+      { group: group.name, promptLength: finalPrompt.length, shouldUseCodingWorker },
+      'Starting agent run',
+    );
     try {
       const run =
         shouldUseCodingWorker && deps.runCodingTask
@@ -597,6 +601,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
               {},
               abortController.signal,
             );
+      deps.logger?.info?.(
+        { group: group.name, ok: run.ok, hasResult: !!run.result, resultLength: run.result?.length },
+        'Agent run completed',
+      );
       result = run.result;
       streamed = run.streamed;
       ok = run.ok;
