@@ -690,6 +690,21 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         phase: 'error',
         detail: 'run failed',
       });
+
+      // Clean up Telegram preview state and notify user on failure
+      if (deps.isTelegramJid(msg.chat_jid)) {
+        // Clean up any pending preview state from the failed run
+        deps.deleteTelegramPreviewMessage?.(msg.chat_jid, 0).catch(() => {});
+        // Consume and discard any stream state
+        deps.consumeTelegramHostStreamState?.(msg.chat_jid, requestId);
+        deps.consumeTelegramHostCompletedRun?.(msg.chat_jid, requestId);
+
+        // Send error message to user - always notify on failure
+        const errorMsg = result || 'Sorry, there was an error processing your message.';
+        await deps.sendAgentResultMessage(msg.chat_jid, errorMsg, {
+          prefixWhatsApp: true,
+        });
+      }
     }
     return true;
   }
