@@ -363,12 +363,11 @@ export function getNewMessages(
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
-  // Filter out bot's own messages by checking content prefix (not is_from_me, since user shares the account)
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
     WHERE timestamp > ? AND chat_jid IN (${placeholders})
-      AND content NOT LIKE ? AND sender != ?
+      AND sender != '__fft_tui__'
       AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
@@ -378,8 +377,6 @@ export function getNewMessages(
     .all(
       lastTimestamp,
       ...jids,
-      `${botPrefix}:%`,
-      '__fft_tui__',
     ) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
@@ -395,12 +392,11 @@ export function getMessagesSince(
   sinceTimestamp: string,
   botPrefix: string,
 ): NewMessage[] {
-  // Filter out bot's own messages by checking content prefix
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
     WHERE chat_jid = ? AND timestamp > ?
-      AND content NOT LIKE ? AND sender != ?
+      AND sender != '__fft_tui__'
       AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
@@ -409,8 +405,6 @@ export function getMessagesSince(
     .all(
       chatJid,
       sinceTimestamp,
-      `${botPrefix}:%`,
-      '__fft_tui__',
     ) as NewMessage[];
 }
 
