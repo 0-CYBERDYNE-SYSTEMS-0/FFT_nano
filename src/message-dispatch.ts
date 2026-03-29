@@ -20,7 +20,6 @@ export interface FinalizeCompletedRunParams {
   deliverToChat?: boolean;
   externallyCompleted: boolean;
   telegramPreviewState: TelegramMessagePreviewState | null;
-  timestampToPersist?: string;
   updateChatUsage: (
     chatJid: string,
     usage?: {
@@ -281,12 +280,6 @@ export async function finalizeCompletedRun(
   params: FinalizeCompletedRunParams,
 ): Promise<void> {
   params.updateChatUsage(params.chatJid, params.usage);
-  if (params.timestampToPersist) {
-    params.persistLastAgentTimestamp?.(
-      params.chatJid,
-      params.timestampToPersist,
-    );
-  }
 
   if (params.abortSignal.aborted) {
     if (params.telegramPreviewState) {
@@ -310,7 +303,17 @@ export async function finalizeCompletedRun(
   }
 
   if (params.result) {
-    params.persistAssistantHistory(params.chatJid, params.result, params.runId);
+    const assistantTimestamp = params.persistAssistantHistory(
+      params.chatJid,
+      params.result,
+      params.runId,
+    );
+    if (assistantTimestamp) {
+      params.persistLastAgentTimestamp?.(
+        params.chatJid,
+        assistantTimestamp,
+      );
+    }
     let finalizedPreview = false;
     if (!params.externallyCompleted && params.telegramPreviewState) {
       finalizedPreview = await params.finalizeTelegramPreviewMessage(
@@ -664,7 +667,6 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         abortSignal: abortController.signal,
         externallyCompleted: completionState.externallyCompleted,
         telegramPreviewState,
-        timestampToPersist: msg.timestamp,
         updateChatUsage: deps.updateChatUsage,
         persistLastAgentTimestamp: (chatJid, timestamp) => {
           deps.state.lastAgentTimestamp ||= {};
