@@ -208,13 +208,29 @@ export type CanvasPatchOp =
 
 export interface MemoryActionRequest {
   type: 'memory_action';
-  action: 'memory_search' | 'memory_get';
+  action: 'memory_search' | 'memory_get' | 'memory_write';
   params: {
     query?: string;
     path?: string;
     topK?: number;
     sources?: 'memory' | 'sessions' | 'all';
     groupFolder?: string;
+    intent?:
+      | 'todo_set_objective'
+      | 'todo_upsert_task'
+      | 'todo_move_task'
+      | 'todo_set_blocked'
+      | 'todo_upsert_subagent'
+      | 'todo_append_log'
+      | 'memory_append'
+      | 'memory_promote'
+      | 'soul_patch'
+      | 'bootstrap_complete';
+    targetSection?: string;
+    payload?: Record<string, unknown>;
+    recordedAt?: string;
+    occurredAt?: string;
+    reason?: string;
   };
   requestId: string;
 }
@@ -240,6 +256,13 @@ export interface MemoryActionResult {
       groupFolder: string;
       path: string;
       content: string;
+    };
+    mutation?: {
+      targetPath: string;
+      operation: string;
+      status: 'applied' | 'rejected';
+      message: string;
+      entryId?: string;
     };
   };
   error?: string;
