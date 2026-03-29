@@ -34,14 +34,19 @@ interface DoctorReport {
 }
 
 const REQUIRED_WORKSPACE_FILES = [
-  'AGENTS.md',
+  'NANO.md',
   'SOUL.md',
+  'TODOS.md',
+  'HEARTBEAT.md',
+  'MEMORY.md',
+] as const;
+
+const LEGACY_WORKSPACE_FILES = [
+  'AGENTS.md',
   'USER.md',
   'IDENTITY.md',
   'PRINCIPLES.md',
   'TOOLS.md',
-  'HEARTBEAT.md',
-  'MEMORY.md',
 ] as const;
 
 function levelWeight(level: CheckLevel): number {
@@ -90,6 +95,25 @@ function checkWorkspaceFiles(): CheckResult {
     id: 'workspace.files',
     level: 'pass',
     summary: 'Required workspace files are present',
+  };
+}
+
+function checkLegacyWorkspaceFiles(): CheckResult {
+  const present = LEGACY_WORKSPACE_FILES.filter((file) =>
+    fs.existsSync(path.join(MAIN_WORKSPACE_DIR, file)),
+  );
+  if (present.length === 0) {
+    return {
+      id: 'workspace.legacy_files',
+      level: 'pass',
+      summary: 'No deprecated workspace files detected',
+    };
+  }
+  return {
+    id: 'workspace.legacy_files',
+    level: 'warn',
+    summary: 'Deprecated legacy workspace files detected',
+    detail: present.join(', '),
   };
 }
 
@@ -368,6 +392,7 @@ export function buildDoctorReport(): DoctorReport {
     checkStateDirs(),
     checkRuntimeProfile(),
     checkWorkspaceFiles(),
+    checkLegacyWorkspaceFiles(),
     checkWorkspaceBootstrapCaps(),
     checkWorkspaceBootState(),
     checkHeartbeatConfig(),

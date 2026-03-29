@@ -805,7 +805,7 @@ function buildOnboardingInterviewPrompt(params: {
     '[ONBOARDING INTERVIEW MODE]',
     'Main workspace onboarding is pending. Continue first-run interview flow now.',
     'Use BOOTSTRAP.md instructions. Ask one concise question at a time and keep the exchange practical.',
-    'Update USER.md, IDENTITY.md, SOUL.md, PRINCIPLES.md, and TOOLS.md as needed based on user responses.',
+    'Update SOUL.md and TODOS.md based on user responses. Promote durable facts and decisions into MEMORY.md.',
     `When onboarding is complete, remove BOOTSTRAP.md and include the token ${MAIN_ONBOARDING_COMPLETION_TOKEN} exactly once on its own line in your final reply.`,
     '',
     '[LATEST USER MESSAGE]',
@@ -3270,7 +3270,7 @@ async function runAgent(
   codingHint: CodingHint = 'none',
   requestId?: string,
   runtimePrefs: ChatRunPreferences = {},
-  options: { suppressErrorReply?: boolean } = {},
+  options: { suppressErrorReply?: boolean; isHeartbeatTask?: boolean } = {},
   abortSignal?: AbortSignal,
 ): Promise<{
   result: string | null;
@@ -3361,6 +3361,7 @@ async function runAgent(
       assistantName: ASSISTANT_NAME,
       codingHint,
       requestId,
+      isHeartbeatTask: options.isHeartbeatTask === true,
       extraSystemPrompt,
       provider: runtimePrefs.provider,
       model: runtimePrefs.model,
@@ -5031,7 +5032,7 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       'auto',
       requestId,
       state.chatRunPreferences[mainChatJid] || {},
-      { suppressErrorReply: true },
+      { suppressErrorReply: true, isHeartbeatTask: true },
       abortController.signal,
     );
     if (!run.ok) {

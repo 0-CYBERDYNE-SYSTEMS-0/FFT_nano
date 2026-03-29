@@ -118,10 +118,10 @@ function usage(): string {
     '  --workspace <dir>            Main workspace path (default: FFT_NANO_MAIN_WORKSPACE_DIR or ~/nano)',
     '  --env-path <file>            Env file to update (default: ./.env)',
     '  --operator <name>            Primary operator name',
-    '  --assistant-name <name>      Assistant name for IDENTITY.md',
+    '  --assistant-name <name>      Assistant name for SOUL.md',
     '  --non-interactive            Run without prompts',
     '  --accept-risk                Required with --non-interactive',
-    '  --force                      Rewrite USER/IDENTITY/SOUL even if customized',
+    '  --force                      Rewrite SOUL/TODOS even if customized',
     '',
     'Wizard options:',
     '  --flow <quickstart|advanced|manual>',
@@ -372,27 +372,14 @@ function readLineIfExists(filePath: string): string {
   }
 }
 
-function parseExistingOperator(userBody: string): string {
-  const match = /Primary operator:\s*(.+?)(?:\.)?\s*$/im.exec(userBody);
+function parseExistingOperator(soulBody: string): string {
+  const match = /copilot for\s+(.+?)(?:\.)?\s*$/im.exec(soulBody);
   return match?.[1]?.trim() || '';
 }
 
-function parseExistingAssistant(identityBody: string): string {
-  const match = /Name:\s*(.+)/i.exec(identityBody);
+function parseExistingAssistant(soulBody: string): string {
+  const match = /You are\s+([^,]+),/i.exec(soulBody);
   return match?.[1]?.trim() || '';
-}
-
-function renderUser(operator: string): string {
-  return ['# USER', '', `Primary operator: ${operator}.`].join('\n');
-}
-
-function renderIdentity(assistantName: string): string {
-  return [
-    '# IDENTITY',
-    '',
-    `Name: ${assistantName}`,
-    'Role: Main orchestrator + coding-capable assistant',
-  ].join('\n');
 }
 
 function renderSoul(operator: string, assistantName: string): string {
@@ -409,26 +396,55 @@ function renderSoul(operator: string, assistantName: string): string {
   ].join('\n');
 }
 
-function shouldRewriteFile(existingBody: string, force: boolean): boolean {
-  if (force) return true;
-  if (!existingBody.trim()) return true;
-  return /\[set during onboarding\]/i.test(existingBody);
+function renderMissionControlTodo(operator: string, assistantName: string): string {
+  return [
+    '# TODOS.md = MISSION CONTROL: Onboarding',
+    '',
+    '## 🚀 ACTIVE OBJECTIVE',
+    '> Complete onboarding and begin validated execution.',
+    '',
+    '## 📋 TASK BOARD',
+    `- [ ] Confirm mission scope with ${operator} <!-- id:T-onboarding-scope status:PENDING -->`,
+    `- [ ] Start first active task as ${assistantName} <!-- id:T-first-task status:PENDING -->`,
+    '',
+    '## 🤖 SUB-AGENTS & PROCESSES',
+    '- [None]',
+    '',
+    '## ⏳ BLOCKED / WAITING',
+    '- [None]',
+    '',
+    '## 📝 MISSION LOG',
+    '- [00:00] - Onboarding mission initialized.',
+  ].join('\n');
+}
+
+const INITIAL_MISSION_TODO_TEMPLATE = [
+  '# TODOS.md = MISSION CONTROL: Initial Mission',
+  '',
+  '## 🚀 ACTIVE OBJECTIVE',
+  '> Ship the next validated increment safely.',
+  '',
+  '## 📋 TASK BOARD',
+  '- [ ] Define first active task <!-- id:T1 status:PENDING -->',
+  '',
+  '## 🤖 SUB-AGENTS & PROCESSES',
+  '- [None]',
+  '',
+  '## ⏳ BLOCKED / WAITING',
+  '- [None]',
+  '',
+  '## 📝 MISSION LOG',
+  '- [00:00] - Mission control initialized.',
+].join('\n');
+
+function isPristineOnboardingTodos(body: string): boolean {
+  return /^# TODOS\.md = MISSION CONTROL: Onboarding\n\n## 🚀 ACTIVE OBJECTIVE\n> Complete onboarding and begin validated execution\.\n\n## 📋 TASK BOARD\n- \[ \] Confirm mission scope with .+ <!-- id:T-onboarding-scope status:PENDING -->\n- \[ \] Start first active task as .+ <!-- id:T-first-task status:PENDING -->\n\n## 🤖 SUB-AGENTS & PROCESSES\n- \[None\]\n\n## ⏳ BLOCKED \/ WAITING\n- \[None\]\n\n## 📝 MISSION LOG\n- \[00:00\] - Onboarding mission initialized\.$/.test(
+    body,
+  );
 }
 
 function normalizeBody(body: string): string {
   return body.replace(/\r\n/g, '\n').trim();
-}
-
-function shouldRewriteIdentityFile(
-  existingBody: string,
-  force: boolean,
-): boolean {
-  if (shouldRewriteFile(existingBody, force)) return true;
-  const normalized = normalizeBody(existingBody);
-  if (normalized === normalizeBody(renderIdentity(ASSISTANT_NAME))) return true;
-  if (normalized === normalizeBody(renderIdentity('FarmFriend'))) return true;
-  if (normalized === normalizeBody(renderIdentity('fft_nano'))) return true;
-  return false;
 }
 
 function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
@@ -446,6 +462,15 @@ function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
   ) {
     return true;
   }
+  return false;
+}
+
+function shouldRewriteTodosFile(existingBody: string, force: boolean): boolean {
+  if (force) return true;
+  if (!existingBody.trim()) return true;
+  const normalized = normalizeBody(existingBody);
+  if (normalized === normalizeBody(INITIAL_MISSION_TODO_TEMPLATE)) return true;
+  if (isPristineOnboardingTodos(normalized)) return true;
   return false;
 }
 
@@ -776,12 +801,10 @@ export async function runOnboarding(
   const envPath = opts.envPath || getDefaultDotEnvPath(process.cwd());
   const envMap = loadDotEnvMap(envPath);
 
-  const userPath = path.join(workspace, 'USER.md');
-  const identityPath = path.join(workspace, 'IDENTITY.md');
   const soulPath = path.join(workspace, 'SOUL.md');
-  const userCurrent = readLineIfExists(userPath);
-  const identityCurrent = readLineIfExists(identityPath);
+  const todosPath = path.join(workspace, 'TODOS.md');
   const soulCurrent = readLineIfExists(soulPath);
+  const todosCurrent = readLineIfExists(todosPath);
   const explicitOperator = opts.operator?.trim() || '';
   const explicitAssistantName = opts.assistantName?.trim() || '';
 
@@ -798,11 +821,11 @@ export async function runOnboarding(
 
   const operatorSeed =
     explicitOperator ||
-    parseExistingOperator(userCurrent) ||
+    parseExistingOperator(soulCurrent) ||
     'Primary Operator';
   const assistantSeed =
     explicitAssistantName ||
-    parseExistingAssistant(identityCurrent) ||
+    parseExistingAssistant(soulCurrent) ||
     ASSISTANT_NAME;
   const resolved = await resolvePromptValues({
     operatorSeed,
@@ -880,20 +903,17 @@ export async function runOnboarding(
     upsertDotEnv(envPath, updates);
   }
 
-  if (shouldRewriteFile(userCurrent, opts.force)) {
-    fs.writeFileSync(userPath, `${renderUser(resolved.operator)}\n`, 'utf-8');
-  }
-  if (shouldRewriteIdentityFile(identityCurrent, opts.force)) {
-    fs.writeFileSync(
-      identityPath,
-      `${renderIdentity(resolved.assistantName)}\n`,
-      'utf-8',
-    );
-  }
   if (shouldRewriteSoulFile(soulCurrent, opts.force)) {
     fs.writeFileSync(
       soulPath,
       `${renderSoul(resolved.operator, resolved.assistantName)}\n`,
+      'utf-8',
+    );
+  }
+  if (shouldRewriteTodosFile(todosCurrent, opts.force)) {
+    fs.writeFileSync(
+      todosPath,
+      `${renderMissionControlTodo(resolved.operator, resolved.assistantName)}\n`,
       'utf-8',
     );
   }
