@@ -6,6 +6,10 @@ import { GROUPS_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
 const MEMORY_FILE_NAME = 'MEMORY.md';
 const MEMORY_DIR_NAME = 'memory';
 const SOUL_FILE_NAME = 'SOUL.md';
+const NANO_FILE_NAME = 'NANO.md';
+const TODOS_FILE_NAME = 'TODOS.md';
+const BOOTSTRAP_FILE_NAME = 'BOOTSTRAP.md';
+const HEARTBEAT_FILE_NAME = 'HEARTBEAT.md';
 
 export function resolveGroupWorkspaceDir(groupFolder: string): string {
   if (groupFolder === MAIN_GROUP_FOLDER) return MAIN_WORKSPACE_DIR;
@@ -14,6 +18,22 @@ export function resolveGroupWorkspaceDir(groupFolder: string): string {
 
 export function resolveSoulPath(groupFolder: string): string {
   return path.join(resolveGroupWorkspaceDir(groupFolder), SOUL_FILE_NAME);
+}
+
+export function resolveNanoPath(groupFolder: string): string {
+  return path.join(resolveGroupWorkspaceDir(groupFolder), NANO_FILE_NAME);
+}
+
+export function resolveTodosPath(groupFolder: string): string {
+  return path.join(resolveGroupWorkspaceDir(groupFolder), TODOS_FILE_NAME);
+}
+
+export function resolveBootstrapPath(groupFolder: string): string {
+  return path.join(resolveGroupWorkspaceDir(groupFolder), BOOTSTRAP_FILE_NAME);
+}
+
+export function resolveHeartbeatPath(groupFolder: string): string {
+  return path.join(resolveGroupWorkspaceDir(groupFolder), HEARTBEAT_FILE_NAME);
 }
 
 export function resolveMemoryPath(groupFolder: string): string {
@@ -49,7 +69,15 @@ export function ensureMemoryScaffold(
 export function isAllowedMemoryRelativePath(relPath: string): boolean {
   if (!relPath) return false;
   const normalized = relPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
-  if (normalized === 'MEMORY.md' || normalized === 'memory.md') {
+  if (
+    normalized === 'NANO.md' ||
+    normalized === 'SOUL.md' ||
+    normalized === 'TODOS.md' ||
+    normalized === 'BOOTSTRAP.md' ||
+    normalized === 'HEARTBEAT.md' ||
+    normalized === 'MEMORY.md' ||
+    normalized === 'memory.md'
+  ) {
     return true;
   }
 

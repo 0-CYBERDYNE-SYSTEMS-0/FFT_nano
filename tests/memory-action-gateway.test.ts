@@ -152,3 +152,147 @@ test('memory_search sessions returns transcript hits and respects main override'
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('memory_write todo_upsert_task is deterministic for same entry id', async () => {
+  const groupFolder = `todo-write-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  try {
+    fs.mkdirSync(groupDir, { recursive: true });
+    const registeredGroups = makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]);
+
+    const first = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'w1',
+        params: {
+          intent: 'todo_upsert_task',
+          payload: {
+            entryId: 'T-demo',
+            text: 'Ship memory contract migration',
+            status: 'PENDING',
+          },
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups,
+      },
+    );
+    assert.equal(first.status, 'success');
+
+    const second = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'w2',
+        params: {
+          intent: 'todo_upsert_task',
+          payload: {
+            entryId: 'T-demo',
+            text: 'Ship memory contract migration',
+            status: 'DONE',
+          },
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups,
+      },
+    );
+    assert.equal(second.status, 'success');
+
+    const todos = fs.readFileSync(path.join(groupDir, 'TODOS.md'), 'utf-8');
+    const matches = todos.match(/id:T-demo/g) || [];
+    assert.equal(matches.length, 1);
+    assert.match(todos, /status:DONE/);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
+test('memory_write memory_append rejects non-durable target paths', async () => {
+  const result = await executeMemoryAction(
+    {
+      type: 'memory_action',
+      action: 'memory_write',
+      requestId: 'w3',
+      params: {
+        intent: 'memory_append',
+        payload: {
+          path: 'TODOS.md',
+          content: 'should fail',
+        },
+      },
+    },
+    {
+      sourceGroup: 'group-a',
+      isMain: false,
+      registeredGroups: makeRegisteredGroups([{ jid: 'chat-a', folder: 'group-a' }]),
+    },
+  );
+
+  assert.equal(result.status, 'error');
+  assert.match(result.error || '', /writable durable memory file/i);
+});
+
+test('memory_write todo_move_task keeps task-board formatting on in-place updates', async () => {
+  const groupFolder = `todo-move-in-place-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  try {
+    fs.mkdirSync(groupDir, { recursive: true });
+    const registeredGroups = makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]);
+
+    const seed = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'w4-seed',
+        params: {
+          intent: 'todo_upsert_task',
+          payload: {
+            entryId: 'T-demo',
+            text: 'Ship memory contract migration',
+            status: 'PENDING',
+          },
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups,
+      },
+    );
+    assert.equal(seed.status, 'success');
+
+    const moved = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'w4-move',
+        params: {
+          intent: 'todo_move_task',
+          payload: {
+            entryId: 'T-demo',
+            to: 'task_board',
+            status: 'DONE',
+          },
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups,
+      },
+    );
+    assert.equal(moved.status, 'success');
+
+    const todos = fs.readFileSync(path.join(groupDir, 'TODOS.md'), 'utf-8');
+    assert.match(todos, /- \[x\] Ship memory contract migration <!-- id:T-demo status:DONE -->/);
+    assert.doesNotMatch(todos, /- \[x\] - \[ \] Ship memory contract migration/);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});

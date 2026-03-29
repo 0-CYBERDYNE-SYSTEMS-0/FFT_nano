@@ -32,6 +32,7 @@ export interface SystemPromptInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  isHeartbeatTask?: boolean;
   assistantName?: string;
   provider?: string;
   model?: string;
@@ -114,13 +115,9 @@ const DEFAULT_MEMORY_CONTEXT_MAX_CHARS = 20_000;
 const DEFAULT_SKILL_CATALOG_MAX_CHARS = 6_000;
 
 const MAIN_BOOTSTRAP_ORDER = [
-  'AGENTS.md',
+  'NANO.md',
   'SOUL.md',
-  'USER.md',
-  'IDENTITY.md',
-  'PRINCIPLES.md',
-  'TOOLS.md',
-  'HEARTBEAT.md',
+  'TODOS.md',
   'BOOTSTRAP.md',
   'MEMORY.md',
 ] as const;
@@ -269,6 +266,7 @@ function addContextEntry(params: {
 function buildMainContextEntries(params: {
   readFileIfExists: (filePath: string) => string | null;
   now: Date;
+  includeHeartbeat: boolean;
   fileMaxChars: number;
   totalMaxChars: number;
   groupDir: string;
@@ -287,6 +285,18 @@ function buildMainContextEntries(params: {
       path: `${params.groupDir}/${name}`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+    });
+  }
+
+  if (params.includeHeartbeat && remaining > 0) {
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: 'HEARTBEAT.md',
+      path: `${params.groupDir}/HEARTBEAT.md`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
     });
   }
 
@@ -317,6 +327,7 @@ function buildMainContextEntries(params: {
 
 function buildNonMainContextEntries(params: {
   readFileIfExists: (filePath: string) => string | null;
+  includeHeartbeat: boolean;
   fileMaxChars: number;
   totalMaxChars: number;
   includeMemoryFallback: boolean;
@@ -328,6 +339,26 @@ function buildNonMainContextEntries(params: {
 } {
   const entries: ContextEntry[] = [];
   let remaining = params.totalMaxChars;
+
+  remaining = addContextEntry({
+    entries,
+    readFileIfExists: params.readFileIfExists,
+    label: 'global/NANO.md',
+    path: `${params.globalDir}/NANO.md`,
+    fileMaxChars: params.fileMaxChars,
+    remainingTotalChars: remaining,
+  });
+  if (remaining > 0) {
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: 'group/NANO.md',
+      path: `${params.groupDir}/NANO.md`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
+    });
+  }
 
   remaining = addContextEntry({
     entries,
@@ -352,10 +383,11 @@ function buildNonMainContextEntries(params: {
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
-      label: 'global/PRINCIPLES.md',
-      path: `${params.globalDir}/PRINCIPLES.md`,
+      label: 'global/TODOS.md',
+      path: `${params.globalDir}/TODOS.md`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+      includeMissing: false,
     });
   }
 
@@ -363,10 +395,23 @@ function buildNonMainContextEntries(params: {
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
-      label: 'group/PRINCIPLES.md',
-      path: `${params.groupDir}/PRINCIPLES.md`,
+      label: 'group/TODOS.md',
+      path: `${params.groupDir}/TODOS.md`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+      includeMissing: false,
+    });
+  }
+
+  if (params.includeHeartbeat && remaining > 0) {
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: 'group/HEARTBEAT.md',
+      path: `${params.groupDir}/HEARTBEAT.md`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
     });
   }
 
@@ -535,6 +580,9 @@ function renderBasePrompt(params: {
     `- ${params.paths.ipcDir} is host bridge for outbound messages and scheduler actions.`,
   );
   lines.push(
+    `- Active mission state belongs in ${params.paths.groupDir}/TODOS.md.`,
+  );
+  lines.push(
     `- Durable memory belongs in ${params.paths.groupDir}/MEMORY.md and ${params.paths.groupDir}/memory/*.md.`,
   );
   lines.push('- Keep SOUL.md stable; do not use it as compaction log storage.');
@@ -607,6 +655,15 @@ function renderBasePrompt(params: {
     `Read task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
   );
   lines.push('');
+  lines.push('## Memory Action IPC');
+  lines.push(
+    `Write memory action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
+  );
+  lines.push('- Search: {"type":"memory_action","action":"memory_search","requestId":"<id>","params":{"query":"...","topK":8,"sources":"all"}}');
+  lines.push('- Get: {"type":"memory_action","action":"memory_get","requestId":"<id>","params":{"path":"MEMORY.md"}}');
+  lines.push('- Write: {"type":"memory_action","action":"memory_write","requestId":"<id>","params":{"intent":"todo_upsert_task","payload":{"entryId":"T1","text":"...","status":"PENDING"}}}');
+  lines.push('For writes, wait for status=success before reporting completion to the user.');
+  lines.push('');
   lines.push('## Output Style');
   lines.push(
     'For user-facing replies, prefer short paragraphs and plain bullets.',
@@ -660,6 +717,7 @@ function renderOverlayPrompt(params: {
         assistant_name: params.assistantName,
         is_main: params.input.isMain,
         is_scheduled_task: params.input.isScheduledTask === true,
+        is_heartbeat_task: params.input.isHeartbeatTask === true,
         coding_hint: params.input.codingHint,
         request_id: params.input.requestId || null,
         provider_override: params.input.provider || null,
@@ -754,7 +812,10 @@ export function buildSystemPrompt(
   const assistantName =
     (input.assistantName || 'FarmFriend').trim() || 'FarmFriend';
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
-  const isHeartbeatRun = (input.requestId || '').startsWith('heartbeat-');
+  const isHeartbeatRun =
+    input.isHeartbeatTask === true ||
+    (input.requestId || '').startsWith('heartbeat-');
+  const includeHeartbeatContext = input.isScheduledTask === true || isHeartbeatRun;
 
   const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
   const autoDelegationEnabled =
@@ -772,12 +833,14 @@ export function buildSystemPrompt(
     ? buildMainContextEntries({
         readFileIfExists,
         now,
+        includeHeartbeat: includeHeartbeatContext,
         fileMaxChars,
         totalMaxChars,
         groupDir: paths.groupDir,
       })
     : buildNonMainContextEntries({
         readFileIfExists,
+        includeHeartbeat: includeHeartbeatContext,
         fileMaxChars,
         totalMaxChars,
         includeMemoryFallback: !providedMemoryContext,
