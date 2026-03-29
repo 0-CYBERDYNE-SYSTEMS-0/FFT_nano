@@ -26,7 +26,7 @@ function nonInteractiveBase(workspace: string) {
   };
 }
 
-test('runOnboarding writes USER/IDENTITY and preserves BOOTSTRAP for first-run ritual', async () => {
+test('runOnboarding writes SOUL/TODOS and preserves BOOTSTRAP for first-run ritual', async () => {
   const workspace = makeTmpWorkspace();
   const result = await runOnboarding({
     ...nonInteractiveBase(workspace),
@@ -35,11 +35,13 @@ test('runOnboarding writes USER/IDENTITY and preserves BOOTSTRAP for first-run r
   });
 
   assert.equal(result.workspace, workspace);
-  assert.match(fs.readFileSync(path.join(workspace, 'USER.md'), 'utf-8'), /Primary operator: Alex\./);
-  assert.match(fs.readFileSync(path.join(workspace, 'IDENTITY.md'), 'utf-8'), /Name: OpenClaw/);
   assert.match(
     fs.readFileSync(path.join(workspace, 'SOUL.md'), 'utf-8'),
     /You are OpenClaw, a pragmatic and technically rigorous copilot for Alex\./,
+  );
+  assert.match(
+    fs.readFileSync(path.join(workspace, 'TODOS.md'), 'utf-8'),
+    /MISSION CONTROL: Onboarding/,
   );
   assert.equal(fs.existsSync(path.join(workspace, 'BOOTSTRAP.md')), true);
 
@@ -74,7 +76,7 @@ test('runOnboarding with --force is deterministic for same inputs', async () => 
   );
 
   assert.equal(secondState, firstState);
-  assert.match(fs.readFileSync(path.join(workspace, 'USER.md'), 'utf-8'), /Primary operator: Scrim\./);
+  assert.match(fs.readFileSync(path.join(workspace, 'SOUL.md'), 'utf-8'), /copilot for Scrim/i);
 });
 
 test('runOnboarding non-interactive requires explicit operator and assistant name', async () => {
@@ -95,12 +97,10 @@ test('runOnboarding non-interactive does not overwrite customized files without 
     assistantName: 'OpenClaw',
   });
 
-  const userPath = path.join(workspace, 'USER.md');
-  const identityPath = path.join(workspace, 'IDENTITY.md');
   const soulPath = path.join(workspace, 'SOUL.md');
-  fs.writeFileSync(userPath, '# USER\n\nPrimary operator: Custom Operator.\n', 'utf-8');
-  fs.writeFileSync(identityPath, '# IDENTITY\n\nName: CustomBot\n', 'utf-8');
+  const todosPath = path.join(workspace, 'TODOS.md');
   fs.writeFileSync(soulPath, '# SOUL\n\nCustom soul profile.\n', 'utf-8');
+  fs.writeFileSync(todosPath, '# TODOS.md = MISSION CONTROL: Custom\n', 'utf-8');
 
   await runOnboarding({
     ...nonInteractiveBase(workspace),
@@ -108,12 +108,8 @@ test('runOnboarding non-interactive does not overwrite customized files without 
     assistantName: 'DifferentBot',
   });
 
-  assert.equal(
-    fs.readFileSync(userPath, 'utf-8'),
-    '# USER\n\nPrimary operator: Custom Operator.\n',
-  );
-  assert.equal(fs.readFileSync(identityPath, 'utf-8'), '# IDENTITY\n\nName: CustomBot\n');
   assert.equal(fs.readFileSync(soulPath, 'utf-8'), '# SOUL\n\nCustom soul profile.\n');
+  assert.equal(fs.readFileSync(todosPath, 'utf-8'), '# TODOS.md = MISSION CONTROL: Custom\n');
 });
 
 test('runOnboarding applies explicit assistant name to default scaffold without force', async () => {
@@ -124,7 +120,36 @@ test('runOnboarding applies explicit assistant name to default scaffold without 
     assistantName: 'AgriBot',
   });
 
-  assert.match(fs.readFileSync(path.join(workspace, 'IDENTITY.md'), 'utf-8'), /Name: AgriBot/);
+  assert.match(fs.readFileSync(path.join(workspace, 'SOUL.md'), 'utf-8'), /You are AgriBot,/);
+  assert.match(
+    fs.readFileSync(path.join(workspace, 'TODOS.md'), 'utf-8'),
+    /Start first active task as AgriBot/,
+  );
+});
+
+test('runOnboarding non-force rerun preserves customized TODOS mission board', async () => {
+  const workspace = makeTmpWorkspace();
+  await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+  });
+
+  const todosPath = path.join(workspace, 'TODOS.md');
+  const customLine = '- [ ] Keep my custom mission item <!-- id:T-custom status:PENDING -->';
+  const currentTodos = fs.readFileSync(todosPath, 'utf-8').trimEnd();
+  fs.writeFileSync(todosPath, `${currentTodos}\n${customLine}\n`, 'utf-8');
+
+  await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    operator: 'Different Name',
+    assistantName: 'DifferentBot',
+    force: false,
+  });
+
+  const after = fs.readFileSync(todosPath, 'utf-8');
+  assert.match(after, /# TODOS\.md = MISSION CONTROL: Onboarding/);
+  assert.match(after, /Keep my custom mission item/);
 });
 
 test('runOnboarding non-interactive requires --accept-risk', async () => {

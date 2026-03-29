@@ -5,28 +5,21 @@ import { createHash } from 'crypto';
 import { PARITY_CONFIG } from './config.js';
 
 export const WORKSPACE_TEMPLATE_FILENAMES = [
-  'AGENTS.md',
+  'NANO.md',
   'SOUL.md',
-  'USER.md',
-  'IDENTITY.md',
-  'PRINCIPLES.md',
-  'TOOLS.md',
+  'TODOS.md',
   'HEARTBEAT.md',
   'BOOT.md',
   'BOOTSTRAP.md',
   'MEMORY.md',
 ] as const;
 
-export type WorkspaceTemplateFileName =
-  (typeof WORKSPACE_TEMPLATE_FILENAMES)[number];
+export type WorkspaceTemplateFileName = (typeof WORKSPACE_TEMPLATE_FILENAMES)[number];
 
 const REQUIRED_BASE_FILES: WorkspaceTemplateFileName[] = [
-  'AGENTS.md',
+  'NANO.md',
   'SOUL.md',
-  'USER.md',
-  'IDENTITY.md',
-  'PRINCIPLES.md',
-  'TOOLS.md',
+  'TODOS.md',
   'HEARTBEAT.md',
   'MEMORY.md',
 ];
@@ -45,72 +38,48 @@ export interface WorkspaceOnboardingState {
 }
 
 const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
-  'AGENTS.md': [
-    '# FFT_nano Main Workspace',
+  'NANO.md': [
+    '# NANO',
     '',
-    'Session start order:',
-    '1. Read SOUL.md',
-    '2. Read USER.md',
-    '3. Read IDENTITY.md',
-    '4. Read PRINCIPLES.md',
-    '5. Read TOOLS.md',
-    '6. Read HEARTBEAT.md',
-    '7. Read BOOTSTRAP.md (if present)',
-    '8. Read MEMORY.md',
+    'Nano Core runtime contract.',
     '',
-    '## Operational Behavior',
+    'Session context order:',
+    '1. Read NANO.md',
+    '2. Read SOUL.md',
+    '3. Read TODOS.md',
+    '4. Read BOOTSTRAP.md (if present)',
+    '5. Read MEMORY.md',
     '',
-    '### Long Tasks',
-    'When a request requires significant work (research, multiple steps, file operations), send a quick acknowledgment first:',
-    '1. Send a brief message: what you understood and what you will do',
-    '2. Do the work',
-    '3. Exit with the final answer',
-    'This keeps users informed instead of waiting in silence.',
+    'Heartbeat and scheduled maintenance runs also read HEARTBEAT.md.',
     '',
-    '### Scheduled Tasks',
-    'When running as a scheduled task (no direct user message), your return value is only logged internally - it won\'t be sent to the user. Use IPC messaging if you need to communicate results.',
+    'Memory policy:',
+    '- Durable memory belongs in MEMORY.md and memory/*.md.',
+    '- Keep SOUL.md stable; do not use it as compaction log storage.',
+    '- TODOS.md is mission control for active execution state.',
     '',
-    '### Memory Organization',
-    'When you learn something important:',
-    '- Create structured memory files (e.g., `crop-cycles.md`, `equipment.md`, `yields.md`)',
-    '- Split files larger than 500 lines into folders',
-    '- Index new memory files at the top of MEMORY.md',
-    '',
-    '### Execution Stance',
+    'Execution stance:',
     '- Use tools to verify claims and perform edits.',
     '- Prefer deterministic, testable changes.',
     '- Keep user-facing updates concise and concrete.',
   ].join('\n'),
-  'SOUL.md': [
-    '# SOUL',
+  'SOUL.md': ['# SOUL', '', 'You are concise, practical, and technically rigorous.'].join('\n'),
+  'TODOS.md': [
+    '# TODOS.md = MISSION CONTROL: Initial Mission',
     '',
-    'You are FarmFriend: an agricultural assistant. You help AMD farmers run operations with minimal friction: planning, logging, reminders, troubleshooting, and decision support.',
+    '## 🚀 ACTIVE OBJECTIVE',
+    '> Ship the next validated increment safely.',
     '',
-    '## Role',
-    '- Name: FarmFriend',
-    '- Primary function: AMD/farm operations assistant',
-    '- Tone: concise, practical, technically rigorous',
-  ].join('\n'),
-  'USER.md': ['# USER', '', 'Primary operator: [set during onboarding].'].join(
-    '\n',
-  ),
-  'IDENTITY.md': [
-    '# IDENTITY',
+    '## 📋 TASK BOARD',
+    '- [ ] Define first active task <!-- id:T1 status:PENDING -->',
     '',
-    'Name: FarmFriend',
-    'Role: Main orchestrator + coding-capable assistant',
-  ].join('\n'),
-  'PRINCIPLES.md': [
-    '# PRINCIPLES',
+    '## 🤖 SUB-AGENTS & PROCESSES',
+    '- [None]',
     '',
-    '- Be truthful about tool usage and edits.',
-    '- Prefer deterministic, testable changes.',
-    '- Ask clarifying questions before high-impact external actions.',
-  ].join('\n'),
-  'TOOLS.md': [
-    '# TOOLS',
+    '## ⏳ BLOCKED / WAITING',
+    '- [None]',
     '',
-    'Local operator notes for tool conventions go here.',
+    '## 📝 MISSION LOG',
+    '- [00:00] - Mission control initialized.',
   ].join('\n'),
   'HEARTBEAT.md': [
     '# HEARTBEAT',
@@ -131,17 +100,24 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '',
     'First-run ritual:',
     '- Start conversationally: "Hey, I just came online. Who am I? Who are you?"',
-    '- Learn and record assistant identity and user identity.',
-    '- Capture preferences and boundaries in SOUL.md.',
+    '- Capture durable behavioral guidance in SOUL.md.',
+    '- Initialize mission state in TODOS.md.',
+    '- Promote durable facts/decisions into MEMORY.md.',
     '- Keep the flow practical and concise.',
     '- Delete this file after the ritual is complete.',
   ].join('\n'),
-  'MEMORY.md': [
-    '# MEMORY',
-    '',
-    'Durable facts, decisions, and compaction summaries belong here.',
-  ].join('\n'),
+  'MEMORY.md': ['# MEMORY', '', 'Durable facts, decisions, and compaction summaries belong here.'].join(
+    '\n',
+  ),
 };
+
+const LEGACY_WORKSPACE_FILES = [
+  'AGENTS.md',
+  'USER.md',
+  'IDENTITY.md',
+  'PRINCIPLES.md',
+  'TOOLS.md',
+] as const;
 
 function stripFrontMatter(content: string): string {
   if (!content.startsWith('---')) return content;
@@ -159,9 +135,51 @@ function readIfExists(filePath: string): string | null {
   }
 }
 
-function resolveWorkspaceTemplateDir(
-  explicitTemplateDir?: string,
-): string | null {
+function mergeLegacyIntoSoul(params: {
+  workspaceDir: string;
+  soulPath: string;
+  soulTemplate: string;
+}): void {
+  const soulCurrent = (readIfExists(params.soulPath) || '').trimEnd();
+  // Do not merge legacy files into customized SOUL profiles.
+  if (soulCurrent && soulCurrent !== params.soulTemplate.trimEnd()) return;
+  const sections: string[] = [];
+  for (const fileName of LEGACY_WORKSPACE_FILES) {
+    const raw = readIfExists(path.join(params.workspaceDir, fileName));
+    if (!raw || !raw.trim()) continue;
+    sections.push(`## Legacy ${fileName}\n${raw.trim()}`);
+  }
+  if (sections.length === 0) return;
+  if (soulCurrent.includes('## Legacy AGENTS.md')) return;
+  const merged = [soulCurrent || '# SOUL', '', ...sections].join('\n\n').trimEnd();
+  fs.writeFileSync(params.soulPath, `${merged}\n`, 'utf-8');
+}
+
+function migrateLegacyWorkspaceFiles(params: {
+  workspaceDir: string;
+  templates: Record<WorkspaceTemplateFileName, string>;
+}): void {
+  const nanoPath = path.join(params.workspaceDir, 'NANO.md');
+  const agentsPath = path.join(params.workspaceDir, 'AGENTS.md');
+  if (!fs.existsSync(nanoPath) && fs.existsSync(agentsPath)) {
+    const legacy = (readIfExists(agentsPath) || '').trim();
+    const next = [
+      params.templates['NANO.md'].trimEnd(),
+      '',
+      '## Legacy AGENTS.md Snapshot',
+      legacy || '[empty]',
+    ].join('\n');
+    fs.writeFileSync(nanoPath, `${next}\n`, 'utf-8');
+  }
+
+  mergeLegacyIntoSoul({
+    workspaceDir: params.workspaceDir,
+    soulPath: path.join(params.workspaceDir, 'SOUL.md'),
+    soulTemplate: params.templates['SOUL.md'],
+  });
+}
+
+function resolveWorkspaceTemplateDir(explicitTemplateDir?: string): string | null {
   const envTemplateDir = process.env.FFT_NANO_WORKSPACE_TEMPLATE_DIR?.trim();
   const candidates = [
     explicitTemplateDir?.trim(),
@@ -175,9 +193,7 @@ function resolveWorkspaceTemplateDir(
   return null;
 }
 
-function loadTemplates(
-  explicitTemplateDir?: string,
-): Record<WorkspaceTemplateFileName, string> {
+function loadTemplates(explicitTemplateDir?: string): Record<WorkspaceTemplateFileName, string> {
   const templateDir = resolveWorkspaceTemplateDir(explicitTemplateDir);
   const out = { ...DEFAULT_TEMPLATE_BODIES };
   if (!templateDir) return out;
@@ -192,11 +208,7 @@ function loadTemplates(
 }
 
 function resolveWorkspaceStatePath(workspaceDir: string): string {
-  return path.join(
-    workspaceDir,
-    WORKSPACE_STATE_DIRNAME,
-    WORKSPACE_STATE_FILENAME,
-  );
+  return path.join(workspaceDir, WORKSPACE_STATE_DIRNAME, WORKSPACE_STATE_FILENAME);
 }
 
 function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
@@ -208,9 +220,7 @@ function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
     return {
       version: WORKSPACE_STATE_VERSION,
       bootstrapSeededAt:
-        typeof parsed.bootstrapSeededAt === 'string'
-          ? parsed.bootstrapSeededAt
-          : undefined,
+        typeof parsed.bootstrapSeededAt === 'string' ? parsed.bootstrapSeededAt : undefined,
       onboardingCompletedAt:
         typeof parsed.onboardingCompletedAt === 'string'
           ? parsed.onboardingCompletedAt
@@ -224,17 +234,16 @@ function readWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
           ? parsed.bootExecutedAt
           : undefined,
       bootHash:
-        typeof parsed.bootHash === 'string' ? parsed.bootHash : undefined,
+        typeof parsed.bootHash === 'string'
+          ? parsed.bootHash
+          : undefined,
     };
   } catch {
     return { version: WORKSPACE_STATE_VERSION };
   }
 }
 
-function writeWorkspaceState(
-  workspaceDir: string,
-  state: WorkspaceOnboardingState,
-): void {
+function writeWorkspaceState(workspaceDir: string, state: WorkspaceOnboardingState): void {
   const statePath = resolveWorkspaceStatePath(workspaceDir);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now().toString(36)}`;
@@ -242,9 +251,7 @@ function writeWorkspaceState(
   fs.renameSync(tmpPath, statePath);
 }
 
-export function readMainWorkspaceState(
-  workspaceDir: string,
-): WorkspaceOnboardingState {
+export function readMainWorkspaceState(workspaceDir: string): WorkspaceOnboardingState {
   return readWorkspaceState(workspaceDir);
 }
 
@@ -262,15 +269,11 @@ export interface MainWorkspaceOnboardingStatus {
   gateEligible: boolean;
 }
 
-export function getMainWorkspaceOnboardingStatus(
-  workspaceDir: string,
-): MainWorkspaceOnboardingStatus {
+export function getMainWorkspaceOnboardingStatus(workspaceDir: string): MainWorkspaceOnboardingStatus {
   const state = readWorkspaceState(workspaceDir);
   const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
   const bootstrapExists = fs.existsSync(bootstrapPath);
-  const pending =
-    bootstrapExists ||
-    (!!state.bootstrapSeededAt && !state.onboardingCompletedAt);
+  const pending = bootstrapExists || (!!state.bootstrapSeededAt && !state.onboardingCompletedAt);
   return {
     state,
     bootstrapExists,
@@ -279,9 +282,7 @@ export function getMainWorkspaceOnboardingStatus(
   };
 }
 
-export function isMainWorkspaceOnboardingPending(
-  workspaceDir: string,
-): boolean {
+export function isMainWorkspaceOnboardingPending(workspaceDir: string): boolean {
   return getMainWorkspaceOnboardingStatus(workspaceDir).pending;
 }
 
@@ -291,10 +292,7 @@ export function computeBootFileHash(content: string): string {
 
 function writeFileIfMissing(filePath: string, body: string): boolean {
   if (fs.existsSync(filePath)) return false;
-  fs.writeFileSync(filePath, `${body.trimEnd()}\n`, {
-    encoding: 'utf-8',
-    flag: 'wx',
-  });
+  fs.writeFileSync(filePath, `${body.trimEnd()}\n`, { encoding: 'utf-8', flag: 'wx' });
   return true;
 }
 
@@ -322,16 +320,14 @@ export function ensureMainWorkspaceBootstrap(params: {
   }
 
   const templates = loadTemplates(params.templateDir);
+  migrateLegacyWorkspaceFiles({ workspaceDir, templates });
 
   for (const fileName of REQUIRED_BASE_FILES) {
     const filePath = path.join(workspaceDir, fileName);
     writeFileIfMissing(filePath, templates[fileName]);
   }
   if (PARITY_CONFIG.workspace.enableBootMd) {
-    writeFileIfMissing(
-      path.join(workspaceDir, 'BOOT.md'),
-      templates['BOOT.md'],
-    );
+    writeFileIfMissing(path.join(workspaceDir, 'BOOT.md'), templates['BOOT.md']);
   }
 
   let state = readWorkspaceState(workspaceDir);
@@ -348,35 +344,22 @@ export function ensureMainWorkspaceBootstrap(params: {
     patchState({ bootstrapSeededAt: nowIso() });
   }
 
-  if (
-    !state.onboardingCompletedAt &&
-    state.bootstrapSeededAt &&
-    !bootstrapExists
-  ) {
+  if (!state.onboardingCompletedAt && state.bootstrapSeededAt && !bootstrapExists) {
     patchState({ onboardingCompletedAt: nowIso() });
   }
 
-  if (
-    !state.bootstrapSeededAt &&
-    !state.onboardingCompletedAt &&
-    !bootstrapExists
-  ) {
-    const userPath = path.join(workspaceDir, 'USER.md');
-    const identityPath = path.join(workspaceDir, 'IDENTITY.md');
-    const userCurrent = (readIfExists(userPath) || '').trimEnd();
-    const identityCurrent = (readIfExists(identityPath) || '').trimEnd();
-    const userTemplate = templates['USER.md'].trimEnd();
-    const identityTemplate = templates['IDENTITY.md'].trimEnd();
-
-    const onboardingAlreadyDone =
-      userCurrent !== userTemplate || identityCurrent !== identityTemplate;
+  if (!state.bootstrapSeededAt && !state.onboardingCompletedAt && !bootstrapExists) {
+    const soulPath = path.join(workspaceDir, 'SOUL.md');
+    const todosPath = path.join(workspaceDir, 'TODOS.md');
+    const soulCurrent = (readIfExists(soulPath) || '').trimEnd();
+    const todosCurrent = (readIfExists(todosPath) || '').trimEnd();
+    const soulTemplate = templates['SOUL.md'].trimEnd();
+    const todosTemplate = templates['TODOS.md'].trimEnd();
+    const onboardingAlreadyDone = soulCurrent !== soulTemplate || todosCurrent !== todosTemplate;
     if (onboardingAlreadyDone) {
       patchState({ onboardingCompletedAt: nowIso() });
     } else {
-      const createdBootstrap = writeFileIfMissing(
-        bootstrapPath,
-        templates['BOOTSTRAP.md'],
-      );
+      const createdBootstrap = writeFileIfMissing(bootstrapPath, templates['BOOTSTRAP.md']);
       bootstrapExists = fs.existsSync(bootstrapPath);
       if (createdBootstrap && !state.bootstrapGateEligibleAt) {
         patchState({ bootstrapGateEligibleAt: nowIso() });
@@ -409,10 +392,7 @@ export function completeMainWorkspaceOnboarding(
 
   const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
   const state = readWorkspaceState(workspaceDir);
-  const next: WorkspaceOnboardingState = {
-    ...state,
-    version: WORKSPACE_STATE_VERSION,
-  };
+  const next: WorkspaceOnboardingState = { ...state, version: WORKSPACE_STATE_VERSION };
   const bootstrapExists = fs.existsSync(bootstrapPath);
 
   if (params.removeBootstrapFile !== false && bootstrapExists) {

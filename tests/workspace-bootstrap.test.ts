@@ -25,9 +25,9 @@ test('fresh workspace seeds core files, BOOTSTRAP.md, and state bootstrapSeededA
     now: () => new Date('2026-02-17T10:00:00.000Z'),
   });
 
-  assert.ok(fs.existsSync(path.join(workspaceDir, 'AGENTS.md')));
-  assert.ok(fs.existsSync(path.join(workspaceDir, 'USER.md')));
-  assert.ok(fs.existsSync(path.join(workspaceDir, 'IDENTITY.md')));
+  assert.ok(fs.existsSync(path.join(workspaceDir, 'NANO.md')));
+  assert.ok(fs.existsSync(path.join(workspaceDir, 'SOUL.md')));
+  assert.ok(fs.existsSync(path.join(workspaceDir, 'TODOS.md')));
   assert.ok(fs.existsSync(path.join(workspaceDir, 'MEMORY.md')));
   assert.ok(fs.existsSync(path.join(workspaceDir, 'BOOTSTRAP.md')));
   assert.equal(state.bootstrapSeededAt, '2026-02-17T10:00:00.000Z');
@@ -39,8 +39,8 @@ test('fresh workspace seeds core files, BOOTSTRAP.md, and state bootstrapSeededA
 test('legacy/onboarded workspace does not recreate BOOTSTRAP.md and marks onboarding complete', () => {
   const workspaceDir = makeTmpWorkspace();
   fs.mkdirSync(workspaceDir, { recursive: true });
-  fs.writeFileSync(path.join(workspaceDir, 'USER.md'), '# USER\n\nPrimary operator: Alex.\n');
-  fs.writeFileSync(path.join(workspaceDir, 'IDENTITY.md'), '# IDENTITY\n\nName: AlexBot\n');
+  fs.writeFileSync(path.join(workspaceDir, 'SOUL.md'), '# SOUL\n\nCustom profile.\n');
+  fs.writeFileSync(path.join(workspaceDir, 'TODOS.md'), '# TODOS.md = MISSION CONTROL: Custom\n');
 
   const state = ensureMainWorkspaceBootstrap({
     workspaceDir,
@@ -97,14 +97,14 @@ test('legacy bootstrap state without gate marker is pending but not gate-eligibl
   assert.equal(status.gateEligible, false);
 });
 
-test('seeded USER template is generic and contains no install-specific personal info', () => {
+test('seeded TODOS mission-control template is generic and contains no install-specific personal info', () => {
   const workspaceDir = makeTmpWorkspace();
   ensureMainWorkspaceBootstrap({
     workspaceDir,
     now: () => new Date('2026-02-17T08:00:00.000Z'),
   });
-  const userBody = readText(path.join(workspaceDir, 'USER.md'));
+  const todosBody = readText(path.join(workspaceDir, 'TODOS.md'));
 
-  assert.match(userBody, /\[set during onboarding\]/);
-  assert.ok(!/scrim|wiggins/i.test(userBody));
+  assert.match(todosBody, /MISSION CONTROL/i);
+  assert.ok(!/scrim|wiggins/i.test(todosBody));
 });

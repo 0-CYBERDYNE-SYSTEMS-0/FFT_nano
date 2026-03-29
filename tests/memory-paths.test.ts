@@ -45,7 +45,9 @@ test('ensures memory scaffold files and folder exist', () => {
 test('allowed memory path validation blocks traversal', () => {
   assert.equal(isAllowedMemoryRelativePath('MEMORY.md'), true);
   assert.equal(isAllowedMemoryRelativePath('memory/2026-02-15.md'), true);
-  assert.equal(isAllowedMemoryRelativePath('SOUL.md'), false);
+  assert.equal(isAllowedMemoryRelativePath('SOUL.md'), true);
+  assert.equal(isAllowedMemoryRelativePath('NANO.md'), true);
+  assert.equal(isAllowedMemoryRelativePath('TODOS.md'), true);
   assert.equal(isAllowedMemoryRelativePath('CLAUDE.md'), false);
   assert.equal(isAllowedMemoryRelativePath('../secret.md'), false);
   assert.equal(isAllowedMemoryRelativePath('notes.md'), false);
