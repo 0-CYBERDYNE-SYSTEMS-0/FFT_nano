@@ -97,6 +97,7 @@ test('finalizeCompletedRun skips duplicate send when Telegram delivery already c
 test('finalizeCompletedRun deletes preview on abort and emits aborted state', async () => {
   const emitter = createEmitter();
   const deleted: number[] = [];
+  const persistedTimestamps: Array<{ chatJid: string; timestamp: string }> = [];
   const controller = new AbortController();
   controller.abort();
 
@@ -114,7 +115,11 @@ test('finalizeCompletedRun deletes preview on abort and emits aborted state', as
       lastText: 'preview',
       updatedAt: 1000,
     },
+    timestampToPersist: '2026-03-22T12:00:00.000Z',
     updateChatUsage: () => {},
+    persistLastAgentTimestamp: (chatJid, timestamp) => {
+      persistedTimestamps.push({ chatJid, timestamp });
+    },
     persistAssistantHistory: () => {
       throw new Error('should not persist');
     },
@@ -134,6 +139,9 @@ test('finalizeCompletedRun deletes preview on abort and emits aborted state', as
     emitter.events.map((event) => event.payload.state || event.payload.detail),
     ['aborted', 'aborted'],
   );
+  assert.deepEqual(persistedTimestamps, [
+    { chatJid: 'telegram:2', timestamp: '2026-03-22T12:00:00.000Z' },
+  ]);
 });
 
 test('runDirectSessionTurn queues behind an active run', async () => {

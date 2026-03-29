@@ -367,7 +367,7 @@ export function getNewMessages(
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
     WHERE timestamp > ? AND chat_jid IN (${placeholders})
-      AND sender != '__fft_tui__'
+      AND content NOT LIKE ? AND sender != ?
       AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
@@ -377,6 +377,8 @@ export function getNewMessages(
     .all(
       lastTimestamp,
       ...jids,
+      `${botPrefix}:%`,
+      '__fft_tui__',
     ) as NewMessage[];
 
   let newTimestamp = lastTimestamp;

@@ -20,6 +20,7 @@ export interface FinalizeCompletedRunParams {
   deliverToChat?: boolean;
   externallyCompleted: boolean;
   telegramPreviewState: TelegramMessagePreviewState | null;
+  timestampToPersist?: string;
   updateChatUsage: (
     chatJid: string,
     usage?: {
@@ -280,6 +281,12 @@ export async function finalizeCompletedRun(
   params: FinalizeCompletedRunParams,
 ): Promise<void> {
   params.updateChatUsage(params.chatJid, params.usage);
+  if (params.timestampToPersist) {
+    params.persistLastAgentTimestamp?.(
+      params.chatJid,
+      params.timestampToPersist,
+    );
+  }
 
   if (params.abortSignal.aborted) {
     if (params.telegramPreviewState) {
@@ -665,6 +672,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         streamed,
         usage,
         abortSignal: abortController.signal,
+        timestampToPersist: msg.timestamp,
         externallyCompleted: completionState.externallyCompleted,
         telegramPreviewState,
         updateChatUsage: deps.updateChatUsage,
