@@ -52,6 +52,7 @@ import {
   getChatHistory,
   getLastGroupSync,
   getMessagesSince,
+  getPromptTranscriptMessages,
   getNewMessages,
   getTaskById,
   getTaskRunLogs,
@@ -78,7 +79,6 @@ import { acquireSingletonLock } from './singleton-lock.js';
 import {
   createTelegramBot,
   isTelegramJid,
-  isTelegramPrivateChatJid,
   parseTelegramChatId,
   splitTelegramText,
 } from './telegram.js';
@@ -196,10 +196,6 @@ import {
   type WebControlCenterServer,
 } from './web/control-center-server.js';
 import {
-  computeBlockStreamDelivery,
-  computePersistentPreviewDelivery,
-  finalizePersistentPreviewDelivery,
-  finalizeBlockStreamDelivery,
   getTelegramPreviewRunKey,
   resolveTelegramStreamCompletionState,
   type TelegramMessagePreviewState,
@@ -221,7 +217,9 @@ import { createAppRuntime } from './app.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
+  type PromptInputLogEntry,
 } from './message-dispatch.js';
+import { writePromptInputLogFile } from './prompt-input-log.js';
 import { createTelegramCommandHandlers } from './telegram-commands.js';
 import {
   state,
@@ -293,11 +291,6 @@ const HEARTBEAT_SHOW_ALERTS = PARITY_CONFIG.heartbeat.visibility.showAlerts;
 const HEARTBEAT_INCLUDE_REASONING = PARITY_CONFIG.heartbeat.includeReasoning;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const TELEGRAM_PERSISTENT_PREVIEW_TTL_MS = 30 * 60 * 1000;
-const telegramPersistentPreviewTexts = new Map<
-  string,
-  { lastText: string; updatedAt: number }
->();
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
 interface GitInfo {
   branch?: string;
@@ -501,9 +494,11 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
-  // Memory file naming: SOUL.md is canonical. CLAUDE.md is supported for
-  // backwards compatibility (older installs/groups).
+  // Workspace persona file naming: SOUL.md is canonical. CLAUDE.md is supported
+  // for backwards compatibility (older installs/groups).
   const soulFile = path.join(groupDir, 'SOUL.md');
+  const nanoFile = path.join(groupDir, 'NANO.md');
+  const todosFile = path.join(groupDir, 'TODOS.md');
   const legacyClaudeFile = path.join(groupDir, 'CLAUDE.md');
 
   // If legacy exists but SOUL doesn't, migrate in-place to avoid split-brain.
@@ -520,10 +515,64 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     }
   }
 
+  if (!fs.existsSync(nanoFile)) {
+    fs.writeFileSync(
+      nanoFile,
+      [
+        '# NANO',
+        '',
+        'Nano Core runtime contract.',
+        '',
+        'Session context order:',
+        '1. Read NANO.md',
+        '2. Read SOUL.md',
+        '3. Read TODOS.md',
+        '4. Read BOOTSTRAP.md (if present)',
+        '5. Read MEMORY.md',
+        '',
+        'Heartbeat and scheduled maintenance runs also read HEARTBEAT.md.',
+        '',
+        'Memory policy:',
+        '- Durable memory belongs in MEMORY.md and memory/*.md.',
+        '- Keep SOUL.md stable; do not use it as compaction log storage.',
+        '- TODOS.md is mission control for active execution state.',
+        '',
+        'Execution stance:',
+        '- Use tools to verify claims and perform edits.',
+        '- Prefer deterministic, testable changes.',
+        '- Keep user-facing updates concise and concrete.',
+      ].join('\n') + '\n',
+    );
+  }
+
   if (!fs.existsSync(soulFile)) {
     fs.writeFileSync(
       soulFile,
-      `# ${ASSISTANT_NAME}\n\nThis is the memory and working directory for: ${group.name}.\n`,
+      `# SOUL\n\nYou are ${ASSISTANT_NAME}, a concise and practical assistant for ${group.name}.\n`,
+    );
+  }
+
+  if (!fs.existsSync(todosFile)) {
+    fs.writeFileSync(
+      todosFile,
+      [
+        '# TODOS.md = MISSION CONTROL: Initial Mission',
+        '',
+        '## 🚀 ACTIVE OBJECTIVE',
+        '> Ship the next validated increment safely.',
+        '',
+        '## 📋 TASK BOARD',
+        '- [ ] Define first active task <!-- id:T1 status:PENDING -->',
+        '',
+        '## 🤖 SUB-AGENTS & PROCESSES',
+        '- [None]',
+        '',
+        '## ⏳ BLOCKED / WAITING',
+        '- [None]',
+        '',
+        '## 📝 MISSION LOG',
+        '- [00:00] - Mission control initialized.',
+      ].join('\n') + '\n',
     );
   }
 
@@ -805,7 +854,7 @@ function buildOnboardingInterviewPrompt(params: {
     '[ONBOARDING INTERVIEW MODE]',
     'Main workspace onboarding is pending. Continue first-run interview flow now.',
     'Use BOOTSTRAP.md instructions. Ask one concise question at a time and keep the exchange practical.',
-    'Update SOUL.md and TODOS.md based on user responses. Promote durable facts and decisions into MEMORY.md.',
+    'Update NANO.md, SOUL.md, and TODOS.md based on user responses. Promote durable facts and decisions into MEMORY.md.',
     `When onboarding is complete, remove BOOTSTRAP.md and include the token ${MAIN_ONBOARDING_COMPLETION_TOKEN} exactly once on its own line in your final reply.`,
     '',
     '[LATEST USER MESSAGE]',
@@ -2111,10 +2160,8 @@ function buildDeliveryPanel(chatJid: string): {
     state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
   const modes: TelegramDeliveryMode[] = [
     'partial',
-    'block',
     'draft',
     'off',
-    'persistent',
   ];
   return {
     text: [
@@ -2122,10 +2169,8 @@ function buildDeliveryPanel(chatJid: string): {
       `Current: ${current}`,
       '',
       'partial: one in-flight message may be edited during the run',
-      'block: append chunked draft blocks, never edit prior text',
-      'draft: Telegram-native draft stream in private chats, falls back to partial elsewhere',
+      'draft: Telegram-native draft stream in all chats',
       'off: no visible preview, send only the completed final answer',
-      'persistent: append-only transcript, already visible text never leaves',
     ].join('\n'),
     keyboard: [
       modes.map((value) => ({
@@ -3139,6 +3184,7 @@ const messageDispatcher = createMessageDispatcher({
   sendMessage,
   setTyping,
   getMessagesSince,
+  getRecentConversation: getPromptTranscriptMessages,
   getSessionKeyForChat,
   resolveMainOnboardingGate,
   buildOnboardingInterviewPrompt,
@@ -3168,6 +3214,20 @@ const messageDispatcher = createMessageDispatcher({
   makeRunId,
   logger,
   persistTuiUserHistory,
+  writePromptInputLog: (entry: PromptInputLogEntry) => {
+    try {
+      writePromptInputLogFile(entry);
+    } catch (err) {
+      logger.warn(
+        {
+          err,
+          groupFolder: entry.groupFolder,
+          requestId: entry.requestId,
+        },
+        'Failed to write prompt input log',
+      );
+    }
+  },
 });
 
 const appRuntime = createAppRuntime({
@@ -4207,19 +4267,14 @@ function consumeTelegramHostStreamState(
 
 function pruneTelegramHostStreamedRuns(): void {
   telegramPreviewRegistry.prune();
-  const staleCutoff = Date.now() - TELEGRAM_PERSISTENT_PREVIEW_TTL_MS;
-  for (const [runKey, preview] of telegramPersistentPreviewTexts.entries()) {
-    if (preview.updatedAt <= staleCutoff)
-      telegramPersistentPreviewTexts.delete(runKey);
-  }
 }
 
 function getTelegramDeliveryMode(chatJid: string): TelegramDeliveryMode {
   return state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
 }
 
-function canUseTelegramNativeDraft(chatJid: string): boolean {
-  return Boolean(state.telegramBot) && isTelegramPrivateChatJid(chatJid);
+function canUseTelegramNativeDraft(_chatJid: string): boolean {
+  return Boolean(state.telegramBot);
 }
 
 async function deliverRuntimeAgentMessage(params: {
@@ -4278,44 +4333,6 @@ async function prepareTelegramCompletionState(params: {
       previewState: null,
     };
   }
-  if (deliveryMode === 'block' && state.telegramBot && params.result) {
-    const runKey = getTelegramHostStreamKey(params.chatJid, params.runId);
-    const blockState = telegramPreviewRegistry.getBlockState(runKey);
-    if (blockState) {
-      const finalized = finalizeBlockStreamDelivery({
-        state: blockState,
-        finalText: params.result,
-      });
-      for (const text of finalized.deliveryTexts) {
-        await state.telegramBot.sendMessage(params.chatJid, text);
-      }
-      if (finalized.nextState)
-        telegramPreviewRegistry.setBlockState(runKey, finalized.nextState);
-      else telegramPreviewRegistry.clearBlockState(runKey);
-      return {
-        externallyCompleted: finalized.completed,
-        previewState: null,
-      };
-    }
-  }
-  if (deliveryMode === 'persistent' && state.telegramBot && params.result) {
-    const runKey = getTelegramHostStreamKey(params.chatJid, params.runId);
-    const finalized = finalizePersistentPreviewDelivery({
-      previousText: telegramPersistentPreviewTexts.get(runKey)?.lastText,
-      finalText: params.result,
-    });
-    telegramPersistentPreviewTexts.delete(runKey);
-    if (finalized.deliveryText) {
-      await state.telegramBot.sendMessage(
-        params.chatJid,
-        finalized.deliveryText,
-      );
-    }
-    return {
-      externallyCompleted: finalized.completed,
-      previewState: null,
-    };
-  }
 
   return {
     externallyCompleted: consumeTelegramHostCompletedRun(
@@ -4340,41 +4357,6 @@ async function processHostEvent(event: HostEvent): Promise<void> {
         event.chatJid,
         event.requestId,
       );
-      if (deliveryMode === 'persistent') {
-        pruneTelegramHostStreamedRuns();
-        const previousText =
-          telegramPersistentPreviewTexts.get(streamKey)?.lastText;
-        const delivery = computePersistentPreviewDelivery({
-          previousText,
-          nextText: event.text,
-        });
-        telegramPersistentPreviewTexts.set(streamKey, {
-          lastText: delivery.nextStateText,
-          updatedAt: Date.now(),
-        });
-        if (delivery.deliveryText) {
-          await state.telegramBot.sendMessage(
-            event.chatJid,
-            delivery.deliveryText,
-          );
-        }
-        return;
-      }
-
-      if (deliveryMode === 'block') {
-        pruneTelegramHostStreamedRuns();
-        const delivery = computeBlockStreamDelivery({
-          previousState: telegramPreviewRegistry.getBlockState(streamKey),
-          nextText: event.text,
-        });
-        if (delivery.nextState)
-          telegramPreviewRegistry.setBlockState(streamKey, delivery.nextState);
-        else telegramPreviewRegistry.clearBlockState(streamKey);
-        for (const text of delivery.deliveryTexts) {
-          await state.telegramBot.sendMessage(event.chatJid, text);
-        }
-        return;
-      }
 
       if (
         deliveryMode === 'draft' &&

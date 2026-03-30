@@ -35,6 +35,9 @@ test('ensures memory scaffold files and folder exist', () => {
   const workspaceDir = path.join(process.cwd(), 'groups', folder);
   try {
     const out = ensureMemoryScaffold(folder);
+    assert.equal(fs.existsSync(out.nanoPath), true);
+    assert.equal(fs.existsSync(out.soulPath), true);
+    assert.equal(fs.existsSync(out.todosPath), true);
     assert.equal(fs.existsSync(out.memoryPath), true);
     assert.equal(fs.existsSync(out.memoryDir), true);
   } finally {

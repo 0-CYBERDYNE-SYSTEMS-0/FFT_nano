@@ -104,6 +104,70 @@ Useful env vars on the host:
 Container logs:
 - Per-group logs at `groups/<group-folder>/logs/`.
 
+## Runtime / Service Model
+
+This repo has two different ways to run the host, and they are not interchangeable:
+
+- `./scripts/start.sh start` or `npm run start`
+  - Runs the built host in the foreground from `dist/index.js`.
+  - Best for manual local runs when you are intentionally not using the installed service manager.
+- `./scripts/start.sh dev` or `npm run dev`
+  - Runs `src/index.ts` via `tsx`.
+  - Debug-only path; use this when actively developing and you want source-level changes without rebuilding.
+- `./scripts/service.sh ...`
+  - Manages the long-running OS service.
+  - On macOS this is a user LaunchAgent with label `com.fft_nano`.
+  - On Linux this is a systemd unit named `fft-nano` by default.
+
+Important operational rule:
+- If the machine is already running the launchd/systemd service, do not also start a second foreground host with `start.sh` or `npm run start`.
+- The host acquires a singleton lock at `data/fft_nano.lock`.
+- A second instance can fail on the lock, or still cause upstream channel conflicts such as Telegram polling collisions.
+
+What actually runs on macOS:
+- The installed LaunchAgent label is `com.fft_nano`.
+- The service keeps the main host alive and restarts it if it exits.
+- The web UI and TUI gateway are served by that same host process.
+  - TUI websocket default: `127.0.0.1:28989`
+  - Web UI default: `127.0.0.1:28990`
+
+Rebuild + restart after code changes:
+
+```bash
+npm run build
+./scripts/service.sh restart
+```
+
+Equivalent direct macOS restart:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.fft_nano
+```
+
+Recommended verification after restart:
+
+```bash
+launchctl list | grep com.fft_nano
+cat data/fft_nano.lock
+lsof -nP -iTCP:28989 -sTCP:LISTEN
+lsof -nP -iTCP:28990 -sTCP:LISTEN
+```
+
+When to use each path:
+- Normal installed runtime on macOS: `./scripts/service.sh restart`
+- One-off foreground production-style run: `./scripts/start.sh start`
+- Source-level debugging run: `./scripts/start.sh dev`
+
+If you want to run a foreground debug/dev instance on a machine that already has the service installed:
+- Stop the service first with `./scripts/service.sh stop`
+- Then run your manual `start.sh` or `dev` command
+- Restart the service when finished
+
+Why this matters:
+- The launchd service may be running with environment and channel settings that differ from your current shell.
+- Restarting the service is the correct way to pick up a rebuilt `dist/` while preserving the installed runtime model.
+- Running `npm run start` from a shell does not replace the existing service; it creates a second process attempt.
+
 Common failure modes:
 - Missing provider key: `pi` reports "No models available" (no API key passed through).
 - Wrong `PI_API`/`PI_MODEL`: `pi` reports "Model '<provider>'/'<model>' not found".

@@ -1,3 +1,4 @@
+import { PARITY_CONFIG } from './config.js';
 import type { TelegramMessagePreviewState } from './telegram-streaming.js';
 import type { NewMessage } from './types.js';
 
@@ -102,6 +103,54 @@ type CodingRunResult = {
   };
 };
 
+export type InboundOrigin = 'user' | 'assistant' | 'tui' | 'system';
+
+interface ClassifiedInboundMessage {
+  group: any;
+  content: string;
+  origin: InboundOrigin;
+  isMainGroup: boolean;
+  queuePrefs: Record<string, any>;
+}
+
+interface DispatchRequest {
+  group: any;
+  content: string;
+  onboardingGate: { active: boolean };
+  requestId: string;
+  sessionKey: string;
+  latestUserText: string;
+  finalPrompt: string;
+  codingHint: any;
+  codingRoute: 'coder_execute' | 'coder_plan' | 'auto_execute' | null;
+  delegationInstruction: string | null;
+  shouldUseCodingWorker: boolean;
+  runPreferences: Record<string, any>;
+  timestampToPersist?: string;
+}
+
+export type RunRoute = 'agent' | 'coding_worker';
+
+interface RunCompletion {
+  ok: boolean;
+  result: string | null;
+  streamed: boolean;
+  usage?: RunUsage;
+}
+
+export interface PromptInputLogEntry {
+  groupFolder: string;
+  requestId: string;
+  chatJid: string;
+  queueMode: string;
+  selectedMessageCount: number;
+  recentContextCount: number;
+  noContinue: boolean;
+  latestUserText: string;
+  finalPrompt: string;
+  createdAt: string;
+}
+
 export interface MessageDispatcherDeps {
   state: {
     registeredGroups: Record<string, any>;
@@ -166,6 +215,7 @@ export interface MessageDispatcherDeps {
     sinceTimestamp: string,
     assistantName: string,
   ) => NewMessage[];
+  getRecentConversation?: (chatJid: string, limit: number) => NewMessage[];
   getSessionKeyForChat: (chatJid: string) => string;
   resolveMainOnboardingGate: (chatJid: string) => { active: boolean };
   buildOnboardingInterviewPrompt: (params: {
@@ -275,6 +325,244 @@ export interface MessageDispatcherDeps {
     text: string,
     runId: string,
   ) => void;
+  writePromptInputLog?: (payload: PromptInputLogEntry) => void;
+}
+
+function formatPromptLine(message: Pick<NewMessage, 'timestamp' | 'sender_name' | 'content'>): string {
+  return `[${message.timestamp}] ${message.sender_name}: ${message.content}`;
+}
+
+function clampPromptMessageToChars(
+  message: NewMessage,
+  maxChars: number,
+): NewMessage {
+  const prefix = `[${message.timestamp}] ${message.sender_name}: `;
+  if (prefix.length >= maxChars) {
+    return {
+      ...message,
+      content: '',
+    };
+  }
+  const available = maxChars - prefix.length;
+  if (message.content.length <= available) return message;
+  if (available <= 3) {
+    return {
+      ...message,
+      content: message.content.slice(0, available),
+    };
+  }
+  return {
+    ...message,
+    content: `${message.content.slice(0, available - 3)}...`,
+  };
+}
+
+function selectRecentConversationMessages(params: {
+  messages: NewMessage[];
+  excludedIds: Set<string>;
+  maxMessages: number;
+  maxChars: number;
+  includeMessage?: (message: NewMessage) => boolean;
+}): NewMessage[] {
+  const filtered = params.messages.filter(
+    (message) =>
+      !params.excludedIds.has(message.id) &&
+      message.content.trim().length > 0 &&
+      (params.includeMessage ? params.includeMessage(message) : true),
+  );
+  if (filtered.length === 0) return [];
+
+  const lastAssistant = [...filtered]
+    .reverse()
+    .find((message) => message.is_from_me === 1);
+
+  let selected = filtered.slice(-params.maxMessages);
+  if (
+    lastAssistant &&
+    !selected.some((message) => message.id === lastAssistant.id)
+  ) {
+    const selectedIds = new Set(selected.map((message) => message.id));
+    selectedIds.add(lastAssistant.id);
+    selected = filtered.filter((message) => selectedIds.has(message.id));
+    while (selected.length > params.maxMessages) {
+      const dropIndex = selected.findIndex(
+        (message) => message.id !== lastAssistant.id,
+      );
+      if (dropIndex === -1) break;
+      selected.splice(dropIndex, 1);
+    }
+  }
+
+  const protectedId = lastAssistant?.id;
+  const totalChars = () =>
+    selected.reduce((sum, message, index) => {
+      return sum + formatPromptLine(message).length + (index > 0 ? 1 : 0);
+    }, 0);
+
+  while (selected.length > 1 && totalChars() > params.maxChars) {
+    const dropIndex = selected.findIndex(
+      (message) => message.id !== protectedId,
+    );
+    if (dropIndex === -1) break;
+    selected.splice(dropIndex, 1);
+  }
+
+  if (selected.length === 1) {
+    const line = formatPromptLine(selected[0]);
+    if (line.length > params.maxChars) {
+      selected = [clampPromptMessageToChars(selected[0], params.maxChars)];
+    }
+  }
+
+  return selected;
+}
+
+function buildInteractivePrompt(params: {
+  recentConversation: NewMessage[];
+  newInboundMessages: NewMessage[];
+  queueMode: string;
+  queueDrop: string;
+  droppedCount: number;
+  queueDebounceMs: number;
+}): string {
+  const recentLines =
+    params.recentConversation.length > 0
+      ? params.recentConversation.map(formatPromptLine)
+      : ['(none)'];
+  const inboundLines =
+    params.newInboundMessages.length > 0
+      ? params.newInboundMessages.map(formatPromptLine)
+      : ['(none)'];
+
+  let finalPrompt = [
+    '[RECENT CONVERSATION]',
+    ...recentLines,
+    '',
+    '[NEW INBOUND MESSAGES]',
+    ...inboundLines,
+  ].join('\n');
+
+  if (params.queueMode === 'interrupt') {
+    finalPrompt =
+      `${finalPrompt}\n\n[QUEUE MODE: interrupt]\n` +
+      'Prioritize the latest message and ignore stale unresolved asks unless explicitly requested.';
+  } else if (params.queueMode === 'steer') {
+    finalPrompt =
+      `${finalPrompt}\n\n[QUEUE MODE: steer]\n` +
+      'Respect full context, but prioritize the user’s newest intent and provide concise steering updates.';
+  } else if (params.queueMode === 'steer-backlog') {
+    finalPrompt =
+      `${finalPrompt}\n\n[QUEUE MODE: steer-backlog]\n` +
+      'Process backlog context and prioritize the newest request first.';
+  }
+  if (params.queueDrop === 'summarize' && params.droppedCount > 0) {
+    finalPrompt =
+      `${finalPrompt}\n\n[QUEUE NOTE]\n` +
+      `Older backlog truncated by queue cap (${params.droppedCount} message(s) dropped); summarize assumptions before acting.`;
+  }
+  if (params.queueDebounceMs > 0) {
+    finalPrompt =
+      `${finalPrompt}\n\n[QUEUE NOTE]\n` +
+      `Debounce preference is ${params.queueDebounceMs}ms; keep responses concise and account for rapid bursts.`;
+  }
+
+  return finalPrompt;
+}
+
+function prepareInteractivePrompt(params: {
+  chatJid: string;
+  selectedMessages: NewMessage[];
+  queueMode: string;
+  queueDrop: string;
+  droppedCount: number;
+  queueDebounceMs: number;
+  getRecentConversation?: (chatJid: string, limit: number) => NewMessage[];
+  includeRecentConversation?: boolean;
+  includeTuiMessagesInRecentConversation?: boolean;
+}): { finalPrompt: string; recentConversationCount: number } {
+  if (params.includeRecentConversation === false) {
+    return {
+      finalPrompt: buildInteractivePrompt({
+        recentConversation: [],
+        newInboundMessages: params.selectedMessages,
+        queueMode: params.queueMode,
+        queueDrop: params.queueDrop,
+        droppedCount: params.droppedCount,
+        queueDebounceMs: params.queueDebounceMs,
+      }),
+      recentConversationCount: 0,
+    };
+  }
+
+  const recentConversationLimit =
+    PARITY_CONFIG.prompt.recentConversationMaxMessages;
+  const recentConversationChars = PARITY_CONFIG.prompt.recentConversationMaxChars;
+  const fetchLimit = Math.max(
+    recentConversationLimit * 3,
+    recentConversationLimit + params.selectedMessages.length + 4,
+  );
+  const recentConversation = selectRecentConversationMessages({
+    messages: params.getRecentConversation
+      ? params.getRecentConversation(params.chatJid, fetchLimit)
+      : [],
+    excludedIds: new Set(params.selectedMessages.map((message) => message.id)),
+    maxMessages: recentConversationLimit,
+    maxChars: recentConversationChars,
+    includeMessage: params.includeTuiMessagesInRecentConversation
+      ? undefined
+      : (message) => message.sender !== '__fft_tui__',
+  });
+
+  return {
+    finalPrompt: buildInteractivePrompt({
+      recentConversation,
+      newInboundMessages: params.selectedMessages,
+      queueMode: params.queueMode,
+      queueDrop: params.queueDrop,
+      droppedCount: params.droppedCount,
+      queueDebounceMs: params.queueDebounceMs,
+    }),
+    recentConversationCount: recentConversation.length,
+  };
+}
+
+function resolveInboundOrigin(
+  msg: NewMessage,
+  assistantName: string,
+): InboundOrigin {
+  if (msg.sender === '__fft_tui__') return 'tui';
+  if (!msg.sender && !msg.sender_name) return 'system';
+  if (msg.sender === assistantName && msg.is_from_me === 1) return 'assistant';
+  return 'user';
+}
+
+function classifyInboundMessage(
+  msg: NewMessage,
+  deps: MessageDispatcherDeps,
+): ClassifiedInboundMessage | null {
+  const group = deps.state.registeredGroups[msg.chat_jid];
+  if (!group) return null;
+
+  const content = msg.content.trim();
+  if (!content) return null;
+
+  const queuePrefs = deps.state.chatRunPreferences[msg.chat_jid] || {};
+  return {
+    group,
+    content,
+    origin: resolveInboundOrigin(msg, deps.constants.assistantName),
+    isMainGroup: group.folder === deps.constants.mainGroupFolder,
+    queuePrefs,
+  };
+}
+
+function selectRunRoute(
+  request: Pick<DispatchRequest, 'shouldUseCodingWorker'>,
+  deps: MessageDispatcherDeps,
+): RunRoute {
+  return request.shouldUseCodingWorker && deps.runCodingTask
+    ? 'coding_worker'
+    : 'agent';
 }
 
 export async function finalizeCompletedRun(
@@ -380,13 +668,240 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     status: 'started' | 'queued' | 'already_running';
   }>;
 } {
-  async function processMessage(msg: NewMessage): Promise<boolean> {
-    const group = deps.state.registeredGroups[msg.chat_jid];
-    if (!group) return true;
+  async function finalizeRun(params: {
+    chatJid: string;
+    runId: string;
+    sessionKey: string;
+    result: string | null;
+    streamed: boolean;
+    usage?: RunUsage;
+    abortSignal: AbortSignal;
+    timestampToPersist?: string;
+    deliverToChat?: boolean;
+  }): Promise<void> {
+    const completionState =
+      deps.isTelegramJid(params.chatJid) && deps.prepareTelegramCompletionState
+        ? await deps.prepareTelegramCompletionState({
+            chatJid: params.chatJid,
+            runId: params.runId,
+            result: params.result,
+          })
+        : {
+            externallyCompleted: deps.isTelegramJid(params.chatJid)
+              ? deps.consumeTelegramHostCompletedRun(params.chatJid, params.runId)
+              : false,
+            previewState: deps.isTelegramJid(params.chatJid)
+              ? deps.consumeTelegramHostStreamState(params.chatJid, params.runId)
+              : null,
+          };
+    const telegramCompletionState = deps.resolveTelegramStreamCompletionState({
+      externallyCompleted: completionState.externallyCompleted,
+      previewState: completionState.previewState,
+    });
 
-    const content = msg.content.trim();
-    const isMainGroup = group.folder === deps.constants.mainGroupFolder;
-    const queuePrefs = deps.state.chatRunPreferences[msg.chat_jid] || {};
+    await deps.finalizeCompletedRun({
+      chatJid: params.chatJid,
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      result: params.result,
+      streamed: telegramCompletionState.effectiveStreamed,
+      usage: params.usage,
+      abortSignal: params.abortSignal,
+      deliverToChat: params.deliverToChat,
+      timestampToPersist: params.timestampToPersist,
+      externallyCompleted: completionState.externallyCompleted,
+      telegramPreviewState: telegramCompletionState.messagePreviewState,
+      updateChatUsage: deps.updateChatUsage,
+      persistLastAgentTimestamp: (chatJid, timestamp) => {
+        deps.state.lastAgentTimestamp ||= {};
+        deps.state.lastAgentTimestamp[chatJid] = timestamp;
+      },
+      persistAssistantHistory: deps.persistAssistantHistory,
+      deleteTelegramPreviewMessage: deps.deleteTelegramPreviewMessage,
+      finalizeTelegramPreviewMessage: deps.finalizeTelegramPreviewMessage,
+      sendAgentResultMessage: deps.sendAgentResultMessage,
+      emitTuiChatEvent: deps.emitTuiChatEvent as any,
+      emitTuiAgentEvent: deps.emitTuiAgentEvent as any,
+    });
+  }
+
+  async function executeDispatchRun(params: {
+    chatJid: string;
+    group: any;
+    sessionKey: string;
+    requestId: string;
+    latestUserText: string;
+    finalPrompt: string;
+    codingHint: any;
+    codingRoute: 'coder_execute' | 'coder_plan' | 'auto_execute' | null;
+    delegationInstruction: string | null;
+    runPreferences: Record<string, any>;
+    onboardingGate: { active: boolean };
+    route: RunRoute;
+    timestampToPersist?: string;
+    deliverToChat?: boolean;
+    onSettled?: () => void;
+  }): Promise<void> {
+    let result: string | null = null;
+    let streamed = false;
+    let ok = false;
+    let usage: RunUsage | undefined;
+    const abortController = new AbortController();
+    const activeRun = {
+      chatJid: params.chatJid,
+      startedAt: Date.now(),
+      requestId: params.requestId,
+      abortController,
+    };
+
+    deps.activeChatRuns.set(params.chatJid, activeRun);
+    deps.activeChatRunsById.set(params.requestId, activeRun);
+    deps.emitTuiChatEvent({
+      runId: params.requestId,
+      sessionKey: params.sessionKey,
+      state: 'message',
+      message: { role: 'user', content: params.latestUserText },
+    });
+    deps.emitTuiAgentEvent({
+      runId: params.requestId,
+      sessionKey: params.sessionKey,
+      phase: 'start',
+      detail: 'running',
+    });
+    await deps.setTyping(params.chatJid, true);
+    deps.logger?.info?.(
+      {
+        group: params.group.name,
+        promptLength: params.finalPrompt.length,
+        route: params.route,
+      },
+      'Starting agent run',
+    );
+
+    try {
+      const run: RunCompletion =
+        params.route === 'coding_worker' && deps.runCodingTask
+          ? await deps.runCodingTask({
+              requestId: params.requestId,
+              mode:
+                params.codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
+              route: params.codingRoute || 'auto_execute',
+              originChatJid: params.chatJid,
+              originGroupFolder: params.group.folder,
+              taskText:
+                params.delegationInstruction || params.latestUserText,
+              workspaceMode:
+                params.codingHint === 'force_delegate_plan'
+                  ? 'read_only'
+                  : 'ephemeral_worktree',
+              timeoutSeconds: 1800,
+              allowFanout:
+                params.codingRoute === 'coder_execute' ||
+                params.codingRoute === 'auto_execute',
+              sessionContext: params.finalPrompt,
+              assistantName: deps.constants.assistantName,
+              sessionKey: params.sessionKey,
+              group: params.group,
+              runtimePrefs: params.runPreferences,
+              abortController,
+            })
+          : await deps.runAgent(
+              params.group,
+              params.finalPrompt,
+              params.chatJid,
+              params.codingHint,
+              params.requestId,
+              params.runPreferences,
+              {},
+              abortController.signal,
+            );
+
+      deps.logger?.info?.(
+        {
+          group: params.group.name,
+          ok: run.ok,
+          hasResult: !!run.result,
+          resultLength: run.result?.length,
+          route: params.route,
+        },
+        'Agent run completed',
+      );
+      result = run.result;
+      streamed = run.streamed;
+      ok = run.ok;
+      usage = run.usage;
+    } finally {
+      await deps.setTyping(params.chatJid, false);
+      if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
+        deps.activeChatRuns.delete(params.chatJid);
+      }
+      deps.activeChatRunsById.delete(params.requestId);
+      params.onSettled?.();
+    }
+
+    if (ok && params.onboardingGate.active) {
+      const completion = deps.extractOnboardingCompletion(result);
+      result = completion.text;
+      if (completion.completed) {
+        deps.completeMainWorkspaceOnboarding({
+          workspaceDir: deps.constants.mainWorkspaceDir,
+        });
+        if (!result) result = 'Onboarding complete.';
+        deps.logger?.info?.(
+          { chatJid: params.chatJid, requestId: params.requestId },
+          'Completed main workspace onboarding from gated run',
+        );
+      }
+    }
+
+    if (ok) {
+      await finalizeRun({
+        chatJid: params.chatJid,
+        runId: params.requestId,
+        sessionKey: params.sessionKey,
+        result,
+        streamed,
+        usage,
+        abortSignal: abortController.signal,
+        timestampToPersist: params.timestampToPersist,
+        deliverToChat: params.deliverToChat,
+      });
+      return;
+    }
+
+    deps.emitTuiChatEvent({
+      runId: params.requestId,
+      sessionKey: params.sessionKey,
+      state: 'error',
+      errorMessage: 'Run failed',
+    });
+    deps.emitTuiAgentEvent({
+      runId: params.requestId,
+      sessionKey: params.sessionKey,
+      phase: 'error',
+      detail: 'run failed',
+    });
+
+    if (deps.isTelegramJid(params.chatJid)) {
+      deps.deleteTelegramPreviewMessage?.(params.chatJid, 0).catch(() => {});
+      deps.consumeTelegramHostStreamState?.(params.chatJid, params.requestId);
+      deps.consumeTelegramHostCompletedRun?.(params.chatJid, params.requestId);
+
+      const errorMsg =
+        result || 'Sorry, there was an error processing your message.';
+      await deps.sendAgentResultMessage(params.chatJid, errorMsg, {
+        prefixWhatsApp: true,
+      });
+    }
+  }
+
+  async function buildDispatchRequest(
+    msg: NewMessage,
+    classified: ClassifiedInboundMessage,
+  ): Promise<DispatchRequest | null> {
+    if (classified.origin !== 'user') return null;
+
+    const { group, content, isMainGroup, queuePrefs } = classified;
     const queueMode = queuePrefs.queueMode || 'collect';
     const queueDrop = queuePrefs.queueDrop || 'old';
     const queueCap =
@@ -403,8 +918,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       !isMainGroup &&
       !freeChatEnabled &&
       !deps.constants.triggerPattern.test(content)
-    )
-      return true;
+    ) {
+      return null;
+    }
 
     const onboardingGate = deps.resolveMainOnboardingGate(msg.chat_jid);
     if (onboardingGate.active && deps.isCoderDelegationCommand?.(content)) {
@@ -412,10 +928,11 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         msg.chat_jid,
         deps.onboardingCommandBlockedText?.() || 'Blocked',
       );
-      return true;
+      return null;
     }
 
     let codingHint: any = isMainGroup ? 'auto' : 'none';
+    let codingRoute: DispatchRequest['codingRoute'] = null;
     let requestId = deps.makeRunId
       ? deps.makeRunId('chat')
       : `chat-${Date.now()}`;
@@ -435,13 +952,17 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         msg.chat_jid,
         `${deps.constants.assistantName}: coder delegation is only available in the main/admin chat for safety.`,
       );
-      return true;
+      return null;
     }
 
     if (wantsDelegation) {
       codingHint = parsedTrigger.hint;
+      codingRoute =
+        codingHint === 'force_delegate_plan' ? 'coder_plan' : 'coder_execute';
       delegationInstruction = parsedTrigger.instruction;
-      requestId = `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      requestId = `coder-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
       const startMessageBody =
         codingHint === 'force_delegate_plan'
           ? `Starting coder plan run (${requestId})...`
@@ -461,24 +982,39 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     let droppedCount = 0;
     if (queueCap && selectedMessages.length > queueCap) {
       droppedCount = selectedMessages.length - queueCap;
-      if (queueDrop === 'new')
+      if (queueDrop === 'new') {
         selectedMessages = selectedMessages.slice(0, queueCap);
-      else selectedMessages = selectedMessages.slice(-queueCap);
+      } else {
+        selectedMessages = selectedMessages.slice(-queueCap);
+      }
     }
     if (queueMode === 'followup' || queueMode === 'interrupt') {
       selectedMessages = selectedMessages.length
         ? [selectedMessages[selectedMessages.length - 1] as NewMessage]
         : [];
     }
-    const lines = selectedMessages.map(
-      (m) => `[${m.timestamp}] ${m.sender_name}: ${m.content}`,
-    );
-    const prompt = lines.join('\n');
-    if (!prompt) return true;
+    const runPreferences: Record<string, any> = {
+      ...(deps.state.chatRunPreferences[msg.chat_jid] || {}),
+    };
+    if (deps.consumeNextRunNoContinue(msg.chat_jid)) {
+      runPreferences.nextRunNoContinue = true;
+    }
+    const preparedPrompt = prepareInteractivePrompt({
+      chatJid: msg.chat_jid,
+      selectedMessages,
+      queueMode,
+      queueDrop,
+      droppedCount,
+      queueDebounceMs,
+      getRecentConversation: deps.getRecentConversation,
+      includeRecentConversation: runPreferences.nextRunNoContinue !== true,
+      includeTuiMessagesInRecentConversation: false,
+    });
+    if (!preparedPrompt.finalPrompt.trim()) return null;
     if (group.folder === deps.constants.mainGroupFolder) {
       deps.rememberHeartbeatTarget(msg.chat_jid);
     }
-    const sessionKey = deps.getSessionKeyForChat(msg.chat_jid);
+
     const latestUserText =
       selectedMessages[selectedMessages.length - 1]?.content || content;
     const shouldAutoRouteCoding =
@@ -487,41 +1023,21 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       !onboardingGate.active &&
       deps.isSubstantialCodingTask?.(latestUserText) === true;
     const shouldUseCodingWorker = wantsDelegation || shouldAutoRouteCoding;
+    if (shouldAutoRouteCoding) codingRoute = 'auto_execute';
 
-    let finalPrompt = prompt;
-    if (queueMode === 'interrupt') {
-      finalPrompt =
-        `${finalPrompt}\n\n[QUEUE MODE: interrupt]\n` +
-        'Prioritize the latest message and ignore stale unresolved asks unless explicitly requested.';
-    } else if (queueMode === 'steer') {
-      finalPrompt =
-        `${finalPrompt}\n\n[QUEUE MODE: steer]\n` +
-        'Respect full context, but prioritize the user’s newest intent and provide concise steering updates.';
-    } else if (queueMode === 'steer-backlog') {
-      finalPrompt =
-        `${finalPrompt}\n\n[QUEUE MODE: steer-backlog]\n` +
-        'Process backlog context and prioritize the newest request first.';
-    }
-    if (queueDrop === 'summarize' && droppedCount > 0) {
-      finalPrompt =
-        `${finalPrompt}\n\n[QUEUE NOTE]\n` +
-        `Older backlog truncated by queue cap (${droppedCount} message(s) dropped); summarize assumptions before acting.`;
-    }
-    if (queueDebounceMs > 0) {
-      finalPrompt =
-        `${finalPrompt}\n\n[QUEUE NOTE]\n` +
-        `Debounce preference is ${queueDebounceMs}ms; keep responses concise and account for rapid bursts.`;
-    }
+    let finalPrompt = preparedPrompt.finalPrompt;
     if (onboardingGate.active) {
       codingHint = 'none';
+      codingRoute = null;
       requestId = deps.makeRunId
         ? deps.makeRunId('onboarding')
         : `onboarding-${Date.now()}`;
       finalPrompt = deps.buildOnboardingInterviewPrompt({
-        prompt,
+        prompt: finalPrompt,
         latestUserText,
       });
     }
+
     deps.logger?.info?.(
       {
         group: group.name,
@@ -534,188 +1050,58 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       },
       'Processing message',
     );
-    const runPreferences: Record<string, any> = {
-      ...(deps.state.chatRunPreferences[msg.chat_jid] || {}),
-    };
-    if (deps.consumeNextRunNoContinue(msg.chat_jid)) {
-      runPreferences.nextRunNoContinue = true;
-    }
-    let result: string | null = null;
-    let streamed = false;
-    let ok = false;
-    let usage: RunUsage | undefined;
-    const abortController = new AbortController();
-    const activeRun = {
-      chatJid: msg.chat_jid,
-      startedAt: Date.now(),
+    deps.writePromptInputLog?.({
+      groupFolder: group.folder,
       requestId,
-      abortController,
+      chatJid: msg.chat_jid,
+      queueMode,
+      selectedMessageCount: selectedMessages.length,
+      recentContextCount: preparedPrompt.recentConversationCount,
+      noContinue: runPreferences.nextRunNoContinue === true,
+      latestUserText,
+      finalPrompt,
+      createdAt: new Date().toISOString(),
+    });
+
+    return {
+      group,
+      content,
+      onboardingGate,
+      requestId,
+      sessionKey: deps.getSessionKeyForChat(msg.chat_jid),
+      latestUserText,
+      finalPrompt,
+      codingHint,
+      codingRoute,
+      delegationInstruction,
+      shouldUseCodingWorker,
+      runPreferences,
+      timestampToPersist: msg.timestamp,
     };
-    deps.activeChatRuns.set(msg.chat_jid, activeRun);
-    deps.activeChatRunsById.set(requestId, activeRun);
-    deps.emitTuiChatEvent({
-      runId: requestId,
-      sessionKey,
-      state: 'message',
-      message: { role: 'user', content: latestUserText },
-    });
-    deps.emitTuiAgentEvent({
-      runId: requestId,
-      sessionKey,
-      phase: 'start',
-      detail: 'running',
-    });
-    await deps.setTyping(msg.chat_jid, true);
-    deps.logger?.info?.(
-      { group: group.name, promptLength: finalPrompt.length, shouldUseCodingWorker },
-      'Starting agent run',
-    );
-    try {
-      const run =
-        shouldUseCodingWorker && deps.runCodingTask
-          ? await deps.runCodingTask({
-              requestId,
-              mode: codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
-              route:
-                codingHint === 'force_delegate_plan'
-                  ? 'coder_plan'
-                  : wantsDelegation
-                    ? 'coder_execute'
-                    : 'auto_execute',
-              originChatJid: msg.chat_jid,
-              originGroupFolder: group.folder,
-              taskText: delegationInstruction || latestUserText,
-              workspaceMode:
-                codingHint === 'force_delegate_plan'
-                  ? 'read_only'
-                  : 'ephemeral_worktree',
-              timeoutSeconds: 1800,
-              allowFanout:
-                (codingHint === 'force_delegate_execute' ||
-                  shouldAutoRouteCoding) &&
-                !onboardingGate.active,
-              sessionContext: finalPrompt,
-              assistantName: deps.constants.assistantName,
-              sessionKey,
-              group,
-              runtimePrefs: runPreferences,
-              abortController,
-            })
-          : await deps.runAgent(
-              group,
-              finalPrompt,
-              msg.chat_jid,
-              codingHint,
-              requestId,
-              runPreferences,
-              {},
-              abortController.signal,
-            );
-      deps.logger?.info?.(
-        { group: group.name, ok: run.ok, hasResult: !!run.result, resultLength: run.result?.length },
-        'Agent run completed',
-      );
-      result = run.result;
-      streamed = run.streamed;
-      ok = run.ok;
-      usage = run.usage;
-    } finally {
-      await deps.setTyping(msg.chat_jid, false);
-      if (deps.activeChatRuns.get(msg.chat_jid) === activeRun) {
-        deps.activeChatRuns.delete(msg.chat_jid);
-      }
-      deps.activeChatRunsById.delete(requestId);
-    }
-    if (ok && onboardingGate.active) {
-      const completion = deps.extractOnboardingCompletion(result);
-      result = completion.text;
-      if (completion.completed) {
-        deps.completeMainWorkspaceOnboarding({
-          workspaceDir: deps.constants.mainWorkspaceDir,
-        });
-        if (!result) result = 'Onboarding complete.';
-        deps.logger?.info?.(
-          { chatJid: msg.chat_jid, requestId },
-          'Completed main workspace onboarding from gated interview run',
-        );
-      }
-    }
-    if (ok) {
-      const completionState =
-        deps.isTelegramJid(msg.chat_jid) && deps.prepareTelegramCompletionState
-          ? await deps.prepareTelegramCompletionState({
-              chatJid: msg.chat_jid,
-              runId: requestId,
-              result,
-            })
-          : {
-              externallyCompleted: deps.isTelegramJid(msg.chat_jid)
-                ? deps.consumeTelegramHostCompletedRun(msg.chat_jid, requestId)
-                : false,
-              previewState: deps.isTelegramJid(msg.chat_jid)
-                ? deps.consumeTelegramHostStreamState(msg.chat_jid, requestId)
-                : null,
-            };
-      const telegramCompletionState = deps.resolveTelegramStreamCompletionState(
-        {
-          externallyCompleted: completionState.externallyCompleted,
-          previewState: completionState.previewState,
-        },
-      );
-      streamed = telegramCompletionState.effectiveStreamed;
-      const telegramPreviewState = telegramCompletionState.messagePreviewState;
-      await deps.finalizeCompletedRun({
-        chatJid: msg.chat_jid,
-        runId: requestId,
-        sessionKey,
-        result,
-        streamed,
-        usage,
-        abortSignal: abortController.signal,
-        timestampToPersist: msg.timestamp,
-        externallyCompleted: completionState.externallyCompleted,
-        telegramPreviewState,
-        updateChatUsage: deps.updateChatUsage,
-        persistLastAgentTimestamp: (chatJid, timestamp) => {
-          deps.state.lastAgentTimestamp ||= {};
-          deps.state.lastAgentTimestamp[chatJid] = timestamp;
-        },
-        persistAssistantHistory: deps.persistAssistantHistory,
-        deleteTelegramPreviewMessage: deps.deleteTelegramPreviewMessage,
-        finalizeTelegramPreviewMessage: deps.finalizeTelegramPreviewMessage,
-        sendAgentResultMessage: deps.sendAgentResultMessage,
-        emitTuiChatEvent: deps.emitTuiChatEvent as any,
-        emitTuiAgentEvent: deps.emitTuiAgentEvent as any,
-      });
-    } else {
-      deps.emitTuiChatEvent({
-        runId: requestId,
-        sessionKey,
-        state: 'error',
-        errorMessage: 'Run failed',
-      });
-      deps.emitTuiAgentEvent({
-        runId: requestId,
-        sessionKey,
-        phase: 'error',
-        detail: 'run failed',
-      });
+  }
 
-      // Clean up Telegram preview state and notify user on failure
-      if (deps.isTelegramJid(msg.chat_jid)) {
-        // Clean up any pending preview state from the failed run
-        deps.deleteTelegramPreviewMessage?.(msg.chat_jid, 0).catch(() => {});
-        // Consume and discard any stream state
-        deps.consumeTelegramHostStreamState?.(msg.chat_jid, requestId);
-        deps.consumeTelegramHostCompletedRun?.(msg.chat_jid, requestId);
+  async function processMessage(msg: NewMessage): Promise<boolean> {
+    const classified = classifyInboundMessage(msg, deps);
+    if (!classified) return true;
 
-        // Send error message to user - always notify on failure
-        const errorMsg = result || 'Sorry, there was an error processing your message.';
-        await deps.sendAgentResultMessage(msg.chat_jid, errorMsg, {
-          prefixWhatsApp: true,
-        });
-      }
-    }
+    const request = await buildDispatchRequest(msg, classified);
+    if (!request) return true;
+
+    await executeDispatchRun({
+      chatJid: msg.chat_jid,
+      group: request.group,
+      sessionKey: request.sessionKey,
+      requestId: request.requestId,
+      latestUserText: request.latestUserText,
+      finalPrompt: request.finalPrompt,
+      codingHint: request.codingHint,
+      codingRoute: request.codingRoute,
+      delegationInstruction: request.delegationInstruction,
+      runPreferences: request.runPreferences,
+      onboardingGate: request.onboardingGate,
+      route: selectRunRoute(request, deps),
+      timestampToPersist: request.timestampToPersist,
+    });
     return true;
   }
 
@@ -743,149 +1129,80 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     const onboardingGate = deps.resolveMainOnboardingGate(chatJid);
     const sessionKey = deps.getSessionKeyForChat(chatJid);
     deps.persistTuiUserHistory?.(chatJid, text, runId);
-    deps.emitTuiChatEvent({
-      runId,
-      sessionKey,
-      state: 'message',
-      message: { role: 'user', content: text },
-    });
-    deps.emitTuiAgentEvent({
-      runId,
-      sessionKey,
-      phase: 'start',
-      detail: 'running',
-    });
     const runPreferences: Record<string, any> = {
       ...(deps.state.chatRunPreferences[chatJid] || {}),
     };
     if (deps.consumeNextRunNoContinue(chatJid)) {
       runPreferences.nextRunNoContinue = true;
     }
-    const directPrompt = `[${new Date().toISOString()}] ${deps.constants.tuiSenderName}: ${text}`;
+    const timestamp = new Date().toISOString();
+    const preparedPrompt = prepareInteractivePrompt({
+      chatJid,
+      selectedMessages: [
+        {
+          id: `${runId}:user`,
+          chat_jid: chatJid,
+          sender: '__fft_tui__',
+          sender_name: deps.constants.tuiSenderName,
+          content: text,
+          timestamp,
+          is_from_me: 0,
+        },
+      ],
+      queueMode: 'collect',
+      queueDrop: 'old',
+      droppedCount: 0,
+      queueDebounceMs: 0,
+      getRecentConversation: deps.getRecentConversation,
+      includeRecentConversation: runPreferences.nextRunNoContinue !== true,
+      includeTuiMessagesInRecentConversation: true,
+    });
     const prompt = onboardingGate.active
       ? deps.buildOnboardingInterviewPrompt({
-          prompt: directPrompt,
+          prompt: preparedPrompt.finalPrompt,
           latestUserText: text,
         })
-      : directPrompt;
-    const abortController = new AbortController();
-    const activeRun = {
-      chatJid,
-      startedAt: Date.now(),
+      : preparedPrompt.finalPrompt;
+    deps.writePromptInputLog?.({
+      groupFolder: group.folder,
       requestId: runId,
-      abortController,
-    };
-    deps.activeChatRuns.set(chatJid, activeRun);
-    deps.activeChatRunsById.set(runId, activeRun);
+      chatJid,
+      queueMode: 'collect',
+      selectedMessageCount: 1,
+      recentContextCount: preparedPrompt.recentConversationCount,
+      noContinue: runPreferences.nextRunNoContinue === true,
+      latestUserText: text,
+      finalPrompt: prompt,
+      createdAt: new Date().toISOString(),
+    });
     void (async () => {
-      let result: string | null = null;
-      let streamed = false;
-      let ok = false;
-      let usage: RunUsage | undefined;
-      await deps.setTyping(chatJid, true);
-      try {
-        const run = await deps.runAgent(
-          group,
-          prompt,
-          chatJid,
-          'none',
-          runId,
-          runPreferences,
-          {},
-          abortController.signal,
-        );
-        result = run.result;
-        streamed = run.streamed;
-        ok = run.ok;
-        usage = run.usage;
-      } finally {
-        await deps.setTyping(chatJid, false);
-        if (deps.activeChatRuns.get(chatJid) === activeRun) {
-          deps.activeChatRuns.delete(chatJid);
-        }
-        deps.activeChatRunsById.delete(runId);
-        const tuiQueue = deps.tuiMessageQueue.get(chatJid);
-        const nextTuiMessage = tuiQueue?.shift();
-        if (nextTuiMessage) {
-          if (tuiQueue?.length === 0) deps.tuiMessageQueue.delete(chatJid);
-          void runDirectSessionTurn({
-            chatJid,
-            text: nextTuiMessage.text,
-            runId: nextTuiMessage.runId,
-            deliver: nextTuiMessage.deliver,
-          });
-        }
-      }
-      if (!ok) {
-        deps.emitTuiChatEvent({
-          runId,
-          sessionKey,
-          state: 'error',
-          errorMessage: 'Run failed',
-        });
-        deps.emitTuiAgentEvent({
-          runId,
-          sessionKey,
-          phase: 'error',
-          detail: 'run failed',
-        });
-        return;
-      }
-      if (onboardingGate.active) {
-        const completion = deps.extractOnboardingCompletion(result);
-        result = completion.text;
-        if (completion.completed) {
-          deps.completeMainWorkspaceOnboarding({
-            workspaceDir: deps.constants.mainWorkspaceDir,
-          });
-          if (!result) result = 'Onboarding complete.';
-          deps.logger?.info?.(
-            { chatJid, runId },
-            'Completed main workspace onboarding from direct session run',
-          );
-        }
-      }
-      const completionState =
-        deps.isTelegramJid(chatJid) && deps.prepareTelegramCompletionState
-          ? await deps.prepareTelegramCompletionState({
-              chatJid,
-              runId,
-              result,
-            })
-          : {
-              externallyCompleted: deps.isTelegramJid(chatJid)
-                ? deps.consumeTelegramHostCompletedRun(chatJid, runId)
-                : false,
-              previewState: deps.isTelegramJid(chatJid)
-                ? deps.consumeTelegramHostStreamState(chatJid, runId)
-                : null,
-            };
-      const telegramCompletionState = deps.resolveTelegramStreamCompletionState(
-        {
-          externallyCompleted: completionState.externallyCompleted,
-          previewState: completionState.previewState,
-        },
-      );
-      streamed = telegramCompletionState.effectiveStreamed;
-      const telegramPreviewState = telegramCompletionState.messagePreviewState;
-      await deps.finalizeCompletedRun({
+      await executeDispatchRun({
         chatJid,
-        runId,
+        group,
         sessionKey,
-        result,
-        streamed,
-        usage,
-        abortSignal: abortController.signal,
+        requestId: runId,
+        latestUserText: text,
+        finalPrompt: prompt,
+        codingHint: 'none',
+        codingRoute: null,
+        delegationInstruction: null,
+        runPreferences,
+        onboardingGate,
+        route: 'agent',
         deliverToChat: deliver,
-        externallyCompleted: completionState.externallyCompleted,
-        telegramPreviewState,
-        updateChatUsage: deps.updateChatUsage,
-        persistAssistantHistory: deps.persistAssistantHistory,
-        deleteTelegramPreviewMessage: deps.deleteTelegramPreviewMessage,
-        finalizeTelegramPreviewMessage: deps.finalizeTelegramPreviewMessage,
-        sendAgentResultMessage: deps.sendAgentResultMessage,
-        emitTuiChatEvent: deps.emitTuiChatEvent as any,
-        emitTuiAgentEvent: deps.emitTuiAgentEvent as any,
+        onSettled: () => {
+          const tuiQueue = deps.tuiMessageQueue.get(chatJid);
+          const nextTuiMessage = tuiQueue?.shift();
+          if (nextTuiMessage) {
+            if (tuiQueue?.length === 0) deps.tuiMessageQueue.delete(chatJid);
+            void runDirectSessionTurn({
+              chatJid,
+              text: nextTuiMessage.text,
+              runId: nextTuiMessage.runId,
+              deliver: nextTuiMessage.deliver,
+            });
+          }
+        },
       });
     })();
     return { runId, status: 'started' };

@@ -64,6 +64,7 @@ const memoryActionSchema = z.object({
           'todo_append_log',
           'memory_append',
           'memory_promote',
+          'nano_patch',
           'soul_patch',
           'bootstrap_complete',
         ])
@@ -410,6 +411,25 @@ function applySoulPatch(input: {
   };
 }
 
+function applyNanoPatch(input: {
+  groupFolder: string;
+  targetSection?: string;
+  payload: Record<string, unknown>;
+}): { targetPath: string; operation: string; message: string } {
+  const absPath = resolveAllowedMemoryFilePath(input.groupFolder, 'NANO.md');
+  const current = readTextFile(absPath, '# NANO\n');
+  const content = String(input.payload.content || '').trim();
+  if (!content) throw new Error('nano_patch requires payload.content');
+  const section = input.targetSection?.trim() || 'Operational Guidance';
+  const next = applySectionAppend(current, section, content);
+  writeTextFile(absPath, next);
+  return {
+    targetPath: 'NANO.md',
+    operation: 'nano_patch',
+    message: `NANO section "${section}" updated`,
+  };
+}
+
 function applyBootstrapComplete(groupFolder: string): {
   targetPath: string;
   operation: string;
@@ -466,6 +486,14 @@ function applyMemoryWrite(input: {
     return applyMemoryMutation({
       groupFolder: input.groupFolder,
       intent,
+      targetSection: input.params.targetSection,
+      payload,
+    });
+  }
+
+  if (intent === 'nano_patch') {
+    return applyNanoPatch({
+      groupFolder: input.groupFolder,
       targetSection: input.params.targetSection,
       payload,
     });

@@ -100,7 +100,7 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '',
     'First-run ritual:',
     '- Start conversationally: "Hey, I just came online. Who am I? Who are you?"',
-    '- Capture durable behavioral guidance in SOUL.md.',
+    '- Capture operational guidance in NANO.md and durable identity guidance in SOUL.md.',
     '- Initialize mission state in TODOS.md.',
     '- Promote durable facts/decisions into MEMORY.md.',
     '- Keep the flow practical and concise.',

@@ -34,7 +34,7 @@ This is the persistent reference doc for:
 
 - `nanoclaw`: primarily `CLAUDE.md` (root + per-group/global).
 - `openclaw`: standard workspace set (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, optional `BOOT.md`, `MEMORY.md`, `memory/`).
-- `fft_nano`: similar structured set, plus `PRINCIPLES.md`; seeds `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory/`, `skills/`.
+- `fft_nano`: similar structured set, plus `PRINCIPLES.md`; seeds `NANO.md`, `SOUL.md`, `TODOS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory/`, `skills/` for the main workspace while retaining legacy compatibility docs/templates.
 
 ### Memory model
 
@@ -225,4 +225,3 @@ To become "as close as possible" to `openclaw`, the biggest missing blocks are:
 - heartbeat routing/visibility/timezone parity
 - cron behavior/UX parity
 - workspace bootstrap controls (`BOOT.md` + size caps + doctor-like checks)
-

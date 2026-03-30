@@ -460,9 +460,14 @@ render_completion_handoff() {
   print_readiness_line "Main/admin chat claimed" "${main_chat_status}"
   say ""
 
-  print_numbered_list "Required now:" "${required_now[@]}"
+  if [[ -z "${required_now[*]-}" ]]; then
+    say "Required now:"
+    say "  (none)"
+  else
+    print_numbered_list "Required now:" "${required_now[@]}"
+  fi
   say ""
-  if [[ "${#required_now[@]}" -eq 0 ]]; then
+  if [[ -z "${required_now[*]-}" ]]; then
     say "ONBOARDING COMPLETE: READY"
   else
     say "ONBOARDING COMPLETE: USER ACTION REQUIRED"

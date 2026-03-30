@@ -83,6 +83,8 @@ export interface PromptParityConfig {
   softTokenThreshold: number;
   hardTokenThreshold: number;
   skillCatalogMaxChars: number;
+  recentConversationMaxMessages: number;
+  recentConversationMaxChars: number;
 }
 
 export interface ParityConfig {
@@ -151,6 +153,8 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
     softTokenThreshold: 48_000,
     hardTokenThreshold: 64_000,
     skillCatalogMaxChars: 6_000,
+    recentConversationMaxMessages: 8,
+    recentConversationMaxChars: 4_000,
   },
 };
 
@@ -322,6 +326,14 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
   merged.prompt.skillCatalogMaxChars = Math.max(
     500,
     Number(merged.prompt.skillCatalogMaxChars) || 6_000,
+  );
+  merged.prompt.recentConversationMaxMessages = Math.max(
+    1,
+    Number(merged.prompt.recentConversationMaxMessages) || 8,
+  );
+  merged.prompt.recentConversationMaxChars = Math.max(
+    200,
+    Number(merged.prompt.recentConversationMaxChars) || 4_000,
   );
 
   return merged;
@@ -495,6 +507,18 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     process.env.FFT_NANO_SKILL_CATALOG_MAX_CHARS,
     next.prompt.skillCatalogMaxChars,
     500,
+    200_000,
+  );
+  next.prompt.recentConversationMaxMessages = envInt(
+    process.env.FFT_NANO_PROMPT_RECENT_CONVERSATION_MAX_MESSAGES,
+    next.prompt.recentConversationMaxMessages,
+    1,
+    100,
+  );
+  next.prompt.recentConversationMaxChars = envInt(
+    process.env.FFT_NANO_PROMPT_RECENT_CONVERSATION_MAX_CHARS,
+    next.prompt.recentConversationMaxChars,
+    200,
     200_000,
   );
   return next;

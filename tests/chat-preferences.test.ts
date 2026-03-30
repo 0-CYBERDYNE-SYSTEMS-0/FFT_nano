@@ -39,12 +39,12 @@ test('normalizeThinkLevel maps aliases', () => {
 test('normalizeTelegramDeliveryMode maps supported values', () => {
   assert.equal(normalizeTelegramDeliveryMode('off'), 'off');
   assert.equal(normalizeTelegramDeliveryMode('partial'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('block'), 'block');
+  assert.equal(normalizeTelegramDeliveryMode('block'), 'partial');
   assert.equal(normalizeTelegramDeliveryMode('draft'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('native'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('progress'), 'partial');
   assert.equal(normalizeTelegramDeliveryMode('live'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'persistent');
+  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'partial');
   assert.equal(normalizeTelegramDeliveryMode('final'), 'off');
   assert.equal(normalizeTelegramDeliveryMode(''), undefined);
 });
@@ -77,7 +77,7 @@ test('updateChatRunPreferences compacts defaults and persists', () => {
   assert.equal(runtime.getSaveCount(), 1);
 
   const persisted = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
-    prefs.telegramDeliveryMode = 'persistent';
+    prefs.telegramDeliveryMode = 'partial';
     prefs.queueMode = 'collect';
     prefs.queueDrop = 'old';
     prefs.nextRunNoContinue = true;
@@ -87,7 +87,6 @@ test('updateChatRunPreferences compacts defaults and persists', () => {
   assert.deepEqual(persisted, {
     provider: 'openai',
     model: 'gpt-5.4',
-    telegramDeliveryMode: 'persistent',
     nextRunNoContinue: true,
   });
   assert.equal(runtime.getSaveCount(), 2);
@@ -110,6 +109,18 @@ test('updateChatRunPreferences compacts defaults and persists', () => {
 
   assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
   assert.equal(runtime.getSaveCount(), 4);
+});
+
+test('legacy Telegram delivery modes normalize to partial when persisted', () => {
+  const runtime = createRuntime();
+
+  const next = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
+    prefs.telegramDeliveryMode = normalizeTelegramDeliveryMode('persistent');
+    return prefs;
+  });
+
+  assert.equal(next.telegramDeliveryMode, undefined);
+  assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
 });
 
 test('getEffectiveModelLabel falls back to configured defaults', () => {

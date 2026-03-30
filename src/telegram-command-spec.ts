@@ -140,7 +140,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/model [provider/model|reset] - show/set chat model',
     '/think [off|minimal|low|medium|high|xhigh] - set thinking level',
     '/reasoning [off|on|stream] - set reasoning visibility mode',
-    '/delivery [off|partial|block|draft|persistent] - set Telegram text delivery mode',
+    '/delivery [off|partial|draft] - set Telegram text delivery mode',
     '/verbose [/v] [off|new|all|verbose] - cycle or set tool progress mode',
     '/new - start fresh session on next run',
     '/reset - alias for /new',

@@ -153,6 +153,45 @@ test('memory_search sessions returns transcript hits and respects main override'
   }
 });
 
+test('memory_search includes NANO.md in document hits', async () => {
+  const groupFolder = `test-mem-nano-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+
+  try {
+    fs.mkdirSync(groupDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(groupDir, 'NANO.md'),
+      '# NANO\n\nOperational contract: greenhouse vents close before irrigation.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(path.join(groupDir, 'MEMORY.md'), '# MEMORY\n\n', 'utf-8');
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_search',
+        requestId: 'r-nano-search',
+        params: {
+          query: 'greenhouse vents close before irrigation',
+          sources: 'memory',
+          topK: 5,
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    const hits = result.result?.hits || [];
+    assert.equal(hits.some((hit) => hit.source === 'memory_doc' && hit.path === 'NANO.md'), true);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
 test('memory_write todo_upsert_task is deterministic for same entry id', async () => {
   const groupFolder = `todo-write-${Date.now()}`;
   const groupDir = path.join(process.cwd(), 'groups', groupFolder);
@@ -236,6 +275,43 @@ test('memory_write memory_append rejects non-durable target paths', async () => 
 
   assert.equal(result.status, 'error');
   assert.match(result.error || '', /writable durable memory file/i);
+});
+
+test('memory_write nano_patch updates NANO.md operational guidance', async () => {
+  const groupFolder = `nano-patch-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  try {
+    fs.mkdirSync(groupDir, { recursive: true });
+    fs.writeFileSync(path.join(groupDir, 'NANO.md'), '# NANO\n\nExisting contract.\n', 'utf-8');
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'nano-patch',
+        params: {
+          intent: 'nano_patch',
+          targetSection: 'Execution',
+          payload: {
+            content: 'Use delegated coding runs for multi-file implementation work.',
+          },
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    assert.equal(result.result?.mutation?.targetPath, 'NANO.md');
+    const nanoBody = fs.readFileSync(path.join(groupDir, 'NANO.md'), 'utf-8');
+    assert.match(nanoBody, /## Execution/);
+    assert.match(nanoBody, /Use delegated coding runs for multi-file implementation work\./);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
 });
 
 test('memory_write todo_move_task keeps task-board formatting on in-place updates', async () => {

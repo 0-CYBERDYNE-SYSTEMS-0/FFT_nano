@@ -11,6 +11,7 @@ Primary files:
 ## Canonical Files
 
 Per group:
+- `NANO.md` (runtime contract / operating instructions)
 - `MEMORY.md` (canonical durable memory)
 - `memory/*.md` (additional memory notes)
 - `SOUL.md` (identity/policy context, not compaction log store)

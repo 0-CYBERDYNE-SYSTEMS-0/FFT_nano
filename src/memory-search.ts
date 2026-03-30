@@ -223,7 +223,7 @@ function collectDocumentFiles(
 ): Array<{ abs: string; rel: string }> {
   const workspace = resolveGroupWorkspaceDir(groupFolder);
   const files = new Set<string>();
-  const canonicalDocs = ['SOUL.md', 'TODOS.md'];
+  const canonicalDocs = ['NANO.md', 'SOUL.md', 'TODOS.md'];
   for (const rel of canonicalDocs) {
     const abs = path.join(workspace, rel);
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {

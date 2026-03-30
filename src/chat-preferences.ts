@@ -57,11 +57,14 @@ export function normalizeTelegramDeliveryMode(
   const key = raw.trim().toLowerCase();
   if (!key) return undefined;
   if (['off', 'final', 'final-only', 'quiet'].includes(key)) return 'off';
-  if (['partial', 'progress', 'live'].includes(key)) return 'partial';
-  if (key === 'block') return 'block';
+  if (
+    ['partial', 'progress', 'live', 'block', 'persistent', 'persist', 'transcript', 'append'].includes(
+      key,
+    )
+  ) {
+    return 'partial';
+  }
   if (['draft', 'native', 'native-draft'].includes(key)) return 'draft';
-  if (['persistent', 'persist', 'transcript', 'append'].includes(key))
-    return 'persistent';
   return undefined;
 }
 
