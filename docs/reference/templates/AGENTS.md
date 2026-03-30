@@ -1,8 +1,7 @@
 # FFT_nano Main Workspace
 
 Legacy note:
-- `AGENTS.md` is the old fft_nano-style name for the workspace operating contract.
-- In `fft_nano`, that role now belongs to `NANO.md`.
+- `AGENTS.md` was the original naming convention; in current FFT_nano, that role belongs to `NANO.md`.
 - Keep `SOUL.md` for identity/tone and `MEMORY.md` for durable memory.
 
 Session start order:

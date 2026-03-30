@@ -1,4 +1,4 @@
-# FFT_nano / NanoClaw Agent Notes
+# FFT_nano Agent Notes
 
 This repo is a single Node.js host process that:
 - Receives chat messages (Telegram and/or WhatsApp)

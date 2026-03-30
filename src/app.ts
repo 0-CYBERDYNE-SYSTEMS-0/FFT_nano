@@ -404,13 +404,13 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     }
     try {
       const output = execSync(
-        "docker ps -a --filter status=exited --filter name=nanoclaw- --format '{{.Names}}'",
+        "docker ps -a --filter status=exited --filter name=fft-nano- --format '{{.Names}}'",
         { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
       );
       const stale = output
         .split('\n')
         .map((n) => n.trim())
-        .filter((n) => n.startsWith('nanoclaw-'));
+        .filter((n) => n.startsWith('fft-nano-'));
       if (stale.length > 0) {
         execSync(`docker rm ${stale.join(' ')}`, { stdio: 'pipe' });
         deps.logger.info?.(
