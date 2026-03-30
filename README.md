@@ -57,7 +57,7 @@ cd FFT_nano
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
 - onboarding wizard (`risk gate`, `quickstart|advanced`, `local|remote`, provider/channel/hatch)
 - host service step (`install/start` by default, with `--no-install-daemon` support)
-- workspace onboarding seed (`SOUL.md`, `USER.md`, `IDENTITY.md`; keeps `BOOTSTRAP.md` for first-run ritual)
+- workspace onboarding/bootstrap seed (`NANO.md`, `SOUL.md`, `TODOS.md`, `HEARTBEAT.md`, `MEMORY.md`; preserves `BOOTSTRAP.md` for first-run ritual and `BOOT.md` when enabled)
 - doctor health check
 
 Profile defaults:
@@ -201,7 +201,7 @@ Host CLI:
 
 Maintenance:
 
-- `./scripts/onboard-all.sh [--workspace /abs/path --env-path /abs/path/.env --runtime docker|host|auto --non-interactive --accept-risk --operator "Name" --assistant-name OpenClaw --skip-setup --skip-restart --skip-doctor --no-backup --skip-channels --skip-skills --skip-health --skip-ui --install-daemon|--no-install-daemon]`
+- `./scripts/onboard-all.sh [--workspace /abs/path --env-path /abs/path/.env --runtime docker|host|auto --non-interactive --accept-risk --operator "Name" --assistant-name "AssistantName" --skip-setup --skip-restart --skip-doctor --no-backup --skip-channels --skip-skills --skip-health --skip-ui --install-daemon|--no-install-daemon]`
 - `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
 - `npm run restore:state -- --archive /abs/path/to/backup.tar.gz [--workspace-target /abs/path]`
 
@@ -335,12 +335,12 @@ sudo systemctl enable --now docker
 docker info
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
 cd FFT_nano
-./scripts/setup.sh
+./scripts/onboard-all.sh --runtime docker
 ./scripts/service.sh status
 ./scripts/service.sh logs
 ```
 
-`setup.sh` installs the service by default unless `FFT_NANO_AUTO_SERVICE=0`.
+For Pi, `./scripts/onboard-all.sh` is the recommended install path. `./scripts/setup.sh` remains the lower-level setup/build helper if you intentionally want setup without the full onboarding flow.
 
 ## Farm Onboarding (Demo vs Production)
 
@@ -428,7 +428,7 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 - Override with `FFT_NANO_MAIN_WORKSPACE_DIR=/absolute/path`.
 - Default main memory and context files live outside this git repo (`~/nano`), which helps keep personal notes out of commits.
 - `groups/main/` is intentionally kept as an empty placeholder in-repo; if you point main workspace into the repo, treat it as local-only and never commit personal memory/state files.
-- Workspace bootstrap files are auto-seeded when missing: `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/` + `skills/`.
+- Workspace bootstrap files are auto-seeded when missing: `NANO.md`, `SOUL.md`, `TODOS.md`, `HEARTBEAT.md`, `MEMORY.md`, and `BOOTSTRAP.md`; optional `BOOT.md` is seeded when enabled. Legacy files can be preserved as compatibility snapshots, but they are not the active contract.
 - Main chat bootstrap interview is host-enforced by default for fresh installs while `BOOTSTRAP.md` is pending.
 - During enforced bootstrap, normal tasks are redirected into onboarding interview flow and `/coder` commands are blocked until completion.
 - Completion marker token: `ONBOARDING_COMPLETE` (host strips token and finalizes onboarding state).
@@ -446,11 +446,11 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
 
 Onboarding command options:
 
-- `fft onboard --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
-- `./scripts/onboard-all.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
-- `npm run onboard -- --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
-- `./scripts/onboard.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name OpenClaw --non-interactive --accept-risk --auth-choice skip`
-- `--force` rewrites `SOUL.md`, `USER.md`, and `IDENTITY.md` even when already customized.
+- `fft onboard --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name "AssistantName" --non-interactive --accept-risk --auth-choice skip`
+- `./scripts/onboard-all.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name "AssistantName" --non-interactive --accept-risk --auth-choice skip`
+- `npm run onboard -- --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name "AssistantName" --non-interactive --accept-risk --auth-choice skip`
+- `./scripts/onboard.sh --workspace /abs/path --env-path /abs/path/.env --operator "Name" --assistant-name "AssistantName" --non-interactive --accept-risk --auth-choice skip`
+- `--force` rewrites generated `SOUL.md` and `TODOS.md` onboarding content when you want to reset the main workspace defaults.
 
 ## Pi-Native Project Skills
 

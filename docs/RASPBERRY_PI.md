@@ -56,19 +56,20 @@ docker info
 
 `docker info` must succeed before continuing.
 
-## 5. Clone and bootstrap FFT_nano
+## 5. Clone and run guided onboarding
 
 ```bash
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
 cd FFT_nano
-./scripts/setup.sh
+./scripts/onboard-all.sh --runtime docker
 ```
 
-What `setup.sh` does:
-- installs deps
-- typechecks and builds
-- builds agent container image for Docker runtime
+What `onboard-all.sh` does:
+- runs backup -> setup -> onboarding wizard -> service step -> doctor
+- installs deps, typechecks, and builds
+- prepares Docker runtime artifacts
 - scaffolds `.env` if missing
+- seeds the main workspace contract (`NANO.md`, `SOUL.md`, `TODOS.md`, `HEARTBEAT.md`, `MEMORY.md`, `BOOTSTRAP.md`; optional `BOOT.md`)
 
 ## 6. Configure `.env`
 
@@ -119,7 +120,7 @@ Check health and logs:
 ```
 
 Notes:
-- `setup.sh` installs/starts the service by default unless `FFT_NANO_AUTO_SERVICE=0`.
+- `onboard-all.sh` installs/starts the service by default unless `FFT_NANO_AUTO_SERVICE=0`.
 - If status/restart needs elevated privileges on your host, run `./scripts/service.sh ...` (or `fft service ...`) from a shell with sufficient permissions.
 
 ## 9. Reboot validation (airtight check)
@@ -157,7 +158,7 @@ This handles companion dashboard fetch, HA startup, and onboarding flow.
 ```bash
 cd ~/FFT_nano
 git pull --ff-only
-./scripts/setup.sh
+./scripts/setup.sh --runtime docker
 ./scripts/service.sh restart
 # or, after `npm link`: fft service restart
 ```
@@ -184,4 +185,4 @@ Node version mismatch:
 node -v
 ```
 
-If `< 20`, reinstall Node.js 20+ and rerun `./scripts/setup.sh`.
+If `< 20`, reinstall Node.js 20+ and rerun `./scripts/setup.sh --runtime docker`.
