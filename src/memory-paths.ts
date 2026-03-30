@@ -11,6 +11,56 @@ const TODOS_FILE_NAME = 'TODOS.md';
 const BOOTSTRAP_FILE_NAME = 'BOOTSTRAP.md';
 const HEARTBEAT_FILE_NAME = 'HEARTBEAT.md';
 
+const DEFAULT_NANO_BODY = [
+  '# NANO',
+  '',
+  'Nano Core runtime contract.',
+  '',
+  'Session context order:',
+  '1. Read NANO.md',
+  '2. Read SOUL.md',
+  '3. Read TODOS.md',
+  '4. Read BOOTSTRAP.md (if present)',
+  '5. Read MEMORY.md',
+  '',
+  'Heartbeat and scheduled maintenance runs also read HEARTBEAT.md.',
+  '',
+  'Memory policy:',
+  '- Durable memory belongs in MEMORY.md and memory/*.md.',
+  '- Keep SOUL.md stable; do not use it as compaction log storage.',
+  '- TODOS.md is mission control for active execution state.',
+  '',
+  'Execution stance:',
+  '- Use tools to verify claims and perform edits.',
+  '- Prefer deterministic, testable changes.',
+  '- Keep user-facing updates concise and concrete.',
+].join('\n');
+
+const DEFAULT_SOUL_BODY = [
+  '# SOUL',
+  '',
+  'You are concise, practical, and technically rigorous.',
+].join('\n');
+
+const DEFAULT_TODOS_BODY = [
+  '# TODOS.md = MISSION CONTROL: Initial Mission',
+  '',
+  '## 🚀 ACTIVE OBJECTIVE',
+  '> Ship the next validated increment safely.',
+  '',
+  '## 📋 TASK BOARD',
+  '- [ ] Define first active task <!-- id:T1 status:PENDING -->',
+  '',
+  '## 🤖 SUB-AGENTS & PROCESSES',
+  '- [None]',
+  '',
+  '## ⏳ BLOCKED / WAITING',
+  '- [None]',
+  '',
+  '## 📝 MISSION LOG',
+  '- [00:00] - Mission control initialized.',
+].join('\n');
+
 export function resolveGroupWorkspaceDir(groupFolder: string): string {
   if (groupFolder === MAIN_GROUP_FOLDER) return MAIN_WORKSPACE_DIR;
   return path.join(GROUPS_DIR, groupFolder);
@@ -47,12 +97,26 @@ export function resolveMemoryDir(groupFolder: string): string {
 export function ensureMemoryScaffold(
   groupFolder: string,
   opts?: { createIfMissing?: boolean },
-): { memoryPath: string; memoryDir: string } {
+): { memoryPath: string; memoryDir: string; nanoPath: string; soulPath: string; todosPath: string } {
   const create = opts?.createIfMissing !== false;
+  const workspaceDir = resolveGroupWorkspaceDir(groupFolder);
+  const nanoPath = resolveNanoPath(groupFolder);
+  const soulPath = resolveSoulPath(groupFolder);
+  const todosPath = resolveTodosPath(groupFolder);
   const memoryPath = resolveMemoryPath(groupFolder);
   const memoryDir = resolveMemoryDir(groupFolder);
 
   if (create) {
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    if (!fs.existsSync(nanoPath)) {
+      fs.writeFileSync(nanoPath, `${DEFAULT_NANO_BODY}\n`);
+    }
+    if (!fs.existsSync(soulPath)) {
+      fs.writeFileSync(soulPath, `${DEFAULT_SOUL_BODY}\n`);
+    }
+    if (!fs.existsSync(todosPath)) {
+      fs.writeFileSync(todosPath, `${DEFAULT_TODOS_BODY}\n`);
+    }
     fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
     if (!fs.existsSync(memoryPath)) {
       fs.writeFileSync(
@@ -63,7 +127,7 @@ export function ensureMemoryScaffold(
     fs.mkdirSync(memoryDir, { recursive: true });
   }
 
-  return { memoryPath, memoryDir };
+  return { memoryPath, memoryDir, nanoPath, soulPath, todosPath };
 }
 
 export function isAllowedMemoryRelativePath(relPath: string): boolean {

@@ -43,9 +43,7 @@ export type ReasoningLevel = 'off' | 'on' | 'stream';
 export type TelegramDeliveryMode =
   | 'off'
   | 'partial'
-  | 'block'
-  | 'draft'
-  | 'persistent';
+  | 'draft';
 export type QueueMode =
   | 'collect'
   | 'interrupt'

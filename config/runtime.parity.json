@@ -43,5 +43,9 @@
   },
   "doctor": {
     "enabled": true
+  },
+  "prompt": {
+    "recentConversationMaxMessages": 8,
+    "recentConversationMaxChars": 4000
   }
 }

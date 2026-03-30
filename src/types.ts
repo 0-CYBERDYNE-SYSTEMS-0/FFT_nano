@@ -48,6 +48,7 @@ export interface NewMessage {
   sender_name: string;
   content: string;
   timestamp: string;
+  is_from_me?: number;
 }
 
 export interface ScheduledTask {
@@ -224,6 +225,7 @@ export interface MemoryActionRequest {
       | 'todo_append_log'
       | 'memory_append'
       | 'memory_promote'
+      | 'nano_patch'
       | 'soul_patch'
       | 'bootstrap_complete';
     targetSection?: string;

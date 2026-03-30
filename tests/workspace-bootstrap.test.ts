@@ -36,6 +36,26 @@ test('fresh workspace seeds core files, BOOTSTRAP.md, and state bootstrapSeededA
   assert.equal(isMainWorkspaceOnboardingPending(workspaceDir), true);
 });
 
+test('fresh workspace keeps operational guidance in NANO.md and persona guidance in SOUL.md', () => {
+  const workspaceDir = makeTmpWorkspace();
+  ensureMainWorkspaceBootstrap({
+    workspaceDir,
+    now: () => new Date('2026-02-17T10:00:00.000Z'),
+  });
+
+  const nanoBody = readText(path.join(workspaceDir, 'NANO.md'));
+  const soulBody = readText(path.join(workspaceDir, 'SOUL.md'));
+
+  assert.match(nanoBody, /Session context order:/);
+  assert.match(nanoBody, /Memory policy:/);
+  assert.match(nanoBody, /Execution stance:/);
+  assert.doesNotMatch(nanoBody, /You are concise, practical, and technically rigorous\./);
+
+  assert.match(soulBody, /Tone: concise, practical, technically rigorous|technically rigorous/i);
+  assert.doesNotMatch(soulBody, /Session context order:/);
+  assert.doesNotMatch(soulBody, /Memory policy:/);
+});
+
 test('legacy/onboarded workspace does not recreate BOOTSTRAP.md and marks onboarding complete', () => {
   const workspaceDir = makeTmpWorkspace();
   fs.mkdirSync(workspaceDir, { recursive: true });

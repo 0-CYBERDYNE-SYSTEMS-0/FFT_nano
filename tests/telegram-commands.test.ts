@@ -58,12 +58,12 @@ function createBaseDeps(): TelegramCommandDeps {
         {
           off: 'off',
           partial: 'partial',
-          block: 'block',
+          block: 'partial',
           draft: 'draft',
           native: 'draft',
           progress: 'partial',
           live: 'partial',
-          persistent: 'persistent',
+          persistent: 'partial',
           final: 'off',
         } as Record<string, string>
       )[value.trim().toLowerCase()] ?? null,
@@ -234,12 +234,12 @@ test('handleTelegramCommand normalizes delivery aliases to canonical persisted v
     ({
       off: 'off',
       partial: 'partial',
-      block: 'block',
+      block: 'partial',
       draft: 'draft',
       native: 'draft',
       progress: 'partial',
       live: 'partial',
-      persistent: 'persistent',
+      persistent: 'partial',
       final: 'off',
     })[value];
 
@@ -280,7 +280,7 @@ test('handleTelegramCommand reports canonical delivery modes in help text', asyn
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
   };
-  deps.state.chatRunPreferences['telegram:1'] = { telegramDeliveryMode: 'block' } as any;
+  deps.state.chatRunPreferences['telegram:1'] = { telegramDeliveryMode: 'partial' } as any;
 
   const handlers = createTelegramCommandHandlers(deps);
   const handled = await handlers.handleTelegramCommand({

@@ -294,6 +294,17 @@ export function storeHostMessage(input: {
 }
 
 export interface ChatHistoryMessageRow {
+  id?: string;
+  sender: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+  is_from_me: number;
+}
+
+export interface PromptTranscriptMessageRow {
+  id: string;
+  chat_jid: string;
   sender: string;
   sender_name: string;
   content: string;
@@ -319,6 +330,29 @@ export function getChatHistory(
     `,
     )
     .all(chatJid, safeLimit) as ChatHistoryMessageRow[];
+  rows.reverse();
+  return rows;
+}
+
+export function getPromptTranscriptMessages(
+  chatJid: string,
+  limit = 24,
+): PromptTranscriptMessageRow[] {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(200, Math.floor(limit)))
+    : 24;
+  const rows = db
+    .prepare(
+      `
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      FROM messages
+      WHERE chat_jid = ?
+        AND content != '' AND content IS NOT NULL
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `,
+    )
+    .all(chatJid, safeLimit) as PromptTranscriptMessageRow[];
   rows.reverse();
   return rows;
 }
@@ -358,16 +392,17 @@ export function storeMessage(
 export function getNewMessages(
   jids: string[],
   lastTimestamp: string,
-  botPrefix: string,
+  _botPrefix: string,
 ): { messages: NewMessage[]; newTimestamp: string } {
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
     FROM messages
     WHERE timestamp > ? AND chat_jid IN (${placeholders})
-      AND content NOT LIKE ? AND sender != ?
+      AND sender != ?
+      AND coalesce(is_from_me, 0) != 1
       AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
@@ -377,7 +412,6 @@ export function getNewMessages(
     .all(
       lastTimestamp,
       ...jids,
-      `${botPrefix}:%`,
       '__fft_tui__',
     ) as NewMessage[];
 
@@ -395,7 +429,7 @@ export function getMessagesSince(
   botPrefix: string,
 ): NewMessage[] {
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
     FROM messages
     WHERE chat_jid = ? AND timestamp > ?
       AND sender != '__fft_tui__'

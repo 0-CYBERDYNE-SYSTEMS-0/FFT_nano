@@ -14,14 +14,6 @@ export interface TelegramMessageStreamState {
   updatedAt: number;
 }
 
-export interface TelegramBlockStreamState {
-  mode: 'block';
-  lastText: string;
-  pendingText: string;
-  updatedAt: number;
-  lastSentAt: number;
-}
-
 export interface TelegramDraftStreamState {
   mode: 'draft';
   draftId: number;
@@ -31,7 +23,6 @@ export interface TelegramDraftStreamState {
 
 export type TelegramStreamState =
   | TelegramMessageStreamState
-  | TelegramBlockStreamState
   | TelegramDraftStreamState;
 
 export function getTelegramPreviewRunKey(
@@ -60,383 +51,10 @@ export function resolveTelegramStreamCompletionState(params: {
   return { effectiveStreamed: false, messagePreviewState: null };
 }
 
-export function computePersistentPreviewDelivery(params: {
-  previousText?: string;
-  nextText: string;
-}): {
-  deliveryText: string | null;
-  nextStateText: string;
-} {
-  const nextStateText = normalizeTelegramDraftText(params.nextText);
-  const previousText = params.previousText
-    ? normalizeTelegramDraftText(params.previousText)
-    : '';
-
-  if (!nextStateText) {
-    return { deliveryText: null, nextStateText };
-  }
-  if (!previousText) {
-    return {
-      deliveryText:
-        nextStateText.length >= MIN_PREVIEW_CHARS ? nextStateText : null,
-      nextStateText,
-    };
-  }
-  if (nextStateText === previousText) {
-    return { deliveryText: null, nextStateText };
-  }
-  if (nextStateText.startsWith(previousText)) {
-    return {
-      deliveryText: nextStateText.slice(previousText.length) || null,
-      nextStateText,
-    };
-  }
-
-  return {
-    deliveryText:
-      nextStateText.length >= MIN_PREVIEW_CHARS
-        ? `Updated draft:\n${nextStateText}`
-        : null,
-    nextStateText,
-  };
-}
-
-export function finalizePersistentPreviewDelivery(params: {
-  previousText?: string;
-  finalText: string;
-}): {
-  deliveryText: string | null;
-  nextStateText: string;
-  completed: boolean;
-} {
-  const nextStateText = normalizeTelegramDraftText(params.finalText);
-  const previousText = params.previousText
-    ? normalizeTelegramDraftText(params.previousText)
-    : '';
-
-  if (!nextStateText) {
-    return { deliveryText: null, nextStateText, completed: false };
-  }
-  if (!previousText) {
-    return {
-      deliveryText: nextStateText,
-      nextStateText,
-      completed: true,
-    };
-  }
-  if (nextStateText === previousText) {
-    return { deliveryText: null, nextStateText, completed: true };
-  }
-  if (nextStateText.startsWith(previousText)) {
-    return {
-      deliveryText: nextStateText.slice(previousText.length) || null,
-      nextStateText,
-      completed: true,
-    };
-  }
-
-  return {
-    deliveryText: `Updated draft:\n${nextStateText}`,
-    nextStateText,
-    completed: true,
-  };
-}
-
 const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
 const MAX_FAILURES_BEFORE_DISABLE = 4;
 const DISABLE_TTL_MS = 120_000;
 const MIN_PREVIEW_CHARS = 20;
-const BLOCK_STREAM_MIN_CHARS = 800;
-const BLOCK_STREAM_MAX_CHARS = 1200;
-const BLOCK_STREAM_IDLE_MS = 1000;
-
-function takeBlockChunk(
-  text: string,
-  maxChars: number,
-): { chunk: string; rest: string } {
-  if (text.length <= maxChars) return { chunk: text, rest: '' };
-
-  let cut = text.lastIndexOf('\n\n', maxChars);
-  let skip = 2;
-  if (cut <= 0) {
-    cut = text.lastIndexOf('\n', maxChars);
-    skip = 1;
-  }
-  if (cut <= 0) {
-    cut = maxChars;
-    skip = 0;
-  } else {
-    cut += skip;
-  }
-
-  return {
-    chunk: text.slice(0, cut),
-    rest: text.slice(cut),
-  };
-}
-
-function drainBlockPending(params: {
-  pendingText: string;
-  minChunkChars: number;
-  maxChunkChars: number;
-  forceFlush: boolean;
-}): { deliveryTexts: string[]; remainingText: string } {
-  let remainingText = params.pendingText;
-  const deliveryTexts: string[] = [];
-  while (remainingText) {
-    if (!params.forceFlush && remainingText.length < params.minChunkChars)
-      break;
-    const { chunk, rest } = takeBlockChunk(remainingText, params.maxChunkChars);
-    if (!chunk) break;
-    deliveryTexts.push(chunk);
-    remainingText = rest;
-    if (!params.forceFlush && remainingText.length < params.minChunkChars)
-      break;
-  }
-  return { deliveryTexts, remainingText };
-}
-
-function shouldFlushBlockPending(params: {
-  pendingText: string;
-  now: number;
-  lastSentAt: number;
-  minChunkChars: number;
-  idleMs: number;
-  forceFlush?: boolean;
-}): boolean {
-  if (!params.pendingText) return false;
-  if (params.forceFlush) return true;
-  if (params.pendingText.length >= params.minChunkChars) return true;
-  return params.now - params.lastSentAt >= params.idleMs;
-}
-
-export function computeBlockStreamDelivery(params: {
-  previousState?: TelegramBlockStreamState | null;
-  nextText: string;
-  now?: number;
-  minChunkChars?: number;
-  maxChunkChars?: number;
-  idleMs?: number;
-  forceFlush?: boolean;
-}): {
-  deliveryTexts: string[];
-  nextState: TelegramBlockStreamState | null;
-} {
-  const now = params.now ?? Date.now();
-  const minChunkChars = Math.max(
-    1,
-    params.minChunkChars ?? BLOCK_STREAM_MIN_CHARS,
-  );
-  const maxChunkChars = Math.max(
-    minChunkChars,
-    params.maxChunkChars ?? BLOCK_STREAM_MAX_CHARS,
-  );
-  const idleMs = Math.max(0, params.idleMs ?? BLOCK_STREAM_IDLE_MS);
-  const nextText = normalizeTelegramDraftText(params.nextText);
-  const previousState = params.previousState || null;
-
-  if (!nextText) {
-    if (!previousState) return { deliveryTexts: [], nextState: null };
-    if (
-      !shouldFlushBlockPending({
-        pendingText: previousState.pendingText,
-        now,
-        lastSentAt: previousState.lastSentAt,
-        minChunkChars,
-        idleMs,
-        forceFlush: params.forceFlush,
-      })
-    ) {
-      return {
-        deliveryTexts: [],
-        nextState: { ...previousState, updatedAt: now },
-      };
-    }
-    const flushed = drainBlockPending({
-      pendingText: previousState.pendingText,
-      minChunkChars,
-      maxChunkChars,
-      forceFlush: params.forceFlush === true,
-    });
-    return {
-      deliveryTexts: flushed.deliveryTexts,
-      nextState: {
-        ...previousState,
-        pendingText: flushed.remainingText,
-        updatedAt: now,
-        lastSentAt:
-          flushed.deliveryTexts.length > 0 ? now : previousState.lastSentAt,
-      },
-    };
-  }
-
-  if (!previousState) {
-    const nextState: TelegramBlockStreamState = {
-      mode: 'block',
-      lastText: nextText,
-      pendingText: nextText,
-      updatedAt: now,
-      lastSentAt: now,
-    };
-    if (
-      !shouldFlushBlockPending({
-        pendingText: nextState.pendingText,
-        now,
-        lastSentAt: nextState.lastSentAt,
-        minChunkChars,
-        idleMs,
-        forceFlush: params.forceFlush,
-      })
-    ) {
-      return { deliveryTexts: [], nextState };
-    }
-    const flushed = drainBlockPending({
-      pendingText: nextState.pendingText,
-      minChunkChars,
-      maxChunkChars,
-      forceFlush: params.forceFlush === true,
-    });
-    return {
-      deliveryTexts: flushed.deliveryTexts,
-      nextState: {
-        ...nextState,
-        pendingText: flushed.remainingText,
-        lastSentAt:
-          flushed.deliveryTexts.length > 0 ? now : nextState.lastSentAt,
-      },
-    };
-  }
-
-  if (nextText === previousState.lastText) {
-    if (
-      !shouldFlushBlockPending({
-        pendingText: previousState.pendingText,
-        now,
-        lastSentAt: previousState.lastSentAt,
-        minChunkChars,
-        idleMs,
-        forceFlush: params.forceFlush,
-      })
-    ) {
-      return {
-        deliveryTexts: [],
-        nextState: { ...previousState, updatedAt: now },
-      };
-    }
-    const flushed = drainBlockPending({
-      pendingText: previousState.pendingText,
-      minChunkChars,
-      maxChunkChars,
-      forceFlush: params.forceFlush === true,
-    });
-    return {
-      deliveryTexts: flushed.deliveryTexts,
-      nextState: {
-        ...previousState,
-        pendingText: flushed.remainingText,
-        updatedAt: now,
-        lastSentAt:
-          flushed.deliveryTexts.length > 0 ? now : previousState.lastSentAt,
-      },
-    };
-  }
-
-  if (!nextText.startsWith(previousState.lastText)) {
-    const flushed = drainBlockPending({
-      pendingText: previousState.pendingText,
-      minChunkChars,
-      maxChunkChars,
-      forceFlush: true,
-    });
-    const deliveryTexts = [...flushed.deliveryTexts];
-    if (nextText) {
-      deliveryTexts.push(`Updated draft:\n${nextText}`);
-    }
-    return {
-      deliveryTexts,
-      nextState: {
-        mode: 'block',
-        lastText: nextText,
-        pendingText: '',
-        updatedAt: now,
-        lastSentAt: deliveryTexts.length > 0 ? now : previousState.lastSentAt,
-      },
-    };
-  }
-
-  const appendedText = nextText.slice(previousState.lastText.length);
-  const nextState: TelegramBlockStreamState = {
-    mode: 'block',
-    lastText: nextText,
-    pendingText: `${previousState.pendingText}${appendedText}`,
-    updatedAt: now,
-    lastSentAt: previousState.lastSentAt,
-  };
-
-  if (
-    !shouldFlushBlockPending({
-      pendingText: nextState.pendingText,
-      now,
-      lastSentAt: nextState.lastSentAt,
-      minChunkChars,
-      idleMs,
-      forceFlush: params.forceFlush,
-    })
-  ) {
-    return { deliveryTexts: [], nextState };
-  }
-
-  const flushed = drainBlockPending({
-    pendingText: nextState.pendingText,
-    minChunkChars,
-    maxChunkChars,
-    forceFlush: params.forceFlush === true,
-  });
-  return {
-    deliveryTexts: flushed.deliveryTexts,
-    nextState: {
-      ...nextState,
-      pendingText: flushed.remainingText,
-      lastSentAt: flushed.deliveryTexts.length > 0 ? now : nextState.lastSentAt,
-    },
-  };
-}
-
-export function finalizeBlockStreamDelivery(params: {
-  state?: TelegramBlockStreamState | null;
-  finalText: string;
-  now?: number;
-  minChunkChars?: number;
-  maxChunkChars?: number;
-  idleMs?: number;
-}): {
-  deliveryTexts: string[];
-  nextState: TelegramBlockStreamState | null;
-  completed: boolean;
-} {
-  if (!params.state) {
-    return { deliveryTexts: [], nextState: null, completed: false };
-  }
-  const result = computeBlockStreamDelivery({
-    previousState: params.state,
-    nextText: params.finalText,
-    now: params.now,
-    minChunkChars: params.minChunkChars,
-    maxChunkChars: params.maxChunkChars,
-    idleMs: params.idleMs,
-    forceFlush: true,
-  });
-  const normalizedFinalText = normalizeTelegramDraftText(params.finalText);
-  const completed =
-    Boolean(normalizedFinalText) &&
-    result.nextState?.lastText === normalizedFinalText &&
-    !result.nextState.pendingText;
-  return {
-    deliveryTexts: result.deliveryTexts,
-    nextState: completed ? null : result.nextState,
-    completed,
-  };
-}
 
 class BaseTelegramStreamRegistry {
   private readonly disabledUntil = new Map<string, number>();
@@ -547,15 +165,6 @@ class BaseTelegramStreamRegistry {
     });
   }
 
-  getBlockState(runKey: string): TelegramBlockStreamState | undefined {
-    const state = this.streamStates.get(runKey);
-    return state?.mode === 'block' ? state : undefined;
-  }
-
-  setBlockState(runKey: string, state: TelegramBlockStreamState): void {
-    this.streamStates.set(runKey, state);
-  }
-
   getDraftState(runKey: string): TelegramDraftStreamState | undefined {
     const state = this.streamStates.get(runKey);
     return state?.mode === 'draft' ? state : undefined;
@@ -574,17 +183,6 @@ class BaseTelegramStreamRegistry {
   clearDraftState(runKey: string): void {
     const state = this.streamStates.get(runKey);
     if (state?.mode === 'draft') this.streamStates.delete(runKey);
-  }
-
-  consumeBlockState(runKey: string): TelegramBlockStreamState | null {
-    const state = this.streamStates.get(runKey);
-    this.streamStates.delete(runKey);
-    return state?.mode === 'block' ? state : null;
-  }
-
-  clearBlockState(runKey: string): void {
-    const state = this.streamStates.get(runKey);
-    if (state?.mode === 'block') this.streamStates.delete(runKey);
   }
 
   consumePreviewState(runKey: string): TelegramMessagePreviewState | null {
@@ -674,9 +272,7 @@ export async function updateTelegramPreview(params: {
       ? `${baseText}\n\n${params.toolTrailFooter}`
       : baseText;
     const state = params.registry.getStreamState(runKey);
-    if (state?.mode === 'block') {
-      params.registry.clearBlockState(runKey);
-    } else if (state?.mode === 'draft') {
+    if (state?.mode === 'draft') {
       params.registry.clearDraftState(runKey);
     }
 
@@ -772,8 +368,6 @@ export async function updateTelegramDraftPreview(params: {
     const state = params.registry.getStreamState(runKey);
     if (state?.mode === 'message') {
       params.registry.clearPreviewState(runKey);
-    } else if (state?.mode === 'block') {
-      params.registry.clearBlockState(runKey);
     }
 
     const existingDraftState = params.registry.getDraftState(runKey);

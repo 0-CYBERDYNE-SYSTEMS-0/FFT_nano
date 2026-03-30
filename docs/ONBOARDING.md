@@ -82,7 +82,7 @@ Runtime gate env toggles:
 
 ## Behavior
 
-1. Ensures core bootstrap files exist (`AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`; optional `BOOT.md` when enabled).
+1. Ensures core bootstrap files exist (`NANO.md`, `SOUL.md`, `TODOS.md`, `HEARTBEAT.md`, `MEMORY.md`; optional `BOOT.md` when enabled, plus legacy reference docs/templates as needed).
 2. Writes onboarding identity values to `SOUL.md`, `USER.md`, and `IDENTITY.md` when files are default/empty (or when `--force` is used).
 3. Preserves customized identity files on upgrades unless `--force` is set.
 4. Preserves `BOOTSTRAP.md` for first-run conversational bootstrap.

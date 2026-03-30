@@ -1,14 +1,20 @@
 # FFT_nano Main Workspace
 
+Legacy note:
+- `AGENTS.md` is the old fft_nano-style name for the workspace operating contract.
+- In `fft_nano`, that role now belongs to `NANO.md`.
+- Keep `SOUL.md` for identity/tone and `MEMORY.md` for durable memory.
+
 Session start order:
-1. Read SOUL.md
-2. Read USER.md
-3. Read IDENTITY.md
-4. Read PRINCIPLES.md
-5. Read TOOLS.md
-6. Read HEARTBEAT.md
-7. Read BOOTSTRAP.md (if present)
-8. Read MEMORY.md
+1. Read `NANO.md`
+2. Read `SOUL.md`
+3. Read `USER.md`
+4. Read `IDENTITY.md`
+5. Read `PRINCIPLES.md`
+6. Read `TOOLS.md`
+7. Read `HEARTBEAT.md`
+8. Read `BOOTSTRAP.md` (if present)
+9. Read `MEMORY.md`
 
 ## Operational Behavior
 
