@@ -7,6 +7,32 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-03-30
+
+### Added
+
+- Canonical workspace contract centered on `NANO.md`, `SOUL.md`, `TODOS.md`, `HEARTBEAT.md`, `MEMORY.md`, and first-run `BOOTSTRAP.md`.
+- Prompt-input logging and diagnostics for direct-session runs.
+- Developer reasoning/autonomy benchmark at `docs/benchmarks/reasoning-autonomy-benchmark.md`.
+- Local `gitleaks` scanning integrated into the tracked-file secret-scan flow.
+
+### Changed
+
+- Main workspace bootstrap, onboarding, and templates now treat `NANO.md` as the operating contract and keep `SOUL.md` focused on identity and tone.
+- Runtime prompt/message handling and Telegram preview flow were simplified and consolidated for more deterministic behavior.
+- Operator-facing docs and release docs now reflect the current install, onboarding, and workspace contract.
+
+### Fixed
+
+- Prevented infinite self-trigger loops and stale abort timestamps in direct-session handling.
+- Fixed multiple Telegram preview and delivery edge cases, including duplicate replies, edit-failure fallback, long-text handling, and visible tool progress behavior.
+- Corrected memory/runtime drift so `NANO.md` is indexed and patchable as operational guidance while `SOUL.md` remains stable.
+- Improved bootstrapping consistency across seeded templates and onboarding defaults.
+
+### Security
+
+- Hardened OSS release hygiene with tracked-file secret scans, personal-path detection, and pack-content checks that exclude runtime state and local secrets from shipped artifacts.
+
 ## [1.2.0] - 2026-03-23
 
 ### Added
