@@ -51,6 +51,8 @@ const FRONTMATTER_OPTIONAL_FIELDS = [
   'compatibility',
   'metadata',
   'allowed-tools',
+  'guardrails',
+  'required_skills',
 ] as const;
 const FRONTMATTER_ALLOWED_FIELDS = new Set<string>([
   ...FRONTMATTER_REQUIRED_FIELDS,

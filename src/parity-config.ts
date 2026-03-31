@@ -152,7 +152,7 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
     preflightRebaseEnabled: true,
     softTokenThreshold: 48_000,
     hardTokenThreshold: 64_000,
-    skillCatalogMaxChars: 6_000,
+    skillCatalogMaxChars: 200_000,
     recentConversationMaxMessages: 8,
     recentConversationMaxChars: 4_000,
   },
