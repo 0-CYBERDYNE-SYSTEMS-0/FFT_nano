@@ -11,10 +11,7 @@ export const PROJECT_SETUP_SKILLS_RELATIVE_DIR_CANDIDATES = [
   path.join('skills', 'setup'),
 ] as const;
 export const REQUIRED_PROJECT_PI_SKILLS = [
-  'fft-setup',
-  'fft-debug',
   'fft-telegram-ops',
-  'fft-coder-ops',
 ] as const;
 
 export interface SkillValidationIssue {

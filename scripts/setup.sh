@@ -101,14 +101,13 @@ detect_runtime() {
     echo "host"; return
   fi
 
-  if command -v docker >/dev/null 2>&1; then
-    echo "docker"; return
-  fi
+  # No auto-detection -- user must explicitly choose a runtime.
+  # This prevents building Docker images when the user intended host mode.
   if is_truthy "${FFT_NANO_ALLOW_HOST_RUNTIME:-0}"; then
     echo "host"; return
   fi
 
-  fail "No supported runtime found. Install Docker, or set CONTAINER_RUNTIME=host with FFT_NANO_ALLOW_HOST_RUNTIME=1."
+  fail "No runtime specified. Pass --runtime docker or --runtime host, or set CONTAINER_RUNTIME."
 }
 
 ensure_runtime_ready() {
