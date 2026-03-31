@@ -2,6 +2,10 @@ import { createHash } from 'crypto';
 import fs from 'fs';
 
 import { DESTRUCTIVE_COMMAND_NAMES } from './bash-guard.js';
+import {
+  buildCapabilityMap,
+  renderCapabilityRoutingText,
+} from './capability-map.js';
 
 export type CodingHint =
   | 'none'
@@ -515,6 +519,7 @@ function buildBaseCacheKey(params: {
   skillCatalogText: string;
 }): string {
   const payload = {
+    basePromptVersion: '2026-03-31-capability-routing-v1',
     assistantName: params.assistantName,
     promptMode: params.promptMode,
     isMain: params.isMain,
@@ -539,11 +544,22 @@ function renderBasePrompt(params: {
   paths: WorkspacePaths;
   contextEntries: ContextEntry[];
   skillCatalogText: string;
+  skillCatalog: SkillCatalogEntry[];
+  isMain: boolean;
   forcedDelegateMode: 'execute' | 'plan' | null;
   canDelegateToCoder: boolean;
   autoDelegationEnabled: boolean;
 }): string {
   const lines: string[] = [];
+  const capabilityRoutingText = renderCapabilityRoutingText({
+    isMain: params.isMain,
+    assistantName: params.assistantName,
+    capabilities: buildCapabilityMap({
+      isMain: params.isMain,
+      assistantName: params.assistantName,
+      skillCatalog: params.skillCatalog,
+    }),
+  });
   lines.push(
     `You are ${params.assistantName}, a practical and capable operator running inside FFT_nano.`,
   );
@@ -628,6 +644,9 @@ function renderBasePrompt(params: {
     lines.push(params.skillCatalogText);
     lines.push('');
   }
+
+  lines.push(capabilityRoutingText);
+  lines.push('');
 
   lines.push('## Messaging IPC');
   lines.push(
@@ -878,6 +897,8 @@ export function buildSystemPrompt(
         paths,
         contextEntries: contextState.entries,
         skillCatalogText: skillCatalog.text,
+        skillCatalog: input.skillCatalog || [],
+        isMain: input.isMain,
         forcedDelegateMode,
         canDelegateToCoder,
         autoDelegationEnabled,

@@ -171,6 +171,14 @@ export interface MessageDispatcherDeps {
       startedAt: number;
       requestId: string;
       abortController: AbortController;
+      sessionKey?: string;
+      route?: string;
+      lastProgressAt?: number;
+      lastStdoutAt?: number;
+      lastToolEventAt?: number;
+      piPid?: number;
+      resumed?: boolean;
+      retriedFreshSession?: boolean;
     }
   >;
   activeChatRunsById: Map<
@@ -180,6 +188,14 @@ export interface MessageDispatcherDeps {
       startedAt: number;
       requestId: string;
       abortController: AbortController;
+      sessionKey?: string;
+      route?: string;
+      lastProgressAt?: number;
+      lastStdoutAt?: number;
+      lastToolEventAt?: number;
+      piPid?: number;
+      resumed?: boolean;
+      retriedFreshSession?: boolean;
     }
   >;
   activeCoderRuns: Map<
@@ -316,6 +332,7 @@ export interface MessageDispatcherDeps {
     instruction: string | null;
   };
   isSubstantialCodingTask?: (text: string) => boolean;
+  isLiveImpactCodingTask?: (text: string) => boolean;
   isCoderDelegationCommand?: (content: string) => boolean;
   onboardingCommandBlockedText?: () => string;
   makeRunId?: (prefix: string) => string;
@@ -752,6 +769,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       startedAt: Date.now(),
       requestId: params.requestId,
       abortController,
+      sessionKey: params.sessionKey,
+      route: params.route,
+      lastProgressAt: Date.now(),
     };
 
     deps.activeChatRuns.set(params.chatJid, activeRun);
@@ -1017,13 +1037,30 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
     const latestUserText =
       selectedMessages[selectedMessages.length - 1]?.content || content;
+    const isLiveImpactCodingTask =
+      deps.isLiveImpactCodingTask?.(latestUserText) === true;
     const shouldAutoRouteCoding =
       !wantsDelegation &&
       isMainGroup &&
       !onboardingGate.active &&
+      !isLiveImpactCodingTask &&
       deps.isSubstantialCodingTask?.(latestUserText) === true;
     const shouldUseCodingWorker = wantsDelegation || shouldAutoRouteCoding;
     if (shouldAutoRouteCoding) codingRoute = 'auto_execute';
+
+    if (
+      !wantsDelegation &&
+      isMainGroup &&
+      !onboardingGate.active &&
+      isLiveImpactCodingTask &&
+      deps.isSubstantialCodingTask?.(latestUserText) === true
+    ) {
+      await deps.sendMessage(
+        msg.chat_jid,
+        `${deps.constants.assistantName}: this looks like a live-impact request, so I will not auto-run coder. Use /coder-plan to review the implementation first, or /coder to explicitly approve execution.`,
+      );
+      return null;
+    }
 
     let finalPrompt = preparedPrompt.finalPrompt;
     if (onboardingGate.active) {

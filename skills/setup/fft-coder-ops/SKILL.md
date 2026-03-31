@@ -24,7 +24,8 @@ Use this skill when handling coding delegation operations in FFT_nano.
 - Never run destructive git commands unless explicitly requested.
 - Preserve unrelated worktree changes.
 - Never bypass main-chat-only coder delegation safety rules.
-- Do not add automatic delegation; delegation remains explicit trigger-based.
+- Low-risk auto-delegation may occur from the host when no existing capability fits.
+- Live-impact coding requests must not auto-execute; require explicit approval or `/coder-plan`.
 
 ## Delegation Triggers
 
@@ -38,13 +39,14 @@ Explicit plan-only:
 
 - `/coder-plan <task>`
 
-Natural-language coding requests without explicit trigger must not auto-delegate.
+Natural-language coding requests may auto-delegate only for low-risk build tasks in main/admin chat after cheaper capabilities have been ruled out.
 
 ## Chat Safety Rules
 
 - Delegation is only available in main/admin chat.
 - Non-main chats may request coding help, but must be handled directly or rejected for delegation.
 - Scheduled tasks must not trigger coder delegation.
+- Live-impact requests should stop for explicit approval before execute-mode delegation.
 
 ## Runtime Expectations
 

@@ -56,7 +56,24 @@ test('gateway rejects unauthorized method calls until connect token handshake su
   const eventHub = new HostEventBus();
   const gateway = await startTuiGatewayServer(
     {
-      getStatus: () => ({ runtime: 'docker', sessions: 2, activeRuns: 0 }),
+      getStatus: () => ({
+        runtime: 'docker',
+        sessions: 2,
+        activeRuns: 0,
+        activeRunDetails: [
+          {
+            runId: 'run-1',
+            chatJid: 'telegram:1',
+            sessionKey: 'main',
+            startedAt: '2026-03-31T19:00:00.000Z',
+            ageSeconds: 15,
+            lastProgressAt: '2026-03-31T19:00:05.000Z',
+            progressAgeSeconds: 10,
+            resumed: true,
+            route: 'agent',
+          },
+        ],
+      }),
       listSessions: () => [],
       resolveChatJid: () => null,
       getSessionKeyForChat: () => 'main',
@@ -121,11 +138,17 @@ test('gateway rejects unauthorized method calls until connect token handshake su
     );
     const statusFrame = await waitForMessage<{
       ok: boolean;
-      result?: { runtime: string; sessions: number };
+      result?: {
+        runtime: string;
+        sessions: number;
+        activeRunDetails: Array<{ runId: string; resumed: boolean }>;
+      };
     }>(wsAuthed);
     assert.equal(statusFrame.ok, true);
     assert.equal(statusFrame.result?.runtime, 'docker');
     assert.equal(statusFrame.result?.sessions, 2);
+    assert.equal(statusFrame.result?.activeRunDetails[0]?.runId, 'run-1');
+    assert.equal(statusFrame.result?.activeRunDetails[0]?.resumed, true);
     wsAuthed.close();
   } finally {
     await gateway.close();

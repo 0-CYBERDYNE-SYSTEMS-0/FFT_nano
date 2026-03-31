@@ -278,6 +278,8 @@ test('buildSystemPrompt injects compact skills catalog only for interactive runs
   );
 
   assert.match(interactive.text, /## Skills Catalog/);
+  assert.match(interactive.text, /## Capability Routing/);
+  assert.match(interactive.text, /path of least resistance/i);
   assert.doesNotMatch(interactive.text, /# fft-debug/);
 
   const scheduled = buildSystemPrompt(

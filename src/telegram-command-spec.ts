@@ -1,5 +1,6 @@
 export const TELEGRAM_COMMON_COMMANDS = [
   { command: 'help', description: 'Show command help' },
+  { command: 'capabilities', description: 'Show what the system can already do' },
   { command: 'status', description: 'Show runtime status' },
   { command: 'id', description: 'Show this chat id' },
   { command: 'models', description: 'List available models' },
@@ -43,6 +44,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
 
 export type TelegramCommandName =
   | '/help'
+  | '/capabilities'
   | '/status'
   | '/id'
   | '/models'
@@ -82,6 +84,7 @@ export type TelegramCommandName =
 
 const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/help',
+  '/capabilities',
   '/status',
   '/id',
   '/models',
@@ -134,6 +137,7 @@ export function normalizeTelegramCommandToken(
 export function formatHelpText(isMainGroup: boolean): string {
   const common = [
     '/help - show this help',
+    '/capabilities - show what the system can already do',
     '/status - runtime and queue status',
     '/id - show current Telegram chat id',
     '/models [query] - list/search available models',

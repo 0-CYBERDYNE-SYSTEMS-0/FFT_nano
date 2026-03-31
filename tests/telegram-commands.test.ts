@@ -46,6 +46,7 @@ function createBaseDeps(): TelegramCommandDeps {
     formatGroupsText: () => 'groups',
     formatStatusText: () => 'status',
     formatHelpText: () => 'help',
+    formatCapabilitiesText: () => 'capabilities',
     formatUsageText: () => 'usage',
     formatActiveSubagentsText: () => 'subagents',
     summarizeTask: () => 'task detail',
@@ -218,6 +219,22 @@ test('handleTelegramCommand opens delivery panel when called without args', asyn
   assert.deepEqual(deps.panels, [
     { chatJid: 'telegram:1', panel: { kind: 'show-delivery' } },
   ]);
+});
+
+test('handleTelegramCommand returns capability inventory', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/capabilities',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(deps.sent[0]?.text, 'capabilities');
 });
 
 test('handleTelegramCommand normalizes delivery aliases to canonical persisted values', async () => {

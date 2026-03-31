@@ -46,6 +46,7 @@ Use this skill for Telegram onboarding, operations, and safe admin command handl
 Available everywhere:
 
 - `/help`
+- `/capabilities`
 - `/status`
 - `/id`
 
@@ -79,5 +80,6 @@ Main/admin chat only:
 ## Operational Checks
 
 - Run `/status` in Telegram to confirm runtime and channel state.
+- Run `/capabilities` to inspect what the system can already do before reaching for coder.
 - Use `/panel` in main chat for task/group/coder quick actions.
 - If polling conflicts occur, stop duplicate FFT_nano instances.

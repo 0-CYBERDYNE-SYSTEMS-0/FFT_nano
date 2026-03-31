@@ -142,6 +142,30 @@ export interface ActiveChatRun {
   startedAt: number;
   requestId: string;
   abortController: AbortController;
+  sessionKey?: string;
+  route?: string;
+  lastProgressAt?: number;
+  lastStdoutAt?: number;
+  lastToolEventAt?: number;
+  piPid?: number;
+  resumed?: boolean;
+  retriedFreshSession?: boolean;
+}
+
+export interface ActiveRunStatusDetail {
+  runId: string;
+  chatJid: string;
+  sessionKey: string;
+  startedAt: string;
+  ageSeconds: number;
+  lastProgressAt?: string;
+  progressAgeSeconds?: number;
+  lastStdoutAt?: string;
+  lastToolEventAt?: string;
+  piPid?: number;
+  resumed: boolean;
+  retriedFreshSession?: boolean;
+  route?: string;
 }
 
 export interface TelegramAttachmentHint {

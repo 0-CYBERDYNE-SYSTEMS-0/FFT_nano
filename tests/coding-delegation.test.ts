@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  isLiveImpactCodingTask,
   isSubstantialCodingTask,
   normalizeDelegationAlias,
   parseDelegationTrigger,
@@ -75,9 +76,32 @@ test('detects substantial natural-language coding asks', () => {
     isSubstantialCodingTask('debug this TypeScript build failure and patch the code'),
     true,
   );
+  assert.equal(
+    isSubstantialCodingTask('automate a soil moisture alert that texts me when a bed goes dry'),
+    true,
+  );
+  assert.equal(
+    isSubstantialCodingTask('create a harvest report script that runs every morning'),
+    true,
+  );
 });
 
 test('does not classify ordinary chat as a substantial coding ask', () => {
   assert.equal(isSubstantialCodingTask('what is the weather today?'), false);
   assert.equal(isSubstantialCodingTask('hello there'), false);
+});
+
+test('detects live-impact coding asks that should not auto-execute', () => {
+  assert.equal(
+    isLiveImpactCodingTask('automate the greenhouse vents based on temperature'),
+    true,
+  );
+  assert.equal(
+    isLiveImpactCodingTask('restart the gateway service every night'),
+    true,
+  );
+  assert.equal(
+    isLiveImpactCodingTask('create a report about this weeks harvest totals'),
+    false,
+  );
 });

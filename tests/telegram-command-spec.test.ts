@@ -31,6 +31,8 @@ test('main chat help includes admin restart alias and non-main help does not', (
   const mainHelp = formatHelpText(true);
   const nonMainHelp = formatHelpText(false);
 
+  assert.match(mainHelp, /\/capabilities - show what the system can already do/i);
+  assert.match(nonMainHelp, /\/capabilities - show what the system can already do/i);
   assert.match(mainHelp, /\/delivery \[off\|partial\|draft\]/);
   assert.match(nonMainHelp, /\/delivery \[off\|partial\|draft\]/);
   assert.match(mainHelp, /\/restart - alias for \/gateway restart/);

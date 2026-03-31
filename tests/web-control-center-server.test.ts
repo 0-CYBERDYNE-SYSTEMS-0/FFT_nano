@@ -46,7 +46,24 @@ test('web control center serves runtime status on localhost mode without auth', 
 
   const server = await startWebControlCenterServer(
     {
-      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 3, activeRuns: 1 }),
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 3,
+        activeRuns: 1,
+        activeRunDetails: [
+          {
+            runId: 'run-1',
+            chatJid: 'telegram:main',
+            sessionKey: 'main',
+            startedAt: '2026-03-31T19:00:00.000Z',
+            ageSeconds: 42,
+            lastProgressAt: '2026-03-31T19:00:30.000Z',
+            progressAgeSeconds: 12,
+            resumed: true,
+            route: 'agent',
+          },
+        ],
+      }),
       getProfileStatus: () => ({
         profile: 'farm',
         featureFarm: true,
@@ -80,9 +97,17 @@ test('web control center serves runtime status on localhost mode without auth', 
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/runtime/status`);
     assert.equal(res.status, 200);
-    const json = (await res.json()) as { ok: boolean; runtime: { sessions: number } };
+    const json = (await res.json()) as {
+      ok: boolean;
+      runtime: {
+        sessions: number;
+        activeRunDetails: Array<{ runId: string; progressAgeSeconds: number }>;
+      };
+    };
     assert.equal(json.ok, true);
     assert.equal(json.runtime.sessions, 3);
+    assert.equal(json.runtime.activeRunDetails[0]?.runId, 'run-1');
+    assert.equal(json.runtime.activeRunDetails[0]?.progressAgeSeconds, 12);
 
     const logsRes = await fetch(`http://127.0.0.1:${port}/api/logs/recent?target=error&lines=20`);
     assert.equal(logsRes.status, 200);
@@ -101,7 +126,12 @@ test('web control center requires bearer token in lan mode', async () => {
 
   const server = await startWebControlCenterServer(
     {
-      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 1,
+        activeRuns: 0,
+        activeRunDetails: [],
+      }),
       getProfileStatus: () => ({
         profile: 'core',
         featureFarm: false,
@@ -155,7 +185,12 @@ test('web control center file APIs list, read, and write within allowed roots', 
 
   const server = await startWebControlCenterServer(
     {
-      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 1,
+        activeRuns: 0,
+        activeRunDetails: [],
+      }),
       getProfileStatus: () => ({
         profile: 'core',
         featureFarm: false,
@@ -237,7 +272,12 @@ test('web control center keeps configured roots even when missing at startup', a
 
   const server = await startWebControlCenterServer(
     {
-      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 1,
+        activeRuns: 0,
+        activeRunDetails: [],
+      }),
       getProfileStatus: () => ({
         profile: 'core',
         featureFarm: false,
@@ -314,7 +354,12 @@ test('web control center file read rejects symlink escapes outside root', async 
 
   const server = await startWebControlCenterServer(
     {
-      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 1,
+        activeRuns: 0,
+        activeRunDetails: [],
+      }),
       getProfileStatus: () => ({
         profile: 'core',
         featureFarm: false,
@@ -379,7 +424,12 @@ test('web control center file write rejects symlink paths outside root', async (
 
   const server = await startWebControlCenterServer(
     {
-      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 1,
+        activeRuns: 0,
+        activeRunDetails: [],
+      }),
       getProfileStatus: () => ({
         profile: 'core',
         featureFarm: false,
@@ -466,7 +516,12 @@ description: "Alpha project skill"
 
   const server = await startWebControlCenterServer(
     {
-      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 1,
+        activeRuns: 0,
+        activeRunDetails: [],
+      }),
       getProfileStatus: () => ({
         profile: 'core',
         featureFarm: false,

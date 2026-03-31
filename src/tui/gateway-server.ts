@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { logger } from '../logger.js';
+import type { ActiveRunStatusDetail } from '../app-state.js';
 
 import type {
   AgentEventPayload,
@@ -50,6 +51,7 @@ export interface TuiGatewayAdapters {
     runtime: string;
     sessions: number;
     activeRuns: number;
+    activeRunDetails: ActiveRunStatusDetail[];
   };
   listSessions: () => TuiSessionSummary[];
   resolveChatJid: (sessionKey: string) => string | null;
@@ -303,6 +305,7 @@ export async function startTuiGatewayServer(
               connectedClients: clients.size,
               sessions: status.sessions,
               activeRuns: status.activeRuns,
+              activeRunDetails: status.activeRunDetails,
             }),
           );
           break;

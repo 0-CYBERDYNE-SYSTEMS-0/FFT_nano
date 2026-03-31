@@ -139,6 +139,11 @@ import {
   updateChatUsage as updateChatUsageCore,
 } from './chat-preferences.js';
 import {
+  buildCapabilityMap,
+  formatCapabilitiesText as formatCapabilitiesInventoryText,
+} from './capability-map.js';
+import {
+  isLiveImpactCodingTask,
   isSubstantialCodingTask,
   parseDelegationTrigger,
   type CodingHint,
@@ -160,6 +165,10 @@ import {
   migrateCompactionsForGroup,
 } from './memory-maintenance.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
+import {
+  buildSkillCatalogEntries,
+  resolveProjectRuntimeSkillsDir,
+} from './pi-skills.js';
 import {
   cycleVerboseMode,
   describeVerboseMode,
@@ -267,6 +276,7 @@ import {
   type TelegramSetupInputState,
   type TelegramSettingsPanelAction,
   type ActiveChatRun,
+  type ActiveRunStatusDetail,
 } from './app-state.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
@@ -1058,6 +1068,54 @@ function buildTuiSessionList(): TuiSessionSummary[] {
     return (b.lastActivity || '').localeCompare(a.lastActivity || '');
   });
   return sessions;
+}
+
+function touchActiveRun(
+  requestId: string | undefined,
+  patch: Partial<ActiveChatRun>,
+): void {
+  if (!requestId) return;
+  const active = activeChatRunsById.get(requestId);
+  if (!active) return;
+  Object.assign(active, patch);
+}
+
+function buildActiveRunDetails(): ActiveRunStatusDetail[] {
+  const now = Date.now();
+  return Array.from(activeChatRunsById.values())
+    .map((run) => {
+      const ageSeconds = Math.max(0, Math.floor((now - run.startedAt) / 1000));
+      const lastProgressAt = run.lastProgressAt;
+      const lastStdoutAt = run.lastStdoutAt;
+      const lastToolEventAt = run.lastToolEventAt;
+      return {
+        runId: run.requestId,
+        chatJid: run.chatJid,
+        sessionKey: run.sessionKey || getSessionKeyForChat(run.chatJid),
+        startedAt: new Date(run.startedAt).toISOString(),
+        ageSeconds,
+        ...(lastProgressAt
+          ? {
+              lastProgressAt: new Date(lastProgressAt).toISOString(),
+              progressAgeSeconds: Math.max(
+                0,
+                Math.floor((now - lastProgressAt) / 1000),
+              ),
+            }
+          : {}),
+        ...(lastStdoutAt
+          ? { lastStdoutAt: new Date(lastStdoutAt).toISOString() }
+          : {}),
+        ...(lastToolEventAt
+          ? { lastToolEventAt: new Date(lastToolEventAt).toISOString() }
+          : {}),
+        ...(typeof run.piPid === 'number' ? { piPid: run.piPid } : {}),
+        resumed: run.resumed === true,
+        ...(run.retriedFreshSession ? { retriedFreshSession: true } : {}),
+        ...(run.route ? { route: run.route } : {}),
+      };
+    })
+    .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 }
 
 function normalizeAssistantHistoryContent(content: string): string {
@@ -2505,6 +2563,31 @@ function formatStatusText(chatJid?: string): string {
   return lines.join('\n');
 }
 
+function getCapabilitySkillCatalog(isMain: boolean) {
+  const sourceDirs = [resolveProjectRuntimeSkillsDir(process.cwd())];
+  if (isMain) {
+    const mainSkillsDir = path.join(MAIN_WORKSPACE_DIR, 'skills');
+    if (fs.existsSync(mainSkillsDir)) sourceDirs.push(mainSkillsDir);
+  }
+  return buildSkillCatalogEntries(sourceDirs, {
+    maxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
+  });
+}
+
+function formatCapabilitiesText(_chatJid: string, isMain: boolean): string {
+  const skillCatalog = getCapabilitySkillCatalog(isMain);
+  const capabilities = buildCapabilityMap({
+    isMain,
+    assistantName: ASSISTANT_NAME,
+    skillCatalog,
+  });
+  return formatCapabilitiesInventoryText({
+    isMain,
+    assistantName: ASSISTANT_NAME,
+    capabilities,
+  });
+}
+
 function summarizeTask(taskId: string): string {
   const task = getTaskById(taskId);
   if (!task) return `Task not found: ${taskId}`;
@@ -2819,6 +2902,9 @@ async function runCompactionForChat(
     startedAt: Date.now(),
     requestId: compactRequestId,
     abortController,
+    sessionKey: getSessionKeyForChat(chatJid),
+    route: 'compaction',
+    lastProgressAt: Date.now(),
   };
   activeChatRuns.set(chatJid, activeRun);
   activeChatRunsById.set(compactRequestId, activeRun);
@@ -3116,6 +3202,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   formatGroupsText,
   formatStatusText,
   formatHelpText,
+  formatCapabilitiesText,
   formatUsageText,
   formatActiveSubagentsText,
   summarizeTask,
@@ -3270,6 +3357,7 @@ const messageDispatcher = createMessageDispatcher({
   finalizeCompletedRun,
   parseDelegationTrigger,
   isSubstantialCodingTask,
+  isLiveImpactCodingTask,
   isCoderDelegationCommand,
   onboardingCommandBlockedText,
   makeRunId,
@@ -3591,6 +3679,51 @@ async function runAgent(
           }
           return { cancelled: true };
         },
+        (event) => {
+          if (!requestId) return;
+          switch (event.kind) {
+            case 'spawn':
+              touchActiveRun(requestId, {
+                piPid:
+                  typeof event.pid === 'number' ? event.pid : undefined,
+                resumed: event.resumed,
+                lastProgressAt: event.at,
+              });
+              break;
+            case 'stdout':
+              touchActiveRun(requestId, {
+                lastProgressAt: event.at,
+                lastStdoutAt: event.at,
+              });
+              break;
+            case 'assistant':
+            case 'thinking':
+              touchActiveRun(requestId, {
+                lastProgressAt: event.at,
+              });
+              break;
+            case 'tool':
+              touchActiveRun(requestId, {
+                lastProgressAt: event.at,
+                lastToolEventAt: event.at,
+              });
+              break;
+            case 'retry_fresh':
+              touchActiveRun(requestId, {
+                lastProgressAt: event.at,
+                resumed: false,
+                retriedFreshSession: true,
+              });
+              break;
+            case 'stale':
+              touchActiveRun(requestId, {
+                lastProgressAt: event.at,
+              });
+              break;
+            default:
+              break;
+          }
+        },
       );
       return {
         ...output,
@@ -3693,6 +3826,7 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
       runtime: getContainerRuntime(),
       sessions: buildTuiSessionList().length,
       activeRuns: activeChatRunsById.size,
+      activeRunDetails: buildActiveRunDetails(),
     }),
     listSessions: () => buildTuiSessionList(),
     resolveChatJid: (sessionKey: string) =>
@@ -3730,6 +3864,7 @@ function createWebControlCenterAdapters(): WebControlCenterAdapters {
       runtime: getContainerRuntime(),
       sessions: buildTuiSessionList().length,
       activeRuns: activeChatRunsById.size,
+      activeRunDetails: buildActiveRunDetails(),
     }),
     getProfileStatus: () => ({
       profile: FFT_PROFILE,
@@ -5104,6 +5239,9 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     startedAt: Date.now(),
     requestId,
     abortController,
+    sessionKey: getSessionKeyForChat(mainChatJid),
+    route: 'heartbeat',
+    lastProgressAt: Date.now(),
   };
   activeChatRuns.set(mainChatJid, activeRun);
   activeChatRunsById.set(requestId, activeRun);

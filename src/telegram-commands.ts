@@ -144,6 +144,7 @@ export interface TelegramCommandDeps {
   formatGroupsText: () => string;
   formatStatusText: (chatJid?: string) => string;
   formatHelpText: (isMainChat: boolean) => string;
+  formatCapabilitiesText: (chatJid: string, isMainChat: boolean) => string;
   formatUsageText: (chatJid: string, scope?: 'chat' | 'all') => string;
   formatActiveSubagentsText: () => string;
   summarizeTask: (taskId: string) => string;
@@ -709,6 +710,15 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/help') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       await deps.sendMessage(m.chatJid, deps.formatHelpText(isMainGroup));
+      return true;
+    }
+
+    if (cmd === '/capabilities') {
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      await deps.sendMessage(
+        m.chatJid,
+        deps.formatCapabilitiesText(m.chatJid, isMainGroup),
+      );
       return true;
     }
 
