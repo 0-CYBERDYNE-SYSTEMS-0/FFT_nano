@@ -41,9 +41,16 @@ import {
   AvailableGroup,
   deriveTelegramDraftId,
   runContainerAgent,
+  type ExtensionUIRequest,
+  type ExtensionUIResponse,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './pi-runner.js';
+import {
+  createPendingConfirmation,
+  parsePermissionGateCallback,
+  resolvePendingConfirmation,
+} from './permission-gate-ui.js';
 import {
   getAllChats,
   getAllTasks,
@@ -3150,6 +3157,34 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
 async function handleTelegramCallbackQuery(
   q: TelegramInboundCallbackQuery,
 ): Promise<void> {
+  // Check if this is a permission gate callback
+  const pgRequestId = parsePermissionGateCallback(q.data);
+  if (pgRequestId) {
+    const confirmed = q.data.startsWith('pg_allow:');
+    resolvePendingConfirmation(pgRequestId, { confirmed });
+
+    // Acknowledge the callback and update the message
+    const bot = state.telegramBot;
+    if (bot) {
+      try {
+        await bot.answerCallbackQuery?.(q.id);
+      } catch {
+        // Ignore -- callback query may have already been answered
+      }
+      try {
+        await bot.editMessageWithKeyboard(
+          q.chatJid,
+          q.messageId,
+          `${confirmed ? '\u2705' : '\u274c'} ${confirmed ? 'Allowed' : 'Blocked'}`,
+          [],
+        );
+      } catch {
+        // Message may have been deleted
+      }
+    }
+    return;
+  }
+
   await telegramCommandHandlers.handleTelegramCallbackQuery(q);
 }
 
@@ -3488,6 +3523,33 @@ async function runAgent(
             ...(event.output ? { output: event.output } : {}),
             ...(event.error ? { error: event.error } : {}),
           });
+        },
+        // Permission gate: handle extension UI requests (confirmation dialogs)
+        async (request: ExtensionUIRequest): Promise<ExtensionUIResponse> => {
+          const timeoutMs = request.timeout ?? 60_000;
+
+          if (request.method === 'confirm' && isTelegramJid(chatJid) && state.telegramBot) {
+            const { promise } = createPendingConfirmation(request.id, chatJid, timeoutMs);
+            await state.telegramBot.sendMessageWithKeyboard(
+              chatJid,
+              `\u26a0\ufe0f *Permission Required*\n\n${request.title ?? 'Action'}\n${request.message ?? ''}\n\n_Reply within ${Math.round(timeoutMs / 1000)}s or it will be auto-denied._`,
+              [[
+                { text: '\u2705 Allow', callbackData: `pg_allow:${request.id}` },
+                { text: '\u274c Block', callbackData: `pg_block:${request.id}` },
+              ]],
+            );
+            return promise;
+          }
+
+          // Non-Telegram or non-confirm: auto-deny for safety
+          logger.warn(
+            { requestId: request.id, method: request.method, chatJid },
+            'Permission gate: no UI available, auto-denying',
+          );
+          if (request.method === 'confirm') {
+            return { confirmed: false };
+          }
+          return { cancelled: true };
         },
       );
       return {

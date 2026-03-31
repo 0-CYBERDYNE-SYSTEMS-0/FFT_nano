@@ -95,6 +95,53 @@ Notes:
 - Validate skill metadata/frontmatter with:
   - `npm run validate:skills`
 
+## Pi Runtime (pi-coding-agent)
+
+The agent runs inside an isolated container via `pi` (pi-coding-agent v0.60.0+).
+
+### Key pi flags used by FFT Nano
+
+| Flag | Purpose |
+|---|---|
+| `--provider <name>` | LLM provider (from `PI_API` env) |
+| `--model <pattern>` | Model selection (from `PI_MODEL` env) |
+| `--api-key <key>` | API key (via env passthrough) |
+| `--system-prompt <text>` | Full system prompt injection |
+| `--continue, -c` | Resume previous session (main agent) |
+| `--no-session` | Ephemeral, no session save (coding workers) |
+| `--session-dir <dir>` | Per-group session storage |
+| `--tools <list>` | Tool enablement (read_only vs full) |
+| `--mode json` | Structured JSON output for host parsing |
+| `--extension <path>` | Load a pi extension |
+
+### Tool system
+
+Pi provides these tools: `read`, `bash`, `edit`, `write` (default), `grep`, `find`, `ls` (available but off by default -- FFT Nano explicitly enables them). FFT Nano controls which tools are enabled via the `--tools` flag.
+
+### Session management
+
+- Main agent: uses `-c` to continue previous session, accumulating context across messages.
+- Coding workers: use `--no-session` for ephemeral one-shot runs with no persistence.
+- Sessions stored per-group at `data/pi/<group>/.pi/` on host, mounted to `/home/node/.pi` in container.
+
+### Pi extensions
+
+FFT Nano loads a custom extension (`src/extensions/fft-permission-gate.ts`) into every pi session via `--extension`. This extension:
+- Subscribes to `tool_call` events **before** tool execution
+- Blocks destructive bash commands (`rm -rf`, `dd of=`, `mkfs`, `git push --force`, etc.)
+- Blocks write/edit to protected paths (`.env`, `.git/`, `node_modules/`)
+- Main agent mode: prompts user via pi's extension UI protocol (confirmation dialog in Telegram)
+- Subagent mode (`FFT_NANO_SUBAGENT=1`): hard-blocks immediately, no user prompt
+
+The extension is the primary enforcement layer. The host-side `src/bash-guard.ts` serves as a secondary audit trail (log-only).
+
+### What pi does NOT provide
+
+- No built-in tool approval flow (provided by FFT Nano's extension)
+- No destructive command blocking (provided by FFT Nano's extension)
+- No subagent spawning from within pi (orchestrated by the host)
+- No callback mechanism to the host (except via extension UI protocol)
+
 ## Debugging / Tracing
 
 Useful env vars on the host:

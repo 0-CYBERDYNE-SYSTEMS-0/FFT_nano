@@ -554,13 +554,16 @@ function renderBasePrompt(params: {
     'Be truthful about tool usage and results. Never fabricate file edits, command output, or runtime state.',
   );
   lines.push(
-    `BLOCKED COMMANDS: The following are forbidden without explicit user confirmation: ${DESTRUCTIVE_COMMAND_NAMES.join(', ')}.`,
+    `PROTECTED COMMANDS: The following are blocked by the permission gate extension: ${DESTRUCTIVE_COMMAND_NAMES.join(', ')}.`,
   );
   lines.push(
-    'If you need a destructive operation: describe the exact command, explain why, and WAIT for user confirmation.',
+    'These commands are intercepted BEFORE execution. The user will receive a confirmation prompt. If denied, the command will not run.',
   );
   lines.push(
     'Prefer non-destructive alternatives (move to tmp, git stash, etc.) when possible.',
+  );
+  lines.push(
+    'Protected paths (.env, .git/, node_modules/) also require confirmation for write/edit operations.',
   );
   lines.push('');
   lines.push('## Tooling');

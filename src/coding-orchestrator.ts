@@ -474,6 +474,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           groupFolder: request.group.folder,
           chatJid: request.originChatJid,
           isMain: request.group.folder === request.originGroupFolder,
+          isSubagent: true,
           assistantName: request.assistantName,
           requestId: request.requestId,
           codingHint: 'none',

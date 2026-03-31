@@ -120,6 +120,12 @@ export type HostEvent =
       args?: string;
       output?: string;
       error?: string;
+    })
+  | (HostEventBase & {
+      kind: 'extension_ui_notification';
+      chatJid?: string;
+      requestId?: string;
+      request: Record<string, unknown>;
     });
 
 export type LegacyTuiEvent =

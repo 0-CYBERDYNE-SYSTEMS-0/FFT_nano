@@ -62,6 +62,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  isSubagent?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
   codingHint?:
@@ -116,6 +117,31 @@ export interface ContainerRuntimeEvent {
   output?: string;
   error?: string;
 }
+
+/** Extension UI request emitted by pi extensions (e.g. permission gate confirm dialog). */
+export interface ExtensionUIRequest {
+  id: string;
+  method: 'confirm' | 'select' | 'input' | 'editor' | 'notify' | 'setStatus' | 'setWidget' | 'setTitle' | 'set_editor_text';
+  title?: string;
+  message?: string;
+  options?: string[];
+  placeholder?: string;
+  prefill?: string;
+  notifyMessage?: string;
+  notifyType?: 'info' | 'warning' | 'error';
+  statusKey?: string;
+  statusText?: string;
+  widgetKey?: string;
+  widgetLines?: string[];
+  widgetPlacement?: string;
+  timeout?: number;
+}
+
+/** User response to an extension UI request. */
+export type ExtensionUIResponse =
+  | { confirmed: boolean }
+  | { value: string }
+  | { cancelled: true };
 
 type CodingHint =
   | 'none'
@@ -354,6 +380,18 @@ function syncSkills(
   return skillSync;
 }
 
+function resolveExtensionPath(): string | null {
+  // Extension file lives in the project source tree
+  const candidates = [
+    path.resolve(process.cwd(), 'src', 'extensions', 'fft-permission-gate.ts'),
+    path.resolve(process.cwd(), 'dist', 'extensions', 'fft-permission-gate.js'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 function buildPiArgs(params: {
   systemPrompt: string;
   prompt: string;
@@ -367,6 +405,16 @@ function buildPiArgs(params: {
     params;
   const args: string[] = ['--mode', 'json'];
   if (useContinue) args.push('-c');
+
+  // Load the permission gate extension if available
+  const extensionPath = resolveExtensionPath();
+  if (extensionPath) {
+    args.push('--extension', extensionPath);
+  } else {
+    logger.warn(
+      'Permission gate extension not found at src/extensions/ or dist/extensions/. Destructive commands will NOT be blocked at runtime.',
+    );
+  }
 
   const model = input.model || secrets.PI_MODEL || process.env.PI_MODEL;
   const provider = input.provider || secrets.PI_API || process.env.PI_API;
@@ -437,6 +485,9 @@ export async function runContainerAgent(
   input: ContainerInput,
   abortSignal?: AbortSignal,
   onRuntimeEvent?: (event: ContainerRuntimeEvent) => void,
+  onExtensionUIRequest?: (
+    request: ExtensionUIRequest,
+  ) => Promise<ExtensionUIResponse>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
   const projectRoot = process.cwd();
@@ -795,6 +846,7 @@ export async function runContainerAgent(
         FFT_NANO_REQUEST_ID: input.requestId || '',
         FFT_NANO_CODING_HINT: codingHint,
         FFT_NANO_IS_MAIN: isMain ? '1' : '0',
+        ...(input.isSubagent ? { FFT_NANO_SUBAGENT: '1' } : {}),
       };
 
       const sandboxed = wrapWithSandbox(piExecutable, piArgs, {
@@ -806,7 +858,7 @@ export async function runContainerAgent(
       const child = spawn(sandboxed.command, sandboxed.args, {
         cwd: wp.groupDir,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
       activeChild = child;
 
@@ -866,6 +918,75 @@ export async function runContainerAgent(
         lastDraftText = nextDraftText;
       };
 
+      const sendExtensionUIResponse = (
+        requestId: string,
+        response: ExtensionUIResponse,
+      ) => {
+        if (child.stdin && !child.stdin.destroyed) {
+          const payload = JSON.stringify({ type: 'extension_ui_response', id: requestId, ...response });
+          child.stdin.write(payload + '\n');
+          logger.debug(
+            { requestId, group: group.name },
+            'Sent extension UI response to pi',
+          );
+        }
+      };
+
+      const handleExtensionUIRequest = async (
+        request: ExtensionUIRequest,
+      ) => {
+        logger.info(
+          { requestId: request.id, method: request.method, title: request.title, group: group.name },
+          'Extension UI request from pi',
+        );
+
+        // Fire-and-forget methods (notify, setStatus, etc.) -- no response needed
+        const fireAndForgetMethods = ['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text'];
+        if (fireAndForgetMethods.includes(request.method)) {
+          // Publish to host event bus for optional UI rendering
+          hostEventBus.publish({
+            kind: 'extension_ui_notification',
+            id: createHostEventId('ext-ui'),
+            createdAt: new Date().toISOString(),
+            source: 'pi-runner',
+            chatJid: input.chatJid,
+            requestId: input.requestId,
+            request: request as unknown as Record<string, unknown>,
+          });
+          return;
+        }
+
+        // Dialog methods (confirm, select, input, editor) -- need user response
+        if (!onExtensionUIRequest) {
+          // No handler registered -- auto-deny for safety
+          logger.warn(
+            { requestId: request.id, method: request.method, group: group.name },
+            'No extension UI handler registered, auto-denying',
+          );
+          if (request.method === 'confirm') {
+            sendExtensionUIResponse(request.id, { confirmed: false });
+          } else {
+            sendExtensionUIResponse(request.id, { cancelled: true });
+          }
+          return;
+        }
+
+        try {
+          const response = await onExtensionUIRequest(request);
+          sendExtensionUIResponse(request.id, response);
+        } catch (err) {
+          logger.error(
+            { requestId: request.id, method: request.method, err, group: group.name },
+            'Extension UI handler failed, auto-denying',
+          );
+          if (request.method === 'confirm') {
+            sendExtensionUIResponse(request.id, { confirmed: false });
+          } else {
+            sendExtensionUIResponse(request.id, { cancelled: true });
+          }
+        }
+      };
+
       const processStdoutLine = (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -880,6 +1001,18 @@ export async function runContainerAgent(
               );
             }
           }
+
+          // Handle extension UI requests (permission gate confirmations, etc.)
+          const parsed = event as Record<string, unknown>;
+          if (
+            parsed.type === 'extension_ui_request' &&
+            typeof parsed.id === 'string' &&
+            typeof parsed.method === 'string'
+          ) {
+            handleExtensionUIRequest(parsed as unknown as ExtensionUIRequest);
+            return;
+          }
+
           const toolDelta = extractToolDeltaFromPiEvent(event, toolTracker);
           if (toolDelta) {
             logger.debug(
