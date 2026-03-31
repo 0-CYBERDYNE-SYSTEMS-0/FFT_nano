@@ -126,6 +126,33 @@ export type HostEvent =
       chatJid?: string;
       requestId?: string;
       request: Record<string, unknown>;
+    })
+  | (HostEventBase & {
+      kind: 'subagent_run_started';
+      requestId: string;
+      subagentType: string;
+      chatJid?: string;
+      taskText?: string;
+      blocking: boolean;
+    })
+  | (HostEventBase & {
+      kind: 'subagent_run_finished';
+      requestId: string;
+      subagentType: string;
+      status: 'success' | 'failed' | 'aborted';
+      durationMs: number;
+      resultLength?: number;
+      error?: string;
+    })
+  | (HostEventBase & {
+      kind: 'subagent_tool_event';
+      requestId: string;
+      subagentType: string;
+      toolName: string;
+      status: string;
+      args?: string;
+      output?: string;
+      error?: string;
     });
 
 export type LegacyTuiEvent =

@@ -4,6 +4,11 @@ export interface TelegramCommandMessage {
   content: string;
 }
 
+import {
+  getSubagentType,
+  listSubagentTypeNames,
+} from './subagent-types.js';
+
 export interface TelegramSetupInputMessage {
   chatJid: string;
   content: string;
@@ -101,7 +106,14 @@ export interface TelegramCommandDeps {
         | 'coder_plan'
         | 'auto_execute'
         | 'subagent_execute'
-        | 'subagent_plan';
+        | 'subagent_plan'
+        | 'eval'
+        | 'nightly-analyst'
+        | 'photo-analyst'
+        | 'researcher'
+        | 'compliance-auditor'
+        | 'data-sync'
+        | 'general';
       state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
       worktreePath?: string;
       childRunIds?: string[];
@@ -223,6 +235,15 @@ export interface TelegramCommandDeps {
     runtimePrefs?: Record<string, any>;
     abortController?: AbortController;
   }) => Promise<CodingRunResult>;
+  runSubagentTask?: (params: {
+    requestId: string;
+    type: string;
+    taskText: string;
+    chatJid: string;
+    groupFolder: string;
+    abortController: AbortController;
+    workspacePath?: string;
+  }) => Promise<{ ok: boolean; result: string | null; error?: string }>;
   setTyping: (chatJid: string, typing: boolean) => Promise<void>;
   persistAssistantHistory: (
     chatJid: string,
@@ -1552,6 +1573,21 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         });
         return true;
       }
+      if (action === 'types') {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'types');
+        const typeNames = listSubagentTypeNames();
+        const lines = typeNames.map((name) => {
+          const t = getSubagentType(name);
+          return t
+            ? `  ${t.label} (${name}) — ${t.description}\n    Tools: ${t.tools.join(', ')} | ${t.blocking ? 'blocking' : 'fire-and-forget'}`
+            : `  ${name}`;
+        });
+        await deps.sendMessage(
+          m.chatJid,
+          `Available subagent types:\n${lines.join('\n')}\n\nUsage: /subagents spawn <type> [task or path]`,
+        );
+        return true;
+      }
       if (action === 'list') {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
         await deps.sendMessage(m.chatJid, deps.formatActiveSubagentsText());
@@ -1603,9 +1639,16 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       if (action === 'spawn' || action === 'run' || action === 'start') {
-        const task = rest.slice(1).join(' ').trim();
-        if (!task) {
-          await deps.sendMessage(m.chatJid, 'Usage: /subagents spawn <task>');
+        const maybeType = rest[1]?.toLowerCase();
+        const typeConfig = maybeType ? getSubagentType(maybeType) : null;
+        const task = typeConfig
+          ? rest.slice(2).join(' ').trim()
+          : rest.slice(1).join(' ').trim();
+        if (!task && !typeConfig) {
+          await deps.sendMessage(
+            m.chatJid,
+            'Usage: /subagents spawn <type> [task] | /subagents spawn <task>\nUse /subagents types to see available types.',
+          );
           return true;
         }
         const group = deps.state.registeredGroups[m.chatJid];
@@ -1625,6 +1668,108 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             m.chatJid,
             `Cannot spawn while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
           );
+          return true;
+        }
+
+        // --- Typed subagent via SubagentOrchestrator ---
+        if (typeConfig && deps.runSubagentTask) {
+          const requestId = `subagent-${typeConfig.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const abortController = new AbortController();
+          const activeRun = {
+            chatJid: m.chatJid,
+            startedAt: Date.now(),
+            requestId,
+            abortController,
+          };
+          deps.activeChatRuns.set(m.chatJid, activeRun);
+          deps.activeChatRunsById?.set(requestId, activeRun);
+          deps.emitTuiChatEvent({
+            runId: requestId,
+            sessionKey: deps.getSessionKeyForChat(m.chatJid),
+            state: 'message',
+            message: {
+              role: 'system',
+              content: `Starting ${typeConfig.label} (${requestId})...`,
+            },
+          });
+          deps.emitTuiAgentEvent({
+            runId: requestId,
+            sessionKey: deps.getSessionKeyForChat(m.chatJid),
+            phase: 'start',
+            detail: 'running',
+          });
+          await deps.sendMessage(
+            m.chatJid,
+            `Starting ${typeConfig.label} (${requestId})...`,
+          );
+          if (typeConfig.blocking) {
+            await deps.setTyping(m.chatJid, true);
+          }
+          try {
+            const run = await deps.runSubagentTask({
+              requestId,
+              type: typeConfig.name,
+              taskText: task || `Run ${typeConfig.label}`,
+              chatJid: m.chatJid,
+              groupFolder: group.folder,
+              abortController,
+            });
+            if (!run.ok) {
+              deps.emitTuiChatEvent({
+                runId: requestId,
+                sessionKey: deps.getSessionKeyForChat(m.chatJid),
+                state: 'error',
+                errorMessage: run.error || 'Subagent run failed',
+              });
+              deps.emitTuiAgentEvent({
+                runId: requestId,
+                sessionKey: deps.getSessionKeyForChat(m.chatJid),
+                phase: 'error',
+                detail: 'subagent run failed',
+              });
+              await deps.sendMessage(
+                m.chatJid,
+                `${typeConfig.label} failed: ${run.error || 'unknown error'}`,
+              );
+            } else if (run.result) {
+              deps.emitTuiChatEvent({
+                runId: requestId,
+                sessionKey: deps.getSessionKeyForChat(m.chatJid),
+                state: 'final',
+                message: { role: 'assistant', content: run.result },
+              });
+              deps.emitTuiAgentEvent({
+                runId: requestId,
+                sessionKey: deps.getSessionKeyForChat(m.chatJid),
+                phase: 'end',
+                detail: 'complete',
+              });
+              await deps.sendAgentResultMessage(m.chatJid, run.result);
+            } else {
+              deps.emitTuiAgentEvent({
+                runId: requestId,
+                sessionKey: deps.getSessionKeyForChat(m.chatJid),
+                phase: 'end',
+                detail: 'complete',
+              });
+              await deps.sendMessage(
+                m.chatJid,
+                `${typeConfig.label} completed (no output).`,
+              );
+            }
+          } finally {
+            if (deps.activeChatRuns.get(m.chatJid) === activeRun) {
+              deps.activeChatRuns.delete(m.chatJid);
+            }
+            deps.activeChatRunsById?.delete(requestId);
+            await deps.setTyping(m.chatJid, false);
+          }
+          return true;
+        }
+
+        // --- Legacy coding subagent (no type or runSubagentTask unavailable) ---
+        if (!task) {
+          await deps.sendMessage(m.chatJid, 'Usage: /subagents spawn <task>');
           return true;
         }
         const requestId = `subagent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1737,7 +1882,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
       await deps.sendMessage(
         m.chatJid,
-        'Usage: /subagents list | /subagents stop <current|all|requestId> | /subagents spawn <task>',
+        'Usage: /subagents list | /subagents types | /subagents stop <current|all|requestId> | /subagents spawn <type> [task] | /subagents spawn <task>',
       );
       return true;
     }

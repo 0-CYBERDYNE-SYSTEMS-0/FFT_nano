@@ -49,13 +49,19 @@ import { state, activeChatRuns, ... } from './app-state.js';
 | `src/telegram-streaming.ts` | Visible Telegram preview registry and completion state |
 | `src/pi-runtime-events.ts` | Host-local runtime event hub for preview/final delivery |
 | `src/tui/runtime-events.ts` | EventEmitter pattern (34 lines, template for Phase 2) |
+| `src/subagent-types.ts` | Subagent type registry (7 registered types) |
+| `src/subagent-orchestrator.ts` | Generalized subagent spawning |
+| `src/subagent-prompts.ts` | Per-type prompt template loader |
+| `config/subagent-prompts/` | Markdown prompt templates per subagent type |
+| `src/extensions/fft-permission-gate.ts` | Pi extension for destructive command blocking |
+| `src/permission-gate-ui.ts` | Telegram confirmation UI for permission gate |
 | `src/config.ts` | All configuration constants |
 
 ## Build & Test
 
 ```bash
 npm run build          # TypeScript compilation
-npm test               # 184 tests via node --test
+npm test               # 326 tests via node --test
 npx tsc --noEmit       # Type-check without emitting
 ```
 

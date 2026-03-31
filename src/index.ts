@@ -73,6 +73,8 @@ import {
   updateChatName,
 } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
+import { createSubagentOrchestrator } from './subagent-orchestrator.js';
+import { loadSubagentPrompt } from './subagent-prompts.js';
 import {
   FarmActionRequest,
   MemoryActionRequest,
@@ -3081,6 +3083,14 @@ function logTelegramCommandAudit(
   logger.info({ chatJid, command, allowed, reason }, 'Telegram command audit');
 }
 
+// ── Subagent orchestrator ──────────────────────────────────────────
+const subagentOrchestrator = createSubagentOrchestrator({
+  activeRuns: activeCoderRuns,
+  runContainerAgent,
+  publishEvent: (event) => hostEventBus.publish(event),
+  sendChatMessage: sendMessage,
+});
+
 const telegramCommandHandlers = createTelegramCommandHandlers({
   state,
   constants: {
@@ -3143,6 +3153,22 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   getSessionKeyForChat,
   runAgent,
   runCodingTask,
+  runSubagentTask: async (params) => {
+    const group = state.registeredGroups[params.groupFolder];
+    const result = await subagentOrchestrator.spawnSubagent({
+      requestId: params.requestId,
+      type: params.type,
+      taskText: params.taskText,
+      originChatJid: params.chatJid,
+      originGroupFolder: params.groupFolder,
+      assistantName: ASSISTANT_NAME,
+      sessionKey: params.chatJid,
+      group,
+      abortController: params.abortController,
+      workspacePath: params.workspacePath,
+    });
+    return { ok: result.ok, result: result.result, error: result.error };
+  },
   setTyping,
   persistAssistantHistory,
   sendAgentResultMessage,
@@ -3308,6 +3334,20 @@ const appRuntime = createAppRuntime({
   startIpcWatcher,
   startMessageLoop: () => appRuntime.startMessageLoop(),
   requestHeartbeatNow,
+  runSubagentTask: async (type, groupFolder, prompt, options) => {
+    const group = state.registeredGroups[groupFolder];
+    const result = await subagentOrchestrator.spawnSubagent({
+      requestId: `cron-${type}-${Date.now()}`,
+      type,
+      taskText: prompt,
+      originChatJid: options?.chatJid ?? '',
+      originGroupFolder: groupFolder,
+      assistantName: ASSISTANT_NAME,
+      sessionKey: options?.chatJid ?? groupFolder,
+      group,
+    });
+    return result.result;
+  },
   storeMessage,
   translateJid,
   processMessage: (msg) => messageDispatcher.processMessage(msg),

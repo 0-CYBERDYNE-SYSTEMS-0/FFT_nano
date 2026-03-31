@@ -71,6 +71,55 @@ Notes:
 - `/subagents` manages real worker runs owned by the host orchestrator.
 - When spawning subagents, prefer `gpt-5.4-mini` whenever possible; only use a larger model when the task clearly requires it.
 
+## Subagent System
+
+FFT Nano supports typed subagents -- isolated agent sessions with specific purposes, tool sets, and workspace scopes. Subagents run as separate pi container processes, tracked alongside coding worker runs.
+
+### Registered Types
+
+| Type | Tools | Workspace | Blocking | Purpose |
+|---|---|---|---|---|
+| `eval` | read, grep, find, ls | Skill directory | Yes | Test skills against prompts |
+| `nightly-analyst` | read, write, bash, grep | Farm data | No | Daily analysis + morning briefing |
+| `photo-analyst` | read | Image directory | Yes | Pest/disease ID from photos |
+| `researcher` | read, web_search, grep | None | Yes | Web research |
+| `compliance-auditor` | read, grep | Compliance files | Yes | Audit spray logs |
+| `data-sync` | bash, write | Farm data | No | Fetch external APIs |
+| `general` | All tools | Main workspace | Yes | Catch-all for any task |
+
+### Commands
+
+```
+/subagents types                              # List available subagent types
+/subagents spawn eval <skill-name>            # Evaluate a skill
+/subagents spawn nightly-analyst              # Run daily analysis
+/subagents spawn photo-analyst <image-path>   # Analyze a photo
+/subagents spawn researcher <query>           # Web research
+/subagents spawn compliance-auditor           # Audit compliance records
+/subagents spawn data-sync                    # Fetch external data
+/subagents spawn general <task>               # General-purpose subagent
+/subagents list                               # Show active runs
+/subagents stop <id>                          # Abort a run
+/subagents stop all                           # Abort all runs
+```
+
+### Architecture
+
+- Type registry: `src/subagent-types.ts` -- defines all registered types with tool sets, workspace modes, timeouts
+- Orchestrator: `src/subagent-orchestrator.ts` -- spawns typed subagents via `runContainerAgent()`
+- Prompt templates: `config/subagent-prompts/<type>.md` -- per-type system prompts
+- All types use the main agent's model (no cheaper models until tested and user-approved)
+- Subagents are marked with `FFT_NANO_SUBAGENT=1` so the permission gate extension hard-blocks destructive commands
+- Fire-and-forget types (`nightly-analyst`, `data-sync`) return immediately and deliver results asynchronously
+
+### Cron Integration
+
+Cron tasks can spawn subagents by setting `subagent_type` on the task. The cron service dispatches to `runSubagentTask` instead of `runContainerAgent` when a subagent type is specified.
+
+### Relationship to /coder
+
+The `/coder` command is a separate system with its own ephemeral worktree management. Subagents use the generalized orchestrator. Both share the `activeCoderRuns` tracking map and abort system, but are otherwise independent.
+
 ## Main Workspace + Heartbeat
 
 - Main/admin container working directory maps to `~/nano` by default.

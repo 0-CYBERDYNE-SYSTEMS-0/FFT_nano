@@ -28,6 +28,12 @@ export interface SchedulerDependencies {
   requestHeartbeatNow?: (reason?: string) => void;
   isChatRunActive?: (jid: string) => boolean;
   runTaskAgent?: typeof runContainerAgent;
+  runSubagentTask?: (
+    type: string,
+    groupFolder: string,
+    prompt: string,
+    options?: { fireAndForget?: boolean; chatJid?: string },
+  ) => Promise<string | null>;
   scheduleNextTick?: (fn: () => void, delayMs: number) => unknown;
 }
 
@@ -230,6 +236,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     sendMessage: deps.sendMessage,
     registeredGroups: deps.registeredGroups,
     requestHeartbeatNow: deps.requestHeartbeatNow,
+    runSubagentTask: deps.runSubagentTask,
   });
 }
 
