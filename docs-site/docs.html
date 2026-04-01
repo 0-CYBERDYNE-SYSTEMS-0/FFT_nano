@@ -6,7 +6,8 @@
   <title>FFT_nano Developer Documentation | FFT_nano Docs</title>
   <meta name="description" content="FFT_nano documentation page: FFT_nano Developer Documentation">
   <meta name="theme-color" content="#0a0a0a">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
@@ -108,7 +109,7 @@
           <h1>FFT_nano Developer Documentation</h1>
           <p>Rendered from Markdown into styled HTML. Code blocks, tables, and links stay readable and theme-consistent.</p>
         </section>
-        <section class="toc-box"><h3>On This Page</h3><a class="" href="#quick-navigation">Quick Navigation</a><a class="" href="#source-of-truth-principle">Source-of-Truth Principle</a><a class="" href="#snapshot">Snapshot</a><a class="" href="#notes">Notes</a></section>
+        <section class="toc-box"><h3>On This Page</h3><a class="" href="#quick-navigation">Quick Navigation</a><a class="" href="#source-of-truth-principle">Source-of-Truth Principle</a><a class="" href="#snapshot">Snapshot</a></section>
         <article class="article">
           <h1 id="fftnano-developer-documentation">FFT_nano Developer Documentation</h1>
 <p>This docs set is implementation-anchored to <code>src/</code> and <code>container/agent-runner/src/</code>.</p>
@@ -128,7 +129,6 @@
 <h2 id="quick-navigation">Quick Navigation</h2>
 <p>Core guides:</p>
 <ul>
-<li><a href="developer/00-gap-analysis.html">Gap Analysis: src vs old docs-site</a></li>
 <li><a href="developer/01-architecture.html">Architecture</a></li>
 <li><a href="developer/02-runtime-message-processing.html">Runtime Message Flow</a></li>
 <li><a href="developer/03-container-runtime.html">Container Runtime</a></li>
@@ -163,17 +163,11 @@
 <h2 id="snapshot">Snapshot</h2>
 <p>Repository baseline in this pass:</p>
 <ul>
-<li>Package: <code>fft_nano@1.0.1</code></li>
+<li>Package: <code>fft_nano@1.4.0</code></li>
 <li>Runtime: <code>node &gt;=20</code></li>
 <li>Host TypeScript LOC (<code>src/*.ts</code>): 9,858</li>
 <li>Primary host process: single Node process with Telegram and/or WhatsApp ingress, SQLite persistence, and containerized agent execution.</li>
 </ul>
-<h2 id="notes">Notes</h2>
-<ul>
-<li><code>docs-site/index.html</code> is now a navigation shell for this docs set.</li>
-<li>Old docs content was broad but mixed in non-implemented or stale details; see gap analysis for exact deltas.</li>
-</ul>
-
 
         </article>
       </main>
