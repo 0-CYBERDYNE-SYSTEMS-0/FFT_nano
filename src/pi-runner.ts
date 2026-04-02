@@ -538,6 +538,8 @@ function resolveExtensionPath(): string | null {
   return null;
 }
 
+type PiTransportMode = 'json' | 'rpc';
+
 function buildPiArgs(params: {
   systemPrompt: string;
   prompt: string;
@@ -546,10 +548,18 @@ function buildPiArgs(params: {
   codingHint: CodingHint;
   piAgentDir: string;
   secrets: Record<string, string>;
+  transportMode: PiTransportMode;
 }): string[] {
-  const { systemPrompt, prompt, useContinue, input, codingHint, secrets } =
-    params;
-  const args: string[] = ['--mode', 'json'];
+  const {
+    systemPrompt,
+    prompt,
+    useContinue,
+    input,
+    codingHint,
+    secrets,
+    transportMode,
+  } = params;
+  const args: string[] = ['--mode', transportMode];
   if (useContinue) args.push('-c');
 
   const extensionPath = resolveExtensionPath();
@@ -591,7 +601,9 @@ function buildPiArgs(params: {
     args.push('--tools', 'read,bash,edit,write,grep,find,ls');
   }
 
-  args.push(prompt);
+  if (transportMode === 'json') {
+    args.push(prompt);
+  }
   return args;
 }
 
@@ -974,6 +986,9 @@ export async function runContainerAgent(
       retryFresh?: boolean;
     }>((resolve) => {
       let localSettled = false;
+      const transportMode: PiTransportMode = onExtensionUIRequest
+        ? 'rpc'
+        : 'json';
       const piArgs = buildPiArgs({
         systemPrompt,
         prompt,
@@ -982,6 +997,7 @@ export async function runContainerAgent(
         codingHint,
         piAgentDir: wp.piAgentDir,
         secrets,
+        transportMode,
       });
 
       const hostPassthrough: Record<string, string> = {};
@@ -1020,8 +1036,27 @@ export async function runContainerAgent(
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      if (!onExtensionUIRequest) {
+      const closeRpcInput = () => {
+        if (
+          transportMode !== 'rpc' ||
+          !child.stdin ||
+          child.stdin.destroyed ||
+          child.stdin.writableEnded
+        ) {
+          return;
+        }
         child.stdin.end();
+      };
+      if (transportMode === 'json') {
+        child.stdin.end();
+      } else if (child.stdin && !child.stdin.destroyed) {
+        child.stdin.write(
+          JSON.stringify({
+            id: input.requestId || `prompt-${Date.now()}`,
+            type: 'prompt',
+            message: prompt,
+          }) + '\n',
+        );
       }
       activeChild = child;
       onProgressEvent?.({
@@ -1060,6 +1095,28 @@ export async function runContainerAgent(
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
+      const publishDraftPreview = (text: string, force = false) => {
+        if (!canStreamTelegramDraft) return;
+        const normalized = normalizeTelegramDraftText(text);
+        if (!normalized) return;
+        const now = Date.now();
+        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        if (normalized === lastDraftText) return;
+        const requestId = (input.requestId || '').trim();
+        if (!requestId) return;
+        hostEventBus.publish({
+          kind: 'telegram_preview_requested',
+          id: createHostEventId('preview'),
+          createdAt: new Date(now).toISOString(),
+          source: 'pi-runner',
+          chatJid: input.chatJid,
+          requestId,
+          text: normalized,
+        });
+        streamedDraft = true;
+        lastDraftSentAt = now;
+        lastDraftText = normalized;
+      };
       const settleLocal = (value: {
         code: number | null;
         stdout: string;
@@ -1131,9 +1188,7 @@ export async function runContainerAgent(
       };
 
       const maybeSendDraft = (force = false) => {
-        if (!canStreamTelegramDraft || !assistantSoFar) return;
-        const now = Date.now();
-        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        if (!assistantSoFar) return;
         let previewText = assistantSoFar;
         if (input.showReasoning && thinkingSoFar) {
           const thinkingBlock =
@@ -1142,22 +1197,7 @@ export async function runContainerAgent(
               : thinkingSoFar;
           previewText = `Reasoning:\n\`\`\`\n${thinkingBlock}\n\`\`\`\n\n${assistantSoFar}`;
         }
-        const nextDraftText = normalizeTelegramDraftText(previewText);
-        if (nextDraftText === lastDraftText) return;
-        const requestId = (input.requestId || '').trim();
-        if (!requestId) return;
-        hostEventBus.publish({
-          kind: 'telegram_preview_requested',
-          id: createHostEventId('preview'),
-          createdAt: new Date(now).toISOString(),
-          source: 'pi-runner',
-          chatJid: input.chatJid,
-          requestId,
-          text: nextDraftText,
-        });
-        streamedDraft = true;
-        lastDraftSentAt = now;
-        lastDraftText = nextDraftText;
+        publishDraftPreview(previewText, force);
       };
 
       const sendExtensionUIResponse = (
@@ -1255,6 +1295,15 @@ export async function runContainerAgent(
           ) {
             void handleExtensionUIRequest(parsed as unknown as ExtensionUIRequest);
             return;
+          }
+          if (
+            transportMode === 'rpc' &&
+            ((parsed.type === 'response' &&
+              parsed.command === 'prompt' &&
+              parsed.success === false) ||
+              parsed.type === 'agent_end')
+          ) {
+            closeRpcInput();
           }
           const toolDelta = extractToolDeltaFromPiEvent(event, toolTracker);
           if (toolDelta) {
