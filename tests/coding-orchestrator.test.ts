@@ -103,3 +103,37 @@ test('execute mode returns structured worker result with changed files', async (
   assert.deepEqual(result.workerResult?.testsRun, ['npm test']);
   assert.equal(result.workerResult?.diffSummary, '2 files changed');
 });
+
+test('subagent routes mark worker runs as subagent executions', async () => {
+  let isSubagent: boolean | undefined;
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/subagent-1',
+      cleanup: async () => {},
+      listChangedFiles: () => [],
+      getDiffSummary: () => '',
+    }),
+    runContainerAgent: async (_group, input) => {
+      isSubagent = input.isSubagent;
+      return {
+        status: 'success',
+        result: 'done',
+        usage: { totalTokens: 1 },
+        toolExecutions: [],
+      };
+    },
+    publishEvent: () => {},
+  });
+
+  const result = await orchestrator.runTask(
+    makeRequest({
+      requestId: 'subagent-1',
+      route: 'subagent_execute',
+      originGroupFolder: 'main',
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(isSubagent, true);
+});

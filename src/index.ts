@@ -41,9 +41,17 @@ import {
   AvailableGroup,
   deriveTelegramDraftId,
   runContainerAgent,
+  type ExtensionUIRequest,
+  type ExtensionUIResponse,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './pi-runner.js';
+import {
+  createPendingConfirmation,
+  parsePermissionGateCallback,
+  resolvePendingConfirmation,
+  shouldPromptPermissionGate,
+} from './permission-gate-ui.js';
 import {
   getAllChats,
   getAllTasks,
@@ -2928,7 +2936,14 @@ function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
   if (!codingOrchestrator) {
     codingOrchestrator = createCodingOrchestrator({
       activeRuns: activeCoderRuns,
-      runContainerAgent,
+      runContainerAgent: (group, input, abortSignal, onRuntimeEvent) =>
+        runContainerAgent(
+          group,
+          input,
+          abortSignal,
+          onRuntimeEvent,
+          (request) => handlePermissionGateRequest(input.chatJid, request),
+        ),
       publishEvent: (event) => {
         hostEventBus.publish(event);
       },
@@ -3390,7 +3405,65 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
 async function handleTelegramCallbackQuery(
   q: TelegramInboundCallbackQuery,
 ): Promise<void> {
+  const pgRequestId = parsePermissionGateCallback(q.data);
+  if (pgRequestId) {
+    const confirmed = q.data.startsWith('pg_allow:');
+    resolvePendingConfirmation(pgRequestId, { confirmed });
+    const bot = state.telegramBot;
+    if (bot) {
+      try {
+        await bot.answerCallbackQuery?.(q.id);
+      } catch {
+        // Ignore duplicate callback acknowledgements.
+      }
+      try {
+        await bot.editMessageWithKeyboard(
+          q.chatJid,
+          q.messageId,
+          `${confirmed ? '✅ Allowed' : '❌ Blocked'}`,
+          [],
+        );
+      } catch {
+        // Message may have been deleted already.
+      }
+    }
+    return;
+  }
+
   await telegramCommandHandlers.handleTelegramCallbackQuery(q);
+}
+
+async function handlePermissionGateRequest(
+  chatJid: string,
+  request: ExtensionUIRequest,
+): Promise<ExtensionUIResponse> {
+  const timeoutMs = request.timeout ?? 60_000;
+
+  if (
+    shouldPromptPermissionGate(request) &&
+    isTelegramJid(chatJid) &&
+    state.telegramBot
+  ) {
+    const { promise } = createPendingConfirmation(request.id, chatJid, timeoutMs);
+    await state.telegramBot.sendMessageWithKeyboard(
+      chatJid,
+      `⚠️ *Permission Required*\n\n${request.title ?? 'Action'}\n${request.message ?? ''}\n\n_Reply within ${Math.round(timeoutMs / 1000)}s or it will be auto-denied._`,
+      [[
+        { text: '✅ Allow', callbackData: `pg_allow:${request.id}` },
+        { text: '❌ Block', callbackData: `pg_block:${request.id}` },
+      ]],
+    );
+    return promise;
+  }
+
+  logger.warn(
+    { requestId: request.id, method: request.method, chatJid },
+    'Permission gate: no UI available, auto-denying',
+  );
+  if (request.method === 'confirm') {
+    return { confirmed: false };
+  }
+  return { cancelled: true };
 }
 
 async function handleTelegramSetupInput(m: {
@@ -3732,6 +3805,7 @@ async function runAgent(
             ...(event.error ? { error: event.error } : {}),
           });
         },
+        (request) => handlePermissionGateRequest(chatJid, request),
       );
       return {
         ...output,

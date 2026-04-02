@@ -85,6 +85,7 @@ test(
       },
       abortController.signal,
       undefined,
+      undefined,
       (event) => {
         progressEvents.push(event);
       },
