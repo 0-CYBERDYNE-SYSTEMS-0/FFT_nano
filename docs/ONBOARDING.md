@@ -1,6 +1,6 @@
 # Onboarding
 
-`FFT_nano` includes a single command onboarding flow that runs:
+`FFT_nano` includes an OpenClaw-style single command onboarding flow that runs:
 backup -> setup -> onboarding wizard -> daemon step -> doctor.
 
 ## Commands

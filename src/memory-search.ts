@@ -4,7 +4,9 @@ import path from 'path';
 import { searchMessagesByFts, type TranscriptSearchRow } from './db.js';
 import {
   isAllowedMemoryRelativePath,
+  isCanonicalScaffoldContent,
   resolveAllowedMemoryFilePath,
+  resolveCanonicalDir,
   resolveGroupWorkspaceDir,
   resolveMemoryDir,
   resolveMemoryPath,
@@ -230,6 +232,18 @@ function collectDocumentFiles(
       files.add(path.resolve(abs));
     }
   }
+  const canonicalFiles = listMarkdownFiles(resolveCanonicalDir(groupFolder));
+  if (canonicalFiles.length > 0) {
+    for (const file of canonicalFiles) {
+      try {
+        const content = fs.readFileSync(file, 'utf8');
+        if (isCanonicalScaffoldContent(path.basename(file), content)) continue;
+        files.add(path.resolve(file));
+      } catch {
+        continue;
+      }
+    }
+  }
   const primaryMemoryPath = resolveMemoryPath(groupFolder);
   const legacyMemoryPath = path.join(workspace, 'memory.md');
   if (
@@ -292,11 +306,20 @@ export function searchDocumentMemory(input: {
     for (const chunk of collectDocumentChunks(folder)) {
       const score = lexicalScore(queryTokens, queryText, chunk.text);
       if (score <= 0) continue;
-      // Prefer dedicated memory root files over memory/* notes.
       const pathBonus =
-        chunk.relPath === 'MEMORY.md' || chunk.relPath === 'memory.md'
-          ? 0.2
-          : 0;
+        chunk.relPath === 'canonical/_hot.md'
+          ? 0.5
+          : chunk.relPath === 'canonical/constraints.md'
+            ? 0.35
+            : chunk.relPath === 'canonical/commitments.md'
+              ? 0.3
+              : chunk.relPath.startsWith('canonical/')
+                ? 0.18
+                : chunk.relPath === 'MEMORY.md' || chunk.relPath === 'memory.md'
+                  ? 0.12
+                  : chunk.relPath.startsWith('memory/')
+                    ? 0.08
+                    : 0;
       scored.push({ chunk, score: score + pathBonus });
     }
   }

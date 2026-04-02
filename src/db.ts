@@ -63,6 +63,7 @@ export function initDatabaseAtPath(dbPath: string): void {
       stagger_ms INTEGER,
       delete_after_run INTEGER DEFAULT 0,
       consecutive_errors INTEGER DEFAULT 0,
+      subagent_type TEXT,
       next_run TEXT,
       last_run TEXT,
       last_result TEXT,
@@ -104,6 +105,7 @@ export function initDatabaseAtPath(dbPath: string): void {
     `ALTER TABLE scheduled_tasks ADD COLUMN stagger_ms INTEGER`,
     `ALTER TABLE scheduled_tasks ADD COLUMN delete_after_run INTEGER DEFAULT 0`,
     `ALTER TABLE scheduled_tasks ADD COLUMN consecutive_errors INTEGER DEFAULT 0`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN subagent_type TEXT`,
   ];
   for (const migration of scheduledTaskMigrations) {
     try {
@@ -118,13 +120,6 @@ export function initDatabaseAtPath(dbPath: string): void {
     db.exec(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
     );
-  } catch {
-    /* column already exists */
-  }
-
-  // Add subagent_type column for generalized subagent cron tasks
-  try {
-    db.exec(`ALTER TABLE scheduled_tasks ADD COLUMN subagent_type TEXT`);
   } catch {
     /* column already exists */
   }
@@ -460,9 +455,9 @@ export function createTask(
       id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode,
       schedule_json, session_target, wake_mode, delivery_mode, delivery_channel, delivery_to,
       delivery_webhook_url, timeout_seconds, stagger_ms, delete_after_run, consecutive_errors,
-      next_run, status, created_at
+      subagent_type, next_run, status, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -483,6 +478,7 @@ export function createTask(
     task.stagger_ms ?? null,
     task.delete_after_run ?? 0,
     task.consecutive_errors ?? 0,
+    task.subagent_type ?? null,
     task.next_run,
     task.status,
     task.created_at,

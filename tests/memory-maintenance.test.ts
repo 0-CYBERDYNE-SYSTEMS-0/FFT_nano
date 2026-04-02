@@ -54,7 +54,7 @@ test('migrateCompactionSectionsFromSoul moves compaction blocks once and is idem
   }
 });
 
-test('appendCompactionSummaryToMemory writes to MEMORY.md', () => {
+test('appendCompactionSummaryToMemory writes to daily staging note', () => {
   const folder = `test-memory-maint-${Date.now()}`;
   const groupRoot = path.join(process.cwd(), 'groups', folder);
   try {
@@ -63,7 +63,7 @@ test('appendCompactionSummaryToMemory writes to MEMORY.md', () => {
       'Summary content',
       '2026-02-15T02:00:00.000Z',
     );
-    const memoryPath = path.join(groupRoot, 'MEMORY.md');
+    const memoryPath = path.join(groupRoot, 'memory', '2026-02-15.md');
     const content = fs.readFileSync(memoryPath, 'utf8');
     assert.equal(content.includes('## Session Compaction 2026-02-15T02:00:00.000Z'), true);
     assert.equal(content.includes('Summary content'), true);

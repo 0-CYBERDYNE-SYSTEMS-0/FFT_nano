@@ -11,7 +11,10 @@ export const PROJECT_SETUP_SKILLS_RELATIVE_DIR_CANDIDATES = [
   path.join('skills', 'setup'),
 ] as const;
 export const REQUIRED_PROJECT_PI_SKILLS = [
+  'fft-setup',
+  'fft-debug',
   'fft-telegram-ops',
+  'fft-coder-ops',
 ] as const;
 
 export interface SkillValidationIssue {
@@ -48,8 +51,6 @@ const FRONTMATTER_OPTIONAL_FIELDS = [
   'compatibility',
   'metadata',
   'allowed-tools',
-  'guardrails',
-  'required_skills',
 ] as const;
 const FRONTMATTER_ALLOWED_FIELDS = new Set<string>([
   ...FRONTMATTER_REQUIRED_FIELDS,

@@ -338,7 +338,6 @@ export async function runScheduledTaskV2(
   let outputError: string | null = null;
   let outputResult: string | null = null;
   try {
-    // If task has a subagent_type, use the subagent dispatcher
     if (task.subagent_type && deps.runSubagentTask) {
       const result = await deps.runSubagentTask(
         task.subagent_type,

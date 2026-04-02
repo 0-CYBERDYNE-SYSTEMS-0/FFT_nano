@@ -161,30 +161,37 @@ export type ContainerProgressEvent =
       retryingFresh: boolean;
     };
 
-/** Extension UI request emitted by pi extensions (e.g. permission gate confirm dialog). */
 export interface ExtensionUIRequest {
+  type?: 'extension_ui_request';
   id: string;
-  method: 'confirm' | 'select' | 'input' | 'editor' | 'notify' | 'setStatus' | 'setWidget' | 'setTitle' | 'set_editor_text';
+  method: string;
   title?: string;
   message?: string;
+  timeout?: number;
   options?: string[];
   placeholder?: string;
   prefill?: string;
-  notifyMessage?: string;
   notifyType?: 'info' | 'warning' | 'error';
   statusKey?: string;
   statusText?: string;
   widgetKey?: string;
   widgetLines?: string[];
   widgetPlacement?: string;
-  timeout?: number;
+  text?: string;
 }
 
-/** User response to an extension UI request. */
-export type ExtensionUIResponse =
-  | { confirmed: boolean }
-  | { value: string }
-  | { cancelled: true };
+export interface ExtensionUIResponse {
+  id?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+  value?: string;
+}
+
+export function shouldBuildRetrievedMemoryContext(input: {
+  isMain: boolean;
+}): boolean {
+  return MEMORY_RETRIEVAL_GATE_ENABLED && input.isMain;
+}
 
 type CodingHint =
   | 'none'
@@ -521,16 +528,17 @@ function syncSkills(
 }
 
 function resolveExtensionPath(): string | null {
-  // Extension file lives in the project source tree
   const candidates = [
     path.resolve(process.cwd(), 'src', 'extensions', 'fft-permission-gate.ts'),
     path.resolve(process.cwd(), 'dist', 'extensions', 'fft-permission-gate.js'),
   ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
   }
   return null;
 }
+
+type PiTransportMode = 'json' | 'rpc';
 
 function buildPiArgs(params: {
   systemPrompt: string;
@@ -540,13 +548,20 @@ function buildPiArgs(params: {
   codingHint: CodingHint;
   piAgentDir: string;
   secrets: Record<string, string>;
+  transportMode: PiTransportMode;
 }): string[] {
-  const { systemPrompt, prompt, useContinue, input, codingHint, secrets } =
-    params;
-  const args: string[] = ['--mode', 'json'];
+  const {
+    systemPrompt,
+    prompt,
+    useContinue,
+    input,
+    codingHint,
+    secrets,
+    transportMode,
+  } = params;
+  const args: string[] = ['--mode', transportMode];
   if (useContinue) args.push('-c');
 
-  // Load the permission gate extension if available
   const extensionPath = resolveExtensionPath();
   if (extensionPath) {
     args.push('--extension', extensionPath);
@@ -586,7 +601,9 @@ function buildPiArgs(params: {
     args.push('--tools', 'read,bash,edit,write,grep,find,ls');
   }
 
-  args.push(prompt);
+  if (transportMode === 'json') {
+    args.push(prompt);
+  }
   return args;
 }
 
@@ -648,7 +665,7 @@ export async function runContainerAgent(
   }
 
   let payload = input;
-  if (MEMORY_RETRIEVAL_GATE_ENABLED) {
+  if (shouldBuildRetrievedMemoryContext(input)) {
     try {
       const memory = getMemoryBackend().buildContext({
         groupFolder: group.folder,
@@ -969,6 +986,9 @@ export async function runContainerAgent(
       retryFresh?: boolean;
     }>((resolve) => {
       let localSettled = false;
+      const transportMode: PiTransportMode = onExtensionUIRequest
+        ? 'rpc'
+        : 'json';
       const piArgs = buildPiArgs({
         systemPrompt,
         prompt,
@@ -977,6 +997,7 @@ export async function runContainerAgent(
         codingHint,
         piAgentDir: wp.piAgentDir,
         secrets,
+        transportMode,
       });
 
       const hostPassthrough: Record<string, string> = {};
@@ -1013,13 +1034,30 @@ export async function runContainerAgent(
       const child = spawn(sandboxed.command, sandboxed.args, {
         cwd: wp.groupDir,
         env,
-        // Leaving pi stdin open as a pipe causes it to hang before emitting
-        // any output. Start with a pipe but close it immediately so pi sees
-        // EOF and can proceed. Extension prompts then fall back to safe denial
-        // rather than wedging the entire run.
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      child.stdin.end();
+      const closeRpcInput = () => {
+        if (
+          transportMode !== 'rpc' ||
+          !child.stdin ||
+          child.stdin.destroyed ||
+          child.stdin.writableEnded
+        ) {
+          return;
+        }
+        child.stdin.end();
+      };
+      if (transportMode === 'json') {
+        child.stdin.end();
+      } else if (child.stdin && !child.stdin.destroyed) {
+        child.stdin.write(
+          JSON.stringify({
+            id: input.requestId || `prompt-${Date.now()}`,
+            type: 'prompt',
+            message: prompt,
+          }) + '\n',
+        );
+      }
       activeChild = child;
       onProgressEvent?.({
         kind: 'spawn',
@@ -1036,6 +1074,17 @@ export async function runContainerAgent(
       let streamedDraft = false;
       let stdoutTruncated = false;
       let sawMeaningfulProgress = false;
+      const initialStaleDelayMs = lifecyclePolicy.staleAfterMs
+        ? useContinue
+          ? lifecyclePolicy.staleAfterMs
+          : lifecyclePolicy.staleAfterMs +
+            parseRuntimeMs(
+              process.env.FFT_NANO_INTERACTIVE_STARTUP_GRACE_MS,
+              750,
+              0,
+              5_000,
+            )
+        : null;
       const toolTracker = createToolTrackerState();
       let staleTimer: NodeJS.Timeout | null = null;
       let ticker: NodeJS.Timeout | null = null;
@@ -1057,6 +1106,28 @@ export async function runContainerAgent(
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
+      const publishDraftPreview = (text: string, force = false) => {
+        if (!canStreamTelegramDraft) return;
+        const normalized = normalizeTelegramDraftText(text);
+        if (!normalized) return;
+        const now = Date.now();
+        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        if (normalized === lastDraftText) return;
+        const requestId = (input.requestId || '').trim();
+        if (!requestId) return;
+        hostEventBus.publish({
+          kind: 'telegram_preview_requested',
+          id: createHostEventId('preview'),
+          createdAt: new Date(now).toISOString(),
+          source: 'pi-runner',
+          chatJid: input.chatJid,
+          requestId,
+          text: normalized,
+        });
+        streamedDraft = true;
+        lastDraftSentAt = now;
+        lastDraftText = normalized;
+      };
       const settleLocal = (value: {
         code: number | null;
         stdout: string;
@@ -1071,8 +1142,10 @@ export async function runContainerAgent(
         resolve(value);
       };
 
-      const armStaleTimer = () => {
-        if (!lifecyclePolicy.staleAfterMs) return;
+      const armStaleTimer = (
+        delayMs: number | null = lifecyclePolicy.staleAfterMs,
+      ) => {
+        if (!delayMs) return;
         if (staleTimer) clearTimeout(staleTimer);
         staleTimer = setTimeout(() => {
           const now = Date.now();
@@ -1107,12 +1180,11 @@ export async function runContainerAgent(
             streamedDraft,
             retryFresh,
           });
-        }, lifecyclePolicy.staleAfterMs);
+        }, delayMs);
       };
 
       const noteProgress = (
         event:
-          | { kind: 'stdout'; at: number }
           | { kind: 'assistant'; at: number }
           | { kind: 'thinking'; at: number }
           | {
@@ -1127,10 +1199,18 @@ export async function runContainerAgent(
         armStaleTimer();
       };
 
+      const noteActivity = (event?: { kind: 'stdout'; at: number }) => {
+        if (event) onProgressEvent?.(event);
+        armStaleTimer();
+      };
+
+      const noteWaitState = (delayMs?: number, meaningful = true) => {
+        if (meaningful) sawMeaningfulProgress = true;
+        armStaleTimer(delayMs ?? lifecyclePolicy.staleAfterMs);
+      };
+
       const maybeSendDraft = (force = false) => {
-        if (!canStreamTelegramDraft || !assistantSoFar) return;
-        const now = Date.now();
-        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        if (!assistantSoFar) return;
         let previewText = assistantSoFar;
         if (input.showReasoning && thinkingSoFar) {
           const thinkingBlock =
@@ -1139,78 +1219,60 @@ export async function runContainerAgent(
               : thinkingSoFar;
           previewText = `Reasoning:\n\`\`\`\n${thinkingBlock}\n\`\`\`\n\n${assistantSoFar}`;
         }
-        const nextDraftText = normalizeTelegramDraftText(previewText);
-        if (nextDraftText === lastDraftText) return;
-        const requestId = (input.requestId || '').trim();
-        if (!requestId) return;
-        hostEventBus.publish({
-          kind: 'telegram_preview_requested',
-          id: createHostEventId('preview'),
-          createdAt: new Date(now).toISOString(),
-          source: 'pi-runner',
-          chatJid: input.chatJid,
-          requestId,
-          text: nextDraftText,
-        });
-        streamedDraft = true;
-        lastDraftSentAt = now;
-        lastDraftText = nextDraftText;
+        publishDraftPreview(previewText, force);
       };
 
       const sendExtensionUIResponse = (
         requestId: string,
         response: ExtensionUIResponse,
       ) => {
-        if (child.stdin && !child.stdin.destroyed) {
-          const payload = JSON.stringify({ type: 'extension_ui_response', id: requestId, ...response });
-          child.stdin.write(payload + '\n');
-          logger.debug(
+        if (!child.stdin || child.stdin.destroyed || child.stdin.writableEnded) {
+          logger.warn(
             { requestId, group: group.name },
-            'Sent extension UI response to pi',
+            'Cannot send extension UI response because pi stdin is unavailable',
           );
           return;
         }
-        logger.warn(
-          { requestId, group: group.name },
-          'Cannot send extension UI response because pi stdin is unavailable',
+        child.stdin.write(
+          JSON.stringify({
+            type: 'extension_ui_response',
+            id: requestId,
+            ...response,
+          }) + '\n',
         );
       };
 
       const handleExtensionUIRequest = async (
         request: ExtensionUIRequest,
-      ) => {
+      ): Promise<void> => {
         logger.info(
-          { requestId: request.id, method: request.method, title: request.title, group: group.name },
+          {
+            requestId: request.id,
+            method: request.method,
+            title: request.title,
+            group: group.name,
+          },
           'Extension UI request from pi',
         );
+        noteWaitState(
+          Math.max(
+            lifecyclePolicy.staleAfterMs ?? 0,
+            (request.timeout ?? 60_000) + 1_000,
+          ),
+        );
 
-        if (!child.stdin || child.stdin.destroyed) {
-          logger.warn(
-            { requestId: request.id, method: request.method, group: group.name },
-            'Skipping extension UI prompt because pi stdin is closed; request will fall back to safe denial',
-          );
+        const fireAndForgetMethods = new Set([
+          'notify',
+          'setStatus',
+          'setWidget',
+          'setTitle',
+          'set_editor_text',
+        ]);
+        if (fireAndForgetMethods.has(request.method)) {
           return;
         }
 
-        // Fire-and-forget methods (notify, setStatus, etc.) -- no response needed
-        const fireAndForgetMethods = ['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text'];
-        if (fireAndForgetMethods.includes(request.method)) {
-          // Publish to host event bus for optional UI rendering
-          hostEventBus.publish({
-            kind: 'extension_ui_notification',
-            id: createHostEventId('ext-ui'),
-            createdAt: new Date().toISOString(),
-            source: 'pi-runner',
-            chatJid: input.chatJid,
-            requestId: input.requestId,
-            request: request as unknown as Record<string, unknown>,
-          });
-          return;
-        }
-
-        // Dialog methods (confirm, select, input, editor) -- need user response
         if (!onExtensionUIRequest) {
-          // No handler registered -- auto-deny for safety
           logger.warn(
             { requestId: request.id, method: request.method, group: group.name },
             'No extension UI handler registered, auto-denying',
@@ -1253,18 +1315,31 @@ export async function runContainerAgent(
               );
             }
           }
-
-          // Handle extension UI requests (permission gate confirmations, etc.)
           const parsed = event as Record<string, unknown>;
           if (
             parsed.type === 'extension_ui_request' &&
             typeof parsed.id === 'string' &&
             typeof parsed.method === 'string'
           ) {
-            handleExtensionUIRequest(parsed as unknown as ExtensionUIRequest);
+            void handleExtensionUIRequest(parsed as unknown as ExtensionUIRequest);
             return;
           }
-
+          if (
+            transportMode === 'rpc' &&
+            parsed.type === 'response' &&
+            parsed.command === 'prompt'
+          ) {
+            noteWaitState(undefined, false);
+          }
+          if (
+            transportMode === 'rpc' &&
+            ((parsed.type === 'response' &&
+              parsed.command === 'prompt' &&
+              parsed.success === false) ||
+              parsed.type === 'agent_end')
+          ) {
+            closeRpcInput();
+          }
           const toolDelta = extractToolDeltaFromPiEvent(event, toolTracker);
           if (toolDelta) {
             logger.debug(
@@ -1330,11 +1405,11 @@ export async function runContainerAgent(
       ticker = canStreamTelegramDraft
         ? setInterval(() => maybeSendDraft(false), 1000)
         : null;
-      armStaleTimer();
+      armStaleTimer(initialStaleDelayMs);
 
       child.stdout.on('data', (d: Buffer) => {
         const chunk = d.toString();
-        noteProgress({ kind: 'stdout', at: Date.now() });
+        noteActivity({ kind: 'stdout', at: Date.now() });
         if (!stdoutTruncated) {
           const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
           if (chunk.length > remaining) {
@@ -1387,7 +1462,6 @@ export async function runContainerAgent(
     }
 
     const timeoutMs = lifecyclePolicy.hardTimeoutMs;
-
     const timeoutHandle = setTimeout(() => {
       killActiveChild();
       finish({

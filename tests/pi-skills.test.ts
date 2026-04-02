@@ -68,7 +68,7 @@ test('syncProjectPiSkillsToGroupPiHome mirrors runtime skills and prunes stale m
     const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome);
 
     assert.equal(res.sourceDirExists, true);
-    assert.ok(res.copied.includes('fft-telegram-ops'));
+    assert.ok(res.copied.includes('fft-setup'));
     assert.ok(res.copied.includes('custom-skill'));
     assert.equal(res.removed.length, 0);
     assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'custom-skill', 'SKILL.md')), true);
@@ -114,18 +114,18 @@ test('main workspace skill source can override project runtime skill', () => {
     fs.mkdirSync(userSkillsRoot, { recursive: true });
     fs.mkdirSync(dstSkillsRoot, { recursive: true });
 
-    const projectSkillDir = path.join(projectSkillsRoot, 'fft-telegram-ops');
+    const projectSkillDir = path.join(projectSkillsRoot, 'fft-debug');
     fs.mkdirSync(projectSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(projectSkillDir, 'SKILL.md'),
-      requiredSkillMarkdown('fft-telegram-ops', 'project version'),
+      requiredSkillMarkdown('fft-debug', 'project version'),
     );
 
-    const userOverrideSkillDir = path.join(userSkillsRoot, 'fft-telegram-ops');
+    const userOverrideSkillDir = path.join(userSkillsRoot, 'fft-debug');
     fs.mkdirSync(userOverrideSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(userOverrideSkillDir, 'SKILL.md'),
-      requiredSkillMarkdown('fft-telegram-ops', 'user override version'),
+      requiredSkillMarkdown('fft-debug', 'user override version'),
     );
 
     const userSkillDir = path.join(userSkillsRoot, 'field-inspector');
@@ -140,10 +140,10 @@ test('main workspace skill source can override project runtime skill', () => {
     });
 
     assert.equal(res.sourceDirExists, true);
-    assert.ok(res.copied.includes('fft-telegram-ops'));
+    assert.ok(res.copied.includes('fft-debug'));
     assert.ok(res.copied.includes('field-inspector'));
     assert.equal(
-      fs.readFileSync(path.join(dstSkillsRoot, 'fft-telegram-ops', 'SKILL.md'), 'utf-8').includes(
+      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
         'user override version',
       ),
       true,
@@ -167,18 +167,18 @@ test('invalid external override falls back to valid project required skill', () 
     fs.mkdirSync(userSkillsRoot, { recursive: true });
     fs.mkdirSync(dstSkillsRoot, { recursive: true });
 
-    const projectSkillDir = path.join(projectSkillsRoot, 'fft-telegram-ops');
+    const projectSkillDir = path.join(projectSkillsRoot, 'fft-debug');
     fs.mkdirSync(projectSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(projectSkillDir, 'SKILL.md'),
-      requiredSkillMarkdown('fft-telegram-ops', 'project version'),
+      requiredSkillMarkdown('fft-debug', 'project version'),
     );
 
-    const invalidOverrideSkillDir = path.join(userSkillsRoot, 'fft-telegram-ops');
+    const invalidOverrideSkillDir = path.join(userSkillsRoot, 'fft-debug');
     fs.mkdirSync(invalidOverrideSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(invalidOverrideSkillDir, 'SKILL.md'),
-      '---\nname: fft-telegram-ops\ndescription: user override\n---\n\n# fft-telegram-ops\n',
+      '---\nname: fft-debug\ndescription: user override\n---\n\n# fft-debug\n',
     );
 
     const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome, {
@@ -186,10 +186,10 @@ test('invalid external override falls back to valid project required skill', () 
     });
 
     assert.equal(res.sourceDirExists, true);
-    assert.ok(res.copied.includes('fft-telegram-ops'));
-    assert.equal(res.skippedInvalid.includes('fft-telegram-ops'), false);
+    assert.ok(res.copied.includes('fft-debug'));
+    assert.equal(res.skippedInvalid.includes('fft-debug'), false);
     assert.equal(
-      fs.readFileSync(path.join(dstSkillsRoot, 'fft-telegram-ops', 'SKILL.md'), 'utf-8').includes(
+      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
         'project version',
       ),
       true,
@@ -242,19 +242,19 @@ test('buildSkillCatalogEntries returns compact summaries without full skill bodi
 
   try {
     const skillsRoot = path.join(tempRoot, 'skills');
-    const skillDir = path.join(skillsRoot, 'fft-telegram-ops');
+    const skillDir = path.join(skillsRoot, 'fft-debug');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(
       path.join(skillDir, 'SKILL.md'),
       requiredSkillMarkdown(
-        'fft-telegram-ops',
+        'fft-debug',
         'Long body text that should never be emitted as a full skill body.\n'.repeat(10),
       ),
     );
 
     const catalog = buildSkillCatalogEntries([skillsRoot], { maxChars: 6000 });
     assert.equal(catalog.length, 1);
-    assert.equal(catalog[0]?.name, 'fft-telegram-ops');
+    assert.equal(catalog[0]?.name, 'fft-debug');
     assert.match(catalog[0]?.whenToUse || '', /test coverage/i);
     assert.doesNotMatch(catalog[0]?.whenToUse || '', /Long body text/);
   } finally {
@@ -328,18 +328,18 @@ test('invalid symlink override falls back to valid project required skill', () =
     fs.mkdirSync(dstSkillsRoot, { recursive: true });
     fs.writeFileSync(externalFile, 'outside');
 
-    const projectSkillDir = path.join(projectSkillsRoot, 'fft-telegram-ops');
+    const projectSkillDir = path.join(projectSkillsRoot, 'fft-debug');
     fs.mkdirSync(projectSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(projectSkillDir, 'SKILL.md'),
-      requiredSkillMarkdown('fft-telegram-ops', 'project version'),
+      requiredSkillMarkdown('fft-debug', 'project version'),
     );
 
-    const overrideSkillDir = path.join(userSkillsRoot, 'fft-telegram-ops');
+    const overrideSkillDir = path.join(userSkillsRoot, 'fft-debug');
     fs.mkdirSync(overrideSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(overrideSkillDir, 'SKILL.md'),
-      requiredSkillMarkdown('fft-telegram-ops', 'external version'),
+      requiredSkillMarkdown('fft-debug', 'external version'),
     );
     const symlinkPath = path.join(overrideSkillDir, 'outside-link.txt');
     try {
@@ -357,14 +357,14 @@ test('invalid symlink override falls back to valid project required skill', () =
       additionalSkillSourceDirs: [userSkillsRoot],
     });
 
-    assert.ok(res.copied.includes('fft-telegram-ops'));
+    assert.ok(res.copied.includes('fft-debug'));
     assert.equal(
-      fs.readFileSync(path.join(dstSkillsRoot, 'fft-telegram-ops', 'SKILL.md'), 'utf-8').includes(
+      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
         'project version',
       ),
       true,
     );
-    assert.equal(res.skippedInvalid.includes('fft-telegram-ops'), false);
+    assert.equal(res.skippedInvalid.includes('fft-debug'), false);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

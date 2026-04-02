@@ -1,4 +1,4 @@
-# FFT_nano Agent Notes
+# FFT_nano / NanoClaw Agent Notes
 
 This repo is a single Node.js host process that:
 - Receives chat messages (Telegram and/or WhatsApp)
@@ -66,59 +66,12 @@ Notes:
 - In the main/admin chat you can use: `@FarmFriend /coder <task>`.
 - `/coding <task>` is an alias for `/coder <task>`.
 - `/coder-plan <task>` and `/coder_plan <task>` run the coding worker in read-only planning mode.
-- Main/admin substantial natural-language coding requests can auto-route to the real coding worker.
+- Main/admin natural-language coding requests stay in the main assistant unless the operator explicitly approves coder escalation.
+- When a message looks like coding work, the bot offers approval controls for `Plan`, `Execute`, or `Cancel` instead of silently auto-running coder.
+- `/coder-plan` is the recommended first step; `/coder` and `/coding` stay explicit execute commands.
 - Execute-mode coder runs use a host-managed isolated worktree by default; they report the worktree path, changed files, and test commands in the final result.
 - `/subagents` manages real worker runs owned by the host orchestrator.
 - When spawning subagents, prefer `gpt-5.4-mini` whenever possible; only use a larger model when the task clearly requires it.
-
-## Subagent System
-
-FFT Nano supports typed subagents -- isolated agent sessions with specific purposes, tool sets, and workspace scopes. Subagents run as separate pi container processes, tracked alongside coding worker runs.
-
-### Registered Types
-
-| Type | Tools | Workspace | Blocking | Purpose |
-|---|---|---|---|---|
-| `eval` | read, grep, find, ls | Skill directory | Yes | Test skills against prompts |
-| `nightly-analyst` | read, write, bash, grep | Farm data | No | Daily analysis + morning briefing |
-| `photo-analyst` | read | Image directory | Yes | Pest/disease ID from photos |
-| `researcher` | read, web_search, grep | None | Yes | Web research |
-| `compliance-auditor` | read, grep | Compliance files | Yes | Audit spray logs |
-| `data-sync` | bash, write | Farm data | No | Fetch external APIs |
-| `general` | All tools | Main workspace | Yes | Catch-all for any task |
-
-### Commands
-
-```
-/subagents types                              # List available subagent types
-/subagents spawn eval <skill-name>            # Evaluate a skill
-/subagents spawn nightly-analyst              # Run daily analysis
-/subagents spawn photo-analyst <image-path>   # Analyze a photo
-/subagents spawn researcher <query>           # Web research
-/subagents spawn compliance-auditor           # Audit compliance records
-/subagents spawn data-sync                    # Fetch external data
-/subagents spawn general <task>               # General-purpose subagent
-/subagents list                               # Show active runs
-/subagents stop <id>                          # Abort a run
-/subagents stop all                           # Abort all runs
-```
-
-### Architecture
-
-- Type registry: `src/subagent-types.ts` -- defines all registered types with tool sets, workspace modes, timeouts
-- Orchestrator: `src/subagent-orchestrator.ts` -- spawns typed subagents via `runContainerAgent()`
-- Prompt templates: `config/subagent-prompts/<type>.md` -- per-type system prompts
-- All types use the main agent's model (no cheaper models until tested and user-approved)
-- Subagents are marked with `FFT_NANO_SUBAGENT=1` so the permission gate extension hard-blocks destructive commands
-- Fire-and-forget types (`nightly-analyst`, `data-sync`) return immediately and deliver results asynchronously
-
-### Cron Integration
-
-Cron tasks can spawn subagents by setting `subagent_type` on the task. The cron service dispatches to `runSubagentTask` instead of `runContainerAgent` when a subagent type is specified.
-
-### Relationship to /coder
-
-The `/coder` command is a separate system with its own ephemeral worktree management. Subagents use the generalized orchestrator. Both share the `activeCoderRuns` tracking map and abort system, but are otherwise independent.
 
 ## Main Workspace + Heartbeat
 
@@ -143,53 +96,6 @@ The `/coder` command is a separate system with its own ephemeral worktree manage
 - Non-main groups only get project runtime skills by default.
 - Validate skill metadata/frontmatter with:
   - `npm run validate:skills`
-
-## Pi Runtime (pi-coding-agent)
-
-The agent runs inside an isolated container via `pi` (pi-coding-agent v0.60.0+).
-
-### Key pi flags used by FFT Nano
-
-| Flag | Purpose |
-|---|---|
-| `--provider <name>` | LLM provider (from `PI_API` env) |
-| `--model <pattern>` | Model selection (from `PI_MODEL` env) |
-| `--api-key <key>` | API key (via env passthrough) |
-| `--system-prompt <text>` | Full system prompt injection |
-| `--continue, -c` | Resume previous session (main agent) |
-| `--no-session` | Ephemeral, no session save (coding workers) |
-| `--session-dir <dir>` | Per-group session storage |
-| `--tools <list>` | Tool enablement (read_only vs full) |
-| `--mode json` | Structured JSON output for host parsing |
-| `--extension <path>` | Load a pi extension |
-
-### Tool system
-
-Pi provides these tools: `read`, `bash`, `edit`, `write` (default), `grep`, `find`, `ls` (available but off by default -- FFT Nano explicitly enables them). FFT Nano controls which tools are enabled via the `--tools` flag.
-
-### Session management
-
-- Main agent: uses `-c` to continue previous session, accumulating context across messages.
-- Coding workers: use `--no-session` for ephemeral one-shot runs with no persistence.
-- Sessions stored per-group at `data/pi/<group>/.pi/` on host, mounted to `/home/node/.pi` in container.
-
-### Pi extensions
-
-FFT Nano loads a custom extension (`src/extensions/fft-permission-gate.ts`) into every pi session via `--extension`. This extension:
-- Subscribes to `tool_call` events **before** tool execution
-- Blocks destructive bash commands (`rm -rf`, `dd of=`, `mkfs`, `git push --force`, etc.)
-- Blocks write/edit to protected paths (`.env`, `.git/`, `node_modules/`)
-- Main agent mode: prompts user via pi's extension UI protocol (confirmation dialog in Telegram)
-- Subagent mode (`FFT_NANO_SUBAGENT=1`): hard-blocks immediately, no user prompt
-
-The extension is the primary enforcement layer. The host-side `src/bash-guard.ts` serves as a secondary audit trail (log-only).
-
-### What pi does NOT provide
-
-- No built-in tool approval flow (provided by FFT Nano's extension)
-- No destructive command blocking (provided by FFT Nano's extension)
-- No subagent spawning from within pi (orchestrated by the host)
-- No callback mechanism to the host (except via extension UI protocol)
 
 ## Debugging / Tracing
 

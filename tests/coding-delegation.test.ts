@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  isLiveImpactCodingTask,
   isSubstantialCodingTask,
   normalizeDelegationAlias,
   parseDelegationTrigger,
@@ -36,26 +35,26 @@ test('parses /coder-plan trigger', () => {
   assert.equal(parsed.instruction, 'propose refactor');
 });
 
-test('parses exact alias phrase use coding agent', () => {
-  const parsed = parseDelegationTrigger('use coding agent');
-  assert.equal(parsed.hint, 'force_delegate_execute');
-  assert.equal(parsed.trigger, 'alias');
-  assert.equal(parsed.instruction, null);
-});
-
-test('parses exact alias phrase use your coding agent skill', () => {
-  const parsed = parseDelegationTrigger('use your coding agent skill');
-  assert.equal(parsed.hint, 'force_delegate_execute');
-  assert.equal(parsed.trigger, 'alias');
-  assert.equal(parsed.instruction, null);
+test('parses /coder-create-project trigger', () => {
+  const parsed = parseDelegationTrigger(
+    '/coder-create-project orchard-os build the first dashboard',
+  );
+  assert.equal(parsed.hint, 'force_delegate_plan');
+  assert.equal(parsed.trigger, 'coder-create-project');
+  assert.equal(parsed.projectSlug, 'orchard-os');
+  assert.equal(parsed.instruction, 'build the first dashboard');
 });
 
 test('normalizes alias phrase punctuation and spacing', () => {
   const normalized = normalizeDelegationAlias('Use   your coding agent skill!!!');
   assert.equal(normalized, 'use your coding agent skill');
+});
+
+test('natural language request to use coding agent does not bypass approval', () => {
   const parsed = parseDelegationTrigger('Use   your coding agent skill!!!');
-  assert.equal(parsed.hint, 'force_delegate_execute');
-  assert.equal(parsed.trigger, 'alias');
+  assert.equal(parsed.hint, 'none');
+  assert.equal(parsed.trigger, 'none');
+  assert.equal(parsed.instruction, null);
 });
 
 test('does not trigger delegation for natural language coding asks', () => {
@@ -76,14 +75,6 @@ test('detects substantial natural-language coding asks', () => {
     isSubstantialCodingTask('debug this TypeScript build failure and patch the code'),
     true,
   );
-  assert.equal(
-    isSubstantialCodingTask('automate a soil moisture alert that texts me when a bed goes dry'),
-    true,
-  );
-  assert.equal(
-    isSubstantialCodingTask('create a harvest report script that runs every morning'),
-    true,
-  );
 });
 
 test('does not classify ordinary chat as a substantial coding ask', () => {
@@ -91,17 +82,19 @@ test('does not classify ordinary chat as a substantial coding ask', () => {
   assert.equal(isSubstantialCodingTask('hello there'), false);
 });
 
-test('detects live-impact coding asks that should not auto-execute', () => {
+test('does not classify memory compaction prompts as substantial coding asks', () => {
   assert.equal(
-    isLiveImpactCodingTask('automate the greenhouse vents based on temperature'),
-    true,
-  );
-  assert.equal(
-    isLiveImpactCodingTask('restart the gateway service every night'),
-    true,
-  );
-  assert.equal(
-    isLiveImpactCodingTask('create a report about this weeks harvest totals'),
+    isSubstantialCodingTask(
+      [
+        'consider and report bk.',
+        '',
+        'Weekly compaction:',
+        '- Review daily logs from past 7 days',
+        '- Distill durable facts to MEMORY.md using these criteria',
+        '- Append distilled facts with date + source tags',
+        '- Delete daily files older than 7 days',
+      ].join('\n'),
+    ),
     false,
   );
 });

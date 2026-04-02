@@ -56,12 +56,7 @@ test('gateway projects assistant_final host events into chat_event frames', asyn
   const bus = new HostEventBus();
   const gateway = await startTuiGatewayServer(
     {
-      getStatus: () => ({
-        runtime: 'docker',
-        sessions: 1,
-        activeRuns: 0,
-        activeRunDetails: [],
-      }),
+      getStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
       listSessions: () => [],
       resolveChatJid: () => 'telegram:1',
       getSessionKeyForChat: () => 'main',

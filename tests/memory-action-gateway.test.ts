@@ -96,6 +96,39 @@ test('memory_get returns empty document when allowed file is missing', async () 
   }
 });
 
+test('memory_get supports canonical durable memory files', async () => {
+  const groupFolder = `canonical-doc-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  try {
+    fs.mkdirSync(path.join(groupDir, 'canonical'), { recursive: true });
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', '_hot.md'),
+      '# _hot\n\nPinned durable context.\n',
+      'utf-8',
+    );
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_get',
+        requestId: 'canonical-doc',
+        params: { path: 'canonical/_hot.md' },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    assert.equal(result.result?.document?.path, 'canonical/_hot.md');
+    assert.match(result.result?.document?.content || '', /Pinned durable context/);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
 test('memory_search sessions returns transcript hits and respects main override', async () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-mem-action-db-'));
   const dbPath = path.join(tmpRoot, 'messages.db');
@@ -192,6 +225,128 @@ test('memory_search includes NANO.md in document hits', async () => {
   }
 });
 
+test('memory_search preserves legacy MEMORY.md hits when canonical files are only scaffold stubs', async () => {
+  const groupFolder = `test-mem-search-legacy-fallback-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+
+  try {
+    fs.mkdirSync(path.join(groupDir, 'canonical'), { recursive: true });
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', '_hot.md'),
+      '# _hot\n\nHigh-priority durable memory retrieved before all other canon.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', 'identity.md'),
+      '# identity\n\nStable user preferences and profile facts.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', 'constraints.md'),
+      '# constraints\n\nStanding hard constraints and prohibitions.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', 'commitments.md'),
+      '# commitments\n\nActive long-lived commitments and obligations.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', 'projects.md'),
+      '# projects\n\nLong-lived project context and architecture notes.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(groupDir, 'MEMORY.md'),
+      '# MEMORY\n\nLEGACY_SEARCH_TOKEN_2026\n',
+      'utf-8',
+    );
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_search',
+        requestId: 'r-legacy-fallback',
+        params: {
+          query: 'LEGACY_SEARCH_TOKEN_2026',
+          sources: 'memory',
+          topK: 5,
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    const hits = result.result?.hits || [];
+    assert.equal(
+      hits.some(
+        (hit) =>
+          hit.source === 'memory_doc' &&
+          hit.path === 'MEMORY.md' &&
+          /LEGACY_SEARCH_TOKEN_2026/.test(hit.snippet),
+      ),
+      true,
+    );
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
+test('memory_search preserves legacy MEMORY.md hits during partial canonical migration', async () => {
+  const groupFolder = `test-mem-search-partial-canon-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+
+  try {
+    fs.mkdirSync(path.join(groupDir, 'canonical'), { recursive: true });
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', 'projects.md'),
+      '# projects\n\nNEW_CANON_SEARCH_TOKEN_2026\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(groupDir, 'MEMORY.md'),
+      '# MEMORY\n\nLEGACY_SEARCH_PARTIAL_TOKEN_2026\n',
+      'utf-8',
+    );
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_search',
+        requestId: 'r-partial-canon',
+        params: {
+          query: 'LEGACY_SEARCH_PARTIAL_TOKEN_2026',
+          sources: 'memory',
+          topK: 5,
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    const hits = result.result?.hits || [];
+    assert.equal(
+      hits.some(
+        (hit) =>
+          hit.source === 'memory_doc' &&
+          hit.path === 'MEMORY.md' &&
+          /LEGACY_SEARCH_PARTIAL_TOKEN_2026/.test(hit.snippet),
+      ),
+      true,
+    );
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
 test('memory_write todo_upsert_task is deterministic for same entry id', async () => {
   const groupFolder = `todo-write-${Date.now()}`;
   const groupDir = path.join(process.cwd(), 'groups', groupFolder);
@@ -275,6 +430,40 @@ test('memory_write memory_append rejects non-durable target paths', async () => 
 
   assert.equal(result.status, 'error');
   assert.match(result.error || '', /writable durable memory file/i);
+});
+
+test('memory_write memory_append supports canonical durable targets', async () => {
+  const groupFolder = `canonical-write-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  try {
+    fs.mkdirSync(path.join(groupDir, 'canonical'), { recursive: true });
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'canonical-write',
+        params: {
+          intent: 'memory_append',
+          payload: {
+            path: 'canonical/constraints.md',
+            content: 'Always confirm before destructive changes.',
+          },
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    const body = fs.readFileSync(path.join(groupDir, 'canonical', 'constraints.md'), 'utf-8');
+    assert.match(body, /Always confirm before destructive changes\./);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
 });
 
 test('memory_write nano_patch updates NANO.md operational guidance', async () => {

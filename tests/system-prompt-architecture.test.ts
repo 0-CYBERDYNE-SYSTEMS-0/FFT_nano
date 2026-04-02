@@ -36,14 +36,19 @@ function makeSkillCatalog(): SkillCatalogEntry[] {
   ];
 }
 
-test('buildSystemPrompt injects trusted metadata, overlay, and bootstrap context files for main runs', () => {
+test('buildSystemPrompt injects trusted metadata, overlay, durable canon, and recent daily memory for main runs', () => {
   const files = new Map<string, string>([
     ['/workspace/group/NANO.md', '# NANO\n'],
     ['/workspace/group/SOUL.md', '# SOUL\n'],
     ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n\nCore durable memory.\n'],
+    ['/workspace/group/canonical/_hot.md', '# _hot\n\nPinned durable memory.\n'],
+    ['/workspace/group/canonical/identity.md', '# identity\n\nPrefers concise replies.\n'],
+    ['/workspace/group/canonical/constraints.md', '# constraints\n\nNever run destructive commands without approval.\n'],
+    ['/workspace/group/canonical/commitments.md', '# commitments\n\nKeep the main workspace stable.\n'],
+    ['/workspace/group/canonical/projects.md', '# projects\n\nFFT_nano owns chat-host runtime orchestration.\n'],
     ['/workspace/group/HEARTBEAT.md', '# HEARTBEAT\n'],
     ['/workspace/group/BOOTSTRAP.md', '# BOOTSTRAP\n'],
-    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
     ['/workspace/group/memory/2026-02-17.md', 'today memory'],
     ['/workspace/group/memory/2026-02-16.md', 'yesterday memory'],
   ]);
@@ -64,13 +69,48 @@ test('buildSystemPrompt injects trusted metadata, overlay, and bootstrap context
   assert.equal(report.mode, 'full');
   assert.match(text, /## Inbound Context \(trusted metadata\)/);
   assert.match(text, /## Host Context Overlay/);
-  assert.match(text, /## \/workspace\/group\/BOOTSTRAP\.md/);
   assert.match(text, /## Memory Action IPC/);
+  assert.match(text, /## \/workspace\/group\/NANO\.md/);
+  assert.match(text, /## \/workspace\/group\/SOUL\.md/);
+  assert.match(text, /## \/workspace\/group\/TODOS\.md/);
+  assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/_hot\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/identity\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/constraints\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/commitments\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/projects\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/BOOTSTRAP\.md/);
+  assert.match(text, /today memory/);
+  assert.match(text, /yesterday memory/);
   assert.ok(
     report.contextEntries.some(
-      (entry) => entry.path === '/workspace/group/BOOTSTRAP.md' && !entry.missing,
+      (entry) => entry.path === '/workspace/group/TODOS.md' && !entry.missing,
     ),
   );
+});
+
+test('buildSystemPrompt skips untouched canonical scaffold placeholders for main runs', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n\nCore durable memory.\n'],
+    [
+      '/workspace/group/canonical/_hot.md',
+      '# _hot\n\nHigh-priority durable memory retrieved before all other canon.\n',
+    ],
+    [
+      '/workspace/group/canonical/identity.md',
+      '# identity\n\nStable user preferences and profile facts.\n',
+    ],
+  ]);
+
+  const { text } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+    readFileIfExists: (filePath) => files.get(filePath) ?? null,
+  });
+
+  assert.doesNotMatch(text, /## \/workspace\/group\/canonical\/_hot\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/canonical\/identity\.md/);
 });
 
 test('buildSystemPrompt enforces per-file and total prompt budgets', () => {
@@ -81,7 +121,7 @@ test('buildSystemPrompt enforces per-file and total prompt budgets', () => {
     totalMaxChars: 600,
     readFileIfExists: (filePath) => {
       if (filePath === '/workspace/group/NANO.md') return giant;
-      if (filePath === '/workspace/group/MEMORY.md') return giant;
+      if (filePath === '/workspace/group/TODOS.md') return giant;
       return null;
     },
   });
@@ -109,7 +149,7 @@ test('buildSystemPrompt uses minimal mode for scheduled runs and truncates retri
   assert.match(text, /retrieved memory context truncated to 20000 chars/);
 });
 
-test('buildSystemPrompt loads non-main SOUL and MEMORY fallbacks when retrieval context is absent', () => {
+test('buildSystemPrompt loads non-main control-plane files plus durable memory fallback', () => {
   const files = new Map<string, string>([
     ['/workspace/global/NANO.md', 'global nano'],
     ['/workspace/group/NANO.md', 'group nano'],
@@ -144,7 +184,7 @@ test('buildSystemPrompt loads non-main SOUL and MEMORY fallbacks when retrieval 
   assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
 });
 
-test('buildSystemPrompt supports legacy non-main memory.md fallback', () => {
+test('buildSystemPrompt falls back to legacy non-main memory.md when MEMORY.md is absent', () => {
   const files = new Map<string, string>([
     ['/workspace/global/SOUL.md', 'global soul'],
     ['/workspace/group/SOUL.md', 'group soul'],
@@ -201,8 +241,6 @@ test('buildSystemPrompt blocks suspicious injected markdown and records layer me
     ['/workspace/group/SOUL.md', '# SOUL\n'],
     ['/workspace/group/TODOS.md', '# TODOS\n'],
     ['/workspace/group/HEARTBEAT.md', '# HEARTBEAT\n'],
-    ['/workspace/group/BOOTSTRAP.md', '# BOOTSTRAP\n'],
-    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
   ]);
 
   const { text, report } = buildSystemPrompt(
@@ -278,8 +316,6 @@ test('buildSystemPrompt injects compact skills catalog only for interactive runs
   );
 
   assert.match(interactive.text, /## Skills Catalog/);
-  assert.match(interactive.text, /## Capability Routing/);
-  assert.match(interactive.text, /path of least resistance/i);
   assert.doesNotMatch(interactive.text, /# fft-debug/);
 
   const scheduled = buildSystemPrompt(

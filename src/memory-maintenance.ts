@@ -117,13 +117,18 @@ export function appendCompactionSummaryToMemory(
   summaryMarkdown: string,
   timestampIso: string,
 ): void {
-  const { memoryPath } = ensureMemoryScaffold(groupFolder);
+  const { memoryDir } = ensureMemoryScaffold(groupFolder);
+  const dateKey = timestampIso.slice(0, 10);
+  const targetPath = path.join(memoryDir, `${dateKey}.md`);
   const block = [
-    '',
     `## Session Compaction ${timestampIso}`,
     '',
     summaryMarkdown.trim(),
     '',
   ].join('\n');
-  fs.appendFileSync(memoryPath, block, 'utf8');
+  const existing = fs.existsSync(targetPath)
+    ? fs.readFileSync(targetPath, 'utf8').trimEnd()
+    : `# ${dateKey}\n`;
+  const separator = existing.length > 0 ? '\n\n' : '';
+  fs.writeFileSync(targetPath, `${existing}${separator}${block}`, 'utf8');
 }

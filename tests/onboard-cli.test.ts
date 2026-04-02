@@ -31,13 +31,13 @@ test('runOnboarding writes SOUL/TODOS and preserves BOOTSTRAP for first-run ritu
   const result = await runOnboarding({
     ...nonInteractiveBase(workspace),
     operator: 'Alex',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
   });
 
   assert.equal(result.workspace, workspace);
   assert.match(
     fs.readFileSync(path.join(workspace, 'SOUL.md'), 'utf-8'),
-    /You are fft_nano, a pragmatic and technically rigorous copilot for Alex\./,
+    /You are OpenClaw, a pragmatic and technically rigorous copilot for Alex\./,
   );
   assert.match(
     fs.readFileSync(path.join(workspace, 'TODOS.md'), 'utf-8'),
@@ -57,7 +57,7 @@ test('runOnboarding with --force is deterministic for same inputs', async () => 
   await runOnboarding({
     ...nonInteractiveBase(workspace),
     operator: 'Scrim',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
   });
 
   const firstState = fs.readFileSync(
@@ -67,7 +67,7 @@ test('runOnboarding with --force is deterministic for same inputs', async () => 
   await runOnboarding({
     ...nonInteractiveBase(workspace),
     operator: 'Scrim',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
     force: true,
   });
   const secondState = fs.readFileSync(
@@ -94,7 +94,7 @@ test('runOnboarding non-interactive does not overwrite customized files without 
   await runOnboarding({
     ...nonInteractiveBase(workspace),
     operator: 'Alex',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
   });
 
   const soulPath = path.join(workspace, 'SOUL.md');
@@ -132,7 +132,7 @@ test('runOnboarding non-force rerun preserves customized TODOS mission board', a
   await runOnboarding({
     ...nonInteractiveBase(workspace),
     operator: 'Alex',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
   });
 
   const todosPath = path.join(workspace, 'TODOS.md');
@@ -159,7 +159,7 @@ test('runOnboarding non-interactive requires --accept-risk', async () => {
       ...nonInteractiveBase(workspace),
       acceptRisk: false,
       operator: 'Alex',
-      assistantName: 'fft_nano',
+      assistantName: 'OpenClaw',
     }),
     /requires explicit risk acknowledgement/i,
   );
@@ -172,7 +172,7 @@ test('runOnboarding non-interactive local auth provider writes provider env', as
     ...nonInteractiveBase(workspace),
     envPath,
     operator: 'Alex',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
     authChoice: 'openai',
     apiKey: 'test-key',
     model: 'gpt-4.1-mini',
@@ -192,7 +192,7 @@ test('runOnboarding local LM Studio choice writes local endpoint defaults withou
     ...nonInteractiveBase(workspace),
     envPath,
     operator: 'Alex',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
     authChoice: 'lm-studio',
     model: 'qwen2.5-coder-7b-instruct',
   });
@@ -212,7 +212,7 @@ test('runOnboarding defaults local runtime to docker and persists it', async () 
     ...nonInteractiveBase(workspace),
     envPath,
     operator: 'Alex',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
   });
   const envBody = fs.readFileSync(envPath, 'utf-8');
   assert.equal(result.runtime, 'docker');
@@ -226,7 +226,7 @@ test('runOnboarding host runtime writes host opt-in env flags', async () => {
     ...nonInteractiveBase(workspace),
     envPath,
     operator: 'Alex',
-    assistantName: 'fft_nano',
+    assistantName: 'OpenClaw',
     runtime: 'host',
   });
   const envBody = fs.readFileSync(envPath, 'utf-8');

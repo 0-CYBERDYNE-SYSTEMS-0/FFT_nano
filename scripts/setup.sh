@@ -101,13 +101,14 @@ detect_runtime() {
     echo "host"; return
   fi
 
-  # No auto-detection -- user must explicitly choose a runtime.
-  # This prevents building Docker images when the user intended host mode.
+  if command -v docker >/dev/null 2>&1; then
+    echo "docker"; return
+  fi
   if is_truthy "${FFT_NANO_ALLOW_HOST_RUNTIME:-0}"; then
     echo "host"; return
   fi
 
-  fail "No runtime specified. Pass --runtime docker or --runtime host, or set CONTAINER_RUNTIME."
+  fail "No supported runtime found. Install Docker, or set CONTAINER_RUNTIME=host with FFT_NANO_ALLOW_HOST_RUNTIME=1."
 }
 
 ensure_runtime_ready() {
@@ -279,7 +280,7 @@ say "  ./scripts/service.sh status   # check daemon/service health"
 say "  ./scripts/service.sh logs     # view recent service logs"
 say "  ./scripts/web.sh              # show FFT CONTROL CENTER URL"
 say "  ./scripts/start.sh tui        # attach TUI to running host"
-say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name fft_nano --non-interactive"
+say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name OpenClaw --non-interactive"
 say "  Telegram DM: /id then /main <secret>"
 say ""
 say "If using WhatsApp, authenticate once:"

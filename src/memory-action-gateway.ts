@@ -341,7 +341,8 @@ function assertDurableMemoryPath(relPath: string): void {
   const normalized = relPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
   const isMemoryRoot = normalized === 'MEMORY.md' || normalized === 'memory.md';
   const isMemoryNote = /^memory\/[^/].*\.md$/i.test(normalized);
-  if (!isMemoryRoot && !isMemoryNote) {
+  const isCanonicalNote = /^canonical\/[^/].*\.md$/i.test(normalized);
+  if (!isMemoryRoot && !isMemoryNote && !isCanonicalNote) {
     throw new Error(`Path "${relPath}" is not a writable durable memory file`);
   }
 }
@@ -378,9 +379,13 @@ function applyMemoryMutation(input: {
   }
   assertDurableMemoryPath(relPath);
   const absPath = resolveAllowedMemoryFilePath(input.groupFolder, relPath);
-  const current = readTextFile(absPath, relPath.toLowerCase().startsWith('memory/')
-    ? `# ${path.basename(relPath)}\n`
-    : '# MEMORY\n');
+  const current = readTextFile(
+    absPath,
+    relPath.toLowerCase().startsWith('memory/') ||
+      relPath.toLowerCase().startsWith('canonical/')
+      ? `# ${path.basename(relPath, '.md')}\n`
+      : '# MEMORY\n',
+  );
   const content = String(input.payload.content || '').trim();
   if (!content) throw new Error(`${input.intent} requires payload.content`);
   const next = applySectionAppend(current, input.targetSection || '', content);

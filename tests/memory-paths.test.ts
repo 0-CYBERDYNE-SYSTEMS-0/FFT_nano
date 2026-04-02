@@ -8,6 +8,7 @@ import {
   ensureMemoryScaffold,
   isAllowedMemoryRelativePath,
   resolveAllowedMemoryFilePath,
+  resolveCanonicalDir,
   resolveGroupWorkspaceDir,
   resolveMemoryDir,
   resolveMemoryPath,
@@ -25,6 +26,10 @@ test('resolves main workspace and non-main group paths', () => {
     path.join(process.cwd(), 'groups', 'demo-group', 'memory'),
   );
   assert.equal(
+    resolveCanonicalDir('demo-group'),
+    path.join(process.cwd(), 'groups', 'demo-group', 'canonical'),
+  );
+  assert.equal(
     resolveSoulPath('demo-group'),
     path.join(process.cwd(), 'groups', 'demo-group', 'SOUL.md'),
   );
@@ -40,6 +45,8 @@ test('ensures memory scaffold files and folder exist', () => {
     assert.equal(fs.existsSync(out.todosPath), true);
     assert.equal(fs.existsSync(out.memoryPath), true);
     assert.equal(fs.existsSync(out.memoryDir), true);
+    assert.equal(fs.existsSync(out.canonicalDir), true);
+    assert.equal(fs.existsSync(path.join(out.canonicalDir, '_hot.md')), true);
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   }
@@ -48,6 +55,7 @@ test('ensures memory scaffold files and folder exist', () => {
 test('allowed memory path validation blocks traversal', () => {
   assert.equal(isAllowedMemoryRelativePath('MEMORY.md'), true);
   assert.equal(isAllowedMemoryRelativePath('memory/2026-02-15.md'), true);
+  assert.equal(isAllowedMemoryRelativePath('canonical/_hot.md'), true);
   assert.equal(isAllowedMemoryRelativePath('SOUL.md'), true);
   assert.equal(isAllowedMemoryRelativePath('NANO.md'), true);
   assert.equal(isAllowedMemoryRelativePath('TODOS.md'), true);

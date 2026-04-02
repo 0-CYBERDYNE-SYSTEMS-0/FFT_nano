@@ -7,6 +7,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-04-02
+
+### Added
+
+- Project-aware coder workspace resolution, including explicit project targeting and text-based project creation flows.
+- Permission-gate policy plumbing and operator approval paths for interactive coding escalation.
+- Canonical durable-memory coverage across retrieval, prompt assembly, and memory-action test surfaces.
+- Expanded developer reference material for message dispatch, prompt construction, permission UI, and runtime modules.
+
+### Changed
+
+- Main-chat coding requests now prefer approval/suggestion flows with resolved workspace targets instead of blind execution.
+- Runtime prompt assembly now handles canonical memory, daily staging notes, and stronger non-main durable-memory fallbacks.
+- Profile/runtime docs, onboarding references, and skill layout were updated for the current OpenClaw/FarmFriend host model.
+
+### Fixed
+
+- Restored reliable RPC prompt transport and extension-UI handling for interactive `pi` runs.
+- Added startup grace so fresh interactive runs are not stale-killed before first output.
+- Restored compatibility for legacy memory layout, cron/subagent task rows, and Telegram draft-preview edge cases.
+
 ## [1.4.0] - 2026-03-31
 
 ### Added

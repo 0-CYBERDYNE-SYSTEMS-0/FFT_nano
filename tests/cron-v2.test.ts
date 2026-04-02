@@ -258,3 +258,55 @@ test('runScheduledTaskV2 keeps recurring tasks active when group is missing', as
 
   closeDatabase();
 });
+
+test('runScheduledTaskV2 preserves typed subagent jobs from older task rows', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = {
+    ...makeTask({
+      id: 'typed-subagent-task',
+      schedule_type: 'once',
+    }),
+    subagent_type: 'nightly-analyst',
+  } as Omit<ScheduledTask, 'last_run' | 'last_result'>;
+  createTask(task);
+
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  let subagentCalls = 0;
+  let containerCalls = 0;
+
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async () => {},
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runSubagentTask: async (type, groupFolder, prompt, options) => {
+      subagentCalls += 1;
+      assert.equal(type, 'nightly-analyst');
+      assert.equal(groupFolder, 'main');
+      assert.equal(prompt, task.prompt);
+      assert.equal(options?.chatJid, task.chat_jid);
+      return 'typed subagent done';
+    },
+    runContainerTask: async () => {
+      containerCalls += 1;
+      return {
+        status: 'success',
+        result: 'wrong path',
+      };
+    },
+  });
+
+  assert.equal(subagentCalls, 1);
+  assert.equal(containerCalls, 0);
+  assert.equal(getTaskById(task.id)?.status, 'completed');
+
+  closeDatabase();
+});
