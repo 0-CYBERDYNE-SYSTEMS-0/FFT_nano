@@ -272,7 +272,6 @@ function formatSnippet(rank: number, chunk: MemoryChunk): string {
 function getPreferredMemoryChunks(baseDir: string): Array<{ path: string; text: string }> {
   const collected: Array<{ path: string; text: string }> = [];
   const canonicalDir = path.join(baseDir, 'canonical');
-  let foundCanonical = false;
 
   try {
     if (fs.existsSync(canonicalDir)) {
@@ -291,7 +290,6 @@ function getPreferredMemoryChunks(baseDir: string): Array<{ path: string; text: 
         }
         if (isCanonicalScaffoldContent(name, content)) continue;
         const chunks = chunkMemoryText(content);
-        if (chunks.length > 0) foundCanonical = true;
         for (const text of chunks) {
           collected.push({ path: relPath, text });
         }
@@ -301,21 +299,19 @@ function getPreferredMemoryChunks(baseDir: string): Array<{ path: string; text: 
     // ignore directory read failures; legacy fallback still applies
   }
 
-  if (!foundCanonical) {
-    const primaryMemoryPath = path.join(baseDir, 'MEMORY.md');
-    const legacyMemoryPath = path.join(baseDir, 'memory.md');
-    const chosenPath = fs.existsSync(primaryMemoryPath)
-      ? primaryMemoryPath
-      : fs.existsSync(legacyMemoryPath)
-        ? legacyMemoryPath
-        : null;
-    if (chosenPath) {
-      for (const text of getChunkedFile(chosenPath)) {
-        collected.push({
-          path: path.basename(chosenPath),
-          text,
-        });
-      }
+  const primaryMemoryPath = path.join(baseDir, 'MEMORY.md');
+  const legacyMemoryPath = path.join(baseDir, 'memory.md');
+  const chosenPath = fs.existsSync(primaryMemoryPath)
+    ? primaryMemoryPath
+    : fs.existsSync(legacyMemoryPath)
+      ? legacyMemoryPath
+      : null;
+  if (chosenPath) {
+    for (const text of getChunkedFile(chosenPath)) {
+      collected.push({
+        path: path.basename(chosenPath),
+        text,
+      });
     }
   }
 
@@ -414,7 +410,10 @@ export function buildMemoryContext(
   });
 
   const hasLexicalMatch = scored.some((s) => s.lexical > 0);
-  scored.sort((a, b) => {
+  const rankedChunks = hasLexicalMatch
+    ? scored.filter((s) => s.lexical > 0)
+    : scored;
+  rankedChunks.sort((a, b) => {
     if (hasLexicalMatch) return b.score - a.score;
     if (a.chunk.source !== b.chunk.source) {
       return a.chunk.source === 'group' ? -1 : 1;
@@ -430,11 +429,11 @@ export function buildMemoryContext(
   const selected: string[] = [];
   let usedChars = 0;
 
-  for (let i = 0; i < scored.length; i += 1) {
+  for (let i = 0; i < rankedChunks.length; i += 1) {
     if (selected.length >= MEMORY_TOP_K) break;
 
     const nextRank = selected.length + 1;
-    const formatted = formatSnippet(nextRank, scored[i].chunk);
+    const formatted = formatSnippet(nextRank, rankedChunks[i].chunk);
     const separator = selected.length === 0 ? 0 : 2;
     const projected = usedChars + separator + formatted.length;
 
@@ -449,8 +448,8 @@ export function buildMemoryContext(
       const reserve = `[${nextRank}] (${scored[i].chunk.source}) `.length;
       const remaining = budgetForSnippets - reserve;
       if (remaining > 40) {
-        const snippet = scored[i].chunk.text.slice(0, remaining - 3).trim();
-        const clipped = `[${nextRank}] (${scored[i].chunk.source}) ${snippet}...`;
+        const snippet = rankedChunks[i].chunk.text.slice(0, remaining - 3).trim();
+        const clipped = `[${nextRank}] (${rankedChunks[i].chunk.source}) ${snippet}...`;
         selected.push(clipped);
         usedChars = clipped.length;
       }

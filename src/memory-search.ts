@@ -233,33 +233,29 @@ function collectDocumentFiles(
     }
   }
   const canonicalFiles = listMarkdownFiles(resolveCanonicalDir(groupFolder));
-  let foundCanonical = false;
   if (canonicalFiles.length > 0) {
     for (const file of canonicalFiles) {
       try {
         const content = fs.readFileSync(file, 'utf8');
         if (isCanonicalScaffoldContent(path.basename(file), content)) continue;
         files.add(path.resolve(file));
-        foundCanonical = true;
       } catch {
         continue;
       }
     }
   }
-  if (!foundCanonical) {
-    const primaryMemoryPath = resolveMemoryPath(groupFolder);
-    const legacyMemoryPath = path.join(workspace, 'memory.md');
-    if (
-      fs.existsSync(primaryMemoryPath) &&
-      fs.statSync(primaryMemoryPath).isFile()
-    ) {
-      files.add(path.resolve(primaryMemoryPath));
-    } else if (
-      fs.existsSync(legacyMemoryPath) &&
-      fs.statSync(legacyMemoryPath).isFile()
-    ) {
-      files.add(path.resolve(legacyMemoryPath));
-    }
+  const primaryMemoryPath = resolveMemoryPath(groupFolder);
+  const legacyMemoryPath = path.join(workspace, 'memory.md');
+  if (
+    fs.existsSync(primaryMemoryPath) &&
+    fs.statSync(primaryMemoryPath).isFile()
+  ) {
+    files.add(path.resolve(primaryMemoryPath));
+  } else if (
+    fs.existsSync(legacyMemoryPath) &&
+    fs.statSync(legacyMemoryPath).isFile()
+  ) {
+    files.add(path.resolve(legacyMemoryPath));
   }
   for (const file of listMarkdownFiles(resolveMemoryDir(groupFolder))) {
     files.add(path.resolve(file));

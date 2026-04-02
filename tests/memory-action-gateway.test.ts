@@ -296,6 +296,57 @@ test('memory_search preserves legacy MEMORY.md hits when canonical files are onl
   }
 });
 
+test('memory_search preserves legacy MEMORY.md hits during partial canonical migration', async () => {
+  const groupFolder = `test-mem-search-partial-canon-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+
+  try {
+    fs.mkdirSync(path.join(groupDir, 'canonical'), { recursive: true });
+    fs.writeFileSync(
+      path.join(groupDir, 'canonical', 'projects.md'),
+      '# projects\n\nNEW_CANON_SEARCH_TOKEN_2026\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(groupDir, 'MEMORY.md'),
+      '# MEMORY\n\nLEGACY_SEARCH_PARTIAL_TOKEN_2026\n',
+      'utf-8',
+    );
+
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_search',
+        requestId: 'r-partial-canon',
+        params: {
+          query: 'LEGACY_SEARCH_PARTIAL_TOKEN_2026',
+          sources: 'memory',
+          topK: 5,
+        },
+      },
+      {
+        sourceGroup: groupFolder,
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]),
+      },
+    );
+
+    assert.equal(result.status, 'success');
+    const hits = result.result?.hits || [];
+    assert.equal(
+      hits.some(
+        (hit) =>
+          hit.source === 'memory_doc' &&
+          hit.path === 'MEMORY.md' &&
+          /LEGACY_SEARCH_PARTIAL_TOKEN_2026/.test(hit.snippet),
+      ),
+      true,
+    );
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
 test('memory_write todo_upsert_task is deterministic for same entry id', async () => {
   const groupFolder = `todo-write-${Date.now()}`;
   const groupDir = path.join(process.cwd(), 'groups', groupFolder);

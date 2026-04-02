@@ -94,3 +94,28 @@ test('memory retrieval preserves legacy MEMORY.md when canonical files are only 
     fs.rmSync(groupRoot, { recursive: true, force: true });
   }
 });
+
+test('memory retrieval preserves legacy MEMORY.md during partial canonical migration', () => {
+  const folder = `test-memory-retrieval-partial-canon-${Date.now()}`;
+  const groupRoot = path.join(process.cwd(), 'groups', folder);
+  try {
+    fs.mkdirSync(path.join(groupRoot, 'canonical'), { recursive: true });
+    fs.writeFileSync(
+      path.join(groupRoot, 'canonical', 'projects.md'),
+      '# projects\n\nNEW_CANON_TOKEN_2026\n',
+    );
+    fs.writeFileSync(
+      path.join(groupRoot, 'MEMORY.md'),
+      '# MEMORY\n\nLEGACY_DURABLE_PARTIAL_TOKEN_2026\n',
+    );
+
+    const result = buildMemoryContext({
+      groupFolder: folder,
+      prompt: 'tell me about LEGACY_DURABLE_PARTIAL_TOKEN_2026',
+    });
+
+    assert.match(result.context, /LEGACY_DURABLE_PARTIAL_TOKEN_2026/);
+  } finally {
+    fs.rmSync(groupRoot, { recursive: true, force: true });
+  }
+});

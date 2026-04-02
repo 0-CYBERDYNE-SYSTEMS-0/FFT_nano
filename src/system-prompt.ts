@@ -134,6 +134,26 @@ function buildDailyMemoryFileNames(now: Date): string[] {
   ];
 }
 
+function resolveDurableMemoryFallbackPath(params: {
+  readFileIfExists: (filePath: string) => string | null;
+  primaryPath: string;
+  legacyPath: string;
+}): { label: string; path: string } | null {
+  if (params.readFileIfExists(params.primaryPath) !== null) {
+    return {
+      label: params.primaryPath.endsWith('/MEMORY.md') ? 'MEMORY.md' : 'memory.md',
+      path: params.primaryPath,
+    };
+  }
+  if (params.readFileIfExists(params.legacyPath) !== null) {
+    return {
+      label: params.legacyPath.endsWith('/MEMORY.md') ? 'MEMORY.md' : 'memory.md',
+      path: params.legacyPath,
+    };
+  }
+  return null;
+}
+
 const PROMPT_INJECTION_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   {
     label: 'override_previous_instructions',
@@ -433,6 +453,46 @@ function buildNonMainContextEntries(params: {
     });
   }
 
+  const globalMemoryFallback =
+    remaining > 0
+      ? resolveDurableMemoryFallbackPath({
+          readFileIfExists: params.readFileIfExists,
+          primaryPath: `${params.globalDir}/MEMORY.md`,
+          legacyPath: `${params.globalDir}/memory.md`,
+        })
+      : null;
+  if (globalMemoryFallback && remaining > 0) {
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: `global/${globalMemoryFallback.label}`,
+      path: globalMemoryFallback.path,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
+    });
+  }
+
+  const groupMemoryFallback =
+    remaining > 0
+      ? resolveDurableMemoryFallbackPath({
+          readFileIfExists: params.readFileIfExists,
+          primaryPath: `${params.groupDir}/MEMORY.md`,
+          legacyPath: `${params.groupDir}/memory.md`,
+        })
+      : null;
+  if (groupMemoryFallback && remaining > 0) {
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: `group/${groupMemoryFallback.label}`,
+      path: groupMemoryFallback.path,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
+    });
+  }
+
   return { entries, remainingTotalChars: remaining };
 }
 
@@ -640,7 +700,7 @@ function renderBasePrompt(params: {
     `Write memory action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
   );
   lines.push(
-    '- In non-main/shared runs, durable memory is not auto-injected beyond the control-plane files. Use memory_search or memory_get when you need more context.',
+    '- In non-main/shared runs, group/global MEMORY.md falls back into the prompt when present. Use memory_search or memory_get for broader recall.',
   );
   lines.push('- Search: {"type":"memory_action","action":"memory_search","requestId":"<id>","params":{"query":"...","topK":8,"sources":"all"}}');
   lines.push('- Get: {"type":"memory_action","action":"memory_get","requestId":"<id>","params":{"path":"MEMORY.md"}}');

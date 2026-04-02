@@ -126,6 +126,24 @@ test('resolveCoderProjectTarget defaults to the main workspace root when no proj
   }
 });
 
+test('resolveCoderProjectTarget defaults to the non-git main workspace root for plan-mode style requests', () => {
+  const root = createWorkspaceFixture();
+  try {
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+
+    const resolved = resolveCoderProjectTarget({
+      mainWorkspaceDir: root,
+      taskText: 'inspect src/index.ts and propose a refactor plan',
+    });
+
+    assert.equal(resolved.status, 'resolved');
+    assert.equal(resolved.workspaceRoot, root);
+    assert.equal(resolved.isGitRepo, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('resolveCoderProjectTarget returns not_found and suggested slug when no project matches', () => {
   const root = createWorkspaceFixture();
   try {

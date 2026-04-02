@@ -119,12 +119,13 @@ export function listCoderProjectCandidates(
   const candidates: CoderProjectCandidate[] = [];
   const seenPaths = new Set<string>();
 
-  if (isGitRepoDir(mainWorkspaceDir)) {
+  if (fs.existsSync(mainWorkspaceDir) && fs.statSync(mainWorkspaceDir).isDirectory()) {
+    const isGitRepo = isGitRepoDir(mainWorkspaceDir);
     candidates.push({
       projectLabel: path.basename(mainWorkspaceDir) || 'main-workspace',
       workspaceRoot: mainWorkspaceDir,
       source: 'main',
-      isGitRepo: true,
+      isGitRepo,
       score: 0,
     });
     seenPaths.add(mainWorkspaceDir);
@@ -265,7 +266,7 @@ export function resolveCoderProjectTarget(params: {
   if (isAmbiguous) {
     return {
       status: 'ambiguous',
-      candidates: ranked.slice(0, 3),
+      candidates: ranked.filter((candidate) => candidate.score >= minimumScore).slice(0, 3),
       taskText: cleanedTaskText,
       projectHint,
     };

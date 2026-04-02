@@ -149,7 +149,7 @@ test('buildSystemPrompt uses minimal mode for scheduled runs and truncates retri
   assert.match(text, /retrieved memory context truncated to 20000 chars/);
 });
 
-test('buildSystemPrompt loads only non-main control-plane files when retrieval context is absent', () => {
+test('buildSystemPrompt loads non-main control-plane files plus durable memory fallback', () => {
   const files = new Map<string, string>([
     ['/workspace/global/NANO.md', 'global nano'],
     ['/workspace/group/NANO.md', 'group nano'],
@@ -157,6 +157,8 @@ test('buildSystemPrompt loads only non-main control-plane files when retrieval c
     ['/workspace/group/SOUL.md', 'group soul'],
     ['/workspace/global/TODOS.md', 'global todos'],
     ['/workspace/group/TODOS.md', 'group todos'],
+    ['/workspace/global/MEMORY.md', 'global memory'],
+    ['/workspace/group/MEMORY.md', 'group memory'],
   ]);
 
   const { text, report } = buildSystemPrompt(
@@ -178,11 +180,11 @@ test('buildSystemPrompt loads only non-main control-plane files when retrieval c
   assert.match(text, /## \/workspace\/group\/SOUL\.md/);
   assert.match(text, /## \/workspace\/global\/TODOS\.md/);
   assert.match(text, /## \/workspace\/group\/TODOS\.md/);
-  assert.doesNotMatch(text, /## \/workspace\/global\/MEMORY\.md/);
-  assert.doesNotMatch(text, /## \/workspace\/group\/MEMORY\.md/);
+  assert.match(text, /## \/workspace\/global\/MEMORY\.md/);
+  assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
 });
 
-test('buildSystemPrompt does not inject legacy non-main memory.md fallback by default', () => {
+test('buildSystemPrompt falls back to legacy non-main memory.md when MEMORY.md is absent', () => {
   const files = new Map<string, string>([
     ['/workspace/global/SOUL.md', 'global soul'],
     ['/workspace/group/SOUL.md', 'group soul'],
@@ -202,8 +204,8 @@ test('buildSystemPrompt does not inject legacy non-main memory.md fallback by de
     },
   );
 
-  assert.doesNotMatch(text, /## \/workspace\/global\/memory\.md/);
-  assert.doesNotMatch(text, /## \/workspace\/group\/memory\.md/);
+  assert.match(text, /## \/workspace\/global\/memory\.md/);
+  assert.match(text, /## \/workspace\/group\/memory\.md/);
 });
 
 test('buildSystemPrompt treats empty files as present context, not missing', () => {
