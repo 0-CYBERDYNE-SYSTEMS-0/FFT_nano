@@ -36,12 +36,17 @@ function makeSkillCatalog(): SkillCatalogEntry[] {
   ];
 }
 
-test('buildSystemPrompt injects trusted metadata, overlay, and only control-plane context files for main runs', () => {
+test('buildSystemPrompt injects trusted metadata, overlay, durable canon, and recent daily memory for main runs', () => {
   const files = new Map<string, string>([
     ['/workspace/group/NANO.md', '# NANO\n'],
     ['/workspace/group/SOUL.md', '# SOUL\n'],
     ['/workspace/group/TODOS.md', '# TODOS\n'],
     ['/workspace/group/MEMORY.md', '# MEMORY\n\nCore durable memory.\n'],
+    ['/workspace/group/canonical/_hot.md', '# _hot\n\nPinned durable memory.\n'],
+    ['/workspace/group/canonical/identity.md', '# identity\n\nPrefers concise replies.\n'],
+    ['/workspace/group/canonical/constraints.md', '# constraints\n\nNever run destructive commands without approval.\n'],
+    ['/workspace/group/canonical/commitments.md', '# commitments\n\nKeep the main workspace stable.\n'],
+    ['/workspace/group/canonical/projects.md', '# projects\n\nFFT_nano owns chat-host runtime orchestration.\n'],
     ['/workspace/group/HEARTBEAT.md', '# HEARTBEAT\n'],
     ['/workspace/group/BOOTSTRAP.md', '# BOOTSTRAP\n'],
     ['/workspace/group/memory/2026-02-17.md', 'today memory'],
@@ -69,13 +74,43 @@ test('buildSystemPrompt injects trusted metadata, overlay, and only control-plan
   assert.match(text, /## \/workspace\/group\/SOUL\.md/);
   assert.match(text, /## \/workspace\/group\/TODOS\.md/);
   assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/_hot\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/identity\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/constraints\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/commitments\.md/);
+  assert.match(text, /## \/workspace\/group\/canonical\/projects\.md/);
   assert.doesNotMatch(text, /## \/workspace\/group\/BOOTSTRAP\.md/);
-  assert.doesNotMatch(text, /today memory/);
+  assert.match(text, /today memory/);
+  assert.match(text, /yesterday memory/);
   assert.ok(
     report.contextEntries.some(
       (entry) => entry.path === '/workspace/group/TODOS.md' && !entry.missing,
     ),
   );
+});
+
+test('buildSystemPrompt skips untouched canonical scaffold placeholders for main runs', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n\nCore durable memory.\n'],
+    [
+      '/workspace/group/canonical/_hot.md',
+      '# _hot\n\nHigh-priority durable memory retrieved before all other canon.\n',
+    ],
+    [
+      '/workspace/group/canonical/identity.md',
+      '# identity\n\nStable user preferences and profile facts.\n',
+    ],
+  ]);
+
+  const { text } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+    readFileIfExists: (filePath) => files.get(filePath) ?? null,
+  });
+
+  assert.doesNotMatch(text, /## \/workspace\/group\/canonical\/_hot\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/canonical\/identity\.md/);
 });
 
 test('buildSystemPrompt enforces per-file and total prompt budgets', () => {

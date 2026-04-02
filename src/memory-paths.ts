@@ -71,6 +71,10 @@ const DEFAULT_CANONICAL_BODIES: Record<string, string> = {
   'projects.md': '# projects\n\nLong-lived project context and architecture notes.\n',
 };
 
+export const DEFAULT_CANONICAL_FILE_NAMES = Object.freeze(
+  Object.keys(DEFAULT_CANONICAL_BODIES),
+);
+
 export function resolveGroupWorkspaceDir(groupFolder: string): string {
   if (groupFolder === MAIN_GROUP_FOLDER) return MAIN_WORKSPACE_DIR;
   return path.join(GROUPS_DIR, groupFolder);

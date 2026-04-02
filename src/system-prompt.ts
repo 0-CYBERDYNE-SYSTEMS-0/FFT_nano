@@ -2,6 +2,10 @@ import { createHash } from 'crypto';
 import fs from 'fs';
 
 import { DESTRUCTIVE_COMMAND_NAMES } from './bash-guard.js';
+import {
+  DEFAULT_CANONICAL_FILE_NAMES,
+  isCanonicalScaffoldContent,
+} from './memory-paths.js';
 
 export type CodingHint =
   | 'none'
@@ -119,6 +123,16 @@ const MAIN_ALWAYS_INJECTED_FILES = [
   'TODOS.md',
   'MEMORY.md',
 ] as const;
+
+function buildDailyMemoryFileNames(now: Date): string[] {
+  const today = new Date(now);
+  const yesterday = new Date(now);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  return [
+    `memory/${today.toISOString().slice(0, 10)}.md`,
+    `memory/${yesterday.toISOString().slice(0, 10)}.md`,
+  ];
+}
 
 const PROMPT_INJECTION_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   {
@@ -267,6 +281,7 @@ function buildMainContextEntries(params: {
   fileMaxChars: number;
   totalMaxChars: number;
   groupDir: string;
+  now: Date;
 }): {
   entries: ContextEntry[];
   remainingTotalChars: number;
@@ -282,6 +297,35 @@ function buildMainContextEntries(params: {
       path: `${params.groupDir}/${name}`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+    });
+  }
+
+  for (const fileName of DEFAULT_CANONICAL_FILE_NAMES) {
+    if (remaining <= 0) break;
+    const canonicalPath = `${params.groupDir}/canonical/${fileName}`;
+    const content = params.readFileIfExists(canonicalPath);
+    if (!content || isCanonicalScaffoldContent(fileName, content)) continue;
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: `canonical/${fileName}`,
+      path: canonicalPath,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
+    });
+  }
+
+  for (const relativePath of buildDailyMemoryFileNames(params.now)) {
+    if (remaining <= 0) break;
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: relativePath,
+      path: `${params.groupDir}/${relativePath}`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
     });
   }
 
@@ -770,11 +814,12 @@ export function buildSystemPrompt(
   const contextState = input.isMain
     ? buildMainContextEntries({
         readFileIfExists,
-        includeHeartbeat: includeHeartbeatContext,
-        fileMaxChars,
-        totalMaxChars,
-        groupDir: paths.groupDir,
-      })
+      includeHeartbeat: includeHeartbeatContext,
+      fileMaxChars,
+      totalMaxChars,
+      groupDir: paths.groupDir,
+      now: options.now?.() ?? new Date(),
+    })
     : buildNonMainContextEntries({
         readFileIfExists,
         includeHeartbeat: includeHeartbeatContext,

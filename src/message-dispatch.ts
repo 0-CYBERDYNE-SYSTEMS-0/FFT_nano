@@ -1006,12 +1006,18 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           );
           return null;
         }
+        if (!delegationInstruction) {
+          await deps.sendMessage(
+            msg.chat_jid,
+            'Use `/coder-create-project <slug> <task>` so the new project starts with a concrete coder plan.',
+          );
+          return null;
+        }
         const created = await deps.createCoderProject({
           slug: parsedTrigger.projectSlug,
         });
         workspaceRoot = created.workspaceRoot;
         projectLabel = created.projectLabel;
-        delegationInstruction = delegationInstruction || stripped;
         await deps.sendMessage(
           msg.chat_jid,
           `Created ${created.projectLabel}. Starting a coder plan there.`,

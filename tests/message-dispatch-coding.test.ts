@@ -209,6 +209,24 @@ test('processMessage supports text-based project creation for non-Telegram coder
   assert.match(sent[0] || '', /Created orchard-os/i);
 });
 
+test('processMessage rejects /coder-create-project without a task', async () => {
+  const { deps, codingCalls, createdProjects, sent } = createDeps();
+  const dispatcher = createMessageDispatcher(deps as any);
+
+  await dispatcher.processMessage({
+    id: '4b',
+    chat_jid: 'telegram:main',
+    sender: 'user',
+    sender_name: 'User',
+    content: '/coder-create-project orchard-os',
+    timestamp: '2026-03-22T00:00:00.000Z',
+  });
+
+  assert.equal(createdProjects.length, 0);
+  assert.equal(codingCalls.length, 0);
+  assert.match(sent[0] || '', /Use `\/coder-create-project <slug> <task>`/);
+});
+
 test('processMessage blocks /coder-create-project while onboarding is pending', async () => {
   const { deps, codingCalls, createdProjects, sent } = createDeps();
   deps.resolveMainOnboardingGate = () => ({ active: true });
