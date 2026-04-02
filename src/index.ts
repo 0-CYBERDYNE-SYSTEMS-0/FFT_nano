@@ -152,6 +152,7 @@ import {
   migrateCompactionsForGroup,
 } from './memory-maintenance.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
+import { resolveCoderProjectWorkspace } from './coder-project-path.js';
 import {
   cycleVerboseMode,
   describeVerboseMode,
@@ -2043,12 +2044,10 @@ async function createCoderProject(params: {
   projectLabel: string;
   isGitRepo: boolean;
 }> {
-  const workspaceRoot = path.join(
-    MAIN_WORKSPACE_DIR,
-    'workspace',
-    'projects',
-    params.slug,
-  );
+  const workspaceRoot = resolveCoderProjectWorkspace({
+    mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+    slug: params.slug,
+  });
   fs.mkdirSync(workspaceRoot, { recursive: true });
   return {
     workspaceRoot,

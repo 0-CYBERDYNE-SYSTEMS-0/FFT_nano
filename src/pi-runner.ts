@@ -62,6 +62,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  isSubagent?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
   codingHint?:
@@ -80,9 +81,15 @@ export interface ContainerInput {
   noContinue?: boolean;
   toolMode?: 'default' | 'read_only' | 'full';
   workspaceDirOverride?: string;
+  piExecutableOverride?: string;
   showReasoning?: boolean;
   skipPromptPreflight?: boolean;
   suppressPreviewStreaming?: boolean;
+  lifecyclePolicyOverride?: {
+    hardTimeoutMs?: number;
+    staleAfterMs?: number | null;
+    allowFreshSessionFallback?: boolean;
+  };
 }
 
 export interface ContainerOutput {
@@ -117,6 +124,43 @@ export interface ContainerRuntimeEvent {
   error?: string;
 }
 
+export type ContainerProgressEvent =
+  | {
+      kind: 'spawn';
+      at: number;
+      pid: number | null;
+      resumed: boolean;
+    }
+  | {
+      kind: 'stdout';
+      at: number;
+    }
+  | {
+      kind: 'assistant';
+      at: number;
+    }
+  | {
+      kind: 'thinking';
+      at: number;
+    }
+  | {
+      kind: 'tool';
+      at: number;
+      toolName: string;
+      status: 'start' | 'ok' | 'error';
+    }
+  | {
+      kind: 'retry_fresh';
+      at: number;
+      reason: 'stale_no_progress';
+    }
+  | {
+      kind: 'stale';
+      at: number;
+      reason: 'stale_no_progress';
+      retryingFresh: boolean;
+    };
+
 export function shouldBuildRetrievedMemoryContext(input: {
   isMain: boolean;
 }): boolean {
@@ -148,6 +192,103 @@ function isForceDelegateHint(hint: CodingHint): boolean {
 
 function isTelegramChatJid(chatJid: string): boolean {
   return chatJid.startsWith('telegram:');
+}
+
+function parseRuntimeMs(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function isHeartbeatRequest(requestId: string | undefined): boolean {
+  return (requestId || '').startsWith('heartbeat-');
+}
+
+function isInteractivePiRun(params: {
+  input: ContainerInput;
+  codingHint: CodingHint;
+}): boolean {
+  return (
+    !params.input.isScheduledTask &&
+    !params.input.isSubagent &&
+    !isHeartbeatRequest(params.input.requestId) &&
+    !isForceDelegateHint(params.codingHint) &&
+    params.input.toolMode !== 'read_only'
+  );
+}
+
+function resolvePiRunLifecyclePolicy(params: {
+  input: ContainerInput;
+  codingHint: CodingHint;
+  groupTimeoutMs: number;
+}): {
+  hardTimeoutMs: number;
+  staleAfterMs: number | null;
+  allowFreshSessionFallback: boolean;
+} {
+  const applyOverride = (policy: {
+    hardTimeoutMs: number;
+    staleAfterMs: number | null;
+    allowFreshSessionFallback: boolean;
+  }) => ({
+    hardTimeoutMs:
+      params.input.lifecyclePolicyOverride?.hardTimeoutMs ?? policy.hardTimeoutMs,
+    staleAfterMs:
+      params.input.lifecyclePolicyOverride?.staleAfterMs ?? policy.staleAfterMs,
+    allowFreshSessionFallback:
+      params.input.lifecyclePolicyOverride?.allowFreshSessionFallback ??
+      policy.allowFreshSessionFallback,
+  });
+
+  if (isHeartbeatRequest(params.input.requestId)) {
+    return applyOverride({
+      hardTimeoutMs: parseRuntimeMs(
+        process.env.FFT_NANO_HEARTBEAT_TIMEOUT_MS,
+        5 * 60 * 1000,
+        1_000,
+        CONTAINER_TIMEOUT,
+      ),
+      staleAfterMs: null,
+      allowFreshSessionFallback: false,
+    });
+  }
+
+  const interactive = isInteractivePiRun(params);
+  if (!interactive) {
+    const configuredTimeout = Math.max(params.groupTimeoutMs, CONTAINER_TIMEOUT);
+    return applyOverride({
+      hardTimeoutMs: Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000),
+      staleAfterMs: null,
+      allowFreshSessionFallback: false,
+    });
+  }
+
+  const defaultInteractiveTimeoutMs = parseRuntimeMs(
+    process.env.FFT_NANO_INTERACTIVE_TIMEOUT_MS,
+    10 * 60 * 1000,
+    1_000,
+    CONTAINER_TIMEOUT,
+  );
+  const hardTimeoutMs =
+    params.groupTimeoutMs > 0
+      ? Math.min(params.groupTimeoutMs, defaultInteractiveTimeoutMs)
+      : defaultInteractiveTimeoutMs;
+
+  return applyOverride({
+    hardTimeoutMs,
+    staleAfterMs: parseRuntimeMs(
+      process.env.FFT_NANO_INTERACTIVE_STALE_MS,
+      90_000,
+      100,
+      Math.max(100, hardTimeoutMs - 100),
+    ),
+    allowFreshSessionFallback: true,
+  });
 }
 
 export function deriveTelegramDraftId(seed: string): number {
@@ -443,6 +584,7 @@ export async function runContainerAgent(
   input: ContainerInput,
   abortSignal?: AbortSignal,
   onRuntimeEvent?: (event: ContainerRuntimeEvent) => void,
+  onProgressEvent?: (event: ContainerProgressEvent) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
   const projectRoot = process.cwd();
@@ -752,7 +894,7 @@ export async function runContainerAgent(
 
   const STDERR_MAX_SIZE = 1_048_576; // 1 MB
 
-  const piExecutable = resolvePiExecutable();
+  const piExecutable = input.piExecutableOverride || resolvePiExecutable();
   if (!piExecutable) {
     return {
       status: 'error',
@@ -762,13 +904,27 @@ export async function runContainerAgent(
     };
   }
 
+  const groupTimeout =
+    typeof group.containerConfig?.timeout === 'number' &&
+    Number.isFinite(group.containerConfig.timeout) &&
+    group.containerConfig.timeout > 0
+      ? Math.floor(group.containerConfig.timeout)
+      : 0;
+  const lifecyclePolicy = resolvePiRunLifecyclePolicy({
+    input,
+    codingHint,
+    groupTimeoutMs: groupTimeout,
+  });
+
   const runPi = (useContinue: boolean) =>
     new Promise<{
       code: number | null;
       stdout: string;
       stderr: string;
       streamedDraft: boolean;
+      retryFresh?: boolean;
     }>((resolve) => {
+      let localSettled = false;
       const piArgs = buildPiArgs({
         systemPrompt,
         prompt,
@@ -812,9 +968,16 @@ export async function runContainerAgent(
       const child = spawn(sandboxed.command, sandboxed.args, {
         cwd: wp.groupDir,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+      child.stdin.end();
       activeChild = child;
+      onProgressEvent?.({
+        kind: 'spawn',
+        at: Date.now(),
+        pid: child.pid ?? null,
+        resumed: useContinue,
+      });
 
       let stdout = '';
       let stderr = '';
@@ -823,7 +986,10 @@ export async function runContainerAgent(
       let thinkingSoFar = '';
       let streamedDraft = false;
       let stdoutTruncated = false;
+      let sawMeaningfulProgress = false;
       const toolTracker = createToolTrackerState();
+      let staleTimer: NodeJS.Timeout | null = null;
+      let ticker: NodeJS.Timeout | null = null;
 
       const canStreamTelegramDraft =
         isTelegramChatJid(input.chatJid) &&
@@ -842,6 +1008,76 @@ export async function runContainerAgent(
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
+      const settleLocal = (value: {
+        code: number | null;
+        stdout: string;
+        stderr: string;
+        streamedDraft: boolean;
+        retryFresh?: boolean;
+      }) => {
+        if (localSettled) return;
+        localSettled = true;
+        if (ticker) clearInterval(ticker);
+        if (staleTimer) clearTimeout(staleTimer);
+        resolve(value);
+      };
+
+      const armStaleTimer = () => {
+        if (!lifecyclePolicy.staleAfterMs) return;
+        if (staleTimer) clearTimeout(staleTimer);
+        staleTimer = setTimeout(() => {
+          const now = Date.now();
+          const retryFresh =
+            useContinue &&
+            lifecyclePolicy.allowFreshSessionFallback &&
+            !sawMeaningfulProgress;
+          logger.warn(
+            {
+              group: group.name,
+              requestId: input.requestId,
+              pid: child.pid,
+              resumed: useContinue,
+              staleAfterMs: lifecyclePolicy.staleAfterMs,
+              retryFresh,
+            },
+            'Pi run stalled before producing progress',
+          );
+          onProgressEvent?.({
+            kind: 'stale',
+            at: now,
+            reason: 'stale_no_progress',
+            retryingFresh: retryFresh,
+          });
+          killActiveChild();
+          settleLocal({
+            code: retryFresh ? 75 : 1,
+            stdout,
+            stderr: retryFresh
+              ? 'FFT_NANO_STALE_RETRY'
+              : 'Pi run stalled before producing progress',
+            streamedDraft,
+            retryFresh,
+          });
+        }, lifecyclePolicy.staleAfterMs);
+      };
+
+      const noteProgress = (
+        event:
+          | { kind: 'stdout'; at: number }
+          | { kind: 'assistant'; at: number }
+          | { kind: 'thinking'; at: number }
+          | {
+              kind: 'tool';
+              at: number;
+              toolName: string;
+              status: 'start' | 'ok' | 'error';
+            },
+      ) => {
+        sawMeaningfulProgress = true;
+        onProgressEvent?.(event);
+        armStaleTimer();
+      };
+
       const maybeSendDraft = (force = false) => {
         if (!canStreamTelegramDraft || !assistantSoFar) return;
         const now = Date.now();
@@ -921,11 +1157,18 @@ export async function runContainerAgent(
               ...(toolDelta.output ? { output: toolDelta.output } : {}),
               ...(toolDelta.error ? { error: toolDelta.error } : {}),
             });
+            noteProgress({
+              kind: 'tool',
+              at: Date.now(),
+              toolName: toolDelta.toolName,
+              status: toolDelta.status,
+            });
           }
           if (input.showReasoning) {
             const thinkingDelta = extractThinkingDeltaFromPiEvent(event);
             if (thinkingDelta) {
               thinkingSoFar += thinkingDelta;
+              noteProgress({ kind: 'thinking', at: Date.now() });
               maybeSendDraft(false);
             }
           }
@@ -933,6 +1176,7 @@ export async function runContainerAgent(
           if (delta) {
             if (delta.kind === 'append') assistantSoFar += delta.text;
             else assistantSoFar = delta.text;
+            noteProgress({ kind: 'assistant', at: Date.now() });
             maybeSendDraft(false);
           }
         } catch {
@@ -940,12 +1184,14 @@ export async function runContainerAgent(
         }
       };
 
-      const ticker = canStreamTelegramDraft
+      ticker = canStreamTelegramDraft
         ? setInterval(() => maybeSendDraft(false), 1000)
         : null;
+      armStaleTimer();
 
       child.stdout.on('data', (d: Buffer) => {
         const chunk = d.toString();
+        noteProgress({ kind: 'stdout', at: Date.now() });
         if (!stdoutTruncated) {
           const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
           if (chunk.length > remaining) {
@@ -973,15 +1219,14 @@ export async function runContainerAgent(
       });
 
       child.on('close', (code) => {
-        if (ticker) clearInterval(ticker);
+        if (localSettled) return;
         if (lineBuffer.trim()) processStdoutLine(lineBuffer);
         maybeSendDraft(true);
-        resolve({ code, stdout, stderr, streamedDraft });
+        settleLocal({ code, stdout, stderr, streamedDraft });
       });
 
       child.on('error', (err) => {
-        if (ticker) clearInterval(ticker);
-        resolve({ code: 1, stdout, stderr: String(err), streamedDraft });
+        settleLocal({ code: 1, stdout, stderr: String(err), streamedDraft });
       });
     });
 
@@ -998,18 +1243,8 @@ export async function runContainerAgent(
       return;
     }
 
-    const groupTimeout =
-      typeof group.containerConfig?.timeout === 'number' &&
-      Number.isFinite(group.containerConfig.timeout) &&
-      group.containerConfig.timeout > 0
-        ? Math.floor(group.containerConfig.timeout)
-        : 0;
-    const configuredTimeout = Math.max(groupTimeout, CONTAINER_TIMEOUT);
-    const timeoutMs = Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000);
-
-    let timedOut = false;
+    const timeoutMs = lifecyclePolicy.hardTimeoutMs;
     const timeoutHandle = setTimeout(() => {
-      timedOut = true;
       killActiveChild();
       finish({
         status: 'error',
@@ -1032,6 +1267,23 @@ export async function runContainerAgent(
         let res = effectiveInputNoContinue
           ? await runPi(false)
           : await runPi(true);
+        if (res.retryFresh) {
+          const retryAt = Date.now();
+          logger.warn(
+            {
+              group: group.name,
+              requestId: input.requestId,
+              retryAt,
+            },
+            'Retrying pi run with fresh session after stale continue attempt',
+          );
+          onProgressEvent?.({
+            kind: 'retry_fresh',
+            at: retryAt,
+            reason: 'stale_no_progress',
+          });
+          res = await runPi(false);
+        }
         if (!effectiveInputNoContinue && res.code !== 0) {
           const looksLikeNoSession =
             /no\s+previous\s+session|no\s+session/i.test(res.stderr);
