@@ -4,7 +4,7 @@ import { PARITY_CONFIG, PARITY_CONFIG_PATH } from './parity-config.js';
 import { FEATURE_FARM, FFT_PROFILE, PROFILE_DETECTION } from './profile.js';
 
 const DEFAULT_ASSISTANT_NAME =
-  FFT_PROFILE === 'farm' ? 'FarmFriend' : 'fft_nano';
+  FFT_PROFILE === 'farm' ? 'FarmFriend' : 'OpenClaw';
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || DEFAULT_ASSISTANT_NAME;

@@ -3,14 +3,12 @@ import http from 'http';
 import path from 'path';
 
 import type { WebAccessMode } from '../config.js';
-import type { ActiveRunStatusDetail } from '../app-state.js';
 import { logger } from '../logger.js';
 
 interface RuntimeStatusPayload {
   runtime: string;
   sessions: number;
   activeRuns: number;
-  activeRunDetails: ActiveRunStatusDetail[];
 }
 
 interface ProfileStatusPayload {

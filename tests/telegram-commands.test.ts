@@ -10,12 +10,26 @@ function createBaseDeps(): TelegramCommandDeps {
   const sent: Array<{ chatJid: string; text: string }> = [];
   const panels: Array<{ chatJid: string; panel: { kind: string } }> = [];
   const persisted: Array<Record<string, string | undefined>> = [];
+  const keyboardMessages: Array<{
+    chatJid: string;
+    text: string;
+    keyboard: Array<Array<{ text: string; callbackData: string }>>;
+  }> = [];
   const audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }> =
     [];
 
   const deps: TelegramCommandDeps = {
     state: {
-      telegramBot: {},
+      telegramBot: {
+        answerCallbackQuery: async () => {},
+        sendMessageWithKeyboard: async (
+          chatJid: string,
+          text: string,
+          keyboard: Array<Array<{ text: string; callbackData: string }>>,
+        ) => {
+          keyboardMessages.push({ chatJid, text, keyboard });
+        },
+      },
       chatRunPreferences: {},
       registeredGroups: {},
       chatUsageStats: {},
@@ -46,7 +60,6 @@ function createBaseDeps(): TelegramCommandDeps {
     formatGroupsText: () => 'groups',
     formatStatusText: () => 'status',
     formatHelpText: () => 'help',
-    formatCapabilitiesText: () => 'capabilities',
     formatUsageText: () => 'usage',
     formatActiveSubagentsText: () => 'subagents',
     summarizeTask: () => 'task detail',
@@ -102,6 +115,17 @@ function createBaseDeps(): TelegramCommandDeps {
     getSessionKeyForChat: (chatJid) => chatJid,
     runAgent: async () => ({ ok: true, result: 'done', streamed: false }),
     runCodingTask: async () => ({ ok: true, result: 'done', streamed: false }),
+    prepareCoderTarget: async ({ taskText }) => ({
+      status: 'ready',
+      workspaceRoot: '/tmp/projects/agintel-dashboard',
+      taskText,
+      projectLabel: 'agintel-dashboard',
+    }),
+    createCoderProject: async ({ slug }) => ({
+      workspaceRoot: `/tmp/projects/${slug}`,
+      projectLabel: slug,
+      isGitRepo: false,
+    }),
     setTyping: async () => {},
     persistAssistantHistory: () => {},
     sendAgentResultMessage: async () => {},
@@ -111,7 +135,7 @@ function createBaseDeps(): TelegramCommandDeps {
     },
   };
 
-  Object.assign(deps, { sent, panels, persisted, audits });
+  Object.assign(deps, { sent, panels, persisted, audits, keyboardMessages });
   return deps;
 }
 
@@ -163,6 +187,95 @@ test('handleTelegramCallbackQuery routes admin panel actions for main chat', asy
     command: 'panel:tasks',
     allowed: true,
     reason: 'ok',
+  });
+});
+
+test('handleTelegramCallbackQuery starts a coder plan from approval actions', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.state.registeredGroups['telegram:main'] = {
+    jid: 'telegram:main',
+    name: 'Main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+  };
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'coder-approve-plan',
+    taskText: 'fix the auth bug',
+  });
+
+  const codingCalls: Array<Record<string, unknown>> = [];
+  deps.runCodingTask = async (params) => {
+    codingCalls.push(params as Record<string, unknown>);
+    return { ok: true, result: 'done', streamed: false };
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-plan',
+    chatJid: 'telegram:main',
+    messageId: 55,
+    data: 'cfg:plan',
+  });
+
+  assert.equal(codingCalls.length, 1);
+  assert.equal(codingCalls[0]?.mode, 'plan');
+  assert.equal(codingCalls[0]?.workspaceRoot, '/tmp/projects/agintel-dashboard');
+  assert.match(deps.sent[0]?.text || '', /Starting coder plan run/);
+});
+
+test('handleTelegramCallbackQuery offers plan fallback when execute target is not git-backed', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    keyboardMessages: Array<{
+      chatJid: string;
+      text: string;
+      keyboard: Array<Array<{ text: string; callbackData: string }>>;
+    }>;
+  };
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'coder-select-project',
+    mode: 'execute',
+    taskText: 'build it',
+    projectPath: '/tmp/projects/orchard-os',
+    projectLabel: 'orchard-os',
+    isGitRepo: false,
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-non-git',
+    chatJid: 'telegram:main',
+    messageId: 56,
+    data: 'cfg:exec',
+  });
+
+  assert.match(deps.keyboardMessages[0]?.text || '', /not a git-backed project/i);
+  assert.equal(deps.keyboardMessages[0]?.keyboard[0]?.[0]?.text, 'Start Plan Instead');
+});
+
+test('handleTelegramCommand blocks /coder-create-project while onboarding is pending', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.resolveMainOnboardingGate = () => ({ active: true });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/coder-create-project orchard-os build the first dashboard',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(deps.sent[0]?.text, 'blocked');
+  assert.deepEqual(deps.audits[0], {
+    chatJid: 'telegram:main',
+    command: '/coder-create-project',
+    allowed: false,
+    reason: 'blocked by onboarding gate',
   });
 });
 
@@ -219,22 +332,6 @@ test('handleTelegramCommand opens delivery panel when called without args', asyn
   assert.deepEqual(deps.panels, [
     { chatJid: 'telegram:1', panel: { kind: 'show-delivery' } },
   ]);
-});
-
-test('handleTelegramCommand returns capability inventory', async () => {
-  const deps = createBaseDeps() as TelegramCommandDeps & {
-    sent: Array<{ chatJid: string; text: string }>;
-  };
-
-  const handlers = createTelegramCommandHandlers(deps);
-  const handled = await handlers.handleTelegramCommand({
-    chatJid: 'telegram:1',
-    chatName: 'Chat',
-    content: '/capabilities',
-  });
-
-  assert.equal(handled, true);
-  assert.equal(deps.sent[0]?.text, 'capabilities');
 });
 
 test('handleTelegramCommand normalizes delivery aliases to canonical persisted values', async () => {

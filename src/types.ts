@@ -70,7 +70,6 @@ export interface ScheduledTask {
   stagger_ms?: number | null;
   delete_after_run?: number | null;
   consecutive_errors?: number | null;
-  subagent_type?: string | null;
   next_run: string | null;
   last_run: string | null;
   last_result: string | null;

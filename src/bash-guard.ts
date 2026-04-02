@@ -22,7 +22,7 @@ export const DESTRUCTIVE_PATTERNS: DestructivePattern[] = [
   },
   { pattern: /\bgit\s+reset\s+--hard\b/i, description: 'git reset --hard' },
   { pattern: /\bgit\s+push\s+--force\b/i, description: 'git push --force' },
-  { pattern: /\bgit\s+push\b.*(?:\s|^)-f(?:\s|$)/i, description: 'git push -f (force push)' },
+  { pattern: /\bgit\s+push\s+\S*-f\b/i, description: 'git push -f' },
   { pattern: /\btruncate\b/i, description: 'truncate (zero out file)' },
   { pattern: /\bshred\b/i, description: 'shred (secure delete)' },
 ];

@@ -451,7 +451,7 @@ function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
   if (force) return true;
   if (!existingBody.trim()) return true;
   if (
-    /You are (?:FarmFriend|fft_nano|FFT_nano): concise, practical, and technically rigorous\./i.test(
+    /You are (?:FarmFriend|OpenClaw|FFT_nano): concise, practical, and technically rigorous\./i.test(
       existingBody,
     )
   ) {

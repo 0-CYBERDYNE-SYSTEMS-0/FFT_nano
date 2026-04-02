@@ -36,14 +36,14 @@ function makeSkillCatalog(): SkillCatalogEntry[] {
   ];
 }
 
-test('buildSystemPrompt injects trusted metadata, overlay, and bootstrap context files for main runs', () => {
+test('buildSystemPrompt injects trusted metadata, overlay, and only control-plane context files for main runs', () => {
   const files = new Map<string, string>([
     ['/workspace/group/NANO.md', '# NANO\n'],
     ['/workspace/group/SOUL.md', '# SOUL\n'],
     ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n\nCore durable memory.\n'],
     ['/workspace/group/HEARTBEAT.md', '# HEARTBEAT\n'],
     ['/workspace/group/BOOTSTRAP.md', '# BOOTSTRAP\n'],
-    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
     ['/workspace/group/memory/2026-02-17.md', 'today memory'],
     ['/workspace/group/memory/2026-02-16.md', 'yesterday memory'],
   ]);
@@ -64,11 +64,16 @@ test('buildSystemPrompt injects trusted metadata, overlay, and bootstrap context
   assert.equal(report.mode, 'full');
   assert.match(text, /## Inbound Context \(trusted metadata\)/);
   assert.match(text, /## Host Context Overlay/);
-  assert.match(text, /## \/workspace\/group\/BOOTSTRAP\.md/);
   assert.match(text, /## Memory Action IPC/);
+  assert.match(text, /## \/workspace\/group\/NANO\.md/);
+  assert.match(text, /## \/workspace\/group\/SOUL\.md/);
+  assert.match(text, /## \/workspace\/group\/TODOS\.md/);
+  assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/BOOTSTRAP\.md/);
+  assert.doesNotMatch(text, /today memory/);
   assert.ok(
     report.contextEntries.some(
-      (entry) => entry.path === '/workspace/group/BOOTSTRAP.md' && !entry.missing,
+      (entry) => entry.path === '/workspace/group/TODOS.md' && !entry.missing,
     ),
   );
 });
@@ -81,7 +86,7 @@ test('buildSystemPrompt enforces per-file and total prompt budgets', () => {
     totalMaxChars: 600,
     readFileIfExists: (filePath) => {
       if (filePath === '/workspace/group/NANO.md') return giant;
-      if (filePath === '/workspace/group/MEMORY.md') return giant;
+      if (filePath === '/workspace/group/TODOS.md') return giant;
       return null;
     },
   });
@@ -109,7 +114,7 @@ test('buildSystemPrompt uses minimal mode for scheduled runs and truncates retri
   assert.match(text, /retrieved memory context truncated to 20000 chars/);
 });
 
-test('buildSystemPrompt loads non-main SOUL and MEMORY fallbacks when retrieval context is absent', () => {
+test('buildSystemPrompt loads only non-main control-plane files when retrieval context is absent', () => {
   const files = new Map<string, string>([
     ['/workspace/global/NANO.md', 'global nano'],
     ['/workspace/group/NANO.md', 'group nano'],
@@ -117,8 +122,6 @@ test('buildSystemPrompt loads non-main SOUL and MEMORY fallbacks when retrieval 
     ['/workspace/group/SOUL.md', 'group soul'],
     ['/workspace/global/TODOS.md', 'global todos'],
     ['/workspace/group/TODOS.md', 'group todos'],
-    ['/workspace/global/MEMORY.md', 'global memory'],
-    ['/workspace/group/MEMORY.md', 'group memory'],
   ]);
 
   const { text, report } = buildSystemPrompt(
@@ -140,11 +143,11 @@ test('buildSystemPrompt loads non-main SOUL and MEMORY fallbacks when retrieval 
   assert.match(text, /## \/workspace\/group\/SOUL\.md/);
   assert.match(text, /## \/workspace\/global\/TODOS\.md/);
   assert.match(text, /## \/workspace\/group\/TODOS\.md/);
-  assert.match(text, /## \/workspace\/global\/MEMORY\.md/);
-  assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/global\/MEMORY\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/MEMORY\.md/);
 });
 
-test('buildSystemPrompt supports legacy non-main memory.md fallback', () => {
+test('buildSystemPrompt does not inject legacy non-main memory.md fallback by default', () => {
   const files = new Map<string, string>([
     ['/workspace/global/SOUL.md', 'global soul'],
     ['/workspace/group/SOUL.md', 'group soul'],
@@ -164,8 +167,8 @@ test('buildSystemPrompt supports legacy non-main memory.md fallback', () => {
     },
   );
 
-  assert.match(text, /## \/workspace\/global\/memory\.md/);
-  assert.match(text, /## \/workspace\/group\/memory\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/global\/memory\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/memory\.md/);
 });
 
 test('buildSystemPrompt treats empty files as present context, not missing', () => {
@@ -201,8 +204,6 @@ test('buildSystemPrompt blocks suspicious injected markdown and records layer me
     ['/workspace/group/SOUL.md', '# SOUL\n'],
     ['/workspace/group/TODOS.md', '# TODOS\n'],
     ['/workspace/group/HEARTBEAT.md', '# HEARTBEAT\n'],
-    ['/workspace/group/BOOTSTRAP.md', '# BOOTSTRAP\n'],
-    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
   ]);
 
   const { text, report } = buildSystemPrompt(
@@ -278,8 +279,6 @@ test('buildSystemPrompt injects compact skills catalog only for interactive runs
   );
 
   assert.match(interactive.text, /## Skills Catalog/);
-  assert.match(interactive.text, /## Capability Routing/);
-  assert.match(interactive.text, /path of least resistance/i);
   assert.doesNotMatch(interactive.text, /# fft-debug/);
 
   const scheduled = buildSystemPrompt(

@@ -135,37 +135,31 @@ export type TelegramSettingsPanelAction =
   | { kind: 'show-setup-api-key' }
   | { kind: 'prompt-setup-api-key' }
   | { kind: 'clear-setup-api-key' }
-  | { kind: 'restart-gateway' };
+  | { kind: 'restart-gateway' }
+  | { kind: 'coder-approve-plan'; taskText: string }
+  | { kind: 'coder-approve-execute'; taskText: string }
+  | {
+      kind: 'coder-select-project';
+      mode: 'plan' | 'execute';
+      taskText: string;
+      projectPath: string;
+      projectLabel: string;
+      isGitRepo: boolean;
+    }
+  | {
+      kind: 'coder-create-project';
+      mode: 'plan' | 'execute';
+      taskText: string;
+      slug: string;
+      projectLabel: string;
+    }
+  | { kind: 'coder-cancel' };
 
 export interface ActiveChatRun {
   chatJid: string;
   startedAt: number;
   requestId: string;
   abortController: AbortController;
-  sessionKey?: string;
-  route?: string;
-  lastProgressAt?: number;
-  lastStdoutAt?: number;
-  lastToolEventAt?: number;
-  piPid?: number;
-  resumed?: boolean;
-  retriedFreshSession?: boolean;
-}
-
-export interface ActiveRunStatusDetail {
-  runId: string;
-  chatJid: string;
-  sessionKey: string;
-  startedAt: string;
-  ageSeconds: number;
-  lastProgressAt?: string;
-  progressAgeSeconds?: number;
-  lastStdoutAt?: string;
-  lastToolEventAt?: string;
-  piPid?: number;
-  resumed: boolean;
-  retriedFreshSession?: boolean;
-  route?: string;
 }
 
 export interface TelegramAttachmentHint {

@@ -10,18 +10,15 @@ export type DelegationTrigger =
   | 'coding'
   | 'coder-plan'
   | 'coder_plan'
-  | 'alias';
+  | 'coder-create-project'
+  | 'coder_create_project';
 
 interface DelegationParseResult {
   hint: CodingHint;
   trigger: DelegationTrigger;
   instruction: string | null;
+  projectSlug?: string | null;
 }
-
-const EXACT_ALIAS_PHRASES = new Set([
-  'use coding agent',
-  'use your coding agent skill',
-]);
 
 const TELEGRAM_COMMAND_SUFFIX = '(?:@[A-Za-z0-9_]+)?';
 const CODER_PLAN_PATTERN = new RegExp(
@@ -34,6 +31,14 @@ const CODER_DASH_PLAN_PATTERN = new RegExp(
 );
 const CODER_PATTERN = new RegExp(`^/coder${TELEGRAM_COMMAND_SUFFIX}\\b`, 'i');
 const CODING_PATTERN = new RegExp(`^/coding${TELEGRAM_COMMAND_SUFFIX}\\b`, 'i');
+const CODER_CREATE_PROJECT_PATTERN = new RegExp(
+  `^/coder_create_project${TELEGRAM_COMMAND_SUFFIX}\\s+([A-Za-z0-9._-]+)\\b`,
+  'i',
+);
+const CODER_DASH_CREATE_PROJECT_PATTERN = new RegExp(
+  `^/coder-create-project${TELEGRAM_COMMAND_SUFFIX}\\s+([A-Za-z0-9._-]+)\\b`,
+  'i',
+);
 
 export function normalizeDelegationAlias(text: string): string {
   return text
@@ -46,6 +51,20 @@ export function normalizeDelegationAlias(text: string): string {
 
 export function parseDelegationTrigger(text: string): DelegationParseResult {
   const trimmed = text.trimStart();
+  const createProjectMatch =
+    trimmed.match(CODER_CREATE_PROJECT_PATTERN) ??
+    trimmed.match(CODER_DASH_CREATE_PROJECT_PATTERN);
+  if (createProjectMatch) {
+    const matchedText = createProjectMatch[0] || '';
+    return {
+      hint: 'force_delegate_plan',
+      trigger: matchedText.includes('/coder-create-project')
+        ? 'coder-create-project'
+        : 'coder_create_project',
+      instruction: trimmed.slice(matchedText.length).trim() || null,
+      projectSlug: createProjectMatch[1]?.trim() || null,
+    };
+  }
 
   if (CODER_PLAN_PATTERN.test(trimmed)) {
     return {
@@ -79,29 +98,18 @@ export function parseDelegationTrigger(text: string): DelegationParseResult {
     };
   }
 
-  const normalized = normalizeDelegationAlias(trimmed);
-  if (EXACT_ALIAS_PHRASES.has(normalized)) {
-    return {
-      hint: 'force_delegate_execute',
-      trigger: 'alias',
-      instruction: null,
-    };
-  }
-
-  return { hint: 'none', trigger: 'none', instruction: null };
+  return { hint: 'none', trigger: 'none', instruction: null, projectSlug: null };
 }
 
 const CODING_ACTION_PATTERNS = [
   /\b(build|create|make|implement|ship|write|add|generate|scaffold)\b/,
   /\b(fix|debug|patch|repair|refactor|rewrite|migrate|upgrade)\b/,
-  /\b(automate|monitor|track|schedule|alert|notify|text|report)\b/,
 ] as const;
 
 const CODING_DOMAIN_PATTERNS = [
   /\b(app|api|backend|frontend|dashboard|component|route|endpoint|service)\b/,
   /\b(code|repo|typescript|javascript|node|react|sqlite|schema|migration)\b/,
   /\b(auth|database|test|tests|build failure|lint|bug|ci|deploy)\b/,
-  /\b(script|automation|workflow|reminder|report|sensor|greenhouse|irrigation|harvest|moisture|temperature|telegram)\b/,
 ] as const;
 
 const SUBSTANTIAL_SCOPE_PATTERNS = [
@@ -109,9 +117,6 @@ const SUBSTANTIAL_SCOPE_PATTERNS = [
   /\bwith auth\b/,
   /\bwith tests?\b/,
   /\bplan and implement\b/,
-  /\bruns? every\b/,
-  /\bwhen .* drops below\b/,
-  /\bwhen .* goes dry\b/,
 ] as const;
 
 // Patterns that indicate the user is NOT asking for coding help
@@ -151,23 +156,4 @@ export function isSubstantialCodingTask(text: string): boolean {
   if (scopeScore > 0) return true;
   if (normalized.length >= 100 && actionScore + domainScore >= 2) return true;
   return actionScore + domainScore >= 3;
-}
-
-const LIVE_IMPACT_PATTERNS = [
-  /\b(automate|control|open|close|start|stop|set|change|adjust)\b.*\b(vent|vents|fan|fans|pump|pumps|valve|valves|heater|heaters|light|lights|irrigation|watering|relay|motor)\b/,
-  /\b(restart|stop|start)\b.*\b(service|gateway|daemon|bot|host)\b/,
-  /\b(schedule|reschedule|change)\b.*\b(irrigation|watering|production|cron|service)\b/,
-  /\b(update|change|set|edit)\b.*\b(config|configuration|\.env|secret|token|api key)\b/,
-] as const;
-
-export function isLiveImpactCodingTask(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) return false;
-  if (normalized.startsWith('/')) return false;
-
-  for (const pattern of LIVE_IMPACT_PATTERNS) {
-    if (pattern.test(normalized)) return true;
-  }
-
-  return false;
 }

@@ -122,13 +122,6 @@ export function initDatabaseAtPath(dbPath: string): void {
     /* column already exists */
   }
 
-  // Add subagent_type column for generalized subagent cron tasks
-  try {
-    db.exec(`ALTER TABLE scheduled_tasks ADD COLUMN subagent_type TEXT`);
-  } catch {
-    /* column already exists */
-  }
-
   const hadMessagesFts = !!db
     .prepare(
       `SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='messages_fts'`,

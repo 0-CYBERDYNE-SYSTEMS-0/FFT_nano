@@ -28,12 +28,6 @@ export interface CronServiceDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   requestHeartbeatNow?: (reason?: string) => void;
   runContainerTask?: typeof runContainerAgent;
-  runSubagentTask?: (
-    type: string,
-    groupFolder: string,
-    prompt: string,
-    options?: { fireAndForget?: boolean; chatJid?: string },
-  ) => Promise<string | null>;
 }
 
 const ERROR_BACKOFF_MS = [30_000, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
@@ -338,34 +332,23 @@ export async function runScheduledTaskV2(
   let outputError: string | null = null;
   let outputResult: string | null = null;
   try {
-    // If task has a subagent_type, use the subagent dispatcher
-    if (task.subagent_type && deps.runSubagentTask) {
-      const result = await deps.runSubagentTask(
-        task.subagent_type,
-        task.group_folder,
-        task.prompt,
-        { fireAndForget: false, chatJid: task.chat_jid },
-      );
-      outputResult = result ?? 'Subagent completed';
+    const runTask = deps.runContainerTask ?? runContainerAgent;
+    const output = await runTask(
+      group,
+      {
+        prompt: task.prompt,
+        groupFolder: task.group_folder,
+        chatJid: task.chat_jid,
+        isMain,
+        isScheduledTask: true,
+        noContinue: resolveNoContinueForTask(task),
+      },
+      abortController.signal,
+    );
+    if (output.status === 'error') {
+      outputError = output.error || 'Unknown scheduled task error';
     } else {
-      const runTask = deps.runContainerTask ?? runContainerAgent;
-      const output = await runTask(
-        group,
-        {
-          prompt: task.prompt,
-          groupFolder: task.group_folder,
-          chatJid: task.chat_jid,
-          isMain,
-          isScheduledTask: true,
-          noContinue: resolveNoContinueForTask(task),
-        },
-        abortController.signal,
-      );
-      if (output.status === 'error') {
-        outputError = output.error || 'Unknown scheduled task error';
-      } else {
-        outputResult = output.result;
-      }
+      outputResult = output.result;
     }
   } catch (err) {
     outputError = err instanceof Error ? err.message : String(err);

@@ -5,6 +5,7 @@ import { GROUPS_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
 
 const MEMORY_FILE_NAME = 'MEMORY.md';
 const MEMORY_DIR_NAME = 'memory';
+const CANONICAL_DIR_NAME = 'canonical';
 const SOUL_FILE_NAME = 'SOUL.md';
 const NANO_FILE_NAME = 'NANO.md';
 const TODOS_FILE_NAME = 'TODOS.md';
@@ -20,13 +21,14 @@ const DEFAULT_NANO_BODY = [
   '1. Read NANO.md',
   '2. Read SOUL.md',
   '3. Read TODOS.md',
-  '4. Read BOOTSTRAP.md (if present)',
-  '5. Read MEMORY.md',
+  '4. Retrieve durable canon from canonical/*.md when needed',
+  '5. Read BOOTSTRAP.md (if present)',
   '',
   'Heartbeat and scheduled maintenance runs also read HEARTBEAT.md.',
   '',
   'Memory policy:',
-  '- Durable memory belongs in MEMORY.md and memory/*.md.',
+  '- Durable memory belongs in canonical/*.md.',
+  '- Daily staging and compaction notes belong in memory/*.md.',
   '- Keep SOUL.md stable; do not use it as compaction log storage.',
   '- TODOS.md is mission control for active execution state.',
   '',
@@ -61,6 +63,14 @@ const DEFAULT_TODOS_BODY = [
   '- [00:00] - Mission control initialized.',
 ].join('\n');
 
+const DEFAULT_CANONICAL_BODIES: Record<string, string> = {
+  '_hot.md': '# _hot\n\nHigh-priority durable memory retrieved before all other canon.\n',
+  'identity.md': '# identity\n\nStable user preferences and profile facts.\n',
+  'constraints.md': '# constraints\n\nStanding hard constraints and prohibitions.\n',
+  'commitments.md': '# commitments\n\nActive long-lived commitments and obligations.\n',
+  'projects.md': '# projects\n\nLong-lived project context and architecture notes.\n',
+};
+
 export function resolveGroupWorkspaceDir(groupFolder: string): string {
   if (groupFolder === MAIN_GROUP_FOLDER) return MAIN_WORKSPACE_DIR;
   return path.join(GROUPS_DIR, groupFolder);
@@ -94,10 +104,21 @@ export function resolveMemoryDir(groupFolder: string): string {
   return path.join(resolveGroupWorkspaceDir(groupFolder), MEMORY_DIR_NAME);
 }
 
+export function resolveCanonicalDir(groupFolder: string): string {
+  return path.join(resolveGroupWorkspaceDir(groupFolder), CANONICAL_DIR_NAME);
+}
+
 export function ensureMemoryScaffold(
   groupFolder: string,
   opts?: { createIfMissing?: boolean },
-): { memoryPath: string; memoryDir: string; nanoPath: string; soulPath: string; todosPath: string } {
+): {
+  memoryPath: string;
+  memoryDir: string;
+  canonicalDir: string;
+  nanoPath: string;
+  soulPath: string;
+  todosPath: string;
+} {
   const create = opts?.createIfMissing !== false;
   const workspaceDir = resolveGroupWorkspaceDir(groupFolder);
   const nanoPath = resolveNanoPath(groupFolder);
@@ -105,6 +126,7 @@ export function ensureMemoryScaffold(
   const todosPath = resolveTodosPath(groupFolder);
   const memoryPath = resolveMemoryPath(groupFolder);
   const memoryDir = resolveMemoryDir(groupFolder);
+  const canonicalDir = resolveCanonicalDir(groupFolder);
 
   if (create) {
     fs.mkdirSync(workspaceDir, { recursive: true });
@@ -125,9 +147,14 @@ export function ensureMemoryScaffold(
       );
     }
     fs.mkdirSync(memoryDir, { recursive: true });
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    for (const [fileName, body] of Object.entries(DEFAULT_CANONICAL_BODIES)) {
+      const filePath = path.join(canonicalDir, fileName);
+      if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, body);
+    }
   }
 
-  return { memoryPath, memoryDir, nanoPath, soulPath, todosPath };
+  return { memoryPath, memoryDir, canonicalDir, nanoPath, soulPath, todosPath };
 }
 
 export function isAllowedMemoryRelativePath(relPath: string): boolean {
@@ -145,7 +172,20 @@ export function isAllowedMemoryRelativePath(relPath: string): boolean {
     return true;
   }
 
+  if (/^canonical\/[^/].*\.md$/i.test(normalized)) {
+    return true;
+  }
+
   return /^memory\/[^/].*\.md$/i.test(normalized);
+}
+
+export function isCanonicalScaffoldContent(
+  fileName: string,
+  content: string,
+): boolean {
+  const defaultBody = DEFAULT_CANONICAL_BODIES[fileName];
+  if (!defaultBody) return false;
+  return content.trim() === defaultBody.trim();
 }
 
 export function resolveAllowedMemoryFilePath(

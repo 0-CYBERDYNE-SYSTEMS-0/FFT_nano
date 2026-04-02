@@ -407,7 +407,7 @@ Alternative: set `TELEGRAM_MAIN_CHAT_ID` and restart.
 Behavior:
 
 - main chat responds to all messages
-- non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@fft_nano` in core profile)
+- non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@OpenClaw` in core profile)
 - admin and coder delegation commands are main-chat only
 - main/admin can query or restart host service with `/gateway status` and `/gateway restart`
 

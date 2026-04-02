@@ -68,12 +68,6 @@ export interface AppRuntimeDeps {
   maybeRegisterWhatsAppMainChat?: () => void;
   syncGroupMetadata?: (force?: boolean) => Promise<void>;
   startSchedulerLoop?: (params: any) => void;
-  runSubagentTask?: (
-    type: string,
-    groupFolder: string,
-    prompt: string,
-    options?: { fireAndForget?: boolean; chatJid?: string },
-  ) => Promise<string | null>;
   startIpcWatcher?: () => void;
   startMessageLoop?: () => Promise<void>;
   requestHeartbeatNow?: (reason?: string) => void;
@@ -268,7 +262,6 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
           sendMessage: deps.sendMessage,
           registeredGroups: () => deps.state.registeredGroups,
           requestHeartbeatNow: deps.requestHeartbeatNow,
-          runSubagentTask: deps.runSubagentTask,
         });
         deps.startIpcWatcher?.();
         void deps
@@ -411,13 +404,13 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     }
     try {
       const output = execSync(
-        "docker ps -a --filter status=exited --filter name=fft-nano- --format '{{.Names}}'",
+        "docker ps -a --filter status=exited --filter name=nanoclaw- --format '{{.Names}}'",
         { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
       );
       const stale = output
         .split('\n')
         .map((n) => n.trim())
-        .filter((n) => n.startsWith('fft-nano-'));
+        .filter((n) => n.startsWith('nanoclaw-'));
       if (stale.length > 0) {
         execSync(`docker rm ${stale.join(' ')}`, { stdio: 'pipe' });
         deps.logger.info?.(
@@ -517,7 +510,6 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
         sendMessage: deps.sendMessage,
         registeredGroups: () => deps.state.registeredGroups,
         requestHeartbeatNow: deps.requestHeartbeatNow,
-        runSubagentTask: deps.runSubagentTask,
       });
       deps.startIpcWatcher?.();
       deps.startHeartbeatLoop?.();

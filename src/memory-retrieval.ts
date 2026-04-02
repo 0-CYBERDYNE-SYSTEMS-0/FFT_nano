@@ -10,12 +10,14 @@ import {
   MEMORY_RETRIEVAL_GATE_ENABLED,
   MEMORY_TOP_K,
 } from './config.js';
+import { isCanonicalScaffoldContent } from './memory-paths.js';
 
 type MemorySource = 'group' | 'global';
 
 interface MemoryChunk {
   source: MemorySource;
   index: number;
+  path: string;
   text: string;
 }
 
@@ -264,19 +266,57 @@ function lexicalScore(
 
 function formatSnippet(rank: number, chunk: MemoryChunk): string {
   const snippet = chunk.text.replace(/\n{3,}/g, '\n\n').trim();
-  return `[${rank}] (${chunk.source}) ${snippet}`;
+  return `[${rank}] (${chunk.source}:${chunk.path}) ${snippet}`;
 }
 
-function getPreferredMemoryChunks(baseDir: string): string[] {
-  const collected: string[] = [];
+function getPreferredMemoryChunks(baseDir: string): Array<{ path: string; text: string }> {
+  const collected: Array<{ path: string; text: string }> = [];
+  const canonicalDir = path.join(baseDir, 'canonical');
+  let foundCanonical = false;
 
-  // Prefer dedicated memory documents.
-  const primaryMemoryPath = path.join(baseDir, 'MEMORY.md');
-  const legacyMemoryPath = path.join(baseDir, 'memory.md');
-  if (fs.existsSync(primaryMemoryPath)) {
-    collected.push(...getChunkedFile(primaryMemoryPath));
-  } else if (fs.existsSync(legacyMemoryPath)) {
-    collected.push(...getChunkedFile(legacyMemoryPath));
+  try {
+    if (fs.existsSync(canonicalDir)) {
+      const entries = fs
+        .readdirSync(canonicalDir)
+        .filter((name) => name.toLowerCase().endsWith('.md'))
+        .sort();
+      for (const name of entries) {
+        const relPath = `canonical/${name}`;
+        const filePath = path.join(canonicalDir, name);
+        let content = '';
+        try {
+          content = fs.readFileSync(filePath, 'utf8');
+        } catch {
+          continue;
+        }
+        if (isCanonicalScaffoldContent(name, content)) continue;
+        const chunks = chunkMemoryText(content);
+        if (chunks.length > 0) foundCanonical = true;
+        for (const text of chunks) {
+          collected.push({ path: relPath, text });
+        }
+      }
+    }
+  } catch {
+    // ignore directory read failures; legacy fallback still applies
+  }
+
+  if (!foundCanonical) {
+    const primaryMemoryPath = path.join(baseDir, 'MEMORY.md');
+    const legacyMemoryPath = path.join(baseDir, 'memory.md');
+    const chosenPath = fs.existsSync(primaryMemoryPath)
+      ? primaryMemoryPath
+      : fs.existsSync(legacyMemoryPath)
+        ? legacyMemoryPath
+        : null;
+    if (chosenPath) {
+      for (const text of getChunkedFile(chosenPath)) {
+        collected.push({
+          path: path.basename(chosenPath),
+          text,
+        });
+      }
+    }
   }
 
   const memoryDir = path.join(baseDir, 'memory');
@@ -287,11 +327,14 @@ function getPreferredMemoryChunks(baseDir: string): string[] {
         .filter((name) => name.toLowerCase().endsWith('.md'))
         .sort();
       for (const name of entries) {
-        collected.push(...getChunkedFile(path.join(memoryDir, name)));
+        const relPath = `memory/${name}`;
+        for (const text of getChunkedFile(path.join(memoryDir, name))) {
+          collected.push({ path: relPath, text });
+        }
       }
     }
   } catch {
-    // ignore directory read failures; fallback memory files still apply
+    // ignore directory read failures; canonical/legacy files still apply
   }
 
   return collected;
@@ -318,14 +361,24 @@ export function buildMemoryContext(
       : path.join(GROUPS_DIR, input.groupFolder);
   const groupChunks = getPreferredMemoryChunks(groupBaseDir);
   for (let i = 0; i < groupChunks.length; i += 1) {
-    allChunks.push({ source: 'group', index: i, text: groupChunks[i] });
+    allChunks.push({
+      source: 'group',
+      index: i,
+      path: groupChunks[i].path,
+      text: groupChunks[i].text,
+    });
   }
 
   const globalChunks = getPreferredMemoryChunks(
     path.join(GROUPS_DIR, 'global'),
   );
   for (let i = 0; i < globalChunks.length; i += 1) {
-    allChunks.push({ source: 'global', index: i, text: globalChunks[i] });
+    allChunks.push({
+      source: 'global',
+      index: i,
+      path: globalChunks[i].path,
+      text: globalChunks[i].text,
+    });
   }
 
   if (allChunks.length === 0) {
@@ -344,8 +397,19 @@ export function buildMemoryContext(
   const scored = allChunks.map((chunk) => {
     const lexical = lexicalScore(queryTokens, queryText, chunk.text);
     const sourceBonus = chunk.source === 'group' ? 0.05 : 0;
+    const pathBonus = chunk.path === 'canonical/_hot.md'
+      ? 0.5
+      : chunk.path === 'canonical/constraints.md'
+        ? 0.35
+        : chunk.path === 'canonical/commitments.md'
+          ? 0.3
+          : chunk.path.startsWith('canonical/')
+            ? 0.18
+            : chunk.path.startsWith('memory/')
+              ? 0.08
+              : 0;
     const tieBreaker = 1 / (chunk.index + 1) / 1000;
-    const score = lexical + sourceBonus + tieBreaker;
+    const score = lexical + sourceBonus + pathBonus + tieBreaker;
     return { chunk, score, lexical };
   });
 

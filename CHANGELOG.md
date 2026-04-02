@@ -7,27 +7,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [1.4.0] - 2026-03-31
-
-### Added
-
-- Capability inventory generation and a new `/capabilities` command so operators can inspect what the host can already do before reaching for new code.
-- Active-run diagnostics for runtime status surfaces, including progress age, run identity, and pi process metadata for stuck-run debugging.
-- Regression coverage for stale resumed pi runs and stdin-closure behavior in the runner lifecycle tests.
-
-### Changed
-
-- Routing now follows a capability-first policy: direct help, existing skills/capabilities, explicit commands/subagents, then coder fallback.
-- Natural-language coder detection now recognizes farmer-style automation requests and treats coder as a fallback builder instead of the primary hammer.
-- Interactive pi lifecycle policy now uses stale-run detection, shorter watchdog budgets, and fresh-session retry fallback for wedged resumed runs.
-- Main prompt/skill guidance now explicitly prefers path-of-least-resistance behavior and surfaces the runtime capability map to the agent.
-
-### Fixed
-
-- Fixed a hang where `pi` could stall indefinitely when spawned with stdin left open, which caused rolling Telegram typing indicators and missing replies.
-- Fixed stuck interactive runs so stalled resumed sessions are aborted, cleaned up, and retried with a fresh session instead of hanging for hours.
-- Fixed Telegram/operator visibility gaps by exposing active run details through the control center and TUI runtime status APIs.
-
 ## [1.3.0] - 2026-03-30
 
 ### Added

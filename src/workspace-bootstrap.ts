@@ -47,13 +47,14 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '1. Read NANO.md',
     '2. Read SOUL.md',
     '3. Read TODOS.md',
-    '4. Read BOOTSTRAP.md (if present)',
-    '5. Read MEMORY.md',
+    '4. Retrieve durable canon from canonical/*.md when needed',
+    '5. Read BOOTSTRAP.md (if present)',
     '',
     'Heartbeat and scheduled maintenance runs also read HEARTBEAT.md.',
     '',
     'Memory policy:',
-    '- Durable memory belongs in MEMORY.md and memory/*.md.',
+    '- Durable memory belongs in canonical/*.md.',
+    '- Daily staging and compaction notes belong in memory/*.md.',
     '- Keep SOUL.md stable; do not use it as compaction log storage.',
     '- TODOS.md is mission control for active execution state.',
     '',
@@ -102,7 +103,7 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '- Start conversationally: "Hey, I just came online. Who am I? Who are you?"',
     '- Capture operational guidance in NANO.md and durable identity guidance in SOUL.md.',
     '- Initialize mission state in TODOS.md.',
-    '- Promote durable facts/decisions into MEMORY.md.',
+    '- Promote durable facts/decisions into canonical/*.md.',
     '- Keep the flow practical and concise.',
     '- Delete this file after the ritual is complete.',
   ].join('\n'),
@@ -326,6 +327,28 @@ export function ensureMainWorkspaceBootstrap(params: {
     const filePath = path.join(workspaceDir, fileName);
     writeFileIfMissing(filePath, templates[fileName]);
   }
+  const canonicalDir = path.join(workspaceDir, 'canonical');
+  fs.mkdirSync(canonicalDir, { recursive: true });
+  writeFileIfMissing(
+    path.join(canonicalDir, '_hot.md'),
+    '# _hot\n\nHigh-priority durable memory retrieved before all other canon.',
+  );
+  writeFileIfMissing(
+    path.join(canonicalDir, 'identity.md'),
+    '# identity\n\nStable user preferences and profile facts.',
+  );
+  writeFileIfMissing(
+    path.join(canonicalDir, 'constraints.md'),
+    '# constraints\n\nStanding hard constraints and prohibitions.',
+  );
+  writeFileIfMissing(
+    path.join(canonicalDir, 'commitments.md'),
+    '# commitments\n\nActive long-lived commitments and obligations.',
+  );
+  writeFileIfMissing(
+    path.join(canonicalDir, 'projects.md'),
+    '# projects\n\nLong-lived project context and architecture notes.',
+  );
   if (PARITY_CONFIG.workspace.enableBootMd) {
     writeFileIfMissing(path.join(workspaceDir, 'BOOT.md'), templates['BOOT.md']);
   }

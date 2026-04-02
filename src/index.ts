@@ -41,16 +41,9 @@ import {
   AvailableGroup,
   deriveTelegramDraftId,
   runContainerAgent,
-  type ExtensionUIRequest,
-  type ExtensionUIResponse,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './pi-runner.js';
-import {
-  createPendingConfirmation,
-  parsePermissionGateCallback,
-  resolvePendingConfirmation,
-} from './permission-gate-ui.js';
 import {
   getAllChats,
   getAllTasks,
@@ -73,8 +66,6 @@ import {
   updateChatName,
 } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { createSubagentOrchestrator } from './subagent-orchestrator.js';
-import { loadSubagentPrompt } from './subagent-prompts.js';
 import {
   FarmActionRequest,
   MemoryActionRequest,
@@ -139,11 +130,6 @@ import {
   updateChatUsage as updateChatUsageCore,
 } from './chat-preferences.js';
 import {
-  buildCapabilityMap,
-  formatCapabilitiesText as formatCapabilitiesInventoryText,
-} from './capability-map.js';
-import {
-  isLiveImpactCodingTask,
   isSubstantialCodingTask,
   parseDelegationTrigger,
   type CodingHint,
@@ -152,6 +138,7 @@ import {
   createCodingOrchestrator,
   type CodingWorkerRequest,
 } from './coding-orchestrator.js';
+import { resolveCoderProjectTarget } from './coder-project-resolver.js';
 import { executeFarmAction } from './farm-action-gateway.js';
 import {
   startFarmStateCollector,
@@ -165,10 +152,6 @@ import {
   migrateCompactionsForGroup,
 } from './memory-maintenance.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
-import {
-  buildSkillCatalogEntries,
-  resolveProjectRuntimeSkillsDir,
-} from './pi-skills.js';
 import {
   cycleVerboseMode,
   describeVerboseMode,
@@ -276,7 +259,6 @@ import {
   type TelegramSetupInputState,
   type TelegramSettingsPanelAction,
   type ActiveChatRun,
-  type ActiveRunStatusDetail,
 } from './app-state.js';
 
 const WHATSAPP_ENABLED = !['0', 'false', 'no'].includes(
@@ -546,13 +528,14 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
         '1. Read NANO.md',
         '2. Read SOUL.md',
         '3. Read TODOS.md',
-        '4. Read BOOTSTRAP.md (if present)',
-        '5. Read MEMORY.md',
+        '4. Retrieve durable canon from canonical/*.md when needed',
+        '5. Read BOOTSTRAP.md (if present)',
         '',
         'Heartbeat and scheduled maintenance runs also read HEARTBEAT.md.',
         '',
         'Memory policy:',
-        '- Durable memory belongs in MEMORY.md and memory/*.md.',
+        '- Durable memory belongs in canonical/*.md.',
+        '- Daily staging and compaction notes belong in memory/*.md.',
         '- Keep SOUL.md stable; do not use it as compaction log storage.',
         '- TODOS.md is mission control for active execution state.',
         '',
@@ -856,7 +839,7 @@ function resolveMainOnboardingGate(chatJid: string): {
 }
 
 function isCoderDelegationCommand(content: string): boolean {
-  return /^\/(?:coder|coding|coder-plan|coder_plan)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(
+  return /^\/(?:coder|coding|coder-plan|coder_plan|coder-create-project|coder_create_project)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(
     content.trim(),
   );
 }
@@ -873,7 +856,7 @@ function buildOnboardingInterviewPrompt(params: {
     '[ONBOARDING INTERVIEW MODE]',
     'Main workspace onboarding is pending. Continue first-run interview flow now.',
     'Use BOOTSTRAP.md instructions. Ask one concise question at a time and keep the exchange practical.',
-    'Update NANO.md, SOUL.md, and TODOS.md based on user responses. Promote durable facts and decisions into MEMORY.md.',
+    'Update NANO.md, SOUL.md, and TODOS.md based on user responses. Promote durable facts and decisions into canonical/*.md.',
     `When onboarding is complete, remove BOOTSTRAP.md and include the token ${MAIN_ONBOARDING_COMPLETION_TOKEN} exactly once on its own line in your final reply.`,
     '',
     '[LATEST USER MESSAGE]',
@@ -1068,54 +1051,6 @@ function buildTuiSessionList(): TuiSessionSummary[] {
     return (b.lastActivity || '').localeCompare(a.lastActivity || '');
   });
   return sessions;
-}
-
-function touchActiveRun(
-  requestId: string | undefined,
-  patch: Partial<ActiveChatRun>,
-): void {
-  if (!requestId) return;
-  const active = activeChatRunsById.get(requestId);
-  if (!active) return;
-  Object.assign(active, patch);
-}
-
-function buildActiveRunDetails(): ActiveRunStatusDetail[] {
-  const now = Date.now();
-  return Array.from(activeChatRunsById.values())
-    .map((run) => {
-      const ageSeconds = Math.max(0, Math.floor((now - run.startedAt) / 1000));
-      const lastProgressAt = run.lastProgressAt;
-      const lastStdoutAt = run.lastStdoutAt;
-      const lastToolEventAt = run.lastToolEventAt;
-      return {
-        runId: run.requestId,
-        chatJid: run.chatJid,
-        sessionKey: run.sessionKey || getSessionKeyForChat(run.chatJid),
-        startedAt: new Date(run.startedAt).toISOString(),
-        ageSeconds,
-        ...(lastProgressAt
-          ? {
-              lastProgressAt: new Date(lastProgressAt).toISOString(),
-              progressAgeSeconds: Math.max(
-                0,
-                Math.floor((now - lastProgressAt) / 1000),
-              ),
-            }
-          : {}),
-        ...(lastStdoutAt
-          ? { lastStdoutAt: new Date(lastStdoutAt).toISOString() }
-          : {}),
-        ...(lastToolEventAt
-          ? { lastToolEventAt: new Date(lastToolEventAt).toISOString() }
-          : {}),
-        ...(typeof run.piPid === 'number' ? { piPid: run.piPid } : {}),
-        resumed: run.resumed === true,
-        ...(run.retriedFreshSession ? { retriedFreshSession: true } : {}),
-        ...(run.route ? { route: run.route } : {}),
-      };
-    })
-    .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 }
 
 function normalizeAssistantHistoryContent(content: string): string {
@@ -1885,6 +1820,243 @@ function getTelegramSettingsPanelAction(
   return state.action;
 }
 
+async function sendTelegramCoderKeyboard(params: {
+  chatJid: string;
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+  fallbackText?: string;
+}): Promise<void> {
+  if (isTelegramJid(params.chatJid) && state.telegramBot?.sendMessageWithKeyboard) {
+    await state.telegramBot.sendMessageWithKeyboard(
+      params.chatJid,
+      params.text,
+      params.keyboard,
+    );
+    return;
+  }
+  await sendMessage(params.chatJid, params.fallbackText || params.text);
+}
+
+function buildCoderCommand(command: '/coder' | '/coder-plan', taskText: string): string {
+  const normalizedTask = taskText.replace(/\s+/g, ' ').trim();
+  return `${command} ${normalizedTask}`.trim();
+}
+
+async function presentCoderSuggestion(params: {
+  chatJid: string;
+  taskText: string;
+  requestId: string;
+}): Promise<void> {
+  await sendTelegramCoderKeyboard({
+    chatJid: params.chatJid,
+    text: [
+      'This sounds like coding work.',
+      'Recommended next step: run a coder plan first, then explicitly escalate to execute if it looks right.',
+    ].join('\n'),
+    fallbackText: [
+      'This sounds like coding work.',
+      `Reply with: ${buildCoderCommand('/coder-plan', params.taskText)}`,
+      `Or execute directly with: ${buildCoderCommand('/coder', params.taskText)}`,
+      'Reply with: cancel',
+    ].join('\n'),
+    keyboard: [
+      [
+        {
+          text: 'Plan',
+          callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+            kind: 'coder-approve-plan',
+            taskText: params.taskText,
+          }),
+        },
+        {
+          text: 'Execute',
+          callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+            kind: 'coder-approve-execute',
+            taskText: params.taskText,
+          }),
+        },
+      ],
+      [
+        {
+          text: 'Cancel',
+          callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+            kind: 'coder-cancel',
+          }),
+        },
+      ],
+    ],
+  });
+}
+
+async function prepareCoderTarget(params: {
+  chatJid: string;
+  mode: 'plan' | 'execute';
+  taskText: string;
+  requestId: string;
+}): Promise<
+  | {
+      status: 'ready';
+      workspaceRoot: string;
+      taskText: string;
+      projectLabel: string;
+    }
+  | { status: 'handled' }
+> {
+  const resolved = resolveCoderProjectTarget({
+    mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+    taskText: params.taskText,
+  });
+
+  if (resolved.status === 'resolved') {
+    if (params.mode === 'execute' && !resolved.isGitRepo) {
+      await sendTelegramCoderKeyboard({
+        chatJid: params.chatJid,
+        text: [
+          `${resolved.projectLabel} is not a git-backed project, so execute mode cannot create an isolated worktree there.`,
+          'Run a coder plan first or initialize git for that project.',
+        ].join('\n'),
+        fallbackText: [
+          `${resolved.projectLabel} is not a git-backed project, so execute mode cannot create an isolated worktree there.`,
+          `Reply with: ${buildCoderCommand('/coder-plan', `project:${resolved.projectLabel} ${resolved.taskText}`)}`,
+          'Or initialize git for that project and retry execute mode.',
+        ].join('\n'),
+        keyboard: [
+          [
+            {
+              text: 'Start Plan Instead',
+              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+                kind: 'coder-select-project',
+                mode: 'plan',
+                taskText: resolved.taskText,
+                projectPath: resolved.workspaceRoot,
+                projectLabel: resolved.projectLabel,
+                isGitRepo: resolved.isGitRepo,
+              }),
+            },
+            {
+              text: 'Cancel',
+              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+                kind: 'coder-cancel',
+              }),
+            },
+          ],
+        ],
+      });
+      return { status: 'handled' };
+    }
+    return {
+      status: 'ready',
+      workspaceRoot: resolved.workspaceRoot,
+      taskText: resolved.taskText,
+      projectLabel: resolved.projectLabel,
+    };
+  }
+
+  if (resolved.status === 'ambiguous') {
+    await sendTelegramCoderKeyboard({
+      chatJid: params.chatJid,
+      text: 'I found multiple likely projects. Pick the right one before coder continues.',
+      fallbackText: [
+        'I found multiple likely projects. Re-run your request with one of these project selectors:',
+        ...resolved.candidates.map((candidate) =>
+          `${buildCoderCommand(
+            params.mode === 'plan' ? '/coder-plan' : '/coder',
+            `project:${candidate.projectLabel} ${resolved.taskText}`,
+          )}`,
+        ),
+        'Reply with: cancel',
+      ].join('\n'),
+      keyboard: [
+        ...resolved.candidates.map((candidate) => [
+          {
+            text: truncateButtonLabel(candidate.projectLabel),
+            callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+              kind: 'coder-select-project',
+              mode: params.mode,
+              taskText: resolved.taskText,
+              projectPath: candidate.workspaceRoot,
+              projectLabel: candidate.projectLabel,
+              isGitRepo: candidate.isGitRepo,
+            }),
+          },
+        ]),
+        [
+          {
+            text: 'Cancel',
+            callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+              kind: 'coder-cancel',
+            }),
+          },
+        ],
+      ],
+    });
+    return { status: 'handled' };
+  }
+
+  if (resolved.projectHint && resolved.suggestedSlug) {
+    await sendTelegramCoderKeyboard({
+      chatJid: params.chatJid,
+      text: [
+        `I could not find a project matching "${resolved.projectHint}".`,
+        'If that project does not exist yet, you can create it now.',
+      ].join('\n'),
+      fallbackText: [
+        `I could not find a project matching "${resolved.projectHint}".`,
+        `Reply with: /coder-create-project ${resolved.suggestedSlug} ${resolved.taskText}`.trim(),
+        'That will create the project and start a coder plan there.',
+        'Or reply with: cancel',
+      ].join('\n'),
+      keyboard: [
+        [
+          {
+            text: `Create ${truncateButtonLabel(resolved.suggestedSlug)}`,
+            callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+              kind: 'coder-create-project',
+              mode: params.mode,
+              taskText: resolved.taskText,
+              slug: resolved.suggestedSlug,
+              projectLabel: resolved.projectHint,
+            }),
+          },
+          {
+            text: 'Cancel',
+            callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
+              kind: 'coder-cancel',
+            }),
+          },
+        ],
+      ],
+    });
+  } else {
+    await sendMessage(
+      params.chatJid,
+      'I could not map that request to a project. Re-run it with `project:<name>` so I can target the right workspace.',
+    );
+  }
+  return { status: 'handled' };
+}
+
+async function createCoderProject(params: {
+  slug: string;
+}): Promise<{
+  workspaceRoot: string;
+  projectLabel: string;
+  isGitRepo: boolean;
+}> {
+  const workspaceRoot = path.join(
+    MAIN_WORKSPACE_DIR,
+    'workspace',
+    'projects',
+    params.slug,
+  );
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+  return {
+    workspaceRoot,
+    projectLabel: params.slug,
+    isGitRepo: false,
+  };
+}
+
 function truncateButtonLabel(text: string, max = 28): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
@@ -2563,31 +2735,6 @@ function formatStatusText(chatJid?: string): string {
   return lines.join('\n');
 }
 
-function getCapabilitySkillCatalog(isMain: boolean) {
-  const sourceDirs = [resolveProjectRuntimeSkillsDir(process.cwd())];
-  if (isMain) {
-    const mainSkillsDir = path.join(MAIN_WORKSPACE_DIR, 'skills');
-    if (fs.existsSync(mainSkillsDir)) sourceDirs.push(mainSkillsDir);
-  }
-  return buildSkillCatalogEntries(sourceDirs, {
-    maxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
-  });
-}
-
-function formatCapabilitiesText(_chatJid: string, isMain: boolean): string {
-  const skillCatalog = getCapabilitySkillCatalog(isMain);
-  const capabilities = buildCapabilityMap({
-    isMain,
-    assistantName: ASSISTANT_NAME,
-    skillCatalog,
-  });
-  return formatCapabilitiesInventoryText({
-    isMain,
-    assistantName: ASSISTANT_NAME,
-    capabilities,
-  });
-}
-
 function summarizeTask(taskId: string): string {
   const task = getTaskById(taskId);
   if (!task) return `Task not found: ${taskId}`;
@@ -2902,9 +3049,6 @@ async function runCompactionForChat(
     startedAt: Date.now(),
     requestId: compactRequestId,
     abortController,
-    sessionKey: getSessionKeyForChat(chatJid),
-    route: 'compaction',
-    lastProgressAt: Date.now(),
   };
   activeChatRuns.set(chatJid, activeRun);
   activeChatRunsById.set(compactRequestId, activeRun);
@@ -2947,7 +3091,7 @@ async function runCompactionForChat(
         : summary;
     return [
       `Compaction complete (${compactRequestId}).`,
-      'Saved summary to /workspace/group/MEMORY.md and scheduled fresh next session.',
+      `Saved summary to /workspace/group/memory/${ts.slice(0, 10)}.md and scheduled fresh next session.`,
       '',
       preview,
     ].join('\n');
@@ -3169,14 +3313,6 @@ function logTelegramCommandAudit(
   logger.info({ chatJid, command, allowed, reason }, 'Telegram command audit');
 }
 
-// ── Subagent orchestrator ──────────────────────────────────────────
-const subagentOrchestrator = createSubagentOrchestrator({
-  activeRuns: activeCoderRuns,
-  runContainerAgent,
-  publishEvent: (event) => hostEventBus.publish(event),
-  sendChatMessage: sendMessage,
-});
-
 const telegramCommandHandlers = createTelegramCommandHandlers({
   state,
   constants: {
@@ -3202,7 +3338,6 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   formatGroupsText,
   formatStatusText,
   formatHelpText,
-  formatCapabilitiesText,
   formatUsageText,
   formatActiveSubagentsText,
   summarizeTask,
@@ -3240,22 +3375,8 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   getSessionKeyForChat,
   runAgent,
   runCodingTask,
-  runSubagentTask: async (params) => {
-    const group = state.registeredGroups[params.groupFolder];
-    const result = await subagentOrchestrator.spawnSubagent({
-      requestId: params.requestId,
-      type: params.type,
-      taskText: params.taskText,
-      originChatJid: params.chatJid,
-      originGroupFolder: params.groupFolder,
-      assistantName: ASSISTANT_NAME,
-      sessionKey: params.chatJid,
-      group,
-      abortController: params.abortController,
-      workspacePath: params.workspacePath,
-    });
-    return { ok: result.ok, result: result.result, error: result.error };
-  },
+  prepareCoderTarget,
+  createCoderProject,
   setTyping,
   persistAssistantHistory,
   sendAgentResultMessage,
@@ -3270,34 +3391,6 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
 async function handleTelegramCallbackQuery(
   q: TelegramInboundCallbackQuery,
 ): Promise<void> {
-  // Check if this is a permission gate callback
-  const pgRequestId = parsePermissionGateCallback(q.data);
-  if (pgRequestId) {
-    const confirmed = q.data.startsWith('pg_allow:');
-    resolvePendingConfirmation(pgRequestId, { confirmed });
-
-    // Acknowledge the callback and update the message
-    const bot = state.telegramBot;
-    if (bot) {
-      try {
-        await bot.answerCallbackQuery?.(q.id);
-      } catch {
-        // Ignore -- callback query may have already been answered
-      }
-      try {
-        await bot.editMessageWithKeyboard(
-          q.chatJid,
-          q.messageId,
-          `${confirmed ? '\u2705' : '\u274c'} ${confirmed ? 'Allowed' : 'Blocked'}`,
-          [],
-        );
-      } catch {
-        // Message may have been deleted
-      }
-    }
-    return;
-  }
-
   await telegramCommandHandlers.handleTelegramCallbackQuery(q);
 }
 
@@ -3357,7 +3450,9 @@ const messageDispatcher = createMessageDispatcher({
   finalizeCompletedRun,
   parseDelegationTrigger,
   isSubstantialCodingTask,
-  isLiveImpactCodingTask,
+  presentCoderSuggestion,
+  prepareCoderTarget,
+  createCoderProject,
   isCoderDelegationCommand,
   onboardingCommandBlockedText,
   makeRunId,
@@ -3422,20 +3517,6 @@ const appRuntime = createAppRuntime({
   startIpcWatcher,
   startMessageLoop: () => appRuntime.startMessageLoop(),
   requestHeartbeatNow,
-  runSubagentTask: async (type, groupFolder, prompt, options) => {
-    const group = state.registeredGroups[groupFolder];
-    const result = await subagentOrchestrator.spawnSubagent({
-      requestId: `cron-${type}-${Date.now()}`,
-      type,
-      taskText: prompt,
-      originChatJid: options?.chatJid ?? '',
-      originGroupFolder: groupFolder,
-      assistantName: ASSISTANT_NAME,
-      sessionKey: options?.chatJid ?? groupFolder,
-      group,
-    });
-    return result.result;
-  },
   storeMessage,
   translateJid,
   processMessage: (msg) => messageDispatcher.processMessage(msg),
@@ -3652,78 +3733,6 @@ async function runAgent(
             ...(event.error ? { error: event.error } : {}),
           });
         },
-        // Permission gate: handle extension UI requests (confirmation dialogs)
-        async (request: ExtensionUIRequest): Promise<ExtensionUIResponse> => {
-          const timeoutMs = request.timeout ?? 60_000;
-
-          if (request.method === 'confirm' && isTelegramJid(chatJid) && state.telegramBot) {
-            const { promise } = createPendingConfirmation(request.id, chatJid, timeoutMs);
-            await state.telegramBot.sendMessageWithKeyboard(
-              chatJid,
-              `\u26a0\ufe0f *Permission Required*\n\n${request.title ?? 'Action'}\n${request.message ?? ''}\n\n_Reply within ${Math.round(timeoutMs / 1000)}s or it will be auto-denied._`,
-              [[
-                { text: '\u2705 Allow', callbackData: `pg_allow:${request.id}` },
-                { text: '\u274c Block', callbackData: `pg_block:${request.id}` },
-              ]],
-            );
-            return promise;
-          }
-
-          // Non-Telegram or non-confirm: auto-deny for safety
-          logger.warn(
-            { requestId: request.id, method: request.method, chatJid },
-            'Permission gate: no UI available, auto-denying',
-          );
-          if (request.method === 'confirm') {
-            return { confirmed: false };
-          }
-          return { cancelled: true };
-        },
-        (event) => {
-          if (!requestId) return;
-          switch (event.kind) {
-            case 'spawn':
-              touchActiveRun(requestId, {
-                piPid:
-                  typeof event.pid === 'number' ? event.pid : undefined,
-                resumed: event.resumed,
-                lastProgressAt: event.at,
-              });
-              break;
-            case 'stdout':
-              touchActiveRun(requestId, {
-                lastProgressAt: event.at,
-                lastStdoutAt: event.at,
-              });
-              break;
-            case 'assistant':
-            case 'thinking':
-              touchActiveRun(requestId, {
-                lastProgressAt: event.at,
-              });
-              break;
-            case 'tool':
-              touchActiveRun(requestId, {
-                lastProgressAt: event.at,
-                lastToolEventAt: event.at,
-              });
-              break;
-            case 'retry_fresh':
-              touchActiveRun(requestId, {
-                lastProgressAt: event.at,
-                resumed: false,
-                retriedFreshSession: true,
-              });
-              break;
-            case 'stale':
-              touchActiveRun(requestId, {
-                lastProgressAt: event.at,
-              });
-              break;
-            default:
-              break;
-          }
-        },
       );
       return {
         ...output,
@@ -3826,7 +3835,6 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
       runtime: getContainerRuntime(),
       sessions: buildTuiSessionList().length,
       activeRuns: activeChatRunsById.size,
-      activeRunDetails: buildActiveRunDetails(),
     }),
     listSessions: () => buildTuiSessionList(),
     resolveChatJid: (sessionKey: string) =>
@@ -3864,7 +3872,6 @@ function createWebControlCenterAdapters(): WebControlCenterAdapters {
       runtime: getContainerRuntime(),
       sessions: buildTuiSessionList().length,
       activeRuns: activeChatRunsById.size,
-      activeRunDetails: buildActiveRunDetails(),
     }),
     getProfileStatus: () => ({
       profile: FFT_PROFILE,
@@ -5239,9 +5246,6 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     startedAt: Date.now(),
     requestId,
     abortController,
-    sessionKey: getSessionKeyForChat(mainChatJid),
-    route: 'heartbeat',
-    lastProgressAt: Date.now(),
   };
   activeChatRuns.set(mainChatJid, activeRun);
   activeChatRunsById.set(requestId, activeRun);
