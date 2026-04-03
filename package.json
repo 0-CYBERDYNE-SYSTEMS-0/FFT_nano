@@ -1,7 +1,24 @@
 {
   "name": "fft_nano",
   "version": "1.5.0",
-  "description": "FFT_nano — secure, containerized OpenClaw-style personal AI assistant host.",
+  "description": "FFT_nano: autonomous AI coworker that runs on your farm's hardware, learns your operation, and texts you updates. No subscriptions. MIT licensed.",
+  "keywords": [
+    "autonomous-agents",
+    "ai-agents",
+    "llm",
+    "llm-agents",
+    "nodejs",
+    "typescript",
+    "telegram-bot",
+    "whatsapp-bot",
+    "raspberry-pi",
+    "open-source",
+    "agriculture",
+    "farming",
+    "automation",
+    "persistent-memory",
+    "local-first-ai"
+  ],
   "private": true,
   "license": "MIT",
   "repository": {

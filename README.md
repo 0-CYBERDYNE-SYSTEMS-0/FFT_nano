@@ -6,28 +6,35 @@
 [![Release Readiness](https://img.shields.io/github/actions/workflow/status/0-CYBERDYNE-SYSTEMS-0/FFT_nano/release-readiness.yml?branch=main&label=release%20readiness)](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/actions/workflows/release-readiness.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-`FFT_nano` is a single-process Node.js host that runs an LLM agent inside a Linux container and routes chat I/O through Telegram and/or WhatsApp.
+An autonomous AI coworker that runs on your farm's hardware. It learns your operation, texts you updates, writes code to automate your equipment, and gets smarter every season. No subscriptions. No cloud dependency. MIT licensed.
 
-## What It Does
+## Quick Start
 
-- Receives inbound chat messages
-- Stores chat + scheduling metadata in SQLite
-- Runs the agent in an isolated Docker container by default (optional host runtime for advanced local use)
-- Uses `~/nano` as the main/admin workspace (configurable via `FFT_NANO_MAIN_WORKSPACE_DIR`)
-- Persists non-main memory per group in `groups/<group>/MEMORY.md` (plus `groups/<group>/memory/*.md`)
-- Sends agent output back to the originating chat
+```bash
+git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
+cd FFT_nano
+./scripts/onboard-all.sh
+```
+
+Runs on Raspberry Pi, your own server, or local hardware. Chat via Telegram or WhatsApp.
+
+## Key Capabilities
+
+| Persistent Memory | Equipment Control | Multi-Provider AI |
+|-------------------|-------------------|-------------------|
+| Carries context across sessions. Learns your operation over time. | Discovers and controls equipment via Telegram. Writes automation code automatically. | OpenAI, Anthropic, Gemini, OpenRouter, Ollama, LM Studio. Local-first. |
+
+## Farm-Proven
+
+Built by a farmer with 24 years of field experience. Three years of real operational testing. Designed for real farms running real equipment.
 
 ## Project Status
 
-- Official distribution channel: **GitHub Releases**
-- `npm install` is intentionally **not** the primary install path yet
-- Current release process and checks: `docs/RELEASE.md`
+- Official distribution: **GitHub Releases**
+- `npm install` is not the primary install path yet
+- See `docs/RELEASE.md` for current release process
 
-Project links:
-
-- Releases: https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/releases
-- Security policy: `.github/SECURITY.md`
-- Contributing: `CONTRIBUTING.md`
+**Links:** [Releases](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/releases) | [Security](.github/SECURITY.md) | [Contributing](CONTRIBUTING.md) | [Docs](docs/)
 - Support: `SUPPORT.md`
 - Changelog: `CHANGELOG.md`
 
