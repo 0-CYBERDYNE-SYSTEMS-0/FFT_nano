@@ -230,12 +230,17 @@ export function enqueueTelegramToolProgressMessage(params: {
   params.runs.set(key, run);
 }
 
-export function finalizeTelegramToolProgressRun(
+export async function awaitTelegramToolProgressRun(
   runs: Map<string, TelegramToolProgressState>,
   key: string,
-): void {
+): Promise<void> {
   const progress = runs.get(key);
   if (!progress) return;
-  runs.delete(key);
-  void progress.chain.catch(() => {});
+  try {
+    await progress.chain;
+  } catch {
+    // best-effort drain
+  } finally {
+    runs.delete(key);
+  }
 }

@@ -3,11 +3,11 @@ import test from 'node:test';
 
 import type { TelegramToolProgressState } from '../src/app-state.js';
 import {
+  awaitTelegramToolProgressRun,
   buildTelegramToolProgressLine,
   buildTelegramToolProgressMessage,
   buildTelegramPreviewToolTrailEntry,
   enqueueTelegramToolProgressMessage,
-  finalizeTelegramToolProgressRun,
   getTelegramToolProgressKey,
   shouldUseTelegramPreviewToolTrail,
   shouldUseStandaloneTelegramToolProgress,
@@ -206,7 +206,7 @@ test('buildTelegramPreviewToolTrailEntry keeps draft trail concise', () => {
   );
 });
 
-test('finalizeTelegramToolProgressRun removes queued progress state without awaiting completion', () => {
+test('awaitTelegramToolProgressRun waits for queued progress completion before clearing state', async () => {
   let resolveChain: (() => void) | undefined;
   const pending = new Promise<void>((resolve) => {
     resolveChain = resolve;
@@ -218,8 +218,18 @@ test('finalizeTelegramToolProgressRun removes queued progress state without awai
     chain: pending,
   });
 
-  finalizeTelegramToolProgressRun(runs, 'telegram:1::run-3');
+  let settled = false;
+  const wait = awaitTelegramToolProgressRun(runs, 'telegram:1::run-3').then(
+    () => {
+      settled = true;
+    },
+  );
 
-  assert.equal(runs.has('telegram:1::run-3'), false);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(runs.has('telegram:1::run-3'), true);
   resolveChain?.();
+  await wait;
+  assert.equal(settled, true);
+  assert.equal(runs.has('telegram:1::run-3'), false);
 });

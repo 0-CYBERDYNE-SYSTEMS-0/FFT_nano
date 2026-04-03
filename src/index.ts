@@ -213,9 +213,9 @@ import {
   updateTelegramPreview,
 } from './telegram-streaming.js';
 import {
+  awaitTelegramToolProgressRun,
   buildTelegramPreviewToolTrailEntry,
   enqueueTelegramToolProgressMessage,
-  finalizeTelegramToolProgressRun,
   getTelegramToolProgressKey,
   getTelegramToolEmoji,
   shouldUseTelegramPreviewToolTrail,
@@ -3909,7 +3909,7 @@ async function runAgent(
     return { result: null, streamed: false, ok: false };
   } finally {
     if (requestId && isTelegramJid(chatJid)) {
-      finalizeTelegramToolProgress(chatJid, requestId);
+      await finalizeTelegramToolProgress(chatJid, requestId);
     }
   }
 }
@@ -4309,11 +4309,11 @@ function queueTelegramToolProgressUpdate(
   }
 }
 
-function finalizeTelegramToolProgress(
+async function finalizeTelegramToolProgress(
   chatJid: string,
   requestId: string,
-): void {
-  finalizeTelegramToolProgressRun(
+): Promise<void> {
+  await awaitTelegramToolProgressRun(
     telegramToolProgressRuns,
     getTelegramToolProgressKey(chatJid, requestId),
   );
