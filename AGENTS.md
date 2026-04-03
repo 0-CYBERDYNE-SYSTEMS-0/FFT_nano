@@ -181,40 +181,80 @@ Common failure modes:
 
 ### Git Strategy: Main = Release
 
-The `main` branch is **clean and release-ready at all times**. Personal development happens in worktrees, never directly on main.
+The root checkout used as the local runtime/release checkout should stay on `main`.
+`main` is **clean and release-ready at all times**.
+Do not start unrelated feature work directly in the root checkout.
 
 **Key rules:**
 - Never commit personal paths, local data, or dev-only files to main
-- Run `npm run secret-scan` and `npm run release-check` before any significant change
+- Do not use the root checkout as a general-purpose dev sandbox
+- Run `npm run secret-scan` and `npm run release-check` before promoting a release candidate
 - Personal directories (`fft-experience/`, `.factory/`, `data/`, `groups/`) are gitignored
+- A public release must come from the exact tested commit that will be tagged
 
 ### Worktrees for Development
 
-Create a worktree for each major feature or experiment:
+Use one reusable general-purpose dev worktree for unrelated feature work:
 
 ```bash
-# Create a new worktree for a feature
-git worktree add ../fft_nano-dev-<feature> -b feat/my-feature
+# Create the reusable dev worktree from main
+git worktree add ../fft_nano-dev -b feat/current-work main
 
-# Do your development there
-cd ../fft_nano-dev-<feature>
+# Do feature work there
+cd ../fft_nano-dev
 
-# When done, merge back to main from the worktree
+# When done, merge or park the branch, then remove the worktree
 git checkout main
-git merge feat/my-feature
+git merge --ff-only feat/current-work
 
-# Clean up worktree when done
-git worktree remove ../fft_nano-dev-<feature>
-git branch -d feat/my-feature
+git worktree remove ../fft_nano-dev
+git branch -d feat/current-work
 ```
+
+Workflow policy:
+- Keep the root checkout on `main` as the stable local runtime/release checkout.
+- Keep at most one active general-purpose dev worktree for unrelated work.
+- If an active non-main worktree already exists, reuse it only if the new task belongs to that branch.
+- Otherwise finish it, checkpoint it, or remove it before starting a new unrelated task.
+
+Feature-worktree runtime validation:
+- Default runtime/service behavior should come from the root checkout on `main`.
+- A feature worktree may be used for temporary runtime validation when intentionally testing that branch.
+- Before doing that, stop the existing service or otherwise avoid channel/runtime conflicts.
+- After validation, restore the root `main` runtime.
+
+Before removing a worktree:
+- Commit the changes, or stash them intentionally, before cleanup.
+- Do not delete a worktree with unreviewed work just to start a new task.
+
+### Fresh-Install Reality Check
+
+For public releases, "tests passed" is necessary but not sufficient.
+
+The real fresh-install surface is:
+- `README.md`
+- `docs/ONBOARDING.md`
+- `scripts/setup.sh`
+- `scripts/onboard-all.sh`
+- `.env.example`
+- `scripts/service.sh`
+
+Before tagging a release, verify that a new user could follow the docs and scripts from a clean checkout on a blank machine. Do not rely only on upgrade testing from an already-configured personal install.
 
 ### Pre-Release Checklist
 
 Before tagging a release or merging to main:
 ```bash
-npm run release-check   # typecheck, tests, secret-scan, pack
-npm run secret-scan     # verify no personal paths or secrets
+npm run release-check   # validate:skills, typecheck, tests, secret-scan, pack-check
+npm run secret-scan     # verify no personal paths, chat ids, or secrets
+git diff --check        # no merge markers / whitespace breakage
+git status --short      # clean release candidate before promotion/tagging
 ```
+
+Release expectations:
+- Run the checks from the clean release candidate worktree/branch, not from a dirty personal checkout.
+- Verify the scripted install path, not just upgrades from an existing machine.
+- Tag only after those checks pass on the exact commit being released.
 
 ### CI/CD
 
@@ -225,7 +265,7 @@ npm run secret-scan     # verify no personal paths or secrets
    - All tests (`npm test`)
    - Secret scan (`npm run secret-scan`)
    - Skills validation (`npm run validate:skills`)
-   - Pack content check (`npm run pack`)
+   - Full release gate (`npm run release-check`), which includes pack-content policy via `npm run pack-check`
 
 2. **`skills-only.yml`** - Runs when only skills change:
    - Skills validation only (faster, skips full test suite)
