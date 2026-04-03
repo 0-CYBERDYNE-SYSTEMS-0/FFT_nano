@@ -213,6 +213,15 @@ import {
   updateTelegramPreview,
 } from './telegram-streaming.js';
 import {
+  buildTelegramPreviewToolTrailEntry,
+  enqueueTelegramToolProgressMessage,
+  finalizeTelegramToolProgressRun,
+  getTelegramToolProgressKey,
+  getTelegramToolEmoji,
+  shouldUseTelegramPreviewToolTrail,
+  shouldUseStandaloneTelegramToolProgress,
+} from './telegram-tool-progress.js';
+import {
   createHostEventId,
   createOrderedHostEventProcessor,
   type HostEvent,
@@ -245,7 +254,6 @@ import {
   telegramSetupInputStates,
   hostEventBus,
   telegramToolProgressRuns,
-  lastToolNameByStream,
   TUI_SENDER_ID,
   TUI_SENDER_NAME,
   SERVICE_STARTED_AT,
@@ -2470,7 +2478,10 @@ function buildVerbosePanel(chatJid: string): {
     text: [
       'Select tool progress mode:',
       `Current: ${current}`,
-      'fft_nano tool progress modes: off -> new -> all -> verbose.',
+      'off = final only',
+      'new = minimal updates (emoji reactions)',
+      'all = concise separate progress message',
+      'verbose = detailed separate progress message',
     ].join('\n'),
     keyboard: rows,
   };
@@ -3784,6 +3795,7 @@ async function runAgent(
             queueTelegramToolProgressUpdate(
               chatJid,
               requestId,
+              runPrefs.telegramDeliveryMode || 'partial',
               runPrefs.verboseMode,
               {
                 toolName: event.toolName,
@@ -3897,7 +3909,7 @@ async function runAgent(
     return { result: null, streamed: false, ok: false };
   } finally {
     if (requestId && isTelegramJid(chatJid)) {
-      await finalizeTelegramToolProgress(chatJid, requestId);
+      finalizeTelegramToolProgress(chatJid, requestId);
     }
   }
 }
@@ -4197,136 +4209,6 @@ async function sendMessage(jid: string, text: string): Promise<void> {
   }
 }
 
-const TELEGRAM_TOOL_EMOJIS: Record<string, string> = {
-  // Terminal & shell
-  bash: '⚡',
-  Bash: '⚡',
-  shell: '⚡',
-  // File read operations
-  read: '👀',
-  Read: '👀',
-  // File write operations
-  write: '✍️',
-  Write: '✍️',
-  // File edit operations
-  edit: '✍️',
-  Edit: '✍️',
-  // Search operations
-  grep: '🤓',
-  Grep: '🤓',
-  find: '🤓',
-  Find: '🤓',
-  search: '🔍',
-  Search: '🔍',
-  // File system
-  ls: '👀',
-  Ls: '👀',
-  glob: '📂',
-  Glob: '📂',
-  // Web operations
-  websearch: '🌐',
-  WebSearch: '🌐',
-  web_extract: '🔎',
-  WebExtract: '🔎',
-  // Task operations
-  todo: '📋',
-  Todo: '📋',
-  tasks: '📋',
-  Tasks: '📋',
-};
-
-function getTelegramToolProgressKey(
-  chatJid: string,
-  requestId: string,
-): string {
-  return `${chatJid}::${requestId}`;
-}
-
-function truncateToolProgressPreview(value: string, max = 80): string {
-  const compact = value.replace(/\s+/g, ' ').trim();
-  if (!compact) return '';
-  return compact.length <= max ? compact : `${compact.slice(0, max - 3)}...`;
-}
-
-function extractToolProgressPreview(args?: string): string | null {
-  if (!args) return null;
-  try {
-    const parsed = JSON.parse(args) as Record<string, unknown>;
-    for (const key of [
-      'command',
-      'path',
-      'url',
-      'query',
-      'pattern',
-      'task',
-      'prompt',
-      'message',
-    ]) {
-      const value = parsed[key];
-      if (typeof value === 'string' && value.trim()) {
-        return truncateToolProgressPreview(value);
-      }
-    }
-    const firstString = Object.values(parsed).find(
-      (value) => typeof value === 'string' && value.trim(),
-    );
-    if (typeof firstString === 'string') {
-      return truncateToolProgressPreview(firstString);
-    }
-  } catch {
-    return truncateToolProgressPreview(args);
-  }
-  return truncateToolProgressPreview(args);
-}
-
-function buildTelegramToolProgressLine(
-  event: {
-    toolName: string;
-    status: 'start' | 'ok' | 'error';
-    args?: string;
-    output?: string;
-    error?: string;
-  },
-  mode: VerboseMode,
-  lastToolName?: string,
-): string | null {
-  const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
-  if (event.status === 'start') {
-    if (mode === 'new' && event.toolName === lastToolName) return null;
-    if (mode === 'new') {
-      // For 'new' mode, only show tool name without args
-      return `${emoji} ${event.toolName}`;
-    }
-    if (mode === 'verbose' && event.args) {
-      let keys = '';
-      try {
-        const parsed = JSON.parse(event.args) as Record<string, unknown>;
-        keys = Object.keys(parsed).join(', ');
-      } catch {
-        keys = '';
-      }
-      return keys
-        ? `${emoji} ${event.toolName}(${keys})\n${truncateToolProgressPreview(event.args, 200)}`
-        : `${emoji} ${event.toolName}\n${truncateToolProgressPreview(event.args, 200)}`;
-    }
-    const preview = extractToolProgressPreview(event.args);
-    return preview
-      ? `${emoji} ${event.toolName}: "${preview}"`
-      : `${emoji} ${event.toolName}...`;
-  }
-  if (event.status === 'error') {
-    const preview = truncateToolProgressPreview(
-      event.error || event.output || 'tool failed',
-      120,
-    );
-    return `⚠️ ${event.toolName} error: ${preview}`;
-  }
-  if (mode === 'verbose' && event.output) {
-    return `↳ ${event.toolName}: ${truncateToolProgressPreview(event.output, 160)}`;
-  }
-  return null;
-}
-
 function queueTelegramToolProgressReaction(
   chatJid: string,
   requestId: string,
@@ -4340,7 +4222,7 @@ function queueTelegramToolProgressReaction(
 
   const emoji =
     event.status === 'start'
-      ? TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥'
+      ? getTelegramToolEmoji(event.toolName)
       : event.status === 'error'
         ? '💔'
         : null;
@@ -4369,6 +4251,7 @@ function queueTelegramToolProgressReaction(
 function queueTelegramToolProgressUpdate(
   chatJid: string,
   requestId: string,
+  deliveryMode: TelegramDeliveryMode,
   mode: VerboseMode | undefined,
   event: {
     toolName: string;
@@ -4384,100 +4267,56 @@ function queueTelegramToolProgressUpdate(
 
   if (effectiveMode === 'off') return;
 
-  // 'verbose' mode appends to preview trail (not separate message)
-  if (effectiveMode === 'verbose' && event.status === 'start') {
-    const streamKey = getTelegramHostStreamKey(chatJid, requestId);
-    const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
-    const preview = extractToolProgressPreview(event.args);
-    const argsPreview = preview
-      ? truncateToolProgressPreview(preview, 80)
-      : '';
-    const trailEntry = argsPreview
-      ? `${emoji} ${event.toolName}: "${argsPreview}"`
-      : `${emoji} ${event.toolName}`;
-    telegramPreviewRegistry.appendToolTrail(streamKey, trailEntry);
-    const previewState = telegramPreviewRegistry.getPreviewState(streamKey);
-    if (previewState) {
-      const footer = telegramPreviewRegistry.getToolTrailFooter(streamKey);
-      if (footer) {
-        bot
-          .editStreamMessage(
-            chatJid,
-            previewState.messageId,
-            `${previewState.lastText}\n\n${footer}`,
-          )
-          .catch(() => {});
-      }
+  if (effectiveMode === 'new') {
+    queueTelegramToolProgressReaction(chatJid, requestId, event);
+    return;
+  }
+
+  if (effectiveMode === 'all' && deliveryMode === 'partial') {
+    queueTelegramToolProgressReaction(chatJid, requestId, event);
+  }
+
+  if (
+    shouldUseTelegramPreviewToolTrail({
+      deliveryMode,
+      verboseMode: effectiveMode,
+    })
+  ) {
+    const trailEntry = buildTelegramPreviewToolTrailEntry(event, effectiveMode);
+    if (trailEntry) {
+      telegramPreviewRegistry.appendToolTrail(
+        getTelegramHostStreamKey(chatJid, requestId),
+        trailEntry,
+      );
     }
     return;
   }
 
-  queueTelegramToolProgressReaction(chatJid, requestId, event);
-
-  if (effectiveMode === 'all' && event.status === 'start') {
-    const streamKey = getTelegramHostStreamKey(chatJid, requestId);
-    const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
-    telegramPreviewRegistry.appendToolTrail(
-      streamKey,
-      `${emoji} ${event.toolName}`,
-    );
-    const preview = telegramPreviewRegistry.getPreviewState(streamKey);
-    if (preview) {
-      const footer = telegramPreviewRegistry.getToolTrailFooter(streamKey);
-      if (footer) {
-        bot
-          .editStreamMessage(
-            chatJid,
-            preview.messageId,
-            `${preview.lastText}\n\n${footer}`,
-          )
-          .catch(() => {});
-      }
-    }
-  }
-
-  if (effectiveMode === 'new' && event.status === 'start') {
-    const streamKey = getTelegramHostStreamKey(chatJid, requestId);
-    // Deduplication: skip if same tool as last
-    const lastTool = lastToolNameByStream.get(streamKey);
-    if (event.toolName === lastTool) {
-      return;
-    }
-    lastToolNameByStream.set(streamKey, event.toolName);
-    const emoji = TELEGRAM_TOOL_EMOJIS[event.toolName] || '🔥';
-    telegramPreviewRegistry.appendToolTrail(
-      streamKey,
-      `${emoji} ${event.toolName}`,
-    );
-    const preview = telegramPreviewRegistry.getPreviewState(streamKey);
-    if (preview) {
-      const footer = telegramPreviewRegistry.getToolTrailFooter(streamKey);
-      if (footer) {
-        bot
-          .editStreamMessage(
-            chatJid,
-            preview.messageId,
-            `${preview.lastText}\n\n${footer}`,
-          )
-          .catch(() => {});
-      }
-    }
+  if (
+    shouldUseStandaloneTelegramToolProgress({
+      deliveryMode,
+      verboseMode: effectiveMode,
+    })
+  ) {
+    enqueueTelegramToolProgressMessage({
+      bot,
+      runs: telegramToolProgressRuns,
+      chatJid,
+      requestId,
+      mode: effectiveMode,
+      event,
+    });
   }
 }
 
-async function finalizeTelegramToolProgress(
+function finalizeTelegramToolProgress(
   chatJid: string,
   requestId: string,
-): Promise<void> {
-  const key = getTelegramToolProgressKey(chatJid, requestId);
-  const progress = telegramToolProgressRuns.get(key);
-  if (!progress) return;
-  telegramToolProgressRuns.delete(key);
-  try {
-    await progress.chain;
-  } catch {
-    // best-effort cleanup
-  }
+): void {
+  finalizeTelegramToolProgressRun(
+    telegramToolProgressRuns,
+    getTelegramToolProgressKey(chatJid, requestId),
+  );
 }
 
 async function deleteTelegramPreviewMessage(

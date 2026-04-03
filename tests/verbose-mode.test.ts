@@ -69,7 +69,7 @@ test('parseVerboseDirective rejects inline prompt payloads', () => {
 
 test('describeVerboseMode returns operator-facing status copy', () => {
   assert.match(describeVerboseMode('off'), /silent mode/i);
-  assert.match(describeVerboseMode('new'), /emoji reactions/i);
-  assert.match(describeVerboseMode('all'), /tool trail/i);
-  assert.match(describeVerboseMode('verbose'), /full tool details/i);
+  assert.match(describeVerboseMode('new'), /minimal tool updates/i);
+  assert.match(describeVerboseMode('all'), /separate progress message/i);
+  assert.match(describeVerboseMode('verbose'), /args, errors, and output/i);
 });

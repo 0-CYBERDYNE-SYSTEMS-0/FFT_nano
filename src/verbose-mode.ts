@@ -26,10 +26,10 @@ export function describeVerboseMode(mode: VerboseMode): string {
   if (mode === 'off')
     return 'Tool progress: OFF — silent mode, just the final response.';
   if (mode === 'new')
-    return 'Tool progress: NEW — emoji reactions show which tool is running.';
+    return 'Tool progress: NEW — minimal tool updates; Telegram uses emoji reactions.';
   if (mode === 'all')
-    return 'Tool progress: ALL — emoji reactions + tool trail in the preview.';
-  return 'Tool progress: VERBOSE — separate message with full tool details.';
+    return 'Tool progress: ALL — concise tool timeline; Telegram adds a separate progress message.';
+  return 'Tool progress: VERBOSE — detailed tool timeline with args, errors, and output.';
 }
 
 export function cycleVerboseMode(mode: VerboseMode | undefined): VerboseMode {

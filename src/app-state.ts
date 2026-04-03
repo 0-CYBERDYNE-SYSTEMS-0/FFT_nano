@@ -266,7 +266,6 @@ export const telegramToolProgressRuns = new Map<
   string,
   TelegramToolProgressState
 >();
-export const lastToolNameByStream = new Map<string, string>();
 
 // ---------------------------------------------------------------------------
 // Constants that were interleaved with state in index.ts
