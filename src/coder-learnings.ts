@@ -16,6 +16,7 @@
 
 import { logger } from './logger.js';
 import { collectRuntimeSecrets } from './pi-runner.js';
+import type { CodingWorkerResult } from './coding-orchestrator.js';
 
 export interface CoderLearningsEntry {
   date: string; // YYYY-MM-DD
@@ -23,29 +24,6 @@ export interface CoderLearningsEntry {
   whatDidnt: string[];
   patterns: string[];
   rawText?: string; // original markdown for reference
-}
-
-export interface CodingWorkerResult {
-  status: 'success' | 'error' | 'aborted';
-  summary: string;
-  finalMessage: string;
-  changedFiles: string[];
-  commandsRun: string[];
-  testsRun: string[];
-  artifacts: string[];
-  childRunIds: string[];
-  startedAt: string;
-  finishedAt: string;
-  diffSummary?: string;
-  worktreePath?: string;
-  error?: string;
-  usage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-    provider?: string;
-    model?: string;
-  };
 }
 
 const LEARNINGS_SECTION_HEADER = '## Coder Learnings';
