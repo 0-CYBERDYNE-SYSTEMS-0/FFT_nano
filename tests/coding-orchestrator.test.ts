@@ -138,3 +138,140 @@ test('subagent routes mark worker runs as subagent executions', async () => {
   assert.equal(result.ok, true);
   assert.equal(isSubagent, true);
 });
+
+test('execute mode cleans up the worktree when the worker fails', async () => {
+  let cleanupCalled = false;
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/coder-fail-1',
+      cleanup: async () => {
+        cleanupCalled = true;
+      },
+      listChangedFiles: () => [],
+      getDiffSummary: () => '',
+    }),
+    runContainerAgent: async () => ({
+      status: 'error',
+      error: 'Worker execution failed',
+      usage: { totalTokens: 0 },
+      toolExecutions: [],
+    }),
+    publishEvent: () => {},
+  });
+
+  const result = await orchestrator.runTask(makeRequest());
+
+  assert.equal(result.ok, false);
+  assert.equal(result.workerResult?.status, 'error');
+  assert.equal(cleanupCalled, true);
+});
+
+test('execute mode cleans up the worktree when the worker throws', async () => {
+  let cleanupCalled = false;
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/coder-throw-1',
+      cleanup: async () => {
+        cleanupCalled = true;
+      },
+      listChangedFiles: () => [],
+      getDiffSummary: () => '',
+    }),
+    runContainerAgent: async () => {
+      throw new Error('Container crashed');
+    },
+    publishEvent: () => {},
+  });
+
+  const result = await orchestrator.runTask(makeRequest());
+
+  assert.equal(result.ok, false);
+  assert.equal(result.workerResult?.status, 'error');
+  assert.equal(cleanupCalled, true);
+});
+
+test('execute mode cleans up the worktree when aborted', async () => {
+  let cleanupCalled = false;
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/coder-abort-1',
+      cleanup: async () => {
+        cleanupCalled = true;
+      },
+      listChangedFiles: () => [],
+      getDiffSummary: () => '',
+    }),
+    runContainerAgent: async () => ({
+      status: 'error',
+      error: 'Execution aborted by user',
+      usage: { totalTokens: 0 },
+      toolExecutions: [],
+    }),
+    publishEvent: () => {},
+  });
+
+  const result = await orchestrator.runTask(makeRequest());
+
+  assert.equal(result.ok, false);
+  assert.equal(result.workerResult?.status, 'aborted');
+  assert.equal(cleanupCalled, true);
+});
+
+test('execute mode retains the worktree after successful completion', async () => {
+  let cleanupCalled = false;
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/coder-success-1',
+      cleanup: async () => {
+        cleanupCalled = true;
+      },
+      listChangedFiles: () => ['src/feature.ts'],
+      getDiffSummary: () => '1 file changed',
+    }),
+    runContainerAgent: async () => ({
+      status: 'success',
+      result: 'Feature implemented successfully.',
+      usage: { totalTokens: 100 },
+      toolExecutions: [],
+    }),
+    publishEvent: () => {},
+  });
+
+  const result = await orchestrator.runTask(makeRequest());
+
+  assert.equal(result.ok, true);
+  assert.equal(result.workerResult?.status, 'success');
+  assert.equal(cleanupCalled, false);
+  assert.equal(result.workerResult?.worktreePath, '/tmp/coder-success-1');
+});
+
+test('execute mode retains worktree and reports path after success', async () => {
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/coder-retain-path-test',
+      cleanup: async () => {},
+      listChangedFiles: () => ['src/app.ts', 'tests/app.test.ts'],
+      getDiffSummary: () => '2 files changed, 50 insertions(+), 10 deletions(-)',
+    }),
+    runContainerAgent: async () => ({
+      status: 'success',
+      result: 'Completed the implementation.',
+      usage: { totalTokens: 50 },
+      toolExecutions: [],
+    }),
+    publishEvent: () => {},
+  });
+
+  const result = await orchestrator.runTask(makeRequest({ requestId: 'retain-test' }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.workerResult?.worktreePath, '/tmp/coder-retain-path-test');
+  assert.ok(result.workerResult?.finalMessage?.includes('/tmp/coder-retain-path-test'));
+  assert.ok(result.workerResult?.finalMessage?.includes('Changed files'));
+  assert.ok(result.workerResult?.finalMessage?.includes('Diff'));
+});
