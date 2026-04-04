@@ -16,6 +16,7 @@ import {
   type CoderLearningsEntry,
   type CodingWorkerResult,
 } from '../src/coder-learnings.js';
+import { GROUPS_DIR } from '../src/config.js';
 
 const makeEntry = (overrides: Partial<CoderLearningsEntry> = {}): CoderLearningsEntry => ({
   date: '2026-04-04',
@@ -186,6 +187,33 @@ What didn't:
   assert.equal(entries[1].date, '2026-12-31');
 });
 
+test('parseCoderLearnings ignores dated headings outside coder learnings section', () => {
+  const content = `# MEMORY
+
+## Operational Notes
+
+### 2026-04-02
+- Not a coder learning
+
+## Coder Learnings
+
+### 2026-04-04
+
+What worked:
+- Real learning
+
+## Future Plans
+
+### 2026-04-05
+- Also not a coder learning
+`;
+
+  const entries = parseCoderLearnings(content);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].date, '2026-04-04');
+  assert.deepEqual(entries[0].whatWorked, ['Real learning']);
+});
+
 test('formatCoderLearningsEntry formats entry with all sections', () => {
   const entry = makeEntry({
     date: '2026-04-04',
@@ -299,7 +327,7 @@ test('roundtrip: parse -> format -> parse preserves content', () => {
     patterns: ['Simple is better', 'Test first'],
   });
 
-  const formatted = formatCoderLearningsEntry(entry);
+  const formatted = `## Coder Learnings\n\n${formatCoderLearningsEntry(entry)}`;
   const reparsed = parseCoderLearnings(formatted);
 
   assert.equal(reparsed.length, 1);
@@ -498,11 +526,97 @@ test('writeCoderLearningsToMemory prepends new entries (newest first)', async ()
   // Note: parseCoderLearnings reverses encounter order, so if entry2 (2026-04-04)
   // comes first in the file and entry1 (2026-04-03) comes second, after reverse
   // entry1 (2026-04-03) will be first (since it was encountered last).
-  const combined = `${formatted2}\n\n${formatted1}`;
+  const combined = `## Coder Learnings\n\n${formatted2}\n\n${formatted1}`;
   const parsed = parseCoderLearnings(combined);
   assert.equal(parsed.length, 2);
   // parseCoderLearnings returns in reverse chronological order (newest first)
   // Since 2026-04-03 was encountered last in the combined string, it ends up first after reverse
   assert.equal(parsed[0].date, '2026-04-03');
   assert.equal(parsed[1].date, '2026-04-04');
+});
+
+test('writeCoderLearningsToMemory preserves sections after coder learnings', async () => {
+  const groupFolder = `coder-learnings-preserve-${Date.now()}-async`;
+  const groupDir = path.join(GROUPS_DIR, groupFolder);
+  const memoryPath = path.join(groupDir, 'MEMORY.md');
+
+  fs.mkdirSync(groupDir, { recursive: true });
+  fs.writeFileSync(
+    memoryPath,
+    `# MEMORY
+
+## Coder Learnings
+
+### 2026-04-03
+
+What worked:
+- Existing learning
+
+## Durable Facts
+
+- Keep this section
+`,
+    'utf-8',
+  );
+
+  try {
+    const result = await writeCoderLearningsToMemory(
+      makeEntry({
+        date: '2026-04-04',
+        whatWorked: ['New learning'],
+      }),
+      groupFolder,
+    );
+
+    assert.equal(result, true);
+    const updated = fs.readFileSync(memoryPath, 'utf-8');
+    assert.ok(updated.includes('### 2026-04-04'));
+    assert.ok(updated.includes('## Durable Facts'));
+    assert.ok(updated.includes('- Keep this section'));
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
+test('writeCoderLearningsToMemorySync preserves sections after coder learnings', () => {
+  const groupFolder = `coder-learnings-preserve-${Date.now()}-sync`;
+  const groupDir = path.join(GROUPS_DIR, groupFolder);
+  const memoryPath = path.join(groupDir, 'MEMORY.md');
+
+  fs.mkdirSync(groupDir, { recursive: true });
+  fs.writeFileSync(
+    memoryPath,
+    `# MEMORY
+
+## Coder Learnings
+
+### 2026-04-03
+
+What worked:
+- Existing learning
+
+## Durable Facts
+
+- Keep this section
+`,
+    'utf-8',
+  );
+
+  try {
+    const result = writeCoderLearningsToMemorySync(
+      makeEntry({
+        date: '2026-04-04',
+        whatWorked: ['New learning'],
+      }),
+      groupFolder,
+    );
+
+    assert.equal(result, true);
+    const updated = fs.readFileSync(memoryPath, 'utf-8');
+    assert.ok(updated.includes('### 2026-04-04'));
+    assert.ok(updated.includes('## Durable Facts'));
+    assert.ok(updated.includes('- Keep this section'));
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
 });
