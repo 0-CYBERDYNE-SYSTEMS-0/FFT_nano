@@ -238,5 +238,39 @@ export const TRIGGER_PATTERN = new RegExp(
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// Retry / fallback chain
+export const FFT_NANO_MAX_RETRIES = envInt(
+  process.env.FFT_NANO_MAX_RETRIES,
+  3,
+  1,
+  5,
+);
+export const FFT_NANO_RETRY_BASE_DELAY_MS = envInt(
+  process.env.FFT_NANO_RETRY_BASE_DELAY_MS,
+  2000,
+  500,
+  60000,
+);
+export const FFT_NANO_RETRY_MAX_DELAY_MS = envInt(
+  process.env.FFT_NANO_RETRY_MAX_DELAY_MS,
+  30000,
+  1000,
+  120000,
+);
+export const FFT_NANO_JITTER_FACTOR = (() => {
+  const raw = process.env.FFT_NANO_JITTER_FACTOR;
+  const parsed = Number.parseFloat(raw || '');
+  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+  return 0.3;
+})();
+export const FFT_NANO_PROVIDER_FALLBACK_ORDER = (() => {
+  const raw = process.env.FFT_NANO_PROVIDER_FALLBACK_ORDER || '';
+  return raw.split(',').map((p) => p.trim()).filter(Boolean);
+})();
+export const FFT_NANO_PROVIDER_FALLBACK_ENABLED = envFlag(
+  process.env.FFT_NANO_PROVIDER_FALLBACK_ENABLED,
+  true,
+);
+
 export { PARITY_CONFIG, PARITY_CONFIG_PATH };
 export { FEATURE_FARM, FFT_PROFILE, PROFILE_DETECTION };

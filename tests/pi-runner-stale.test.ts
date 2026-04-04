@@ -5,8 +5,33 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { hostEventBus } from '../src/app-state.js';
-import { runContainerAgent } from '../src/pi-runner.ts';
+import {
+  getProviderFallbackCandidates,
+  runContainerAgent,
+} from '../src/pi-runner.ts';
 import type { RegisteredGroup } from '../src/types.ts';
+
+test('getProviderFallbackCandidates skips attempted providers and dedupes order', () => {
+  assert.deepEqual(
+    getProviderFallbackCandidates({
+      primaryProvider: 'openai',
+      configuredOrder: ['anthropic', 'openai', 'anthropic', 'zai', ''],
+      attemptedProviders: ['gemini', 'zai'],
+    }),
+    ['anthropic'],
+  );
+});
+
+test('getProviderFallbackCandidates preserves forward-only fallback progression', () => {
+  assert.deepEqual(
+    getProviderFallbackCandidates({
+      primaryProvider: 'anthropic',
+      configuredOrder: ['openai', 'anthropic', 'zai'],
+      attemptedProviders: ['openai'],
+    }),
+    ['zai'],
+  );
+});
 
 function writeFakePiExecutable(dir: string): string {
   const executablePath = path.join(dir, 'fake-pi.js');
