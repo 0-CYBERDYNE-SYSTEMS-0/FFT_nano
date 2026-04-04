@@ -14,6 +14,9 @@ import {
   TIMEZONE,
 } from './config.js';
 import {
+  getEffectiveTimezone,
+} from './time-context.js';
+import {
   assertValidGroupFolder,
   resolveGroupFolderPath,
   resolveGroupIpcPath,
@@ -90,6 +93,7 @@ export interface ContainerInput {
     staleAfterMs?: number | null;
     allowFreshSessionFallback?: boolean;
   };
+  effectiveTimezone?: string;
 }
 
 export interface ContainerOutput {
@@ -720,6 +724,8 @@ export async function runContainerAgent(
     skillCatalog,
   } as const;
 
+  const effectiveTimezone = getEffectiveTimezone(input.effectiveTimezone);
+
   const cachedBase = PARITY_CONFIG.prompt.cacheEnabled
     ? promptState.cacheEntries[
         `${isMain ? 'main' : 'group'}:${input.isScheduledTask ? 'minimal' : 'full'}:${codingHint}`
@@ -728,6 +734,7 @@ export async function runContainerAgent(
   let systemPromptBuild = buildSystemPrompt(baseInput, wp, {
     delegationExtensionAvailable: true,
     skillCatalogMaxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
+    timezone: effectiveTimezone,
     cachedBaseLayer: cachedBase
       ? {
           key: cachedBase.key,
@@ -822,6 +829,7 @@ export async function runContainerAgent(
       {
         delegationExtensionAvailable: true,
         skillCatalogMaxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
+        timezone: effectiveTimezone,
         cachedBaseLayer: cachedBase
           ? {
               key: cachedBase.key,

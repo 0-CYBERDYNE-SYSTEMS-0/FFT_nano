@@ -16,9 +16,10 @@ import {
   runScheduledTaskV2,
   shouldTriggerWakeNow,
 } from '../src/cron/service.ts';
-import { PARITY_CONFIG } from '../src/config.ts';
+import { PARITY_CONFIG, TIMEZONE } from '../src/config.ts';
 import { closeDatabase, createTask, getTaskById, initDatabaseAtPath } from '../src/db.ts';
 import type { RegisteredGroup, ScheduledTask } from '../src/types.ts';
+import type { ContainerInput } from '../src/pi-runner.js';
 
 function makeTempDbPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-cron-v2-'));
@@ -307,6 +308,121 @@ test('runScheduledTaskV2 preserves typed subagent jobs from older task rows', as
   assert.equal(subagentCalls, 1);
   assert.equal(containerCalls, 0);
   assert.equal(getTaskById(task.id)?.status, 'completed');
+
+  closeDatabase();
+});
+
+test('runScheduledTaskV2 passes explicit schedule_json.tz as effectiveTimezone (VAL-TIME-007)', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = makeTask({
+    id: 'explicit-tz-task',
+    schedule_type: 'cron',
+    schedule_value: '0 8 * * *',
+    schedule_json: JSON.stringify({ kind: 'cron', expr: '0 8 * * *', tz: 'Europe/Paris' }),
+    context_mode: 'isolated',
+  });
+  createTask(task);
+
+  let capturedInput: ContainerInput | undefined;
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async () => {},
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runContainerTask: async (_group, input) => {
+      capturedInput = input;
+      return { status: 'success', result: 'done' };
+    },
+  });
+
+  assert.ok(capturedInput);
+  assert.equal(capturedInput!.effectiveTimezone, 'Europe/Paris');
+
+  closeDatabase();
+});
+
+test('runScheduledTaskV2 falls back to host TIMEZONE when schedule_json has no tz (VAL-TIME-008)', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = makeTask({
+    id: 'no-tz-task',
+    schedule_type: 'cron',
+    schedule_value: '0 8 * * *',
+    schedule_json: JSON.stringify({ kind: 'cron', expr: '0 8 * * *' }),
+    context_mode: 'isolated',
+  });
+  createTask(task);
+
+  let capturedInput: ContainerInput | undefined;
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async () => {},
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runContainerTask: async (_group, input) => {
+      capturedInput = input;
+      return { status: 'success', result: 'done' };
+    },
+  });
+
+  assert.ok(capturedInput);
+  assert.equal(capturedInput!.effectiveTimezone, TIMEZONE);
+
+  closeDatabase();
+});
+
+test('runScheduledTaskV2 with invalid tz falls back to validated host TIMEZONE (VAL-TIME-009)', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = makeTask({
+    id: 'invalid-tz-task',
+    schedule_type: 'cron',
+    schedule_value: '0 8 * * *',
+    schedule_json: JSON.stringify({ kind: 'cron', expr: '0 8 * * *', tz: 'Invalid/Timezone' }),
+    context_mode: 'isolated',
+  });
+  createTask(task);
+
+  let capturedInput: ContainerInput | undefined;
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async () => {},
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runContainerTask: async (_group, input) => {
+      capturedInput = input;
+      return { status: 'success', result: 'done' };
+    },
+  });
+
+  assert.ok(capturedInput);
+  // Invalid tz should fall back to host TIMEZONE (validated by getEffectiveTimezone)
+  assert.equal(capturedInput!.effectiveTimezone, TIMEZONE);
 
   closeDatabase();
 });
