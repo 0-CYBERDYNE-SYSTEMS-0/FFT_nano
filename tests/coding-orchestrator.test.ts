@@ -74,6 +74,7 @@ test('plan mode uses read-only worker execution without a worktree', async () =>
   assert.equal(result.ok, true);
   assert.equal(toolMode, 'read_only');
   assert.equal(result.workerResult?.status, 'success');
+  assert.equal(result.workerResult?.worktreePath, undefined);
 });
 
 test('execute mode returns structured worker result with changed files', async () => {
