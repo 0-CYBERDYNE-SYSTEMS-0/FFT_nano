@@ -866,8 +866,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       usage = run.usage;
 
       // Capture worker result for reflection (async MEMORY write after finalizeRun)
-      // Only for coding routes with successful completion
-      if (ok && params.route === 'coding_worker') {
+      // Only for coding routes with execute mode (not plan mode for coder-plan)
+      if (ok && params.route === 'coding_worker' && params.codingHint !== 'force_delegate_plan') {
         workerResultForReflection = (run as CodingRunResult).workerResult;
         taskTextForReflection = params.delegationInstruction || params.latestUserText;
       }
