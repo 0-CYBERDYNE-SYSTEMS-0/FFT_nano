@@ -81,34 +81,34 @@ test('appendCompactionSummaryToMemory writes to daily staging note', () => {
 });
 
 test('appendCompactionSummaryToMemory uses local timezone date key to match prompt reader', () => {
-  const priorTz = process.env.TZ;
-  process.env.TZ = 'America/Chicago';
   const folder = `test-memory-maint-local-${Date.now()}`;
   const groupRoot = path.join(process.cwd(), 'groups', folder);
   try {
+    const timestampIso = '2026-04-03T02:15:30.000Z';
+    const expectedDateKey = formatLocalDate(new Date(timestampIso), TIMEZONE);
     appendCompactionSummaryToMemory(
       folder,
       'Late evening summary',
-      '2026-04-03T02:15:30.000Z',
+      timestampIso,
     );
-    const memoryPath = path.join(groupRoot, 'memory', '2026-04-02.md');
+    const memoryPath = path.join(groupRoot, 'memory', `${expectedDateKey}.md`);
     assert.equal(fs.existsSync(memoryPath), true);
     const content = fs.readFileSync(memoryPath, 'utf8');
     assert.equal(
-      content.includes('## Session Compaction 2026-04-03T02:15:30.000Z'),
+      content.includes(`## Session Compaction ${timestampIso}`),
       true,
     );
     assert.equal(content.includes('Late evening summary'), true);
   } finally {
-    if (priorTz === undefined) delete process.env.TZ;
-    else process.env.TZ = priorTz;
     fs.rmSync(groupRoot, { recursive: true, force: true });
   }
 });
 
 test('resolveCompactionMemoryRelativePath matches the actual save location', () => {
-  const relPath = resolveCompactionMemoryRelativePath('2026-04-03T02:15:30.000Z');
-  assert.equal(relPath, 'memory/2026-04-02.md');
+  const timestampIso = '2026-04-03T02:15:30.000Z';
+  const relPath = resolveCompactionMemoryRelativePath(timestampIso);
+  const expectedRelPath = `memory/${formatLocalDate(new Date(timestampIso), TIMEZONE)}.md`;
+  assert.equal(relPath, expectedRelPath);
 });
 
 // ---------------------------------------------------------------------------
