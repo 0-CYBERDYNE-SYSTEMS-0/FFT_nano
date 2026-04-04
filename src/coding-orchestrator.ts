@@ -452,52 +452,97 @@ export async function createDefaultEphemeralWorktree(params: {
     `${sanitizePathToken(params.requestId)}-${Date.now()}`,
   );
 
-  await runCommand(
-    'git',
-    ['-C', gitTopLevel, 'worktree', 'add', '--detach', worktreePath, 'HEAD'],
-    {
+  // Check if the repo is unborn (has no commits)
+  let isUnbornRepo = false;
+  try {
+    await runCommand('git', ['-C', gitTopLevel, 'rev-parse', 'HEAD'], {
       signal: params.signal,
-    },
-  );
+    });
+  } catch {
+    isUnbornRepo = true;
+  }
 
-  const excludes = [
-    '.git',
-    'node_modules',
-    '.next',
-    'dist',
-    'coverage',
-    'logs',
-    'data',
-    'groups',
-    'store',
-    '.desloppify',
-    '.venv',
-    '.venv-*',
-    '.venv-desloppify',
-  ];
-  const rsyncArgs = [
-    '-a',
-    '--delete',
-    ...excludes.flatMap((value) => ['--exclude', value]),
-    `${workspaceRoot}/`,
-    `${worktreePath}/`,
-  ];
-  await runCommand('rsync', rsyncArgs, { signal: params.signal });
+  if (isUnbornRepo) {
+    // For unborn repos, create the directory and initialize a fresh git repo
+    // This is needed because git worktree add requires at least one commit
+    fs.mkdirSync(worktreePath, { recursive: true });
+    const excludes = [
+      '.git',
+      'node_modules',
+      '.next',
+      'dist',
+      'coverage',
+      'logs',
+      'data',
+      'groups',
+      'store',
+      '.desloppify',
+      '.venv',
+      '.venv-*',
+      '.venv-desloppify',
+    ];
+    const rsyncArgs = [
+      '-a',
+      '--delete',
+      ...excludes.flatMap((value) => ['--exclude', value]),
+      `${workspaceRoot}/`,
+      `${worktreePath}/`,
+    ];
+    await runCommand('rsync', rsyncArgs, { signal: params.signal });
+    // Initialize the worktree as a fresh git repo
+    await runCommand('git', ['init'], { cwd: worktreePath, signal: params.signal });
+  } else {
+    await runCommand(
+      'git',
+      ['-C', gitTopLevel, 'worktree', 'add', '--detach', worktreePath, 'HEAD'],
+      {
+        signal: params.signal,
+      },
+    );
+
+    const excludes = [
+      '.git',
+      'node_modules',
+      '.next',
+      'dist',
+      'coverage',
+      'logs',
+      'data',
+      'groups',
+      'store',
+      '.desloppify',
+      '.venv',
+      '.venv-*',
+      '.venv-desloppify',
+    ];
+    const rsyncArgs = [
+      '-a',
+      '--delete',
+      ...excludes.flatMap((value) => ['--exclude', value]),
+      `${workspaceRoot}/`,
+      `${worktreePath}/`,
+    ];
+    await runCommand('rsync', rsyncArgs, { signal: params.signal });
+  }
 
   return {
     worktreePath,
     cleanup: async () => {
-      try {
-        await runCommand('git', [
-          '-C',
-          gitTopLevel,
-          'worktree',
-          'remove',
-          '--force',
-          worktreePath,
-        ]);
-      } catch {
+      if (isUnbornRepo) {
         fs.rmSync(worktreePath, { recursive: true, force: true });
+      } else {
+        try {
+          await runCommand('git', [
+            '-C',
+            gitTopLevel,
+            'worktree',
+            'remove',
+            '--force',
+            worktreePath,
+          ]);
+        } catch {
+          fs.rmSync(worktreePath, { recursive: true, force: true });
+        }
       }
     },
     listChangedFiles: () => {
