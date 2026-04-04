@@ -54,10 +54,11 @@ export function getLegacyDailyMemoryCandidates(
   tz: string,
 ): string[] {
   const localKey = getLocalDateKey(now, tz);
+  const localYesterday = shiftDateByDays(localKey, -1);
   const utcKey = formatLocalDate(now, 'UTC');
   const utcYesterday = shiftDateByDays(utcKey, -1);
 
-  return [...new Set([localKey, utcKey, utcYesterday])].map(
+  return [...new Set([localKey, localYesterday, utcKey, utcYesterday])].map(
     (key) => `memory/${key}.md`,
   );
 }
