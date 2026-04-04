@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import {
   createCodingOrchestrator,
+  pruneRetainedWorktrees,
   type CodingWorkerRequest,
 } from '../src/coding-orchestrator.js';
 
@@ -274,4 +278,176 @@ test('execute mode retains worktree and reports path after success', async () =>
   assert.ok(result.workerResult?.finalMessage?.includes('/tmp/coder-retain-path-test'));
   assert.ok(result.workerResult?.finalMessage?.includes('Changed files'));
   assert.ok(result.workerResult?.finalMessage?.includes('Diff'));
+});
+
+test('pruneRetainedWorktrees removes worktrees older than retentionTtlMs', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-prune-test-'));
+  const worktreeBase = path.join(tempDir, 'worktrees');
+  fs.mkdirSync(worktreeBase, { recursive: true });
+
+  // Create mock worktree directories with embedded timestamps
+  // Use 30 minutes ago for "recent" to avoid boundary timing issues
+  const now = Date.now();
+  const thirtyMinutesAgo = now - 30 * 60 * 1000;
+  const twoHoursAgo = now - 2 * 60 * 60 * 1000;
+  const threeHoursAgo = now - 3 * 60 * 60 * 1000;
+
+  // 2 hours ago > 1 hour TTL → pruned
+  // 3 hours ago > 1 hour TTL → pruned
+  // 30 minutes ago < 1 hour TTL → NOT pruned
+  const staleWorktree1 = path.join(worktreeBase, `coder-old-1-${twoHoursAgo}`);
+  const staleWorktree2 = path.join(worktreeBase, `coder-old-2-${threeHoursAgo}`);
+  const recentWorktree = path.join(worktreeBase, `coder-recent-${thirtyMinutesAgo}`);
+
+  fs.mkdirSync(staleWorktree1);
+  fs.mkdirSync(staleWorktree2);
+  fs.mkdirSync(recentWorktree);
+
+  // Prune with 1-hour TTL
+  const result = await pruneRetainedWorktrees({
+    worktreeBaseDir: worktreeBase,
+    protectedPaths: new Set<string>(),
+    retentionTtlMs: 60 * 60 * 1000, // 1 hour
+    maxRetainedWorktrees: 10,
+  });
+
+  assert.equal(result.pruned.length, 2);
+  assert.ok(result.pruned.includes(staleWorktree1));
+  assert.ok(result.pruned.includes(staleWorktree2));
+  assert.ok(!result.pruned.includes(recentWorktree));
+  assert.ok(fs.existsSync(recentWorktree));
+
+  // Cleanup
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('pruneRetainedWorktrees respects maxRetainedWorktrees limit', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-prune-max-'));
+  const worktreeBase = path.join(tempDir, 'worktrees');
+  fs.mkdirSync(worktreeBase, { recursive: true });
+
+  const now = Date.now();
+  // Create 5 worktrees with recent timestamps
+  const worktrees: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const wtPath = path.join(worktreeBase, `coder-${i}-${now - i * 60 * 1000}`);
+    fs.mkdirSync(wtPath);
+    worktrees.push(wtPath);
+  }
+
+  // Prune with maxRetainedWorktrees=3
+  const result = await pruneRetainedWorktrees({
+    worktreeBaseDir: worktreeBase,
+    protectedPaths: new Set<string>(),
+    retentionTtlMs: 48 * 60 * 60 * 1000, // 48 hours (none should be this old)
+    maxRetainedWorktrees: 3,
+  });
+
+  // Should prune the 2 oldest (index 4 and 3, since sorted by timestamp descending)
+  assert.equal(result.pruned.length, 2);
+  assert.ok(result.pruned.includes(worktrees[4])); // oldest
+  assert.ok(result.pruned.includes(worktrees[3]));
+
+  // Cleanup
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('pruneRetainedWorktrees keeps active worktrees out of retention pruning', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-prune-active-'));
+  const worktreeBase = path.join(tempDir, 'worktrees');
+  fs.mkdirSync(worktreeBase, { recursive: true });
+
+  const now = Date.now();
+  // Use 2 hours ago for stale so it's STRICTLY GREATER than 1 hour TTL
+  const twoHoursAgo = now - 2 * 60 * 60 * 1000;
+
+  // Create a stale worktree that should be pruned (2 hours old > 1 hour TTL)
+  const staleWorktree = path.join(worktreeBase, `coder-stale-${twoHoursAgo}`);
+  fs.mkdirSync(staleWorktree);
+
+  // Create an "active" worktree that should be protected (4 hours old but protected)
+  const activeWorktree = path.join(worktreeBase, `coder-active-${now - 4 * 60 * 60 * 1000}`);
+  fs.mkdirSync(activeWorktree);
+
+  // Prune with 1-hour TTL but protect activeWorktree
+  const result = await pruneRetainedWorktrees({
+    worktreeBaseDir: worktreeBase,
+    protectedPaths: new Set([activeWorktree]),
+    retentionTtlMs: 60 * 60 * 1000, // 1 hour (stale is 2h old, so > TTL)
+    maxRetainedWorktrees: 10,
+  });
+
+  // The stale worktree should be pruned
+  assert.equal(result.pruned.length, 1);
+  assert.ok(result.pruned.includes(staleWorktree));
+  // But active worktree should NOT be pruned even though it's older than TTL
+  assert.ok(fs.existsSync(activeWorktree));
+
+  // Cleanup
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('pruneRetainedWorktrees returns empty result for non-existent directory', async () => {
+  const result = await pruneRetainedWorktrees({
+    worktreeBaseDir: '/tmp/fft-non-existent-dir-12345',
+    protectedPaths: new Set<string>(),
+    retentionTtlMs: 60 * 60 * 1000,
+    maxRetainedWorktrees: 10,
+  });
+
+  assert.equal(result.pruned.length, 0);
+  assert.equal(result.errors.length, 0);
+});
+
+test('pruneRetainedWorktrees skips non-directory entries', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-prune-files-'));
+  const worktreeBase = path.join(tempDir, 'worktrees');
+  fs.mkdirSync(worktreeBase, { recursive: true });
+
+  // Create a file (not a directory)
+  fs.writeFileSync(path.join(worktreeBase, 'not-a-worktree.txt'), 'test');
+
+  const result = await pruneRetainedWorktrees({
+    worktreeBaseDir: worktreeBase,
+    protectedPaths: new Set<string>(),
+    retentionTtlMs: 0, // would delete everything if files were included
+    maxRetainedWorktrees: 0,
+  });
+
+  // File should be ignored, not treated as a worktree
+  assert.equal(result.pruned.length, 0);
+  assert.ok(fs.existsSync(path.join(worktreeBase, 'not-a-worktree.txt')));
+
+  // Cleanup
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('pruneRetainedWorktrees skips entries with invalid timestamp format', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-prune-invalid-'));
+  const worktreeBase = path.join(tempDir, 'worktrees');
+  fs.mkdirSync(worktreeBase, { recursive: true });
+
+  // Create directories with invalid timestamp formats
+  fs.mkdirSync(path.join(worktreeBase, 'valid-coder-1234567890123')); // valid
+  fs.mkdirSync(path.join(worktreeBase, 'invalid-no-timestamp')); // no timestamp
+  fs.mkdirSync(path.join(worktreeBase, 'invalid-not-a-number-abc')); // non-numeric
+  fs.mkdirSync(path.join(worktreeBase, 'invalid-negative--12345')); // negative
+
+  const result = await pruneRetainedWorktrees({
+    worktreeBaseDir: worktreeBase,
+    protectedPaths: new Set<string>(),
+    retentionTtlMs: 0, // would delete all valid timestamp dirs
+    maxRetainedWorktrees: 0,
+  });
+
+  // Only the valid timestamp directory should be considered for pruning
+  // Since maxRetainedWorktrees=0, the valid one should be pruned
+  // But invalid ones should be skipped entirely
+  assert.equal(result.pruned.length, 1);
+  assert.ok(fs.existsSync(path.join(worktreeBase, 'invalid-no-timestamp')));
+  assert.ok(fs.existsSync(path.join(worktreeBase, 'invalid-not-a-number-abc')));
+  assert.ok(fs.existsSync(path.join(worktreeBase, 'invalid-negative--12345')));
+
+  // Cleanup
+  fs.rmSync(tempDir, { recursive: true, force: true });
 });

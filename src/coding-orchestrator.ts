@@ -322,6 +322,104 @@ function hashString(input: string): string {
   return crypto.createHash('sha1').update(input).digest('hex');
 }
 
+/**
+ * Extracts timestamp (epoch ms) from a worktree directory name.
+ * Format: <sanitizedRequestId>-<timestamp>
+ * Returns null if extraction fails.
+ * Minimum valid timestamp is 10000000000 (10+ digits, Sept 2001) to filter out obviously fake timestamps.
+ */
+function extractWorktreeTimestamp(dirPath: string): number | null {
+  const dirName = path.basename(dirPath);
+  const lastHyphenIdx = dirName.lastIndexOf('-');
+  if (lastHyphenIdx === -1) return null;
+  const timestampStr = dirName.slice(lastHyphenIdx + 1);
+  // Reject if timestampStr starts with '-' (e.g., "invalid-negative--12345")
+  // or contains another hyphen (e.g., "coder--12345" for negative)
+  if (timestampStr.startsWith('-') || timestampStr.includes('-')) return null;
+  const timestamp = Number(timestampStr);
+  // Reject NaN, zero, negative, and obviously fake timestamps (< 10 digits / Sept 2001)
+  // Real epoch timestamps are 10+ digits (current timestamps are 13 digits)
+  if (isNaN(timestamp) || timestamp <= 0 || timestamp < 1000000000) return null;
+  return timestamp;
+}
+
+/**
+ * Prunes retained worktrees older than retentionTtlMs, while respecting
+ * maxRetainedWorktrees limit and protected (active) worktrees.
+ *
+ * @param worktreeBaseDir - The base directory containing worktree subdirs
+ * @param protectedPaths - Set of worktree paths to never prune
+ * @param retentionTtlMs - Worktrees older than this are eligible for pruning (default: 48h)
+ * @param maxRetainedWorktrees - Maximum worktrees to retain per repo (default: 10)
+ */
+export async function pruneRetainedWorktrees(params: {
+  worktreeBaseDir: string;
+  protectedPaths: Set<string>;
+  retentionTtlMs?: number;
+  maxRetainedWorktrees?: number;
+}): Promise<{ pruned: string[]; errors: string[] }> {
+  const {
+    worktreeBaseDir,
+    protectedPaths,
+    retentionTtlMs = 48 * 60 * 60 * 1000, // 48 hours default
+    maxRetainedWorktrees = 10,
+  } = params;
+
+  const pruned: string[] = [];
+  const errors: string[] = [];
+
+  if (!fs.existsSync(worktreeBaseDir)) {
+    return { pruned, errors };
+  }
+
+  const now = Date.now();
+  const entries = fs.readdirSync(worktreeBaseDir, { withFileTypes: true });
+  const worktreeDirs: { path: string; timestamp: number }[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const fullPath = path.join(worktreeBaseDir, entry.name);
+    if (protectedPaths.has(fullPath)) continue;
+    const timestamp = extractWorktreeTimestamp(entry.name);
+    if (timestamp === null) continue;
+    worktreeDirs.push({ path: fullPath, timestamp });
+  }
+
+  // Sort by timestamp descending (newest first)
+  worktreeDirs.sort((a, b) => b.timestamp - a.timestamp);
+
+  // Mark worktrees for deletion
+  const toDelete: string[] = [];
+  for (let i = 0; i < worktreeDirs.length; i++) {
+    const wt = worktreeDirs[i];
+    const age = now - wt.timestamp;
+    // Delete if too old OR if we exceed maxRetainedWorktrees (delete oldest ones first)
+    if (age > retentionTtlMs || i >= maxRetainedWorktrees) {
+      toDelete.push(wt.path);
+    }
+  }
+
+  // Delete marked worktrees
+  for (const wtPath of toDelete) {
+    try {
+      // First try git worktree remove
+      try {
+        // We need gitTopLevel to use git worktree remove --force
+        // Since we don't have it here, fall back to direct rm
+        fs.rmSync(wtPath, { recursive: true, force: true });
+      } catch {
+        fs.rmSync(wtPath, { recursive: true, force: true });
+      }
+      pruned.push(wtPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`Failed to prune ${wtPath}: ${msg}`);
+    }
+  }
+
+  return { pruned, errors };
+}
+
 export async function createDefaultEphemeralWorktree(params: {
   requestId: string;
   sourceWorkspaceDir: string;
@@ -348,6 +446,7 @@ export async function createDefaultEphemeralWorktree(params: {
     repoHash,
   );
   fs.mkdirSync(worktreeBase, { recursive: true });
+
   const worktreePath = path.join(
     worktreeBase,
     `${sanitizePathToken(params.requestId)}-${Date.now()}`,
@@ -422,6 +521,24 @@ export async function createDefaultEphemeralWorktree(params: {
   };
 }
 
+/**
+ * Computes the worktree base directory path for a given workspace.
+ * Useful for calling pruneRetainedWorktrees before creating a worktree.
+ */
+export function getWorktreeBaseDir(sourceWorkspaceDir: string): Promise<string> {
+  return runCommand(
+    'git',
+    ['-C', path.resolve(sourceWorkspaceDir), 'rev-parse', '--show-toplevel'],
+  ).then(({ stdout }) => {
+    const gitTopLevel = stdout.trim();
+    if (!gitTopLevel) {
+      throw new Error(`Could not resolve git root for ${sourceWorkspaceDir}`);
+    }
+    const repoHash = hashString(gitTopLevel);
+    return path.join(os.tmpdir(), 'fft-nano-coder-worktrees', repoHash);
+  });
+}
+
 export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
   runTask: (request: CodingWorkerRequest) => Promise<CodingTaskRunResult>;
 } {
@@ -471,6 +588,23 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
     try {
       let workspaceDirOverride: string | undefined;
       if (request.mode === 'execute') {
+        // Prune stale worktrees before creating a new one, protecting active runs
+        const activeWorktreePaths = new Set<string>();
+        for (const run of deps.activeRuns.values()) {
+          if (run.worktreePath) {
+            activeWorktreePaths.add(run.worktreePath);
+          }
+        }
+        const worktreeBaseDir = await getWorktreeBaseDir(
+          request.workspaceRoot || process.cwd(),
+        );
+        await pruneRetainedWorktrees({
+          worktreeBaseDir,
+          protectedPaths: activeWorktreePaths,
+          retentionTtlMs: 48 * 60 * 60 * 1000, // 48 hours
+          maxRetainedWorktrees: 10,
+        });
+
         worktree = await createEphemeralWorktree({
           requestId: request.requestId,
           sourceWorkspaceDir: request.workspaceRoot || process.cwd(),
