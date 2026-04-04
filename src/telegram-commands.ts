@@ -858,7 +858,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return;
       case 'panel:health':
         deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
-        await deps.sendMessage(q.chatJid, deps.formatStatusText(q.chatJid));
+        const healthResponse = deps.formatStatusText(q.chatJid);
+        deps.emitTuiChatEvent({
+          runId: `panel-health-${Date.now()}`,
+          sessionKey: deps.getSessionKeyForChat(q.chatJid),
+          state: 'final',
+          message: { role: 'assistant', content: healthResponse },
+        });
+        await deps.sendMessage(q.chatJid, healthResponse);
         return;
       default:
         return;
@@ -953,24 +960,42 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/id') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       const chatId = deps.parseTelegramChatId(m.chatJid);
-      await deps.sendMessage(
-        m.chatJid,
-        chatId
-          ? `Chat id: ${chatId}`
-          : 'Could not parse chat id for this chat.',
-      );
+      const responseText = chatId
+        ? `Chat id: ${chatId}`
+        : 'Could not parse chat id for this chat.';
+      deps.emitTuiChatEvent({
+        runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+        sessionKey: deps.getSessionKeyForChat(m.chatJid),
+        state: 'final',
+        message: { role: 'assistant', content: responseText },
+      });
+      await deps.sendMessage(m.chatJid, responseText);
       return true;
     }
 
     if (cmd === '/help') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      await deps.sendMessage(m.chatJid, deps.formatHelpText(isMainGroup));
+      const responseText = deps.formatHelpText(isMainGroup);
+      deps.emitTuiChatEvent({
+        runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+        sessionKey: deps.getSessionKeyForChat(m.chatJid),
+        state: 'final',
+        message: { role: 'assistant', content: responseText },
+      });
+      await deps.sendMessage(m.chatJid, responseText);
       return true;
     }
 
     if (cmd === '/status') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      await deps.sendMessage(m.chatJid, deps.formatStatusText(m.chatJid));
+      const responseText = deps.formatStatusText(m.chatJid);
+      deps.emitTuiChatEvent({
+        runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+        sessionKey: deps.getSessionKeyForChat(m.chatJid),
+        state: 'final',
+        message: { role: 'assistant', content: responseText },
+      });
+      await deps.sendMessage(m.chatJid, responseText);
       return true;
     }
 
@@ -978,6 +1003,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       const searchText = rest.join(' ');
       const listed = deps.runPiListModels(searchText);
+      deps.emitTuiChatEvent({
+        runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+        sessionKey: deps.getSessionKeyForChat(m.chatJid),
+        state: 'final',
+        message: { role: 'assistant', content: listed.text },
+      });
       if (!searchText && deps.state.telegramBot?.sendMessageWithKeyboard) {
         await deps.state.telegramBot.sendMessageWithKeyboard(
           m.chatJid,
