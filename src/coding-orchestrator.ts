@@ -11,6 +11,7 @@ import type {
   ContainerRuntimeEvent,
 } from './pi-runner.js';
 import { createHostEventId, type HostEvent } from './runtime/host-events.js';
+import { getCoderLearningsForContext } from './coder-learnings.js';
 
 export type CodingWorkerRoute =
   | 'coder_execute'
@@ -196,7 +197,7 @@ function formatFinalMessage(params: {
   return lines.filter(Boolean).join('\n\n');
 }
 
-function buildWorkerPrompt(request: CodingWorkerRequest): string {
+function buildWorkerPrompt(request: CodingWorkerRequest, learningsContext: string = ''): string {
   const lines = [
     '[REAL CODING WORKER RUN]',
     'You are the dedicated coding worker for FFT_nano.',
@@ -211,9 +212,21 @@ function buildWorkerPrompt(request: CodingWorkerRequest): string {
     '## Primary Task',
     request.taskText,
     '',
-    '## Session Context',
-    request.sessionContext,
   ];
+
+  // Prepend coder learnings context if available
+  if (learningsContext) {
+    lines.push(
+      '## Recent Coder Context',
+      '(lessons from previous runs — apply these patterns)',
+      '',
+      learningsContext,
+      '',
+    );
+  }
+
+  lines.push('## Session Context');
+  lines.push(request.sessionContext);
 
   if (request.mode === 'plan') {
     lines.push(
@@ -660,10 +673,16 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       }
       activeRun.state = 'running';
 
+      // Fetch coder learnings from MEMORY.md to prepend to context
+      const learningsContext = await getCoderLearningsForContext(
+        request.originGroupFolder,
+        5, // maxEntries
+      );
+
       const output = await deps.runContainerAgent(
         request.group,
         {
-          prompt: buildWorkerPrompt(request),
+          prompt: buildWorkerPrompt(request, learningsContext),
           groupFolder: request.group.folder,
           chatJid: request.originChatJid,
           isMain: request.group.folder === request.originGroupFolder,

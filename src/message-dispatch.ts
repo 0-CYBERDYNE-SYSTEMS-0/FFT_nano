@@ -1,6 +1,7 @@
 import { PARITY_CONFIG } from './config.js';
 import type { TelegramMessagePreviewState } from './telegram-streaming.js';
 import type { NewMessage } from './types.js';
+import type { CodingWorkerResult } from './coding-orchestrator.js';
 
 export interface FinalizeCompletedRunParams {
   chatJid: string;
@@ -807,6 +808,14 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       'Starting agent run',
     );
 
+    // Capture reflection data immediately after run completes - this creates a stable closure
+    // that won't be affected by subsequent calls to executeDispatchRun
+    let capturedReflectionData: {
+      workerResult: CodingRunResult['workerResult'];
+      taskText: string;
+      groupFolder: string;
+    } | undefined;
+
     try {
       const run: RunCompletion =
         params.route === 'coding_worker' && deps.runCodingTask
@@ -860,6 +869,19 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       streamed = run.streamed;
       ok = run.ok;
       usage = run.usage;
+
+      // Capture worker result for reflection (async MEMORY write after finalizeRun)
+      // Only for coding routes with execute mode (not plan mode for coder-plan)
+      if (ok && params.route === 'coding_worker' && params.codingHint !== 'force_delegate_plan') {
+        const workerResult = (run as CodingRunResult).workerResult;
+        if (workerResult) {
+          capturedReflectionData = {
+            workerResult,
+            taskText: params.delegationInstruction || params.latestUserText || '',
+            groupFolder: params.group.folder,
+          };
+        }
+      }
     } finally {
       await deps.setTyping(params.chatJid, false);
       if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
@@ -896,6 +918,23 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         timestampToPersist: params.timestampToPersist,
         deliverToChat: params.deliverToChat,
       });
+
+      // Trigger async reflection and MEMORY.md write (fire and forget)
+      // This happens AFTER the final message is sent to user, so it doesn't block
+      if (capturedReflectionData) {
+        // Use a copy of the data so the closure captures stable values
+        const { workerResult, taskText, groupFolder } = capturedReflectionData;
+        import('./coder-learnings.js').then(({ reflectOnCoderRun, writeCoderLearningsToMemory }) => {
+          reflectOnCoderRun(workerResult as CodingWorkerResult, taskText)
+            .then((entry) => writeCoderLearningsToMemory(entry, groupFolder))
+            .catch((err) => {
+              deps.logger?.info?.({ err }, 'Failed to write coder learnings to MEMORY.md');
+            });
+        }).catch((err) => {
+          deps.logger?.info?.({ err }, 'Failed to import coder-learnings for reflection');
+        });
+      }
+
       return;
     }
 
