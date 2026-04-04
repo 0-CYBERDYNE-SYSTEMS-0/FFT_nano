@@ -5,7 +5,9 @@ import {
   parseCoderLearnings,
   formatCoderLearningsEntry,
   pruneCoderLearnings,
+  reflectOnCoderRun,
   type CoderLearningsEntry,
+  type CodingWorkerResult,
 } from '../src/coder-learnings.js';
 
 const makeEntry = (overrides: Partial<CoderLearningsEntry> = {}): CoderLearningsEntry => ({
@@ -298,4 +300,69 @@ test('roundtrip: parse -> format -> parse preserves content', () => {
   assert.deepEqual(reparsed[0].whatWorked, entry.whatWorked);
   assert.deepEqual(reparsed[0].whatDidnt, entry.whatDidnt);
   assert.deepEqual(reparsed[0].patterns, entry.patterns);
+});
+
+test('reflectOnCoderRun returns empty entry for aborted run', async () => {
+  const abortedResult: CodingWorkerResult = {
+    status: 'aborted',
+    summary: 'Task aborted',
+    finalMessage: 'The task was aborted by user',
+    changedFiles: [],
+    commandsRun: [],
+    testsRun: [],
+    artifacts: [],
+    childRunIds: [],
+    startedAt: '2026-04-04T10:00:00Z',
+    finishedAt: '2026-04-04T10:01:00Z',
+  };
+
+  const entry = await reflectOnCoderRun(abortedResult, 'Do something');
+
+  assert.equal(entry.whatWorked.length, 0);
+  assert.equal(entry.whatDidnt.length, 0);
+  assert.equal(entry.patterns.length, 0);
+});
+
+test('reflectOnCoderRun returns fallback for success when no API key', async () => {
+  const successResult: CodingWorkerResult = {
+    status: 'success',
+    summary: 'Added new feature',
+    finalMessage: 'Successfully added the new feature',
+    changedFiles: ['src/feature.ts'],
+    commandsRun: ['npm test'],
+    testsRun: ['npm test'],
+    artifacts: [],
+    childRunIds: [],
+    startedAt: '2026-04-04T10:00:00Z',
+    finishedAt: '2026-04-04T10:01:00Z',
+    diffSummary: '1 file changed, 10 insertions',
+  };
+
+  const entry = await reflectOnCoderRun(successResult, 'Add a new feature');
+
+  // Without API key, should return fallback with basic info
+  assert.equal(entry.date, new Date().toISOString().slice(0, 10));
+  assert.ok(entry.whatWorked.length > 0 || entry.patterns.length > 0);
+});
+
+test('reflectOnCoderRun returns fallback for error when no API key', async () => {
+  const errorResult: CodingWorkerResult = {
+    status: 'error',
+    summary: 'Task failed',
+    finalMessage: 'The task failed with an error',
+    changedFiles: [],
+    commandsRun: [],
+    testsRun: [],
+    artifacts: [],
+    childRunIds: [],
+    startedAt: '2026-04-04T10:00:00Z',
+    finishedAt: '2026-04-04T10:01:00Z',
+    error: 'Something went wrong',
+  };
+
+  const entry = await reflectOnCoderRun(errorResult, 'Do something that fails');
+
+  // Without API key, should return fallback with error info
+  assert.equal(entry.date, new Date().toISOString().slice(0, 10));
+  assert.ok(entry.whatDidnt.length > 0);
 });

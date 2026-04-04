@@ -14,12 +14,38 @@
  * - ...
  */
 
+import { logger } from './logger.js';
+import { collectRuntimeSecrets } from './pi-runner.js';
+
 export interface CoderLearningsEntry {
   date: string; // YYYY-MM-DD
   whatWorked: string[];
   whatDidnt: string[];
   patterns: string[];
   rawText?: string; // original markdown for reference
+}
+
+export interface CodingWorkerResult {
+  status: 'success' | 'error' | 'aborted';
+  summary: string;
+  finalMessage: string;
+  changedFiles: string[];
+  commandsRun: string[];
+  testsRun: string[];
+  artifacts: string[];
+  childRunIds: string[];
+  startedAt: string;
+  finishedAt: string;
+  diffSummary?: string;
+  worktreePath?: string;
+  error?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    provider?: string;
+    model?: string;
+  };
 }
 
 const LEARNINGS_SECTION_HEADER = '## Coder Learnings';
@@ -176,4 +202,312 @@ export function pruneCoderLearnings(
     return entries;
   }
   return entries.slice(0, maxEntries);
+}
+
+/**
+ * Generate a structured reflection prompt for the LLM.
+ */
+function buildReflectionPrompt(
+  taskText: string,
+  result: CodingWorkerResult,
+): string {
+  const lines: string[] = [
+    'You are a coding reflection analyzer. Analyze the following coding run and produce structured learnings.',
+    '',
+    '## Task',
+    taskText,
+    '',
+    '## Run Result',
+    `Status: ${result.status}`,
+    `Summary: ${result.summary}`,
+  ];
+
+  if (result.status === 'success') {
+    lines.push(`Final message: ${result.finalMessage.slice(0, 500)}`);
+    if (result.changedFiles.length > 0) {
+      lines.push(`Changed files: ${result.changedFiles.join(', ')}`);
+    }
+    if (result.diffSummary) {
+      lines.push(`Diff summary: ${result.diffSummary}`);
+    }
+    if (result.commandsRun.length > 0) {
+      lines.push(`Commands run: ${result.commandsRun.join(' | ')}`);
+    }
+    if (result.testsRun.length > 0) {
+      lines.push(`Tests run: ${result.testsRun.join(' | ')}`);
+    }
+  } else if (result.status === 'error') {
+    lines.push(`Error: ${result.error || 'Unknown error'}`);
+    lines.push(`Final message: ${result.finalMessage.slice(0, 500)}`);
+  }
+
+  lines.push(
+    '',
+    '## Your Task',
+    'Analyze this coding run and produce a structured reflection with:',
+  );
+
+  if (result.status === 'success') {
+    lines.push(
+      '- "What worked": 2-4 specific things that went well (concise bullet points)',
+      '- "Patterns": 2-4 reusable patterns or techniques discovered (concise bullet points)',
+    );
+  } else {
+    lines.push(
+      '- "What didn\'t": 2-4 specific things that went wrong or could be improved (concise bullet points)',
+    );
+  }
+
+  lines.push(
+    '',
+    'Format your response exactly as:',
+    '```',
+    'What worked:',
+    '- ...',
+    '',
+    "What didn't:",
+    '- ...',
+    '',
+    'Patterns:',
+    '- ...',
+    '```',
+  );
+
+  return lines.join('\n');
+}
+
+interface LlmChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+interface LlmChatRequest {
+  model: string;
+  messages: LlmChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+}
+
+interface LlmChatResponse {
+  choices?: Array<{
+    message?: { content?: string };
+    finish_reason?: string;
+  }>;
+  error?: {
+    message?: string;
+    type?: string;
+  };
+}
+
+/**
+ * Call the LLM API to generate a reflection.
+ * Returns the raw response content or null on error.
+ */
+async function callLlmReflection(
+  prompt: string,
+  model: string,
+  apiKey: string,
+  baseUrl: string,
+): Promise<string | null> {
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+
+  const requestBody: LlmChatRequest = {
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: prompt,
+      },
+    ],
+    temperature: 0.3,
+    max_tokens: 1024,
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      logger.warn(
+        { status: response.status, error: errorText },
+        'LLM reflection call failed',
+      );
+      return null;
+    }
+
+    const data = (await response.json()) as LlmChatResponse;
+
+    if (data.error) {
+      logger.warn({ error: data.error }, 'LLM reflection returned error');
+      return null;
+    }
+
+    const content = data.choices?.[0]?.message?.content;
+    return content ?? null;
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.warn({ error }, 'LLM reflection call threw');
+    return null;
+  }
+}
+
+/**
+ * Parse the LLM response into a CoderLearningsEntry.
+ * Handles various response formats gracefully.
+ */
+function parseReflectionResponse(
+  response: string,
+  status: CodingWorkerResult['status'],
+): CoderLearningsEntry {
+  const today = new Date().toISOString().slice(0, 10);
+  const whatWorked: string[] = [];
+  const whatDidnt: string[] = [];
+  const patterns: string[] = [];
+
+  // Extract "What worked:" section
+  const whatWorkedMatch = response.match(/What worked:?\s*\n([\s\S]*?)(?=\n\s*\n|What didn't:|Patterns:|$)/i);
+  if (whatWorkedMatch) {
+    const bullets = whatWorkedMatch[1].match(/^[-*]\s+(.+)$/gm);
+    if (bullets) {
+      for (const bullet of bullets) {
+        const text = bullet.replace(/^[-*]\s+/, '').trim();
+        if (text) whatWorked.push(text);
+      }
+    }
+  }
+
+  // Extract "What didn't:" section
+  const whatDidntMatch = response.match(/What didn't:?\s*\n([\s\S]*?)(?=\n\s*\n|Patterns:|$)/i);
+  if (whatDidntMatch) {
+    const bullets = whatDidntMatch[1].match(/^[-*]\s+(.+)$/gm);
+    if (bullets) {
+      for (const bullet of bullets) {
+        const text = bullet.replace(/^[-*]\s+/, '').trim();
+        if (text) whatDidnt.push(text);
+      }
+    }
+  }
+
+  // Extract "Patterns:" section
+  const patternsMatch = response.match(/Patterns:?\s*\n([\s\S]*?)$/im);
+  if (patternsMatch) {
+    const bullets = patternsMatch[1].match(/^[-*]\s+(.+)$/gm);
+    if (bullets) {
+      for (const bullet of bullets) {
+        const text = bullet.replace(/^[-*]\s+/, '').trim();
+        if (text) patterns.push(text);
+      }
+    }
+  }
+
+  // If we couldn't parse anything meaningful, provide sensible defaults
+  if (whatWorked.length === 0 && whatDidnt.length === 0 && patterns.length === 0) {
+    if (status === 'success') {
+      whatWorked.push('Task completed successfully');
+      patterns.push('Completed coding task as requested');
+    } else {
+      whatDidnt.push('Task did not complete successfully');
+    }
+  }
+
+  return {
+    date: today,
+    whatWorked,
+    whatDidnt,
+    patterns,
+  };
+}
+
+/**
+ * Generate a reflection from a coder run result.
+ *
+ * This function calls an LLM to analyze the coding run and produce structured learnings.
+ * It should be called ASYNC after the final message has been sent to the user.
+ *
+ * @param workerResult - The result from the coding worker
+ * @param taskText - The original task description
+ * @returns A CoderLearningsEntry with the reflection, or a fallback entry on error
+ */
+export async function reflectOnCoderRun(
+  workerResult: CodingWorkerResult,
+  taskText: string,
+): Promise<CoderLearningsEntry> {
+  // Skip reflection for aborted runs
+  if (workerResult.status === 'aborted') {
+    logger.debug('Skipping reflection for aborted coder run');
+    return {
+      date: new Date().toISOString().slice(0, 10),
+      whatWorked: [],
+      whatDidnt: [],
+      patterns: [],
+    };
+  }
+
+  try {
+    // Get runtime configuration
+    const projectRoot = process.cwd();
+    const secrets = collectRuntimeSecrets(projectRoot);
+
+    const apiKey =
+      secrets.ZAI_API_KEY ||
+      secrets.OPENAI_API_KEY ||
+      secrets.ANTHROPIC_API_KEY ||
+      '';
+    const model = secrets.PI_MODEL || 'glm-4.7';
+    const baseUrl =
+      secrets.OPENAI_BASE_URL ||
+      secrets.PI_BASE_URL ||
+      'https://open.bigmodel.cn/api/paas/v4';
+
+    if (!apiKey) {
+      logger.warn('No API key available for reflection');
+      return createFallbackEntry(workerResult, 'No API key available');
+    }
+
+    const prompt = buildReflectionPrompt(taskText, workerResult);
+    const response = await callLlmReflection(prompt, model, apiKey, baseUrl);
+
+    if (!response) {
+      return createFallbackEntry(workerResult, 'LLM call returned no response');
+    }
+
+    return parseReflectionResponse(response, workerResult.status);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.warn({ error }, 'reflectOnCoderRun threw');
+    return createFallbackEntry(workerResult, error);
+  }
+}
+
+/**
+ * Create a fallback learnings entry when LLM reflection fails.
+ */
+function createFallbackEntry(
+  result: CodingWorkerResult,
+  reason: string,
+): CoderLearningsEntry {
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (result.status === 'success') {
+    return {
+      date: today,
+      whatWorked: [`Task completed: ${result.summary.slice(0, 100)}`],
+      whatDidnt: [],
+      patterns: [`Changed ${result.changedFiles.length} files`],
+    };
+  } else {
+    return {
+      date: today,
+      whatWorked: [],
+      whatDidnt: [`Error: ${(result.error || reason).slice(0, 100)}`],
+      patterns: [],
+    };
+  }
 }
