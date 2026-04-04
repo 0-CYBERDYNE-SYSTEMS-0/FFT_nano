@@ -426,3 +426,151 @@ test('runScheduledTaskV2 with invalid tz falls back to validated host TIMEZONE (
 
   closeDatabase();
 });
+
+// ---------------------------------------------------------------------------
+// VAL-TIME-013: Invalid task timezone does not break prompt assembly
+// ---------------------------------------------------------------------------
+
+test('runScheduledTaskV2 with invalid schedule_json.tz still completes task successfully (VAL-TIME-013)', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = makeTask({
+    id: 'invalid-tz-prompt-task',
+    schedule_type: 'cron',
+    schedule_value: '0 8 * * *',
+    schedule_json: JSON.stringify({ kind: 'cron', expr: '0 8 * * *', tz: 'Totally/Fake/Zone' }),
+    context_mode: 'isolated',
+    delivery_mode: 'announce',
+    delivery_to: 'telegram:13',
+  });
+  createTask(task);
+
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  const sentMessages: string[] = [];
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async (_jid, text) => {
+      sentMessages.push(text);
+    },
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runContainerTask: async (_group, input) => {
+      // Task still executed with a valid fallback timezone
+      assert.ok(input.effectiveTimezone);
+      // Verify the timezone is valid (not the invalid one)
+      assert.notEqual(input.effectiveTimezone, 'Totally/Fake/Zone');
+      return { status: 'success', result: 'task completed despite invalid tz' };
+    },
+  });
+
+  // Task should complete successfully
+  const postRun = getTaskById(task.id);
+  assert.equal(postRun?.status, 'completed');
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0], /\[scheduled:invalid-tz-prompt-task\]/);
+
+  closeDatabase();
+});
+
+test('runScheduledTaskV2 with invalid schedule_json.tz produces valid machine time in prompt (VAL-TIME-013)', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = makeTask({
+    id: 'invalid-tz-machine-time-task',
+    schedule_type: 'cron',
+    schedule_value: '0 8 * * *',
+    schedule_json: JSON.stringify({ kind: 'cron', expr: '0 8 * * *', tz: 'NoSuch/Timezone' }),
+    context_mode: 'isolated',
+  });
+  createTask(task);
+
+  let capturedInput: ContainerInput | undefined;
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async () => {},
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runContainerTask: async (_group, input) => {
+      capturedInput = input;
+      return { status: 'success', result: 'done' };
+    },
+  });
+
+  assert.ok(capturedInput);
+  // effectiveTimezone should be the validated host timezone (fallback from invalid)
+  assert.equal(capturedInput!.effectiveTimezone, TIMEZONE);
+
+  closeDatabase();
+});
+
+// ---------------------------------------------------------------------------
+// VAL-CROSS-003: Invalid TZ env var does not crash host
+// ---------------------------------------------------------------------------
+
+test('runScheduledTaskV2 with invalid process.env.TZ still executes tasks (VAL-CROSS-003)', async () => {
+  const priorTz = process.env.TZ;
+  process.env.TZ = 'Invalid/Timezone';
+
+  try {
+    const dbPath = makeTempDbPath();
+    initDatabaseAtPath(dbPath);
+
+    const task = makeTask({
+      id: 'invalid-env-tz-task',
+      schedule_type: 'once',
+      schedule_value: new Date().toISOString(),
+      context_mode: 'isolated',
+      delivery_mode: 'announce',
+      delivery_to: 'telegram:99',
+    });
+    createTask(task);
+
+    const group: RegisteredGroup = {
+      name: 'main',
+      folder: 'main',
+      trigger: '@FarmFriend',
+      added_at: new Date().toISOString(),
+    };
+
+    const sentMessages: string[] = [];
+    const latest = getTaskById(task.id);
+    assert.ok(latest);
+
+    // runScheduledTaskV2 should NOT throw even with invalid process.env.TZ
+    await runScheduledTaskV2(latest!, {
+      sendMessage: async (_jid, text) => {
+        sentMessages.push(text);
+      },
+      registeredGroups: () => ({ 'telegram:1': group }),
+      runContainerTask: async (_group, input) => {
+        // Should still receive a valid effective timezone
+        assert.ok(input.effectiveTimezone);
+        return { status: 'success', result: 'task ran with invalid env TZ' };
+      },
+    });
+
+    const postRun = getTaskById(task.id);
+    assert.equal(postRun?.status, 'completed');
+    assert.equal(sentMessages.length, 1);
+
+    closeDatabase();
+  } finally {
+    if (priorTz === undefined) delete process.env.TZ;
+    else process.env.TZ = priorTz;
+  }
+});

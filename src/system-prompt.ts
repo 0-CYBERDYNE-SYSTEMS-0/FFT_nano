@@ -11,6 +11,7 @@ import {
   formatLocalTime,
   formatWeekday,
   getLegacyDailyMemoryCandidates,
+  resolveEffectiveTimezone,
 } from './time-context.js';
 
 export type CodingHint =
@@ -871,8 +872,9 @@ export function buildSystemPrompt(
     (input.assistantName || 'FarmFriend').trim() || 'FarmFriend';
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
   const now = options.now?.() ?? new Date();
-  const timezone =
+  const rawTimezone =
     options.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const timezone = resolveEffectiveTimezone(rawTimezone);
   const isHeartbeatRun =
     input.isHeartbeatTask === true ||
     (input.requestId || '').startsWith('heartbeat-');

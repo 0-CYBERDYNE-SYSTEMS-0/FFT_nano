@@ -89,6 +89,70 @@ test('buildSystemPrompt injects trusted metadata, overlay, durable canon, and re
   );
 });
 
+test('buildSystemPrompt injects authoritative machine time metadata for each run', () => {
+  const { text } = buildSystemPrompt(
+    makeInput({
+      requestId: 'req-time',
+    }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-04-03T02:15:30.000Z'),
+      timezone: 'America/Chicago',
+      readFileIfExists: () => null,
+    },
+  );
+
+  assert.match(text, /"machine_now_iso": "2026-04-03T02:15:30.000Z"/);
+  assert.match(text, /"machine_timezone": "America\/Chicago"/);
+  assert.match(text, /"machine_local_date": "2026-04-02"/);
+  assert.match(text, /"machine_local_time": "21:15:30"/);
+  assert.match(text, /"machine_weekday": "Thursday"/);
+  assert.match(
+    text,
+    /Use the machine time fields above as the authoritative current date\/time for this run\./,
+  );
+});
+
+test('buildSystemPrompt selects daily memory files using configured local timezone instead of UTC', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+    ['/workspace/group/memory/2026-04-02.md', 'local today memory'],
+    ['/workspace/group/memory/2026-04-01.md', 'local yesterday memory'],
+    ['/workspace/group/memory/2026-04-03.md', 'legacy utc today memory'],
+  ]);
+
+  const { text } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+    now: () => new Date('2026-04-03T02:15:30.000Z'),
+    timezone: 'America/Chicago',
+    readFileIfExists: (filePath) => files.get(filePath) ?? null,
+  });
+
+  assert.match(text, /local today memory/);
+  assert.match(text, /local yesterday memory/);
+  assert.match(text, /legacy utc today memory/);
+});
+
+test('buildSystemPrompt preserves fallback reads for pre-timezone UTC daily memory files', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+    ['/workspace/group/memory/2026-04-03.md', 'pre-upgrade utc note'],
+  ]);
+
+  const { text } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+    now: () => new Date('2026-04-03T02:15:30.000Z'),
+    timezone: 'America/Chicago',
+    readFileIfExists: (filePath) => files.get(filePath) ?? null,
+  });
+
+  assert.match(text, /pre-upgrade utc note/);
+});
+
 test('buildSystemPrompt skips untouched canonical scaffold placeholders for main runs', () => {
   const files = new Map<string, string>([
     ['/workspace/group/NANO.md', '# NANO\n'],
@@ -302,6 +366,62 @@ test('buildSystemPrompt injects HEARTBEAT.md only for scheduled or heartbeat run
     },
   );
   assert.match(heartbeat.text, /## \/workspace\/group\/HEARTBEAT\.md/);
+});
+
+// ---------------------------------------------------------------------------
+// VAL-TIME-012: Invalid timezone does not break prompt assembly
+// ---------------------------------------------------------------------------
+
+test('buildSystemPrompt succeeds with invalid timezone and falls back gracefully (VAL-TIME-012)', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+  ]);
+
+  // buildSystemPrompt should NOT throw even with an invalid timezone
+  const { text, report } = buildSystemPrompt(
+    makeInput({ codingHint: 'none' }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-04-03T15:30:00.000Z'),
+      timezone: 'Invalid/Timezone',
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+
+  // Prompt was assembled successfully
+  assert.ok(text.length > 0);
+  assert.equal(report.mode, 'full');
+  // Machine time metadata should still be present with a valid fallback timezone
+  assert.match(text, /"machine_now_iso": "2026-04-03T15:30:00.000Z"/);
+  assert.match(text, /"machine_timezone": "UTC"/);
+  assert.match(text, /"machine_local_date": "2026-04-03"/);
+  assert.match(text, /"machine_local_time": "15:30:00"/);
+});
+
+test('buildSystemPrompt succeeds with empty string timezone (VAL-TIME-012)', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+  ]);
+
+  const { text } = buildSystemPrompt(
+    makeInput({ codingHint: 'none' }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-04-03T15:30:00.000Z'),
+      timezone: '',
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+
+  assert.ok(text.length > 0);
+  // Should contain valid machine time metadata
+  assert.match(text, /"machine_local_date": "2026-04-03"/);
 });
 
 test('buildSystemPrompt injects compact skills catalog only for interactive runs', () => {
