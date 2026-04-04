@@ -6,6 +6,13 @@ import {
   DEFAULT_CANONICAL_FILE_NAMES,
   isCanonicalScaffoldContent,
 } from './memory-paths.js';
+import {
+  formatLocalDate,
+  formatLocalTime,
+  formatWeekday,
+  getLegacyDailyMemoryCandidates,
+  resolveEffectiveTimezone,
+} from './time-context.js';
 
 export type CodingHint =
   | 'none'
@@ -106,6 +113,7 @@ interface BuildSystemPromptOptions {
   delegationExtensionAvailable?: boolean;
   readFileIfExists?: (filePath: string) => string | null;
   now?: () => Date;
+  timezone?: string;
   fileMaxChars?: number;
   totalMaxChars?: number;
   skillCatalogMaxChars?: number;
@@ -124,14 +132,8 @@ const MAIN_ALWAYS_INJECTED_FILES = [
   'MEMORY.md',
 ] as const;
 
-function buildDailyMemoryFileNames(now: Date): string[] {
-  const today = new Date(now);
-  const yesterday = new Date(now);
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  return [
-    `memory/${today.toISOString().slice(0, 10)}.md`,
-    `memory/${yesterday.toISOString().slice(0, 10)}.md`,
-  ];
+function buildDailyMemoryFileNames(now: Date, timezone: string): string[] {
+  return getLegacyDailyMemoryCandidates(now, timezone);
 }
 
 function resolveDurableMemoryFallbackPath(params: {
@@ -302,6 +304,7 @@ function buildMainContextEntries(params: {
   totalMaxChars: number;
   groupDir: string;
   now: Date;
+  timezone: string;
 }): {
   entries: ContextEntry[];
   remainingTotalChars: number;
@@ -336,7 +339,10 @@ function buildMainContextEntries(params: {
     });
   }
 
-  for (const relativePath of buildDailyMemoryFileNames(params.now)) {
+  for (const relativePath of buildDailyMemoryFileNames(
+    params.now,
+    params.timezone,
+  )) {
     if (remaining <= 0) break;
     remaining = addContextEntry({
       entries,
@@ -744,6 +750,8 @@ function renderOverlayPrompt(params: {
   promptMode: PromptMode;
   paths: WorkspacePaths;
   providedMemoryContext: string;
+  now: Date;
+  timezone: string;
 }): string {
   const lines: string[] = [];
   lines.push('## Inbound Context (trusted metadata)');
@@ -768,12 +776,21 @@ function renderOverlayPrompt(params: {
         think_level: params.input.thinkLevel || null,
         reasoning_level: params.input.reasoningLevel || null,
         continue_session: params.input.noContinue !== true,
+        machine_now_iso: params.now.toISOString(),
+        machine_timezone: params.timezone,
+        machine_local_date: formatLocalDate(params.now, params.timezone),
+        machine_local_time: formatLocalTime(params.now, params.timezone),
+        machine_weekday: formatWeekday(params.now, params.timezone),
       },
       null,
       2,
     ),
   );
   lines.push('```');
+  lines.push('');
+  lines.push(
+    'Use the machine time fields above as the authoritative current date/time for this run.',
+  );
   lines.push('');
 
   const extraSystemPrompt = trimAndNormalize(
@@ -854,6 +871,10 @@ export function buildSystemPrompt(
   const assistantName =
     (input.assistantName || 'FarmFriend').trim() || 'FarmFriend';
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
+  const now = options.now?.() ?? new Date();
+  const rawTimezone =
+    options.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const timezone = resolveEffectiveTimezone(rawTimezone);
   const isHeartbeatRun =
     input.isHeartbeatTask === true ||
     (input.requestId || '').startsWith('heartbeat-');
@@ -878,7 +899,8 @@ export function buildSystemPrompt(
       fileMaxChars,
       totalMaxChars,
       groupDir: paths.groupDir,
-      now: options.now?.() ?? new Date(),
+      now,
+      timezone,
     })
     : buildNonMainContextEntries({
         readFileIfExists,
@@ -926,6 +948,8 @@ export function buildSystemPrompt(
     promptMode,
     paths,
     providedMemoryContext,
+    now,
+    timezone,
   });
   const text = [baseContent, overlayContent]
     .filter(Boolean)

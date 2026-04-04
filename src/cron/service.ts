@@ -22,6 +22,7 @@ import {
 import { logger } from '../logger.js';
 import { RegisteredGroup, ScheduledTask } from '../types.js';
 import { resolveNoContinueForTask } from './adapters.js';
+import { getEffectiveTimezone } from '../time-context.js';
 
 export interface CronServiceDependencies {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -348,6 +349,8 @@ export async function runScheduledTaskV2(
       outputResult = result ?? 'Subagent completed';
     } else {
       const runTask = deps.runContainerTask ?? runContainerAgent;
+      const schedule = parseTaskScheduleJson(task);
+      const effectiveTimezone = getEffectiveTimezone(schedule.tz);
       const output = await runTask(
         group,
         {
@@ -357,6 +360,7 @@ export async function runScheduledTaskV2(
           isMain,
           isScheduledTask: true,
           noContinue: resolveNoContinueForTask(task),
+          effectiveTimezone,
         },
         abortController.signal,
       );

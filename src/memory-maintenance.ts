@@ -6,6 +6,8 @@ import {
   resolveMemoryPath,
   resolveSoulPath,
 } from './memory-paths.js';
+import { TIMEZONE } from './config.js';
+import { getDailyMemoryRelativePath, getLocalDateKey } from './time-context.js';
 
 const COMPACTION_HEADING_PREFIX = '## Session Compaction ';
 const MIGRATION_NOTE =
@@ -118,7 +120,7 @@ export function appendCompactionSummaryToMemory(
   timestampIso: string,
 ): void {
   const { memoryDir } = ensureMemoryScaffold(groupFolder);
-  const dateKey = timestampIso.slice(0, 10);
+  const dateKey = resolveCompactionDateKey(timestampIso);
   const targetPath = path.join(memoryDir, `${dateKey}.md`);
   const block = [
     `## Session Compaction ${timestampIso}`,
@@ -131,4 +133,18 @@ export function appendCompactionSummaryToMemory(
     : `# ${dateKey}\n`;
   const separator = existing.length > 0 ? '\n\n' : '';
   fs.writeFileSync(targetPath, `${existing}${separator}${block}`, 'utf8');
+}
+
+export function resolveCompactionDateKey(timestampIso: string): string {
+  const timestamp = new Date(timestampIso);
+  return Number.isNaN(timestamp.getTime())
+    ? timestampIso.slice(0, 10)
+    : getLocalDateKey(timestamp, TIMEZONE);
+}
+
+export function resolveCompactionMemoryRelativePath(timestampIso: string): string {
+  const timestamp = new Date(timestampIso);
+  return Number.isNaN(timestamp.getTime())
+    ? `memory/${timestampIso.slice(0, 10)}.md`
+    : getDailyMemoryRelativePath(timestamp, TIMEZONE);
 }

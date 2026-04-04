@@ -158,6 +158,7 @@ import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
 import {
   appendCompactionSummaryToMemory,
   migrateCompactionsForGroup,
+  resolveCompactionMemoryRelativePath,
 } from './memory-maintenance.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { resolveCoderProjectWorkspace } from './coder-project-path.js';
@@ -3116,7 +3117,7 @@ async function runCompactionForChat(
         : summary;
     return [
       `Compaction complete (${compactRequestId}).`,
-      `Saved summary to /workspace/group/memory/${ts.slice(0, 10)}.md and scheduled fresh next session.`,
+      `Saved summary to /workspace/group/${resolveCompactionMemoryRelativePath(ts)} and scheduled fresh next session.`,
       '',
       preview,
     ].join('\n');
@@ -4624,6 +4625,39 @@ async function processHostEvent(event: HostEvent): Promise<void> {
         'Host event reported error',
       );
       return;
+    case 'tool_progress': {
+      if (!event.chatJid) return;
+      if (!isTelegramJid(event.chatJid)) return;
+      if (!state.telegramBot) return;
+
+      const deliveryMode = getTelegramDeliveryMode(event.chatJid);
+      const verboseMode = getEffectiveVerboseMode(
+        state.chatRunPreferences[event.chatJid]?.verboseMode,
+      );
+      if (
+        !shouldUseStandaloneTelegramToolProgress({
+          deliveryMode,
+          verboseMode,
+        })
+      ) {
+        return;
+      }
+      enqueueTelegramToolProgressMessage({
+        bot: state.telegramBot,
+        runs: telegramToolProgressRuns,
+        chatJid: event.chatJid,
+        requestId: event.runId,
+        mode: verboseMode as 'all' | 'verbose',
+        event: {
+          toolName: event.toolName,
+          status: event.status,
+          args: event.args,
+          output: event.output,
+          error: event.error,
+        },
+      });
+      return;
+    }
     default:
       return;
   }
