@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 import {
   parseCoderLearnings,
   formatCoderLearningsEntry,
   pruneCoderLearnings,
   reflectOnCoderRun,
+  getCoderLearningsForContext,
+  getCoderLearningsForContextSync,
   type CoderLearningsEntry,
   type CodingWorkerResult,
 } from '../src/coder-learnings.js';
@@ -365,4 +370,20 @@ test('reflectOnCoderRun returns fallback for error when no API key', async () =>
   // Without API key, should return fallback with error info
   assert.equal(entry.date, new Date().toISOString().slice(0, 10));
   assert.ok(entry.whatDidnt.length > 0);
+});
+
+test('getCoderLearningsForContext returns empty string when MEMORY.md does not exist', async () => {
+  const result = await getCoderLearningsForContext('nonexistent-group', 5);
+  assert.equal(result, '');
+});
+
+test('getCoderLearningsForContextSync returns empty string when MEMORY.md does not exist', () => {
+  const result = getCoderLearningsForContextSync('nonexistent-group', 5);
+  assert.equal(result, '');
+});
+
+test('getCoderLearningsForContextSync handles errors gracefully', () => {
+  // Pass invalid path to trigger error
+  const result = getCoderLearningsForContextSync('test-group-invalid', 5);
+  assert.equal(result, '');
 });

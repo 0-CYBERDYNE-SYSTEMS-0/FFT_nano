@@ -151,6 +151,158 @@ export function parseCoderLearnings(memoryContent: string): CoderLearningsEntry[
 }
 
 /**
+ * Get formatted coder learnings for context prepending.
+ *
+ * Reads MEMORY.md from the group's memory directory, parses coder learnings entries,
+ * and returns the last `maxEntries` formatted as a string to prepend to task context.
+ *
+ * @param groupFolder - The group folder name (e.g., 'global', 'main')
+ * @param maxEntries - Maximum number of recent entries to include (default: 5)
+ * @returns Formatted learnings string, or empty string if no learnings or file missing
+ */
+export async function getCoderLearningsForContext(
+  groupFolder: string,
+  maxEntries: number = 5,
+): Promise<string> {
+  const { GROUPS_DIR } = await import('./config.js');
+  const fs = await import('fs');
+  const path = await import('path');
+
+  const memoryPath = path.join(GROUPS_DIR, groupFolder, 'MEMORY.md');
+
+  if (!fs.existsSync(memoryPath)) {
+    logger.debug({ memoryPath }, 'MEMORY.md not found for coder learnings');
+    return '';
+  }
+
+  try {
+    const content = fs.readFileSync(memoryPath, 'utf-8');
+    const entries = parseCoderLearnings(content);
+
+    if (entries.length === 0) {
+      return '';
+    }
+
+    // Entries are already newest-first from parseCoderLearnings
+    const recentEntries = entries.slice(0, maxEntries);
+
+    const lines = [
+      '## Recent Coder Learnings',
+      '(from previous coding runs)',
+      '',
+    ];
+
+    for (const entry of recentEntries) {
+      lines.push(`### ${entry.date}`);
+      lines.push('');
+
+      if (entry.whatWorked.length > 0) {
+        lines.push('What worked:');
+        for (const item of entry.whatWorked) {
+          lines.push(`- ${item}`);
+        }
+        lines.push('');
+      }
+
+      if (entry.whatDidnt.length > 0) {
+        lines.push("What didn't:");
+        for (const item of entry.whatDidnt) {
+          lines.push(`- ${item}`);
+        }
+        lines.push('');
+      }
+
+      if (entry.patterns.length > 0) {
+        lines.push('Patterns:');
+        for (const item of entry.patterns) {
+          lines.push(`- ${item}`);
+        }
+        lines.push('');
+      }
+    }
+
+    return lines.join('\n').trimEnd();
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.warn({ error, memoryPath }, 'Failed to read coder learnings for context');
+    return '';
+  }
+}
+
+/**
+ * Get formatted coder learnings synchronously (for use in contexts where async is not available).
+ *
+ * @param groupFolder - The group folder name
+ * @param maxEntries - Maximum number of recent entries to include (default: 5)
+ * @returns Formatted learnings string, or empty string if no learnings or file missing
+ */
+export function getCoderLearningsForContextSync(
+  groupFolder: string,
+  maxEntries: number = 5,
+): string {
+  try {
+    const { GROUPS_DIR } = require('./config.js');
+    const fs = require('fs');
+    const path = require('path');
+
+    const memoryPath = path.join(GROUPS_DIR, groupFolder, 'MEMORY.md');
+
+    if (!fs.existsSync(memoryPath)) {
+      return '';
+    }
+
+    const content = fs.readFileSync(memoryPath, 'utf-8');
+    const entries = parseCoderLearnings(content);
+
+    if (entries.length === 0) {
+      return '';
+    }
+
+    const recentEntries = entries.slice(0, maxEntries);
+
+    const lines = [
+      '## Recent Coder Learnings',
+      '(from previous coding runs)',
+      '',
+    ];
+
+    for (const entry of recentEntries) {
+      lines.push(`### ${entry.date}`);
+      lines.push('');
+
+      if (entry.whatWorked.length > 0) {
+        lines.push('What worked:');
+        for (const item of entry.whatWorked) {
+          lines.push(`- ${item}`);
+        }
+        lines.push('');
+      }
+
+      if (entry.whatDidnt.length > 0) {
+        lines.push("What didn't:");
+        for (const item of entry.whatDidnt) {
+          lines.push(`- ${item}`);
+        }
+        lines.push('');
+      }
+
+      if (entry.patterns.length > 0) {
+        lines.push('Patterns:');
+        for (const item of entry.patterns) {
+          lines.push(`- ${item}`);
+        }
+        lines.push('');
+      }
+    }
+
+    return lines.join('\n').trimEnd();
+  } catch (err) {
+    // Silently return empty on error to avoid crashing
+    return '';
+  }
+}
+
+/**
  * Format a CoderLearningsEntry back to markdown string.
  */
 export function formatCoderLearningsEntry(entry: CoderLearningsEntry): string {
