@@ -91,6 +91,44 @@ Choose runtime at install time:
 ./scripts/onboard-all.sh --runtime host
 ```
 
+### All Setup Options
+
+`./scripts/onboard-all.sh` accepts the following options:
+
+| Option | Description |
+|--------|-------------|
+| `--workspace <dir>` | Main workspace path (default: ~/nano) |
+| `--env-path <file>` | Path to .env file |
+| `--operator <name>` | Primary operator name |
+| `--assistant-name <name>` | Assistant name |
+| `--accept-risk` | Acknowledge risk before onboarding |
+| `--flow <flow>` | quickstart, advanced, or manual |
+| `--mode <mode>` | local or remote |
+| `--runtime <runtime>` | auto, docker, or host |
+| `--auth-choice <choice>` | openai, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, or skip |
+| `--model <id>` | Model ID (e.g. gpt-4o-mini, claude-3-5-sonnet-20241022) |
+| `--api-key <token>` | Provider API key |
+| `--remote-url <url>` | Remote gateway URL (remote mode) |
+| `--gateway-port <port>` | Gateway/TUI port hint |
+| `--telegram-token <token>` | Telegram bot token |
+| `--telegram-main-chat-id <id>` | Pre-set Telegram main chat ID (skips /main claim) |
+| `--whatsapp-enabled <0\|1>` | Enable or disable WhatsApp channel |
+| `--hatch <choice>` | tui, web, or later |
+| `--install-daemon` | Install/start host service after onboarding |
+| `--no-install-daemon` | Skip service install/start |
+| `--skip-channels` | Skip Telegram/WhatsApp channel prompts |
+| `--skip-skills` | Skip skills prompts |
+| `--skip-health` | Skip health prompts and checks |
+| `--skip-ui` | Skip hatch (TUI/Web) prompts |
+| `--skip-setup` | Skip deps/build/image/service install |
+| `--skip-restart` | Skip service restart after onboarding |
+| `--skip-doctor` | Skip doctor health check at end |
+| `--no-backup` | Skip safety backup step |
+| `--backup-out-dir <dir>` | Custom backup output directory |
+| `--non-interactive` | Require explicit --operator and --assistant-name |
+| `--force` | Force rewrite of onboarding identity files |
+| `--help, -h` | Show full help |
+
 ### 2. Configure `.env` (minimum required)
 
 At minimum set provider runtime values plus Telegram credentials.
@@ -193,24 +231,75 @@ Once claimed:
 
 ### Unified Command Reference
 
-If CLI linking is unavailable/disabled (`FFT_NANO_AUTO_LINK=0`), use `./scripts/start.sh ...` and `./scripts/service.sh ...` equivalents.
+The `fft` CLI is the primary interface after install. When CLI linking is unavailable (`FFT_NANO_AUTO_LINK=0`), substitute `./scripts/start.sh ...` and `./scripts/service.sh ...` equivalents.
 
-Host CLI:
+**fft subcommands:**
 
-- `fft onboard [--workspace <dir>] [--env-path <file>] [--operator <name>] [--assistant-name <name>] [--non-interactive --accept-risk] [--flow quickstart|advanced|manual] [--mode local|remote] [--runtime auto|docker|host] [--auth-choice openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip] [--api-key <token>] [--model <id>] [--remote-url <url>] [--gateway-port <port>] [--telegram-token <token>] [--whatsapp-enabled <0|1>] [--hatch tui|web|later] [--install-daemon|--no-install-daemon] [--skip-channels] [--skip-skills] [--skip-health] [--skip-ui] [--force] [--json]`
-- `fft profile <status|set|apply> [core|farm]`
-- `fft start [telegram-only]`
-- `fft dev [telegram-only]`
-- `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]`
-- `fft web [--open]`
-- `fft doctor [--json]`
-- `fft service <install|uninstall|start|stop|restart|status|logs>`
+| Command | Description |
+|---------|-------------|
+| `fft onboard [options]` | Run the full guided onboarding flow |
+| `fft profile <status\|set\|apply> [core\|farm]` | Show or switch operator/assistant profile |
+| `fft start [telegram-only]` | Start the host service |
+| `fft dev [telegram-only]` | Start in development mode |
+| `fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]` | Attach the terminal UI |
+| `fft web [--open]` | Open the FFT Control Center web UI |
+| `fft doctor [--json]` | Run health diagnostics |
+| `fft service <install\|uninstall\|start\|stop\|restart\|status\|logs>` | Manage the host service |
 
-Maintenance:
+**fft onboard options** (same as `./scripts/onboard-all.sh`):
 
-- `./scripts/onboard-all.sh [--workspace /abs/path --env-path /abs/path/.env --runtime docker|host|auto --non-interactive --accept-risk --operator "Name" --assistant-name "AssistantName" --skip-setup --skip-restart --skip-doctor --no-backup --skip-channels --skip-skills --skip-health --skip-ui --install-daemon|--no-install-daemon]`
-- `npm run backup:state [-- --workspace /abs/path --out-dir /abs/path --dry-run]`
-- `npm run restore:state -- --archive /abs/path/to/backup.tar.gz [--workspace-target /abs/path]`
+| Option | Description |
+|--------|-------------|
+| `--workspace <dir>` | Main workspace path |
+| `--env-path <file>` | Path to .env file |
+| `--operator <name>` | Primary operator name |
+| `--assistant-name <name>` | Assistant name |
+| `--non-interactive` | Require explicit operator/assistant-name |
+| `--accept-risk` | Acknowledge risk before onboarding |
+| `--flow <flow>` | quickstart, advanced, or manual |
+| `--mode <mode>` | local or remote |
+| `--runtime <runtime>` | auto, docker, or host |
+| `--auth-choice <choice>` | openai, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, skip |
+| `--model <id>` | Model ID |
+| `--api-key <token>` | Provider API key |
+| `--remote-url <url>` | Remote gateway URL (remote mode) |
+| `--gateway-port <port>` | Gateway/TUI port hint |
+| `--telegram-token <token>` | Telegram bot token |
+| `--telegram-main-chat-id <id>` | Pre-set main chat ID |
+| `--whatsapp-enabled <0\|1>` | Enable/disable WhatsApp |
+| `--hatch <choice>` | tui, web, or later |
+| `--install-daemon` | Install/start service after onboarding |
+| `--no-install-daemon` | Skip service install/start |
+| `--skip-channels` | Skip channel prompts |
+| `--skip-skills` | Skip skills prompts |
+| `--skip-health` | Skip health prompts and checks |
+| `--skip-ui` | Skip hatch prompts |
+| `--skip-setup` | Skip deps/build/image install |
+| `--skip-restart` | Skip service restart after onboarding |
+| `--skip-doctor` | Skip doctor health check at end |
+| `--no-backup` | Skip safety backup |
+| `--backup-out-dir <dir>` | Custom backup directory |
+| `--force` | Force rewrite of identity files |
+| `--help, -h` | Show full help |
+
+**Maintenance:**
+
+```bash
+# Full onboard with explicit args
+./scripts/onboard-all.sh --workspace /abs/path --env-path /abs/path/.env \
+  --operator "Name" --assistant-name "AssistantName" \
+  --non-interactive --accept-risk \
+  --runtime docker --auth-choice openai --model gpt-4o-mini \
+  --api-key "sk-..." --telegram-token "..." \
+  --install-daemon
+
+# Backup state before upgrades
+npm run backup:state -- --workspace ~/nano --out-dir ./backups --dry-run
+npm run backup:state -- --workspace ~/nano --out-dir ./backups
+
+# Restore from backup
+npm run restore:state -- --archive ./backups/backup-YYYYMMDD-HHMMSS.tar.gz
+```
 
 Config edit note:
 
