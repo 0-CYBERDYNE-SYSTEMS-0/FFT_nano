@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -317,6 +318,10 @@ function runCommandSync(
   };
 }
 
+function hashString(input: string): string {
+  return crypto.createHash('sha1').update(input).digest('hex');
+}
+
 export async function createDefaultEphemeralWorktree(params: {
   requestId: string;
   sourceWorkspaceDir: string;
@@ -336,7 +341,12 @@ export async function createDefaultEphemeralWorktree(params: {
     throw new Error(`Could not resolve git root for ${workspaceRoot}`);
   }
 
-  const worktreeBase = path.join(os.tmpdir(), 'fft-nano-coder-worktrees');
+  const repoHash = hashString(gitTopLevel);
+  const worktreeBase = path.join(
+    os.tmpdir(),
+    'fft-nano-coder-worktrees',
+    repoHash,
+  );
   fs.mkdirSync(worktreeBase, { recursive: true });
   const worktreePath = path.join(
     worktreeBase,
