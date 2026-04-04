@@ -807,6 +807,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       'Starting agent run',
     );
 
+    // Variables for async reflection (declared here so they're accessible after try block)
+    let workerResultForReflection: CodingRunResult['workerResult'] | undefined;
+    let taskTextForReflection: string | undefined;
+
     try {
       const run: RunCompletion =
         params.route === 'coding_worker' && deps.runCodingTask
@@ -860,6 +864,13 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       streamed = run.streamed;
       ok = run.ok;
       usage = run.usage;
+
+      // Capture worker result for reflection (async MEMORY write after finalizeRun)
+      // Only for coding routes with successful completion
+      if (ok && params.route === 'coding_worker') {
+        workerResultForReflection = (run as CodingRunResult).workerResult;
+        taskTextForReflection = params.delegationInstruction || params.latestUserText;
+      }
     } finally {
       await deps.setTyping(params.chatJid, false);
       if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
@@ -896,6 +907,23 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         timestampToPersist: params.timestampToPersist,
         deliverToChat: params.deliverToChat,
       });
+
+      // Trigger async reflection and MEMORY.md write (fire and forget)
+      // This happens AFTER the final message is sent to user, so it doesn't block
+      if (workerResultForReflection && taskTextForReflection) {
+        const groupFolder = params.group.folder;
+        // Fire and forget - don't await
+        import('./coder-learnings.js').then(({ reflectOnCoderRun, writeCoderLearningsToMemory }) => {
+          reflectOnCoderRun(workerResultForReflection!, taskTextForReflection!)
+            .then((entry) => writeCoderLearningsToMemory(entry, groupFolder))
+            .catch((err) => {
+              deps.logger?.info?.({ err }, 'Failed to write coder learnings to MEMORY.md');
+            });
+        }).catch((err) => {
+          deps.logger?.info?.({ err }, 'Failed to import coder-learnings for reflection');
+        });
+      }
+
       return;
     }
 

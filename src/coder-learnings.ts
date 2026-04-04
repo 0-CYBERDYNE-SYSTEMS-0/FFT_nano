@@ -663,3 +663,169 @@ function createFallbackEntry(
     };
   }
 }
+
+const MAX_CODER_LEARNINGS_ENTRIES = 20;
+
+/**
+ * Write a coder learnings entry to MEMORY.md.
+ *
+ * This function:
+ * - Reads existing MEMORY.md from the group's memory directory
+ * - Parses existing coder learnings entries
+ * - Prepends the new entry (newest first)
+ * - Prunes old entries beyond MAX_CODER_LEARNINGS_ENTRIES (20)
+ * - Writes the updated content back to MEMORY.md
+ *
+ * @param entry - The learnings entry to write
+ * @param groupFolder - The group folder name (e.g., 'global', 'main')
+ * @returns Promise<boolean> - true if successful, false otherwise
+ */
+export async function writeCoderLearningsToMemory(
+  entry: CoderLearningsEntry,
+  groupFolder: string,
+): Promise<boolean> {
+  try {
+    const { GROUPS_DIR } = await import('./config.js');
+    const fs = await import('fs');
+    const path = await import('path');
+
+    const memoryPath = path.join(GROUPS_DIR, groupFolder, 'MEMORY.md');
+
+    // Read existing content or create empty if file doesn't exist
+    let content = '';
+    if (fs.existsSync(memoryPath)) {
+      content = fs.readFileSync(memoryPath, 'utf-8');
+    } else {
+      // Create minimal MEMORY.md structure if it doesn't exist
+      content = '# MEMORY\n\nDurable facts, decisions, and compaction summaries belong here.\n';
+    }
+
+    // Parse existing learnings
+    const existingEntries = parseCoderLearnings(content);
+
+    // Prepend new entry (entries are newest-first)
+    const updatedEntries = [entry, ...existingEntries];
+
+    // Prune to max entries
+    const prunedEntries = pruneCoderLearnings(updatedEntries, MAX_CODER_LEARNINGS_ENTRIES);
+
+    // Format the new entry
+    const formattedEntry = formatCoderLearningsEntry(entry);
+
+    // Rebuild the learnings section
+    const learningsSectionLines = [
+      LEARNINGS_SECTION_HEADER,
+      '',
+    ];
+
+    for (const e of prunedEntries) {
+      learningsSectionLines.push(formatCoderLearningsEntry(e));
+      learningsSectionLines.push('');
+    }
+
+    const newLearningsSection = learningsSectionLines.join('\n').trimEnd() + '\n';
+
+    // Find and replace or insert the Coder Learnings section
+    const learningsSectionPattern = new RegExp(
+      `\\n*${LEARNINGS_SECTION_HEADER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?$`,
+      'm',
+    );
+
+    let newContent: string;
+    if (learningsSectionPattern.test(content)) {
+      // Replace existing section
+      newContent = content.replace(learningsSectionPattern, '\n' + newLearningsSection);
+    } else {
+      // Append new section at the end
+      newContent = content.trimEnd() + '\n\n' + newLearningsSection;
+    }
+
+    // Write back to file
+    fs.writeFileSync(memoryPath, newContent, 'utf-8');
+
+    logger.debug(
+      { memoryPath, entryCount: prunedEntries.length },
+      'Wrote coder learnings to MEMORY.md',
+    );
+
+    return true;
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.warn({ error, groupFolder }, 'Failed to write coder learnings to MEMORY.md');
+    return false;
+  }
+}
+
+/**
+ * Write coder learnings entry synchronously (for use in contexts where async is not available).
+ *
+ * @param entry - The learnings entry to write
+ * @param groupFolder - The group folder name
+ * @returns boolean - true if successful, false otherwise
+ */
+export function writeCoderLearningsToMemorySync(
+  entry: CoderLearningsEntry,
+  groupFolder: string,
+): boolean {
+  try {
+    const { GROUPS_DIR } = require('./config.js');
+    const fs = require('fs');
+    const path = require('path');
+
+    const memoryPath = path.join(GROUPS_DIR, groupFolder, 'MEMORY.md');
+
+    // Read existing content or create empty if file doesn't exist
+    let content = '';
+    if (fs.existsSync(memoryPath)) {
+      content = fs.readFileSync(memoryPath, 'utf-8');
+    } else {
+      // Create minimal MEMORY.md structure if it doesn't exist
+      content = '# MEMORY\n\nDurable facts, decisions, and compaction summaries belong here.\n';
+    }
+
+    // Parse existing learnings
+    const existingEntries = parseCoderLearnings(content);
+
+    // Prepend new entry (entries are newest-first)
+    const updatedEntries = [entry, ...existingEntries];
+
+    // Prune to max entries
+    const prunedEntries = pruneCoderLearnings(updatedEntries, MAX_CODER_LEARNINGS_ENTRIES);
+
+    // Rebuild the learnings section
+    const learningsSectionLines = [
+      LEARNINGS_SECTION_HEADER,
+      '',
+    ];
+
+    for (const e of prunedEntries) {
+      learningsSectionLines.push(formatCoderLearningsEntry(e));
+      learningsSectionLines.push('');
+    }
+
+    const newLearningsSection = learningsSectionLines.join('\n').trimEnd() + '\n';
+
+    // Find and replace or insert the Coder Learnings section
+    const learningsSectionPattern = new RegExp(
+      `\\n*${LEARNINGS_SECTION_HEADER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?$`,
+      'm',
+    );
+
+    let newContent: string;
+    if (learningsSectionPattern.test(content)) {
+      // Replace existing section
+      newContent = content.replace(learningsSectionPattern, '\n' + newLearningsSection);
+    } else {
+      // Append new section at the end
+      newContent = content.trimEnd() + '\n\n' + newLearningsSection;
+    }
+
+    // Write back to file
+    fs.writeFileSync(memoryPath, newContent, 'utf-8');
+
+    return true;
+  } catch (err) {
+    // Silently return false on error
+    return false;
+  }
+}
