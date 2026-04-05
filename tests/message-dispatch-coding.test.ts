@@ -9,6 +9,11 @@ function createDeps() {
   const sent: string[] = [];
   const suggestions: Array<Record<string, unknown>> = [];
   const createdProjects: Array<{ slug: string }> = [];
+  const reflections: Array<{
+    taskText: string;
+    groupFolder: string;
+    workerStatus: string;
+  }> = [];
 
   const deps = {
     state: {
@@ -126,9 +131,28 @@ function createDeps() {
         isGitRepo: false,
       };
     },
+    recordCoderLearning: async (params: {
+      workerResult: { status: string };
+      taskText: string;
+      groupFolder: string;
+    }) => {
+      reflections.push({
+        taskText: params.taskText,
+        groupFolder: params.groupFolder,
+        workerStatus: params.workerResult.status,
+      });
+    },
   };
 
-  return { deps, codingCalls, agentCalls, sent, suggestions, createdProjects };
+  return {
+    deps,
+    codingCalls,
+    agentCalls,
+    sent,
+    suggestions,
+    createdProjects,
+    reflections,
+  };
 }
 
 test('processMessage routes /coding requests to the coding worker with a resolved workspace root', async () => {
@@ -245,4 +269,59 @@ test('processMessage blocks /coder-create-project while onboarding is pending', 
   assert.equal(createdProjects.length, 0);
   assert.equal(codingCalls.length, 0);
   assert.equal(sent[0], 'blocked');
+});
+
+test('processMessage records coder learning for failed execute-mode coding runs', async () => {
+  const { deps, reflections } = createDeps();
+  deps.runCodingTask = async () => ({
+    ok: false,
+    result: 'Worker execution failed',
+    streamed: false,
+    workerResult: {
+      status: 'error',
+      summary: 'failed',
+      finalMessage: 'Worker execution failed',
+      changedFiles: [],
+      commandsRun: [],
+      testsRun: [],
+      artifacts: [],
+      childRunIds: [],
+      startedAt: '2026-03-22T00:00:00.000Z',
+      finishedAt: '2026-03-22T00:00:01.000Z',
+      error: 'boom',
+    },
+  });
+  const dispatcher = createMessageDispatcher(deps as any);
+
+  await dispatcher.processMessage({
+    id: '6',
+    chat_jid: 'telegram:main',
+    sender: 'user',
+    sender_name: 'User',
+    content: '/coding build an app',
+    timestamp: '2026-03-22T00:00:00.000Z',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(reflections.length, 1);
+  assert.equal(reflections[0].workerStatus, 'error');
+  assert.equal(reflections[0].groupFolder, 'main');
+  assert.equal(reflections[0].taskText, 'build an app');
+});
+
+test('processMessage does not record coder learning for plan-mode coding runs', async () => {
+  const { deps, reflections } = createDeps();
+  const dispatcher = createMessageDispatcher(deps as any);
+
+  await dispatcher.processMessage({
+    id: '7',
+    chat_jid: 'telegram:main',
+    sender: 'user',
+    sender_name: 'User',
+    content: '/coder-create-project orchard-os build the first dashboard',
+    timestamp: '2026-03-22T00:00:00.000Z',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(reflections.length, 0);
 });
