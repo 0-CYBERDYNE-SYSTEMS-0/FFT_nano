@@ -331,6 +331,91 @@ setTimeout(() => {
   return executablePath;
 }
 
+function writeSlowToolPiExecutable(dir: string): string {
+  const executablePath = path.join(dir, 'fake-pi-slow-tool.js');
+  fs.writeFileSync(
+    executablePath,
+    `#!/usr/bin/env node
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({
+    type: 'tool_call_start',
+    toolName: 'bash',
+    toolCallId: 'call-1',
+    args: { command: 'npm test' },
+  }) + '\\n');
+}, 25);
+
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({
+    type: 'tool_call_end',
+    toolName: 'bash',
+    toolCallId: 'call-1',
+    result: 'ok',
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'tool finished' }],
+    },
+  }) + '\\n');
+  setTimeout(() => process.exit(0), 10);
+}, 550);
+`,
+    'utf8',
+  );
+  fs.chmodSync(executablePath, 0o755);
+  return executablePath;
+}
+
+test(
+  'runContainerAgent does not stale-kill a long-running tool after tool start progress',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-slow-tool-'));
+    const fakePiPath = writeSlowToolPiExecutable(tempDir);
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      requestId: 'req-slow-tool-1',
+      noContinue: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 200,
+        hardTimeoutMs: 2500,
+      },
+    });
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, 'tool finished');
+  },
+);
+
 test(
   'runContainerAgent avoids generic Telegram draft previews before assistant text exists',
   { timeout: 5000, concurrency: false },
@@ -396,6 +481,192 @@ test(
     assert.equal(
       seenPreviewTexts.some((text) => text.includes('final answer')),
       true,
+    );
+  },
+);
+
+function writeLongQuietToolPiExecutable(dir: string): string {
+  const executablePath = path.join(dir, 'fake-pi-long-tool.js');
+  fs.writeFileSync(
+    executablePath,
+    `#!/usr/bin/env node
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({
+    type: 'tool_call_start',
+    toolName: 'bash',
+    toolCallId: 'call-long-1',
+    args: { command: 'npm test' },
+  }) + '\\n');
+}, 25);
+
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({
+    type: 'tool_call_end',
+    toolCallId: 'call-long-1',
+    status: 'ok',
+    output: 'tests passed',
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'verification finished' }],
+    },
+  }) + '\\n');
+  setTimeout(() => process.exit(0), 10);
+}, 650);
+`,
+    'utf8',
+  );
+  fs.chmodSync(executablePath, 0o755);
+  return executablePath;
+}
+
+function writeToolEndThenHangPiExecutable(dir: string): string {
+  const executablePath = path.join(dir, 'fake-pi-tool-end-hang.js');
+  fs.writeFileSync(
+    executablePath,
+    `#!/usr/bin/env node
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({
+    type: 'tool_call_start',
+    toolName: 'bash',
+    toolCallId: 'call-hang-1',
+    args: { command: 'npm test' },
+  }) + '\\n');
+}, 20);
+
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({
+    type: 'tool_call_end',
+    toolName: 'bash',
+    toolCallId: 'call-hang-1',
+    result: 'ok',
+  }) + '\\n');
+}, 60);
+
+setInterval(() => {}, 1000);
+`,
+    'utf8',
+  );
+  fs.chmodSync(executablePath, 0o755);
+  return executablePath;
+}
+
+test(
+  'runContainerAgent does not stale-kill a long quiet tool-active phase',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-long-tool-'));
+    const fakePiPath = writeLongQuietToolPiExecutable(tempDir);
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      requestId: 'req-long-tool-1',
+      noContinue: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 200,
+        hardTimeoutMs: 2500,
+        toolActiveStaleMs: 1000,
+      } as any,
+    });
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, 'verification finished');
+  },
+);
+
+test(
+  'runContainerAgent reverts to interactive stale timeout after tool completion',
+  { timeout: 10000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-tool-end-hang-'));
+    const fakePiPath = writeToolEndThenHangPiExecutable(tempDir);
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    let toolEndedAt: number | null = null;
+    let firstStaleAt: number | null = null;
+    const output = await runContainerAgent(group, {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      requestId: 'req-tool-end-hang-1',
+      noContinue: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 220,
+        toolActiveStaleMs: 1200,
+        hardTimeoutMs: 2500,
+        allowFreshSessionFallback: false,
+      },
+    },
+    undefined,
+    undefined,
+    undefined,
+    (event) => {
+      if (event.kind === 'tool' && event.status === 'ok') {
+        toolEndedAt = event.at;
+      }
+      if (event.kind === 'stale' && firstStaleAt === null) {
+        firstStaleAt = event.at;
+      }
+    });
+
+    assert.equal(output.status, 'error');
+    assert.ok(toolEndedAt !== null, 'expected tool end progress event');
+    assert.ok(firstStaleAt !== null, 'expected stale progress event');
+    const staleDelay = (firstStaleAt as number) - (toolEndedAt as number);
+    assert.ok(
+      staleDelay < 700,
+      `expected stale timeout to revert to interactive window, staleDelay=${staleDelay}ms`,
     );
   },
 );
