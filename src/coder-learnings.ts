@@ -14,10 +14,6 @@
  * - ...
  */
 
-import fs from 'fs';
-import path from 'path';
-
-import { GROUPS_DIR } from './config.js';
 import { logger } from './logger.js';
 import { collectRuntimeSecrets } from './pi-runner.js';
 import type { CodingWorkerResult } from './coding-orchestrator.js';
@@ -36,11 +32,11 @@ const WHAT_WORKED_RE = /^What worked:?\s*$/i;
 const WHAT_DIDNT_RE = /^What didn't:?\s*$/i;
 const PATTERNS_RE = /^Patterns:?\s*$/i;
 const BULLET_RE = /^[-*]\s+/;
-const TOP_LEVEL_HEADING_RE = /^##\s+/;
 
 /**
  * Parse all coder learnings entries from MEMORY.md content.
- * Returns entries in reverse chronological order (newest first).
+ * Returns entries in encounter order within the Coder Learnings section.
+ * (The writer prepends newest entries, so parse naturally yields newest-first.)
  */
 export function parseCoderLearnings(memoryContent: string): CoderLearningsEntry[] {
   if (!memoryContent || typeof memoryContent !== 'string') {
@@ -82,15 +78,21 @@ export function parseCoderLearnings(memoryContent: string): CoderLearningsEntry[
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Detect section header (top-level markdown heading)
+    // Detect learnings section header.
     if (trimmed === LEARNINGS_SECTION_HEADER) {
-      flushEntry();
+      if (inLearningsSection) {
+        flushEntry();
+      }
       resetCurrent();
       inLearningsSection = true;
       continue;
     }
 
-    if (TOP_LEVEL_HEADING_RE.test(trimmed)) {
+    // Ignore everything until we enter the learnings section.
+    if (!inLearningsSection) continue;
+
+    // Exit when another top-level section begins.
+    if (/^##\s+/.test(trimmed) && trimmed !== LEARNINGS_SECTION_HEADER) {
       flushEntry();
       resetCurrent();
       inLearningsSection = false;
@@ -98,9 +100,10 @@ export function parseCoderLearnings(memoryContent: string): CoderLearningsEntry[
     }
 
     // Detect date heading
-    const dateMatch = inLearningsSection ? trimmed.match(DATE_HEADING_RE) : null;
+    const dateMatch = trimmed.match(DATE_HEADING_RE);
     if (dateMatch) {
       flushEntry();
+      resetCurrent();
       currentDate = dateMatch[1];
       currentRawLines.push(line);
       continue;
@@ -139,54 +142,7 @@ export function parseCoderLearnings(memoryContent: string): CoderLearningsEntry[
   }
 
   flushEntry();
-  return entries.reverse();
-}
-
-function buildCoderLearningsSection(entries: CoderLearningsEntry[]): string {
-  const learningsSectionLines = [LEARNINGS_SECTION_HEADER, ''];
-
-  for (const entry of entries) {
-    learningsSectionLines.push(formatCoderLearningsEntry(entry));
-    learningsSectionLines.push('');
-  }
-
-  return `${learningsSectionLines.join('\n').trimEnd()}\n`;
-}
-
-function replaceOrAppendCoderLearningsSection(
-  content: string,
-  learningsSection: string,
-): string {
-  const lines = content.split('\n');
-  const startIndex = lines.findIndex(
-    (line) => line.trim() === LEARNINGS_SECTION_HEADER,
-  );
-
-  if (startIndex === -1) {
-    return `${content.trimEnd()}\n\n${learningsSection}`;
-  }
-
-  let endIndex = lines.length;
-  for (let i = startIndex + 1; i < lines.length; i += 1) {
-    if (TOP_LEVEL_HEADING_RE.test(lines[i].trim())) {
-      endIndex = i;
-      break;
-    }
-  }
-
-  const before = lines.slice(0, startIndex).join('\n').trimEnd();
-  const after = lines.slice(endIndex).join('\n').trimStart();
-
-  if (before && after) {
-    return `${before}\n\n${learningsSection}\n${after}`;
-  }
-  if (before) {
-    return `${before}\n\n${learningsSection}`;
-  }
-  if (after) {
-    return `${learningsSection}\n${after}`;
-  }
-  return learningsSection;
+  return entries;
 }
 
 /**
@@ -280,6 +236,10 @@ export function getCoderLearningsForContextSync(
   maxEntries: number = 5,
 ): string {
   try {
+    const { GROUPS_DIR } = require('./config.js');
+    const fs = require('fs');
+    const path = require('path');
+
     const memoryPath = path.join(GROUPS_DIR, groupFolder, 'MEMORY.md');
 
     if (!fs.existsSync(memoryPath)) {
@@ -747,11 +707,33 @@ export async function writeCoderLearningsToMemory(
     // Format the new entry
     const formattedEntry = formatCoderLearningsEntry(entry);
 
-    const newLearningsSection = buildCoderLearningsSection(prunedEntries);
-    const newContent = replaceOrAppendCoderLearningsSection(
-      content,
-      newLearningsSection,
+    // Rebuild the learnings section
+    const learningsSectionLines = [
+      LEARNINGS_SECTION_HEADER,
+      '',
+    ];
+
+    for (const e of prunedEntries) {
+      learningsSectionLines.push(formatCoderLearningsEntry(e));
+      learningsSectionLines.push('');
+    }
+
+    const newLearningsSection = learningsSectionLines.join('\n').trimEnd() + '\n';
+
+    // Find and replace or insert the Coder Learnings section
+    const learningsSectionPattern = new RegExp(
+      `\\n*${LEARNINGS_SECTION_HEADER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?$`,
+      'm',
     );
+
+    let newContent: string;
+    if (learningsSectionPattern.test(content)) {
+      // Replace existing section
+      newContent = content.replace(learningsSectionPattern, '\n' + newLearningsSection);
+    } else {
+      // Append new section at the end
+      newContent = content.trimEnd() + '\n\n' + newLearningsSection;
+    }
 
     // Write back to file
     fs.writeFileSync(memoryPath, newContent, 'utf-8');
@@ -781,6 +763,10 @@ export function writeCoderLearningsToMemorySync(
   groupFolder: string,
 ): boolean {
   try {
+    const { GROUPS_DIR } = require('./config.js');
+    const fs = require('fs');
+    const path = require('path');
+
     const memoryPath = path.join(GROUPS_DIR, groupFolder, 'MEMORY.md');
 
     // Read existing content or create empty if file doesn't exist
@@ -801,11 +787,33 @@ export function writeCoderLearningsToMemorySync(
     // Prune to max entries
     const prunedEntries = pruneCoderLearnings(updatedEntries, MAX_CODER_LEARNINGS_ENTRIES);
 
-    const newLearningsSection = buildCoderLearningsSection(prunedEntries);
-    const newContent = replaceOrAppendCoderLearningsSection(
-      content,
-      newLearningsSection,
+    // Rebuild the learnings section
+    const learningsSectionLines = [
+      LEARNINGS_SECTION_HEADER,
+      '',
+    ];
+
+    for (const e of prunedEntries) {
+      learningsSectionLines.push(formatCoderLearningsEntry(e));
+      learningsSectionLines.push('');
+    }
+
+    const newLearningsSection = learningsSectionLines.join('\n').trimEnd() + '\n';
+
+    // Find and replace or insert the Coder Learnings section
+    const learningsSectionPattern = new RegExp(
+      `\\n*${LEARNINGS_SECTION_HEADER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?$`,
+      'm',
     );
+
+    let newContent: string;
+    if (learningsSectionPattern.test(content)) {
+      // Replace existing section
+      newContent = content.replace(learningsSectionPattern, '\n' + newLearningsSection);
+    } else {
+      // Append new section at the end
+      newContent = content.trimEnd() + '\n\n' + newLearningsSection;
+    }
 
     // Write back to file
     fs.writeFileSync(memoryPath, newContent, 'utf-8');

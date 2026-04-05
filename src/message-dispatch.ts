@@ -349,6 +349,11 @@ export interface MessageDispatcherDeps {
   onboardingCommandBlockedText?: () => string;
   makeRunId?: (prefix: string) => string;
   logger?: { info?: (payload: unknown, message?: string) => void };
+  recordCoderLearning?: (params: {
+    workerResult: NonNullable<CodingRunResult['workerResult']>;
+    taskText: string;
+    groupFolder: string;
+  }) => Promise<void> | void;
   persistTuiUserHistory?: (
     chatJid: string,
     text: string,
@@ -870,9 +875,12 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       ok = run.ok;
       usage = run.usage;
 
-      // Capture worker result for reflection (async MEMORY write after finalizeRun)
-      // Only for coding routes with execute mode (not plan mode for coder-plan)
-      if (ok && params.route === 'coding_worker' && params.codingHint !== 'force_delegate_plan') {
+      // Capture worker result for reflection (async MEMORY write after completion path)
+      // Only for coding execute routes (exclude plan mode for coder-plan).
+      if (
+        params.route === 'coding_worker' &&
+        params.codingHint !== 'force_delegate_plan'
+      ) {
         const workerResult = (run as CodingRunResult).workerResult;
         if (workerResult) {
           capturedReflectionData = {
@@ -906,6 +914,47 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       }
     }
 
+    const triggerAsyncCoderReflection = () => {
+      if (!capturedReflectionData) return;
+      const { workerResult, taskText, groupFolder } = capturedReflectionData;
+
+      if (deps.recordCoderLearning) {
+        Promise.resolve(
+          deps.recordCoderLearning({
+            workerResult: workerResult as NonNullable<
+              CodingRunResult['workerResult']
+            >,
+            taskText,
+            groupFolder,
+          }),
+        ).catch((err) => {
+          deps.logger?.info?.(
+            { err },
+            'Failed to record coder learning via injected hook',
+          );
+        });
+        return;
+      }
+
+      import('./coder-learnings.js')
+        .then(({ reflectOnCoderRun, writeCoderLearningsToMemory }) => {
+          reflectOnCoderRun(workerResult as CodingWorkerResult, taskText)
+            .then((entry) => writeCoderLearningsToMemory(entry, groupFolder))
+            .catch((err) => {
+              deps.logger?.info?.(
+                { err },
+                'Failed to write coder learnings to MEMORY.md',
+              );
+            });
+        })
+        .catch((err) => {
+          deps.logger?.info?.(
+            { err },
+            'Failed to import coder-learnings for reflection',
+          );
+        });
+    };
+
     if (ok) {
       await finalizeRun({
         chatJid: params.chatJid,
@@ -919,21 +968,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         deliverToChat: params.deliverToChat,
       });
 
-      // Trigger async reflection and MEMORY.md write (fire and forget)
-      // This happens AFTER the final message is sent to user, so it doesn't block
-      if (capturedReflectionData) {
-        // Use a copy of the data so the closure captures stable values
-        const { workerResult, taskText, groupFolder } = capturedReflectionData;
-        import('./coder-learnings.js').then(({ reflectOnCoderRun, writeCoderLearningsToMemory }) => {
-          reflectOnCoderRun(workerResult as CodingWorkerResult, taskText)
-            .then((entry) => writeCoderLearningsToMemory(entry, groupFolder))
-            .catch((err) => {
-              deps.logger?.info?.({ err }, 'Failed to write coder learnings to MEMORY.md');
-            });
-        }).catch((err) => {
-          deps.logger?.info?.({ err }, 'Failed to import coder-learnings for reflection');
-        });
-      }
+      // Fire-and-forget reflection after success completion.
+      triggerAsyncCoderReflection();
 
       return;
     }
@@ -962,6 +998,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         prefixWhatsApp: true,
       });
     }
+
+    // Fire-and-forget reflection after failure completion.
+    triggerAsyncCoderReflection();
   }
 
   async function buildDispatchRequest(
