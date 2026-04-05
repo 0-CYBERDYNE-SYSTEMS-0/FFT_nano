@@ -97,6 +97,8 @@ export interface ContainerInput {
   lifecyclePolicyOverride?: {
     hardTimeoutMs?: number;
     staleAfterMs?: number | null;
+    toolActiveStaleMs?: number | null;
+    waitStateStaleMs?: number | null;
     allowFreshSessionFallback?: boolean;
   };
   effectiveTimezone?: string;
@@ -291,17 +293,27 @@ function resolvePiRunLifecyclePolicy(params: {
 }): {
   hardTimeoutMs: number;
   staleAfterMs: number | null;
+  toolActiveStaleMs: number | null;
+  waitStateStaleMs: number | null;
   allowFreshSessionFallback: boolean;
 } {
   const applyOverride = (policy: {
     hardTimeoutMs: number;
     staleAfterMs: number | null;
+    toolActiveStaleMs: number | null;
+    waitStateStaleMs: number | null;
     allowFreshSessionFallback: boolean;
   }) => ({
     hardTimeoutMs:
       params.input.lifecyclePolicyOverride?.hardTimeoutMs ?? policy.hardTimeoutMs,
     staleAfterMs:
       params.input.lifecyclePolicyOverride?.staleAfterMs ?? policy.staleAfterMs,
+    toolActiveStaleMs:
+      params.input.lifecyclePolicyOverride?.toolActiveStaleMs ??
+      policy.toolActiveStaleMs,
+    waitStateStaleMs:
+      params.input.lifecyclePolicyOverride?.waitStateStaleMs ??
+      policy.waitStateStaleMs,
     allowFreshSessionFallback:
       params.input.lifecyclePolicyOverride?.allowFreshSessionFallback ??
       policy.allowFreshSessionFallback,
@@ -316,6 +328,8 @@ function resolvePiRunLifecyclePolicy(params: {
         CONTAINER_TIMEOUT,
       ),
       staleAfterMs: null,
+      toolActiveStaleMs: null,
+      waitStateStaleMs: null,
       allowFreshSessionFallback: false,
     });
   }
@@ -326,6 +340,8 @@ function resolvePiRunLifecyclePolicy(params: {
     return applyOverride({
       hardTimeoutMs: Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000),
       staleAfterMs: null,
+      toolActiveStaleMs: null,
+      waitStateStaleMs: null,
       allowFreshSessionFallback: false,
     });
   }
@@ -340,15 +356,30 @@ function resolvePiRunLifecyclePolicy(params: {
     params.groupTimeoutMs > 0
       ? Math.min(params.groupTimeoutMs, defaultInteractiveTimeoutMs)
       : defaultInteractiveTimeoutMs;
+  const staleAfterMs = parseRuntimeMs(
+    process.env.FFT_NANO_INTERACTIVE_STALE_MS,
+    90_000,
+    100,
+    Math.max(100, hardTimeoutMs - 100),
+  );
+  const toolActiveStaleMs = parseRuntimeMs(
+    process.env.FFT_NANO_INTERACTIVE_TOOL_STALE_MS,
+    Math.min(Math.max(100, hardTimeoutMs - 100), Math.max(staleAfterMs, 5 * 60 * 1000)),
+    100,
+    Math.max(100, hardTimeoutMs - 100),
+  );
+  const waitStateStaleMs = parseRuntimeMs(
+    process.env.FFT_NANO_INTERACTIVE_WAIT_STALE_MS,
+    Math.min(Math.max(100, hardTimeoutMs - 100), Math.max(staleAfterMs, 3 * 60 * 1000)),
+    100,
+    Math.max(100, hardTimeoutMs - 100),
+  );
 
   return applyOverride({
     hardTimeoutMs,
-    staleAfterMs: parseRuntimeMs(
-      process.env.FFT_NANO_INTERACTIVE_STALE_MS,
-      90_000,
-      100,
-      Math.max(100, hardTimeoutMs - 100),
-    ),
+    staleAfterMs,
+    toolActiveStaleMs,
+    waitStateStaleMs,
     allowFreshSessionFallback: true,
   });
 }
@@ -674,7 +705,8 @@ type RunErrorClass = 'rate_limit' | 'timeout' | 'unknown' | 'non_retryable';
 
 function classifyRunError(stderr: string, code: number | null): RunErrorClass {
   // Stale timer already retries via code 75 — treat as retryable 'unknown'
-  if (code === 75) return 'unknown';
+  if (code === 75 || code === 76) return 'unknown';
+  if (/FFT_NANO_STALE_RETRY/i.test(stderr)) return 'unknown';
 
   // Fresh interactive runs that trip the stale timer should fail immediately.
   if (/Pi run stalled before producing progress/i.test(stderr)) {
@@ -1175,6 +1207,7 @@ export async function runContainerAgent(
       let streamedDraft = false;
       let stdoutTruncated = false;
       let sawMeaningfulProgress = false;
+      let sawToolActivity = false;
       const initialStaleDelayMs = lifecyclePolicy.staleAfterMs
         ? useContinue
           ? lifecyclePolicy.staleAfterMs
@@ -1274,11 +1307,13 @@ export async function runContainerAgent(
           staleKillInProgress = true;
           killActiveChild();
           settleLocal({
-            code: retryFresh ? 75 : 1,
+            code: retryFresh ? 75 : sawMeaningfulProgress ? 76 : 1,
             stdout,
             stderr: retryFresh
               ? 'FFT_NANO_STALE_RETRY'
-              : 'Pi run stalled before producing progress',
+              : sawMeaningfulProgress
+                ? 'FFT_NANO_STALE_RETRY_AFTER_PROGRESS'
+                : 'Pi run stalled before producing progress',
             streamedDraft,
             retryFresh,
           });
@@ -1298,17 +1333,40 @@ export async function runContainerAgent(
       ) => {
         sawMeaningfulProgress = true;
         onProgressEvent?.(event);
-        armStaleTimer();
+        if (event.kind === 'tool') {
+          if (event.status === 'start') {
+            sawToolActivity = true;
+            armStaleTimer(lifecyclePolicy.toolActiveStaleMs);
+            return;
+          }
+          // Tool completed; revert to normal interactive stale budget.
+          sawToolActivity = false;
+          armStaleTimer(lifecyclePolicy.staleAfterMs);
+          return;
+        }
+        armStaleTimer(
+          sawToolActivity
+            ? lifecyclePolicy.toolActiveStaleMs
+            : lifecyclePolicy.staleAfterMs,
+        );
       };
 
       const noteActivity = (event?: { kind: 'stdout'; at: number }) => {
         if (event) onProgressEvent?.(event);
-        armStaleTimer();
+        armStaleTimer(
+          sawToolActivity
+            ? lifecyclePolicy.toolActiveStaleMs
+            : lifecyclePolicy.staleAfterMs,
+        );
       };
 
       const noteWaitState = (delayMs?: number, meaningful = true) => {
         if (meaningful) sawMeaningfulProgress = true;
-        armStaleTimer(delayMs ?? lifecyclePolicy.staleAfterMs);
+        armStaleTimer(
+          delayMs ??
+            lifecyclePolicy.waitStateStaleMs ??
+            lifecyclePolicy.staleAfterMs,
+        );
       };
 
       const maybeSendDraft = (force = false) => {
@@ -1363,7 +1421,9 @@ export async function runContainerAgent(
         });
         noteWaitState(
           Math.max(
-            lifecyclePolicy.staleAfterMs ?? 0,
+            lifecyclePolicy.waitStateStaleMs ??
+              lifecyclePolicy.staleAfterMs ??
+              0,
             (request.timeout ?? 60_000) + 1_000,
           ),
         );
