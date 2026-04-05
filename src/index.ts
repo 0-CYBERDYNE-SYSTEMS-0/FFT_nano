@@ -2948,13 +2948,22 @@ function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
   if (!codingOrchestrator) {
     codingOrchestrator = createCodingOrchestrator({
       activeRuns: activeCoderRuns,
-      runContainerAgent: (group, input, abortSignal, onRuntimeEvent) =>
+      runContainerAgent: (
+        group,
+        input,
+        abortSignal,
+        onRuntimeEvent,
+        onExtensionUIRequest,
+        onProgressEvent,
+      ) =>
         runContainerAgent(
           group,
           input,
           abortSignal,
           onRuntimeEvent,
-          (request) => handlePermissionGateRequest(input.chatJid, request),
+          onExtensionUIRequest ||
+            ((request) => handlePermissionGateRequest(input.chatJid, request)),
+          onProgressEvent,
         ),
       publishEvent: (event) => {
         hostEventBus.publish(event);
@@ -4656,6 +4665,74 @@ async function processHostEvent(event: HostEvent): Promise<void> {
           error: event.error,
         },
       });
+      return;
+    }
+    case 'run_progress': {
+      if (!event.chatJid) return;
+      if (!isTelegramJid(event.chatJid)) return;
+      if (!state.telegramBot) return;
+      if (!state.registeredGroups[event.chatJid]) return;
+
+      const deliveryMode = getTelegramDeliveryMode(event.chatJid);
+      if (deliveryMode === 'off') return;
+
+      const streamKey = getTelegramPreviewRunKey(event.chatJid, event.runId);
+      const existingState = telegramPreviewRegistry.getStreamState(streamKey);
+      if (
+        existingState &&
+        existingState.lastText.trim() &&
+        !existingState.lastText.startsWith('Coder status:')
+      ) {
+        return;
+      }
+
+      if (
+        deliveryMode === 'draft' &&
+        canUseTelegramNativeDraft(event.chatJid)
+      ) {
+        const sendResult = await updateTelegramDraftPreview({
+          bot: state.telegramBot,
+          registry: telegramPreviewRegistry,
+          chatJid: event.chatJid,
+          requestId: event.runId,
+          draftId: deriveTelegramDraftId(streamKey),
+          text: event.text,
+          toolTrailFooter:
+            telegramPreviewRegistry.getToolTrailFooter(streamKey),
+        });
+        if (sendResult.error) {
+          logger.warn(
+            {
+              chatJid: event.chatJid,
+              requestId: event.runId,
+              runKey: sendResult.runKey,
+              err: sendResult.error,
+            },
+            'Telegram draft run-progress update failed; continuing without status draft updates for this run',
+          );
+        }
+        return;
+      }
+
+      const sendResult = await updateTelegramPreview({
+        bot: state.telegramBot,
+        registry: telegramPreviewRegistry,
+        chatJid: event.chatJid,
+        requestId: event.runId,
+        text: event.text,
+        toolTrailFooter: telegramPreviewRegistry.getToolTrailFooter(streamKey),
+      });
+      if (sendResult.error) {
+        logger.warn(
+          {
+            chatJid: event.chatJid,
+            requestId: event.runId,
+            runKey: sendResult.runKey,
+            err: sendResult.error,
+          },
+          'Telegram run-progress update failed; disabling status preview updates for this run',
+        );
+      }
       return;
     }
     default:

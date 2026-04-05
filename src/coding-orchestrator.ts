@@ -6,12 +6,16 @@ import path from 'path';
 
 import type { RegisteredGroup } from './types.js';
 import type {
+  ContainerProgressEvent,
   ContainerInput,
   ContainerOutput,
+  ExtensionUIRequest,
+  ExtensionUIResponse,
   ContainerRuntimeEvent,
 } from './pi-runner.js';
 import { createHostEventId, type HostEvent } from './runtime/host-events.js';
 import { getCoderLearningsForContext } from './coder-learnings.js';
+import { createRunProgressReporter } from './run-progress.js';
 
 export type CodingWorkerRoute =
   | 'coder_execute'
@@ -112,6 +116,10 @@ export interface CodingOrchestratorDeps {
     input: ContainerInput,
     abortSignal?: AbortSignal,
     onRuntimeEvent?: (event: ContainerRuntimeEvent) => void,
+    onExtensionUIRequest?: (
+      request: ExtensionUIRequest,
+    ) => Promise<ExtensionUIResponse>,
+    onProgressEvent?: (event: ContainerProgressEvent) => void,
   ) => Promise<ContainerOutput>;
   publishEvent: (event: HostEvent) => void;
   createEphemeralWorktree?: (params: {
@@ -610,6 +618,18 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
     const childRunIds: string[] = [];
     let worktree: EphemeralWorktree | null = null;
     let cleanedUp = false;
+    const runProgress = createRunProgressReporter({
+      source: 'coding-orchestrator',
+      runId: request.requestId,
+      sessionKey: request.sessionKey,
+      chatJid: request.originChatJid,
+      heartbeatMs: Math.max(
+        5_000,
+        Number.parseInt(process.env.FFT_NANO_PROGRESS_HEARTBEAT_MS || '30000', 10) ||
+          30_000,
+      ),
+      emit: (event) => deps.publishEvent(event),
+    });
 
     const activeRun: ActiveCodingRunState = {
       requestId: request.requestId,
@@ -736,6 +756,10 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
             ...(event.error ? { error: event.error } : {}),
           });
         },
+        undefined,
+        (event) => {
+          runProgress.handle(event);
+        },
       );
 
       if (output.status === 'error') {
@@ -831,6 +855,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         aborted ? 'aborted' : 'error',
       );
     } finally {
+      runProgress.stop();
       deps.activeRuns.delete(request.requestId);
     }
   }

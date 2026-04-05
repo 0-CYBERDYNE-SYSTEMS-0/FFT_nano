@@ -16,19 +16,19 @@ function makeRequest(overrides: Partial<CodingWorkerRequest> = {}): CodingWorker
     requestId: 'coder-1',
     mode: 'execute',
     route: 'coder_execute',
-    originChatJid: 'telegram:main',
-    originGroupFolder: 'main',
+    originChatJid: 'telegram:test-group',
+    originGroupFolder: 'test-group',
     taskText: 'Build the feature',
     workspaceMode: 'ephemeral_worktree',
     timeoutSeconds: 300,
     allowFanout: false,
     sessionContext: '[2026-03-22T00:00:00.000Z] User: Build the feature',
     assistantName: 'FarmFriend',
-    sessionKey: 'main',
+    sessionKey: 'test-group',
     group: {
-      jid: 'telegram:main',
-      name: 'Main',
-      folder: 'main',
+      jid: 'telegram:test-group',
+      name: 'Test Group',
+      folder: 'test-group',
       trigger: '@FarmFriend',
     },
     ...overrides,
@@ -110,6 +110,106 @@ test('execute mode returns structured worker result with changed files', async (
   assert.equal(result.workerResult?.diffSummary, '2 files changed');
 });
 
+test('execute mode forwards run progress events into host events', async () => {
+  const published: Array<Record<string, unknown>> = [];
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/coder-progress-1',
+      cleanup: async () => {},
+      listChangedFiles: () => [],
+      getDiffSummary: () => '',
+    }),
+    runContainerAgent: async (
+      _group,
+      _input,
+      _abortSignal,
+      onRuntimeEvent,
+      _onExtensionUIRequest,
+      onProgressEvent,
+    ) => {
+      onProgressEvent?.({
+        kind: 'spawn',
+        at: Date.now(),
+        pid: 123,
+        resumed: false,
+      });
+      onProgressEvent?.({
+        kind: 'tool',
+        at: Date.now(),
+        toolName: 'bash',
+        status: 'start',
+      });
+      onRuntimeEvent?.({
+        kind: 'tool',
+        index: 1,
+        toolName: 'bash',
+        status: 'start',
+        args: '{"command":"npm test"}',
+      });
+      onProgressEvent?.({
+        kind: 'retry_delay',
+        at: Date.now(),
+        delayMs: 2500,
+        attempt: 1,
+        reason: 'timeout',
+      });
+      return {
+        status: 'success',
+        result: 'done',
+        usage: { totalTokens: 1 },
+        toolExecutions: [],
+      };
+    },
+    publishEvent: (event) => {
+      published.push(event as Record<string, unknown>);
+    },
+  });
+
+  const result = await orchestrator.runTask(
+    makeRequest({ requestId: 'coder-progress-test' }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    published.some(
+      (event) =>
+        event.kind === 'run_progress' &&
+        event.runId === 'coder-progress-test' &&
+        event.phase === 'spawn',
+    ),
+    true,
+  );
+  assert.equal(
+    published.some(
+      (event) =>
+        event.kind === 'run_progress' &&
+        event.runId === 'coder-progress-test' &&
+        event.phase === 'tool_running' &&
+        event.detail === 'bash',
+    ),
+    true,
+  );
+  assert.equal(
+    published.some(
+      (event) =>
+        event.kind === 'run_progress' &&
+        event.runId === 'coder-progress-test' &&
+        event.phase === 'retry_delay',
+    ),
+    true,
+  );
+  assert.equal(
+    published.some(
+      (event) =>
+        event.kind === 'tool_progress' &&
+        event.runId === 'coder-progress-test' &&
+        event.toolName === 'bash',
+    ),
+    true,
+  );
+});
+
 test('subagent routes mark worker runs as subagent executions', async () => {
   let isSubagent: boolean | undefined;
   const orchestrator = createCodingOrchestrator({
@@ -136,7 +236,7 @@ test('subagent routes mark worker runs as subagent executions', async () => {
     makeRequest({
       requestId: 'subagent-1',
       route: 'subagent_execute',
-      originGroupFolder: 'main',
+      originGroupFolder: 'test-group',
     }),
   );
 

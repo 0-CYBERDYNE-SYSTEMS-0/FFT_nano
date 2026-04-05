@@ -60,6 +60,27 @@ export type AgentEventPayload =
         output?: string;
         error?: string;
       };
+    }
+  | {
+      runId: string;
+      stream: 'progress';
+      data: {
+        phase:
+          | 'spawn'
+          | 'thinking'
+          | 'tool_running'
+          | 'waiting_permission'
+          | 'retry_fresh'
+          | 'retry_delay'
+          | 'retry_provider_switch'
+          | 'stale';
+        text: string;
+        detail?: string;
+        attempt?: number;
+        delayMs?: number;
+        fromProvider?: string;
+        toProvider?: string;
+      };
     };
 
 export function isGatewayRequestFrame(

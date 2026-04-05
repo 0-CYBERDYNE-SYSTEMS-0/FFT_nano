@@ -101,3 +101,71 @@ test('gateway projects assistant_final host events into chat_event frames', asyn
     await gateway.close();
   }
 });
+
+test('gateway projects run_progress host events into agent_event frames', async () => {
+  const port = await getFreePort();
+  const bus = new HostEventBus();
+  const gateway = await startTuiGatewayServer(
+    {
+      getStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      listSessions: () => [],
+      resolveChatJid: () => 'telegram:1',
+      getSessionKeyForChat: () => 'main',
+      getSessionPrefs: () => ({}),
+      patchSessionPrefs: () => ({}),
+      resetSession: () => ({ ok: true, reason: 'ok' }),
+      getHistory: async () => [],
+      sendChat: async () => ({ runId: 'r1', status: 'started' as const }),
+      abortChat: async () => ({ aborted: false }),
+      serviceGateway: () => ({ ok: true, text: 'ok' }),
+    },
+    bus,
+    {
+      host: '127.0.0.1',
+      port,
+    },
+  );
+
+  try {
+    const ws = await connectWs(`ws://127.0.0.1:${port}`);
+    bus.publish({
+      kind: 'run_progress',
+      id: 'evt-2',
+      createdAt: '2026-03-21T00:00:00.000Z',
+      source: 'coding-orchestrator',
+      runId: 'r2',
+      sessionKey: 'main',
+      chatJid: 'telegram:1',
+      phase: 'retry_delay',
+      text: 'Coder status: Retrying after 1500ms.',
+      detail: 'retrying after stall',
+      attempt: 1,
+      delayMs: 1500,
+    });
+
+    const frame = await waitForMessage<{
+      event: string;
+      payload?: {
+        runId: string;
+        stream: string;
+        data?: {
+          phase?: string;
+          text?: string;
+          detail?: string;
+          attempt?: number;
+          delayMs?: number;
+        };
+      };
+    }>(ws);
+    assert.equal(frame.event, 'agent_event');
+    assert.equal(frame.payload?.runId, 'r2');
+    assert.equal(frame.payload?.stream, 'progress');
+    assert.equal(frame.payload?.data?.phase, 'retry_delay');
+    assert.equal(frame.payload?.data?.text, 'Coder status: Retrying after 1500ms.');
+    assert.equal(frame.payload?.data?.attempt, 1);
+    assert.equal(frame.payload?.data?.delayMs, 1500);
+    ws.close();
+  } finally {
+    await gateway.close();
+  }
+});

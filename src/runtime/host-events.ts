@@ -95,6 +95,27 @@ export type HostEvent =
       error?: string;
     })
   | (HostEventBase & {
+      kind: 'run_progress';
+      runId: string;
+      sessionKey: string;
+      chatJid?: string;
+      phase:
+        | 'spawn'
+        | 'thinking'
+        | 'tool_running'
+        | 'waiting_permission'
+        | 'retry_fresh'
+        | 'retry_delay'
+        | 'retry_provider_switch'
+        | 'stale';
+      text: string;
+      detail?: string;
+      attempt?: number;
+      delayMs?: number;
+      fromProvider?: string;
+      toProvider?: string;
+    })
+  | (HostEventBase & {
       kind: 'assistant_final';
       runId: string;
       sessionKey: string;
@@ -248,6 +269,30 @@ export function projectEventToGatewayFrame(
             ...(event.args ? { args: event.args } : {}),
             ...(event.output ? { output: event.output } : {}),
             ...(event.error ? { error: event.error } : {}),
+          },
+        },
+      };
+    case 'run_progress':
+      return {
+        event: 'agent_event',
+        payload: {
+          runId: event.runId,
+          sessionKey: event.sessionKey,
+          stream: 'progress',
+          data: {
+            phase: event.phase,
+            text: event.text,
+            ...(event.detail ? { detail: event.detail } : {}),
+            ...(typeof event.attempt === 'number'
+              ? { attempt: event.attempt }
+              : {}),
+            ...(typeof event.delayMs === 'number'
+              ? { delayMs: event.delayMs }
+              : {}),
+            ...(event.fromProvider
+              ? { fromProvider: event.fromProvider }
+              : {}),
+            ...(event.toProvider ? { toProvider: event.toProvider } : {}),
           },
         },
       };
