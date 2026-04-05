@@ -156,6 +156,11 @@ export type ContainerProgressEvent =
       at: number;
     }
   | {
+      kind: 'wait';
+      at: number;
+      reason: 'extension_ui';
+    }
+  | {
       kind: 'tool';
       at: number;
       toolName: string;
@@ -1351,6 +1356,11 @@ export async function runContainerAgent(
           },
           'Extension UI request from pi',
         );
+        onProgressEvent?.({
+          kind: 'wait',
+          at: Date.now(),
+          reason: 'extension_ui',
+        });
         noteWaitState(
           Math.max(
             lifecyclePolicy.staleAfterMs ?? 0,
