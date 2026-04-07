@@ -5304,8 +5304,15 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
           logHeartbeatSkip('no-destination', { chatJid: mainChatJid, reason });
           return;
         }
-        await sendMessage(destination, 'HEARTBEAT_OK');
-        rememberHeartbeatTarget(destination);
+        const sent = await sendMessage(destination, 'HEARTBEAT_OK');
+        if (!sent) {
+          logger.error(
+            { chatJid: mainChatJid, destination, reason },
+            'Heartbeat HEARTBEAT_OK delivery failed',
+          );
+        } else {
+          rememberHeartbeatTarget(destination);
+        }
       }
       logHeartbeatSkip('ack-token', {
         chatJid: mainChatJid,
@@ -5344,7 +5351,14 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
         'Heartbeat accountId configured but ignored (single-account channels in FFT_nano)',
       );
     }
-    await sendMessage(destination, normalized.text);
+    const sent = await sendMessage(destination, normalized.text);
+    if (!sent) {
+      logger.error(
+        { chatJid: mainChatJid, destination, reason },
+        'Heartbeat alert delivery failed; user did not receive the heartbeat notification',
+      );
+      return;
+    }
     rememberHeartbeatTarget(destination);
     if (HEARTBEAT_INCLUDE_REASONING) {
       const match =
@@ -5352,7 +5366,13 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
         run.result.match(/<thinking>([\s\S]*?)<\/thinking>/i);
       const reasoning = match?.[1]?.trim();
       if (reasoning) {
-        await sendMessage(destination, `Reasoning:\n${reasoning}`);
+        const reasonSent = await sendMessage(destination, `Reasoning:\n${reasoning}`);
+        if (!reasonSent) {
+          logger.warn(
+            { chatJid: mainChatJid, destination, reason },
+            'Heartbeat reasoning delivery failed (alert was sent)',
+          );
+        }
       }
     }
     heartbeatLastSent.set(mainChatJid, {
@@ -5360,7 +5380,10 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       sentAt: nowMs,
     });
   } catch (err) {
-    logger.warn({ err, chatJid: mainChatJid }, 'Heartbeat run failed');
+    logger.error(
+      { err, chatJid: mainChatJid, reason },
+      'Heartbeat run failed; agent threw an exception',
+    );
   } finally {
     if (activeChatRuns.get(mainChatJid) === activeRun) {
       activeChatRuns.delete(mainChatJid);

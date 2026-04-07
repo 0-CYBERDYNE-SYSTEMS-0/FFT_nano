@@ -1016,9 +1016,15 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
       const errorMsg =
         result || 'Sorry, there was an error processing your message.';
-      await deps.sendAgentResultMessage(params.chatJid, errorMsg, {
+      const sent = await deps.sendAgentResultMessage(params.chatJid, errorMsg, {
         prefixWhatsApp: true,
       });
+      if (!sent) {
+        logger.error(
+          { chatJid: params.chatJid, runId: params.requestId },
+          'Agent error message delivery failed; user may not have been notified of the run failure',
+        );
+      }
     }
 
     // Fire-and-forget reflection after failure completion.

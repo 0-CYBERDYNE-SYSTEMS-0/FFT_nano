@@ -128,37 +128,44 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     });
 
     deps.state.telegramBot.startPolling(async (event: any) => {
-      deps.logger.debug?.(
-        { kind: event.kind, chatJid: event.chatJid, contentLength: event.content?.length },
-        'Telegram event received from polling',
-      );
+      try {
+        deps.logger.debug?.(
+          { kind: event.kind, chatJid: event.chatJid, contentLength: event.content?.length },
+          'Telegram event received from polling',
+        );
 
-      if (event.kind === 'callback_query') {
-        await deps.handleTelegramCallbackQuery(event);
-        return;
-      }
+        if (event.kind === 'callback_query') {
+          await deps.handleTelegramCallbackQuery(event);
+          return;
+        }
 
-      const m = event;
-      deps.storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
-      const didRegister = deps.maybeRegisterTelegramChat(m.chatJid, m.chatName);
-      if (didRegister && deps.isMainChat(m.chatJid)) {
-        await deps.refreshTelegramCommandMenus();
-      }
-      if (await deps.handleTelegramSetupInput(m)) return;
-      if (await deps.handleTelegramCommand(m)) return;
-      if (deps.state.registeredGroups[m.chatJid]) {
-        const finalContent = m.media
-          ? await deps.persistTelegramMedia(m)
-          : m.content;
-        deps.storeTextMessage({
-          id: m.id,
-          chatJid: m.chatJid,
-          sender: m.sender,
-          senderName: m.senderName,
-          content: finalContent,
-          timestamp: m.timestamp,
-          isFromMe: false,
-        });
+        const m = event;
+        deps.storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
+        const didRegister = deps.maybeRegisterTelegramChat(m.chatJid, m.chatName);
+        if (didRegister && deps.isMainChat(m.chatJid)) {
+          await deps.refreshTelegramCommandMenus();
+        }
+        if (await deps.handleTelegramSetupInput(m)) return;
+        if (await deps.handleTelegramCommand(m)) return;
+        if (deps.state.registeredGroups[m.chatJid]) {
+          const finalContent = m.media
+            ? await deps.persistTelegramMedia(m)
+            : m.content;
+          deps.storeTextMessage({
+            id: m.id,
+            chatJid: m.chatJid,
+            sender: m.sender,
+            senderName: m.senderName,
+            content: finalContent,
+            timestamp: m.timestamp,
+            isFromMe: false,
+          });
+        }
+      } catch (err) {
+        deps.logger.error?.(
+          { err, eventKind: event.kind, chatJid: event.chatJid },
+          'Unhandled exception in Telegram polling callback',
+        );
       }
     });
 
