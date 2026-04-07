@@ -23,7 +23,7 @@ import { resolveNoContinueForTask } from './cron/adapters.js';
 import { computeRecurringTaskNextRun } from './task-schedule.js';
 
 export interface SchedulerDependencies {
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (jid: string, text: string) => Promise<boolean>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   requestHeartbeatNow?: (reason?: string) => void;
   isChatRunActive?: (jid: string) => boolean;
