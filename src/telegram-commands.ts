@@ -108,7 +108,7 @@ export interface TelegramCommandDeps {
       abortController?: AbortController;
     }
   >;
-  sendMessage: (chatJid: string, text: string) => Promise<void>;
+  sendMessage: (chatJid: string, text: string) => Promise<boolean>;
   sendTelegramSettingsPanel: (chatJid: string, panel: any) => Promise<void>;
   editTelegramSettingsPanel: (
     chatJid: string,
@@ -255,7 +255,7 @@ export interface TelegramCommandDeps {
     chatJid: string,
     text: string,
     opts?: { prefixWhatsApp?: boolean },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   updateChatUsage: (chatJid: string, usage?: RunUsage) => void;
   logTelegramCommandAudit: (
     chatJid: string,

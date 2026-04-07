@@ -64,7 +64,7 @@ export interface AppRuntimeDeps {
   makeCacheableSignalKeyStore?: (keys: any, logger: any) => any;
   browsers?: { macOS: (name: string) => unknown };
   disconnectReason?: { loggedOut: number };
-  sendMessage?: (chatJid: string, text: string) => Promise<void>;
+  sendMessage?: (chatJid: string, text: string) => Promise<boolean>;
   maybeRegisterWhatsAppMainChat?: () => void;
   syncGroupMetadata?: (force?: boolean) => Promise<void>;
   startSchedulerLoop?: (params: any) => void;

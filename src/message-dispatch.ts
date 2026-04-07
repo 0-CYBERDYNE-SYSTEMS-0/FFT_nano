@@ -1,4 +1,5 @@
 import { PARITY_CONFIG } from './config.js';
+import { logger } from './logger.js';
 import type { TelegramMessagePreviewState } from './telegram-streaming.js';
 import type { NewMessage } from './types.js';
 import type { CodingWorkerResult } from './coding-orchestrator.js';
@@ -52,7 +53,7 @@ export interface FinalizeCompletedRunParams {
     chatJid: string,
     text: string,
     opts?: { prefixWhatsApp?: boolean },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   emitTuiChatEvent: (payload: {
     runId: string;
     sessionKey: string;
@@ -210,7 +211,7 @@ export interface MessageDispatcherDeps {
     string,
     Array<{ text: string; runId: string; deliver: boolean }>
   >;
-  sendMessage: (chatJid: string, text: string) => Promise<void>;
+  sendMessage: (chatJid: string, text: string) => Promise<boolean>;
   setTyping: (chatJid: string, typing: boolean) => Promise<void>;
   getMessagesSince: (
     chatJid: string,
@@ -289,7 +290,7 @@ export interface MessageDispatcherDeps {
     chatJid: string,
     text: string,
     opts?: { prefixWhatsApp?: boolean },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   emitTuiChatEvent: (payload: any) => void;
   emitTuiAgentEvent: (payload: any) => void;
   isTelegramJid: (chatJid: string) => boolean;
@@ -348,7 +349,11 @@ export interface MessageDispatcherDeps {
   isCoderDelegationCommand?: (content: string) => boolean;
   onboardingCommandBlockedText?: () => string;
   makeRunId?: (prefix: string) => string;
-  logger?: { info?: (payload: unknown, message?: string) => void };
+  logger?: {
+    info?: (payload: unknown, message?: string) => void;
+    error?: (payload: unknown, message?: string) => void;
+    warn?: (payload: unknown, message?: string) => void;
+  };
   recordCoderLearning?: (params: {
     workerResult: NonNullable<CodingRunResult['workerResult']>;
     taskText: string;
@@ -651,14 +656,31 @@ export async function finalizeCompletedRun(
         params.result,
       );
     }
-    if (
+    // Send a fallback message if:
+    // - delivery is enabled
+    // - completion was NOT handled by the Telegram streaming layer
+    // - either: (1) no streaming happened, OR
+    //           (2) streaming happened with a preview that failed to finalize, OR
+    //           (3) streaming happened but no preview state exists (drafts disabled
+    //               mid-stream or preview state not captured on resume — Telegram
+    //               streaming layer did not actually deliver anything)
+    const shouldSend =
       params.deliverToChat !== false &&
       !params.externallyCompleted &&
-      (!params.streamed || (params.telegramPreviewState && !finalizedPreview))
-    ) {
-      await params.sendAgentResultMessage(params.chatJid, params.result, {
+      (!params.streamed ||
+        !params.telegramPreviewState ||
+        !finalizedPreview);
+
+    if (shouldSend) {
+      const sent = await params.sendAgentResultMessage(params.chatJid, params.result, {
         prefixWhatsApp: true,
       });
+      if (!sent) {
+        logger.error(
+          { chatJid: params.chatJid, runId: params.runId },
+          'Agent result message delivery failed; user may not have received the response',
+        );
+      }
     }
     params.emitTuiChatEvent({
       runId: params.runId,
@@ -928,9 +950,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
             groupFolder,
           }),
         ).catch((err) => {
-          deps.logger?.info?.(
-            { err },
-            'Failed to record coder learning via injected hook',
+          deps.logger?.error?.(
+            { err, groupFolder, taskText },
+            'Failed to record coder learning via injected hook — coder reflection skipped',
           );
         });
         return;
@@ -941,16 +963,16 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           reflectOnCoderRun(workerResult as CodingWorkerResult, taskText)
             .then((entry) => writeCoderLearningsToMemory(entry, groupFolder))
             .catch((err) => {
-              deps.logger?.info?.(
-                { err },
+              deps.logger?.error?.(
+                { err, groupFolder },
                 'Failed to write coder learnings to MEMORY.md',
               );
             });
         })
         .catch((err) => {
-          deps.logger?.info?.(
-            { err },
-            'Failed to import coder-learnings for reflection',
+          deps.logger?.error?.(
+            { err, groupFolder },
+            'Failed to import coder-learnings module for reflection',
           );
         });
     };

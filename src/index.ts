@@ -4090,22 +4090,19 @@ async function stopWebControlCenterService(): Promise<void> {
 async function sendTelegramAgentReply(
   chatJid: string,
   text: string,
-): Promise<void> {
+): Promise<boolean> {
   if (!state.telegramBot) {
-    await sendMessage(chatJid, text);
-    return;
+    return await sendMessage(chatJid, text);
   }
 
   const extracted = extractTelegramAttachmentHintsFromReply(text);
   if (extracted.hints.length === 0) {
-    await sendMessage(chatJid, text);
-    return;
+    return await sendMessage(chatJid, text);
   }
 
   const group = state.registeredGroups[chatJid];
   if (!group) {
-    await sendMessage(chatJid, text);
-    return;
+    return await sendMessage(chatJid, text);
   }
 
   const resolved = resolveTelegramAttachmentsFromReply({
@@ -4118,12 +4115,12 @@ async function sendTelegramAgentReply(
     hints: extracted.hints,
   });
   if (resolved.attachments.length === 0) {
-    await sendMessage(chatJid, text);
-    return;
+    return await sendMessage(chatJid, text);
   }
 
+  let textSent = true;
   if (extracted.cleanedText) {
-    await sendMessage(chatJid, extracted.cleanedText);
+    textSent = await sendMessage(chatJid, extracted.cleanedText);
   }
 
   const outcomes = await sendResolvedTelegramAttachments({
@@ -4170,38 +4167,40 @@ async function sendTelegramAgentReply(
       `Note: ${failedTotal} attachment${failedTotal === 1 ? '' : 's'} could not be delivered.`,
     );
   }
+
+  return textSent && failedTotal === 0;
 }
 
 async function sendAgentResultMessage(
   chatJid: string,
   text: string,
   opts: { prefixWhatsApp?: boolean } = {},
-): Promise<void> {
+): Promise<boolean> {
   if (isTelegramJid(chatJid)) {
-    await sendTelegramAgentReply(chatJid, text);
-    return;
+    return await sendTelegramAgentReply(chatJid, text);
   }
 
   const outgoing = opts.prefixWhatsApp ? `${ASSISTANT_NAME}: ${text}` : text;
-  await sendMessage(chatJid, outgoing);
+  return await sendMessage(chatJid, outgoing);
 }
 
-async function sendMessage(jid: string, text: string): Promise<void> {
+async function sendMessage(jid: string, text: string): Promise<boolean> {
   if (isTelegramJid(jid)) {
     if (!state.telegramBot) {
       logger.error(
         { jid },
         'Telegram message send requested but Telegram is not configured',
       );
-      return;
+      return false;
     }
     try {
       await state.telegramBot.sendMessage(jid, text);
       logger.info({ jid, length: text.length }, 'Telegram message sent');
+      return true;
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+      return false;
     }
-    return;
   }
 
   if (!state.sock) {
@@ -4209,13 +4208,15 @@ async function sendMessage(jid: string, text: string): Promise<void> {
       { jid },
       'WhatsApp message send requested but WhatsApp is not connected',
     );
-    return;
+    return false;
   }
   try {
     await state.sock.sendMessage(jid, { text });
     logger.info({ jid, length: text.length }, 'Message sent');
+    return true;
   } catch (err) {
     logger.error({ jid, err }, 'Failed to send message');
+    return false;
   }
 }
 
@@ -4355,12 +4356,12 @@ async function finalizeTelegramPreviewMessage(
   const extracted = extractTelegramAttachmentHintsFromReply(text);
   if (extracted.hints.length > 0) {
     await deleteTelegramPreviewMessage(chatJid, messageId);
-    await sendTelegramAgentReply(chatJid, text);
+    const sent = await sendTelegramAgentReply(chatJid, text);
     logger.info(
       { chatJid, messageId, finalizeMode: 'delete-then-send' },
       'Telegram streaming preview finalized',
     );
-    return true;
+    return sent;
   }
 
   const chunks = splitTelegramText(text);
@@ -4381,7 +4382,8 @@ async function finalizeTelegramPreviewMessage(
       'Failed to finalize Telegram streaming preview in place',
     );
     await deleteTelegramPreviewMessage(chatJid, messageId);
-    return true;
+    // Fallback: send the full text as a plain message
+    return await sendMessage(chatJid, text);
   }
 
   for (const chunk of chunks.slice(1)) {
