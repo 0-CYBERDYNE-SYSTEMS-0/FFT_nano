@@ -25,7 +25,7 @@ import { resolveNoContinueForTask } from './adapters.js';
 import { getEffectiveTimezone } from '../time-context.js';
 
 export interface CronServiceDependencies {
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (jid: string, text: string) => Promise<boolean>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   requestHeartbeatNow?: (reason?: string) => void;
   runContainerTask?: typeof runContainerAgent;
@@ -202,7 +202,20 @@ async function deliverTaskOutcome(
 
   if (mode === 'announce') {
     const destination = task.delivery_to?.trim() || task.chat_jid;
-    await deps.sendMessage(destination, text.slice(0, 4000));
+    try {
+      const sent = await deps.sendMessage(destination, text.slice(0, 4000));
+      if (!sent) {
+        logger.error(
+          { taskId: task.id, destination },
+          'Scheduled task announce delivery failed; user did not receive the result',
+        );
+      }
+    } catch (err) {
+      logger.error(
+        { taskId: task.id, destination, err },
+        'Scheduled task announce delivery threw an exception',
+      );
+    }
     return;
   }
 
