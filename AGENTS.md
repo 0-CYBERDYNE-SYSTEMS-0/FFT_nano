@@ -85,17 +85,71 @@ Notes:
 
 ## Pi-Native Project Skills
 
-- Two skill types:
-  - Setup-only skills: `skills/setup/`
-  - Runtime agent skills: `skills/runtime/`
-- Main workspace user-created runtime skills live at `~/nano/skills/`.
-- On each run, runtime skills are mirrored into per-group Pi home:
-  - host: `data/pi/<group>/.pi/skills/`
-  - container: `/home/node/.pi/skills/`
-- Main/admin runs merge project runtime skills + `~/nano/skills/` (main workspace overrides on name collision).
-- Non-main groups only get project runtime skills by default.
-- Validate skill metadata/frontmatter with:
-  - `npm run validate:skills`
+Skills give the pi agent specific capabilities it can invoke during its work loop. They are
+organized in two layers:
+
+### Skill directory layout
+
+```
+fft_nano/
+  skills/
+    setup/          ← operator-facing guides (one-time setup tasks)
+    runtime/        ← repo-tracked agent skills (fft-coder-ops, agent-browser, etc.)
+
+~/nano/
+  skills/           ← your personal agent skills (untracked, not in git)
+```
+
+### The two layers
+
+**`skills/runtime/`** — repo-tracked, version-controlled, part of the install package.
+These are FFT_nano's standard agent skills. Any operator or agent can see and use them.
+They are the source of record for distributed deploys.
+
+**`~/nano/skills/`** — your personal skills layer. Lives inside the agent's workspace,
+untracked by git. Add skills here when you want the agent to have a capability that
+should not be committed to the repo (e.g., proprietary workflows, integrations with
+your personal tools, domain-specific skills).
+
+### How skill mirroring works
+
+On each run, FFT_nano merges both layers and syncs them into the agent's home:
+
+```
+skills/runtime/  +  ~/nano/skills/
+        ↓ merge
+data/pi/<group>/.pi/skills/
+        ↓ mount
+container: /home/node/.pi/skills/
+```
+
+- **Main/admin runs:** both layers are merged. Repo skills and personal skills coexist.
+  On name collision, `~/nano/skills/` wins (it is sourced last).
+- **Non-main group runs:** only repo skills are synced. Personal skills are intentionally
+  not available to group members — access is workspace-scoped, not global.
+- **Sync safety:** FFT_nano uses a manifest file (`.fft_nano_managed_skills.json`) to
+  track which skills it manages. Only repo-tracked skills are managed — personal skills
+  in `~/nano/skills/` are never overwritten or removed by sync. You can safely add,
+  modify, or delete personal skills without affecting the repo layer.
+- **Validation:** `npm run validate:skills` checks frontmatter and structure for both
+  layers. Personal skills go through the same validation as repo skills.
+
+### Adding a personal skill
+
+```bash
+# Create the skill directory in your personal skills layer
+mkdir -p ~/nano/skills/my-custom-skill
+# Add a SKILL.md with name + description frontmatter
+$EDITOR ~/nano/skills/my-custom-skill/SKILL.md
+```
+
+The next time the main agent runs, it will be available. No restart needed.
+
+### Setup skills (skills/setup/)
+
+These are **not** agent skills. They are step-by-step operator guides for one-time
+installation and configuration tasks (Gmail setup, Docker conversion, etc.). They are
+human-facing documentation, not tools the agent invokes.
 
 ## Debugging / Tracing
 
