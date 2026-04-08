@@ -7,26 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-## [1.6.0] - 2026-04-04
-
-### Added
-
-- Repo-scoped ephemeral coder worktree retention, including TTL/count pruning and lifecycle regression coverage for success, failure, and abort cases.
-- Time-context helpers and cross-scheduled-task timezone coverage for daily-memory lookup, compaction paths, and prompt-time metadata.
-- Telegram/TUI visibility for operator commands (`/status`, `/id`, `/help`, `/models`) plus verbose Telegram tool-progress streaming.
-
-### Changed
-
-- Scheduled runs now pass a validated effective timezone into cron execution, prompt assembly, and daily-memory fallback handling.
-- Coder worktree creation now namespaces temporary paths by repository hash and preserves successful worktrees while pruning stale retained ones.
-- Main prompt assembly now exposes authoritative machine-local date/time fields and uses aligned local-time daily-memory selection.
-- README and workflow docs now better cover release hygiene, worktree policy, discoverability, and the full `onboard-all.sh` CLI surface.
+## [1.6.1] - 2026-04-08
 
 ### Fixed
 
-- Ephemeral coder worktree creation now handles unborn repositories that do not have an initial commit yet.
-- Daily-memory read/write behavior is aligned across prompt reads and compaction writes, including graceful fallback for invalid timezone input.
-- Telegram command responses now surface consistently in TUI/control-plane event streams.
+- End-to-end message delivery success/failure tracking across all send paths.
+- Delivery confirmation handling for heartbeat, cron task outcomes, and error reply paths.
+- `SchedulerDependencies.sendMessage` return type corrected to `Promise<boolean>` so delivery results propagate correctly through the scheduler.
+
+### Changed
+
+- Expanded Pi-Native Project Skills documentation in AGENTS.md with explicit skill directory layout, two-layer architecture explanation, mirroring semantics, and personal skill setup instructions.
 
 ## [1.5.0] - 2026-04-02
 
