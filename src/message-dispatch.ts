@@ -636,10 +636,11 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  if (params.result) {
+  const effectiveResult = params.result || 'Task completed.';
+  if (effectiveResult) {
     const assistantTimestamp = params.persistAssistantHistory(
       params.chatJid,
-      params.result,
+      effectiveResult,
       params.runId,
     );
     if (assistantTimestamp) {
@@ -653,7 +654,7 @@ export async function finalizeCompletedRun(
       finalizedPreview = await params.finalizeTelegramPreviewMessage(
         params.chatJid,
         params.telegramPreviewState.messageId,
-        params.result,
+        effectiveResult,
       );
     }
     // Send a fallback message if:
@@ -672,7 +673,7 @@ export async function finalizeCompletedRun(
         !finalizedPreview);
 
     if (shouldSend) {
-      const sent = await params.sendAgentResultMessage(params.chatJid, params.result, {
+      const sent = await params.sendAgentResultMessage(params.chatJid, effectiveResult, {
         prefixWhatsApp: true,
       });
       if (!sent) {
@@ -686,7 +687,7 @@ export async function finalizeCompletedRun(
       runId: params.runId,
       sessionKey: params.sessionKey,
       state: 'final',
-      message: { role: 'assistant', content: params.result },
+      message: { role: 'assistant', content: effectiveResult },
       usage: params.usage,
     });
     params.emitTuiAgentEvent({
