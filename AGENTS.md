@@ -91,7 +91,7 @@ organized in two layers:
 ### Skill directory layout
 
 ```
-fft_nano/
+fft_nano-dev/
   skills/
     setup/          ← operator-facing guides (one-time setup tasks)
     runtime/        ← repo-tracked agent skills (fft-coder-ops, agent-browser, etc.)
