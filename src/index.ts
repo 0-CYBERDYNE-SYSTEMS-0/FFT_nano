@@ -1289,11 +1289,11 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
 
   const totalModels = filtered.length;
   const lines: string[] = [
-    `<b>Available Models</b> (${totalModels} across ${providerOrder.length} providers)`,
+    `*Available Models* (${totalModels} across ${providerOrder.length} providers)`,
   ];
 
   if (trimmed) {
-    lines[0] = `<b>Models matching "${trimmed}"</b> (${totalModels})`;
+    lines[0] = `*Models matching "${trimmed}"* (${totalModels})`;
   }
 
   lines.push('');
@@ -1301,14 +1301,16 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
     const models = providerModels.get(provider) ?? [];
     const providerDef = getRuntimeProviderDefinitionByPiApi(provider);
     const providerLabel = providerDef ? `${providerDef.label}` : provider;
-    lines.push(`<b>${providerLabel}</b> (${models.length})`);
+    lines.push(`*${providerLabel}* (${models.length})`);
     for (const m of models) {
-      lines.push(`  <code>${m}</code>`);
+      lines.push(`  \`${m}\``);
     }
     lines.push('');
   }
 
-  lines.push('Use /model to open the interactive picker.');
+  lines.push(
+    'Use /model to open the picker, or /model provider/name to set directly.',
+  );
 
   const text = lines.join('\n');
   const bounded =
@@ -2269,14 +2271,13 @@ function buildAddModelForProviderPanel(
   const providerLabel = providerDef ? providerDef.label : provider;
   return {
     text: [
-      `Add a model to <b>${providerLabel}</b>:`,
+      `Add a model to ${providerLabel}:`,
       '',
-      'You can:',
-      '1. Type the model name below (e.g. <code>gpt-4.1-mini</code>)',
-      '2. Or use the button to type it now',
+      'Tap "Type Model Name" below, then type the model id.',
+      'Or use /model directly: /model provider/model-name',
       '',
       'The model will be set as your per-chat override.',
-      'Note: the model must already be available in your pi runtime.',
+      'The model must already exist in your pi runtime.',
     ].join('\n'),
     keyboard: [
       [
