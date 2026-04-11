@@ -108,6 +108,7 @@ import {
   buildRuntimeProviderPresetUpdates,
   getDefaultDotEnvPath,
   getRuntimeProviderDefinitionByPreset,
+  getRuntimeProviderDefinitionByPiApi,
   loadDotEnvMap,
   resolveRuntimeConfigSnapshot,
   RUNTIME_PROVIDER_PRESET_ENV,
@@ -1251,42 +1252,21 @@ function resetTuiSession(
 }
 
 function runPiListModels(searchText: string): { ok: boolean; text: string } {
-  const piExecutable = resolvePiExecutable();
-  if (!piExecutable) {
-    return {
-      ok: false,
-      text: 'Model listing is unavailable: `pi` was not found on PATH and no repo-local fallback exists at node_modules/.bin/pi. Run setup or install dependencies.',
-    };
+  const loaded = loadPiModels(true);
+  if (!loaded.ok) {
+    return { ok: false, text: loaded.text };
   }
 
-  const args = ['--list-models'];
-  const trimmed = searchText.trim();
-  if (trimmed) args.push(trimmed);
-  const result = spawnSync(piExecutable, args, {
-    encoding: 'utf8',
-    env: process.env,
-    maxBuffer: 4 * 1024 * 1024,
-  });
+  const trimmed = searchText.trim().toLowerCase();
+  const filtered = trimmed
+    ? loaded.entries.filter(
+        (e) =>
+          e.provider.toLowerCase().includes(trimmed) ||
+          e.model.toLowerCase().includes(trimmed),
+      )
+    : loaded.entries;
 
-  if (result.error) {
-    return {
-      ok: false,
-      text: `Failed to run ${piExecutable} --list-models: ${result.error.message}`,
-    };
-  }
-
-  if (result.status !== 0) {
-    const details = (result.stderr || result.stdout || '').trim();
-    return {
-      ok: false,
-      text: details
-        ? `pi --list-models failed:\n${details}`
-        : `pi --list-models exited with code ${result.status ?? 'unknown'}`,
-    };
-  }
-
-  const out = (result.stdout || '').trim();
-  if (!out) {
+  if (filtered.length === 0) {
     return {
       ok: true,
       text: trimmed
@@ -1295,16 +1275,47 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
     };
   }
 
+  const providerOrder: string[] = [];
+  const providerModels = new Map<string, string[]>();
+  for (const entry of filtered) {
+    let list = providerModels.get(entry.provider);
+    if (!list) {
+      list = [];
+      providerModels.set(entry.provider, list);
+      providerOrder.push(entry.provider);
+    }
+    list.push(entry.model);
+  }
+
+  const totalModels = filtered.length;
+  const lines: string[] = [
+    `<b>Available Models</b> (${totalModels} across ${providerOrder.length} providers)`,
+  ];
+
+  if (trimmed) {
+    lines[0] = `<b>Models matching "${trimmed}"</b> (${totalModels})`;
+  }
+
+  lines.push('');
+  for (const provider of providerOrder) {
+    const models = providerModels.get(provider) ?? [];
+    const providerDef = getRuntimeProviderDefinitionByPiApi(provider);
+    const providerLabel = providerDef ? `${providerDef.label}` : provider;
+    lines.push(`<b>${providerLabel}</b> (${models.length})`);
+    for (const m of models) {
+      lines.push(`  <code>${m}</code>`);
+    }
+    lines.push('');
+  }
+
+  lines.push('Use /model to open the interactive picker.');
+
+  const text = lines.join('\n');
   const bounded =
-    out.length > 12000
-      ? `${out.slice(0, 12000)}\n\n...output truncated...`
-      : out;
-  return {
-    ok: true,
-    text: trimmed
-      ? `Models matching "${trimmed}":\n${bounded}`
-      : `Available models:\n${bounded}`,
-  };
+    text.length > 12000
+      ? `${text.slice(0, 12000)}\n\n...output truncated...`
+      : text;
+  return { ok: true, text: bounded };
 }
 
 function parsePiModelListOutput(output: string): PiModelEntry[] {
@@ -1420,6 +1431,16 @@ function setTelegramSetupInputState(
     kind,
     expiresAt: Date.now() + TELEGRAM_SETUP_INPUT_TTL_MS,
   });
+}
+
+function setTelegramSetupInputProvider(
+  chatJid: string,
+  provider: string,
+): void {
+  const current = telegramSetupInputStates.get(chatJid);
+  if (current) {
+    current.provider = provider;
+  }
 }
 
 function clearTelegramSetupInputState(chatJid: string): void {
@@ -1844,7 +1865,10 @@ async function sendTelegramCoderKeyboard(params: {
   keyboard: TelegramInlineKeyboard;
   fallbackText?: string;
 }): Promise<void> {
-  if (isTelegramJid(params.chatJid) && state.telegramBot?.sendMessageWithKeyboard) {
+  if (
+    isTelegramJid(params.chatJid) &&
+    state.telegramBot?.sendMessageWithKeyboard
+  ) {
     await state.telegramBot.sendMessageWithKeyboard(
       params.chatJid,
       params.text,
@@ -1855,7 +1879,10 @@ async function sendTelegramCoderKeyboard(params: {
   await sendMessage(params.chatJid, params.fallbackText || params.text);
 }
 
-function buildCoderCommand(command: '/coder' | '/coder-plan', taskText: string): string {
+function buildCoderCommand(
+  command: '/coder' | '/coder-plan',
+  taskText: string,
+): string {
   const normalizedTask = taskText.replace(/\s+/g, ' ').trim();
   return `${command} ${normalizedTask}`.trim();
 }
@@ -1942,20 +1969,26 @@ async function prepareCoderTarget(params: {
           [
             {
               text: 'Start Plan Instead',
-              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
-                kind: 'coder-select-project',
-                mode: 'plan',
-                taskText: resolved.taskText,
-                projectPath: resolved.workspaceRoot,
-                projectLabel: resolved.projectLabel,
-                isGitRepo: resolved.isGitRepo,
-              }),
+              callbackData: registerTelegramSettingsPanelAction(
+                params.chatJid,
+                {
+                  kind: 'coder-select-project',
+                  mode: 'plan',
+                  taskText: resolved.taskText,
+                  projectPath: resolved.workspaceRoot,
+                  projectLabel: resolved.projectLabel,
+                  isGitRepo: resolved.isGitRepo,
+                },
+              ),
             },
             {
               text: 'Cancel',
-              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
-                kind: 'coder-cancel',
-              }),
+              callbackData: registerTelegramSettingsPanelAction(
+                params.chatJid,
+                {
+                  kind: 'coder-cancel',
+                },
+              ),
             },
           ],
         ],
@@ -1976,11 +2009,12 @@ async function prepareCoderTarget(params: {
       text: 'I found multiple likely projects. Pick the right one before coder continues.',
       fallbackText: [
         'I found multiple likely projects. Re-run your request with one of these project selectors:',
-        ...resolved.candidates.map((candidate) =>
-          `${buildCoderCommand(
-            params.mode === 'plan' ? '/coder-plan' : '/coder',
-            `project:${candidate.projectLabel} ${resolved.taskText}`,
-          )}`,
+        ...resolved.candidates.map(
+          (candidate) =>
+            `${buildCoderCommand(
+              params.mode === 'plan' ? '/coder-plan' : '/coder',
+              `project:${candidate.projectLabel} ${resolved.taskText}`,
+            )}`,
         ),
         'Reply with: cancel',
       ].join('\n'),
@@ -2054,9 +2088,7 @@ async function prepareCoderTarget(params: {
   return { status: 'handled' };
 }
 
-async function createCoderProject(params: {
-  slug: string;
-}): Promise<{
+async function createCoderProject(params: { slug: string }): Promise<{
   workspaceRoot: string;
   projectLabel: string;
   isGitRepo: boolean;
@@ -2195,19 +2227,23 @@ function buildTelegramModelProviderPanel(chatJid: string): {
   for (let i = 0; i < providers.length; i += 2) {
     const slice = providers.slice(i, i + 2);
     rows.push(
-      slice.map(([provider, count]) => ({
-        text: `${provider} (${count})`,
-        callbackData: registerTelegramSettingsPanelAction(chatJid, {
-          kind: 'show-models-for-provider',
-          provider,
-          page: 0,
-        }),
-      })),
+      slice.map(([provider, count]) => {
+        const providerDef = getRuntimeProviderDefinitionByPiApi(provider);
+        const label = providerDef ? providerDef.label : provider;
+        return {
+          text: `${label} (${count})`,
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-models-for-provider',
+            provider,
+            page: 0,
+          }),
+        };
+      }),
     );
   }
   rows.push([
     {
-      text: 'Back',
+      text: 'Home',
       callbackData: registerTelegramSettingsPanelAction(chatJid, {
         kind: 'show-home',
       }),
@@ -2219,6 +2255,54 @@ function buildTelegramModelProviderPanel(chatJid: string): {
       ...formatTelegramSettingsPanelSummary(chatJid),
     ].join('\n'),
     keyboard: rows,
+  };
+}
+
+function buildAddModelForProviderPanel(
+  chatJid: string,
+  provider: string,
+): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const providerDef = getRuntimeProviderDefinitionByPiApi(provider);
+  const providerLabel = providerDef ? providerDef.label : provider;
+  return {
+    text: [
+      `Add a model to <b>${providerLabel}</b>:`,
+      '',
+      'You can:',
+      '1. Type the model name below (e.g. <code>gpt-4.1-mini</code>)',
+      '2. Or use the button to type it now',
+      '',
+      'The model will be set as your per-chat override.',
+      'Note: the model must already be available in your pi runtime.',
+    ].join('\n'),
+    keyboard: [
+      [
+        {
+          text: 'Type Model Name',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'prompt-add-model-for-provider',
+            provider,
+          }),
+        },
+      ],
+      [
+        {
+          text: 'Providers',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-model-providers',
+          }),
+        },
+        {
+          text: 'Home',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-home',
+          }),
+        },
+      ],
+    ],
   };
 }
 
@@ -2315,13 +2399,20 @@ function buildTelegramProviderModelPanel(
       }),
     },
     {
+      text: '+ Add Model',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-add-model-for-provider',
+        provider,
+      }),
+    },
+  ]);
+  rows.push([
+    {
       text: 'Providers',
       callbackData: registerTelegramSettingsPanelAction(chatJid, {
         kind: 'show-model-providers',
       }),
     },
-  ]);
-  rows.push([
     {
       text: 'Home',
       callbackData: registerTelegramSettingsPanelAction(chatJid, {
@@ -2330,9 +2421,11 @@ function buildTelegramProviderModelPanel(
     },
   ]);
 
+  const providerDef = getRuntimeProviderDefinitionByPiApi(provider);
+  const providerLabel = providerDef ? providerDef.label : provider;
   return {
     text: [
-      `Select a model from ${provider}:`,
+      `Select a model from ${providerLabel}:`,
       `Current: ${current}`,
       `Page ${safePage + 1} of ${totalPages}`,
     ].join('\n'),
@@ -2413,11 +2506,7 @@ function buildDeliveryPanel(chatJid: string): {
 } {
   const current =
     state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
-  const modes: TelegramDeliveryMode[] = [
-    'partial',
-    'draft',
-    'off',
-  ];
+  const modes: TelegramDeliveryMode[] = ['partial', 'draft', 'off'];
   return {
     text: [
       'Select Telegram text delivery mode:',
@@ -2880,6 +2969,10 @@ function resolveTelegramSettingsPanel(
       return buildTelegramSetupEndpointPanel(chatJid);
     case 'show-setup-api-key':
       return buildTelegramSetupApiKeyPanel(chatJid);
+    case 'show-add-model-for-provider':
+      return buildAddModelForProviderPanel(chatJid, action.provider);
+    case 'prompt-add-model-for-provider':
+      return buildAddModelForProviderPanel(chatJid, action.provider);
     default:
       return buildTelegramSettingsHomePanel(chatJid);
   }
@@ -3365,6 +3458,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   editTelegramSettingsPanel,
   promptTelegramSetupInput,
   clearTelegramSetupInputState,
+  setTelegramSetupInputProvider,
   getTelegramSetupInputState,
   getTelegramSettingsPanelAction,
   updateChatRunPreferences,
@@ -3465,14 +3559,20 @@ async function handlePermissionGateRequest(
     isTelegramJid(chatJid) &&
     state.telegramBot
   ) {
-    const { promise } = createPendingConfirmation(request.id, chatJid, timeoutMs);
+    const { promise } = createPendingConfirmation(
+      request.id,
+      chatJid,
+      timeoutMs,
+    );
     await state.telegramBot.sendMessageWithKeyboard(
       chatJid,
       `⚠️ *Permission Required*\n\n${request.title ?? 'Action'}\n${request.message ?? ''}\n\n_Reply within ${Math.round(timeoutMs / 1000)}s or it will be auto-denied._`,
-      [[
-        { text: '✅ Allow', callbackData: `pg_allow:${request.id}` },
-        { text: '❌ Block', callbackData: `pg_block:${request.id}` },
-      ]],
+      [
+        [
+          { text: '✅ Allow', callbackData: `pg_allow:${request.id}` },
+          { text: '❌ Block', callbackData: `pg_block:${request.id}` },
+        ],
+      ],
     );
     return promise;
   }
@@ -5366,7 +5466,10 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
         run.result.match(/<thinking>([\s\S]*?)<\/thinking>/i);
       const reasoning = match?.[1]?.trim();
       if (reasoning) {
-        const reasonSent = await sendMessage(destination, `Reasoning:\n${reasoning}`);
+        const reasonSent = await sendMessage(
+          destination,
+          `Reasoning:\n${reasoning}`,
+        );
         if (!reasonSent) {
           logger.warn(
             { chatJid: mainChatJid, destination, reason },

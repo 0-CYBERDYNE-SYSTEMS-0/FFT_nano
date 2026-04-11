@@ -40,10 +40,7 @@ export type ThinkLevel =
   | 'high'
   | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
-export type TelegramDeliveryMode =
-  | 'off'
-  | 'partial'
-  | 'draft';
+export type TelegramDeliveryMode = 'off' | 'partial' | 'draft';
 export type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -95,11 +92,13 @@ export type TelegramSetupInputKind =
   | 'provider'
   | 'model'
   | 'endpoint'
-  | 'api-key';
+  | 'api-key'
+  | 'add-model-for-provider';
 
 export interface TelegramSetupInputState {
   kind: TelegramSetupInputKind;
   expiresAt: number;
+  provider?: string;
 }
 
 export type TelegramSettingsPanelAction =
@@ -153,7 +152,9 @@ export type TelegramSettingsPanelAction =
       slug: string;
       projectLabel: string;
     }
-  | { kind: 'coder-cancel' };
+  | { kind: 'coder-cancel' }
+  | { kind: 'show-add-model-for-provider'; provider: string }
+  | { kind: 'prompt-add-model-for-provider'; provider: string };
 
 export interface ActiveChatRun {
   chatJid: string;
