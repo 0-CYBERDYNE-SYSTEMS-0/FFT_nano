@@ -403,6 +403,88 @@ test('handleTelegramCallbackQuery sends terminal completion message when coder r
   assert.match(deps.agentResults[0]?.text || '', /coder run completed/i);
 });
 
+test('handleTelegramCallbackQuery reports aborted when fallback runAgent returns empty result after stop', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    agentResults: Array<{ chatJid: string; text: string }>;
+  };
+  deps.state.registeredGroups['telegram:main'] = {
+    jid: 'telegram:main',
+    name: 'Main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+  };
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'coder-approve-execute',
+    taskText: 'fix the auth bug',
+  });
+  deps.runCodingTask = undefined;
+  deps.runAgent = async (_group, _prompt, chatJid) => {
+    deps.activeChatRuns.get(chatJid)?.abortController.abort(
+      new Error('Stopped by user via /stop'),
+    );
+    return {
+      ok: true,
+      result: null,
+      streamed: false,
+    };
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-abort',
+    chatJid: 'telegram:main',
+    messageId: 90,
+    data: 'cfg:exec',
+  });
+
+  assert.match(deps.sent[0]?.text || '', /Starting coder run/i);
+  assert.equal(deps.agentResults.length, 1);
+  assert.match(deps.agentResults[0]?.text || '', /coder run aborted/i);
+  assert.doesNotMatch(deps.agentResults[0]?.text || '', /coder run completed/i);
+});
+
+test('handleTelegramCommand reports aborted when subagent fallback runAgent is stopped', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    agentResults: Array<{ chatJid: string; text: string }>;
+  };
+  deps.state.registeredGroups['telegram:main'] = {
+    jid: 'telegram:main',
+    name: 'Main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+  };
+  deps.isMainChat = () => true;
+  deps.runCodingTask = undefined;
+  deps.runAgent = async (_group, _prompt, chatJid) => {
+    deps.activeChatRuns.get(chatJid)?.abortController.abort(
+      new Error('Stopped by user via /subagents stop current'),
+    );
+    return {
+      ok: true,
+      result: null,
+      streamed: false,
+    };
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/subagents spawn inspect this',
+  });
+
+  assert.equal(handled, true);
+  assert.match(deps.sent[0]?.text || '', /Starting subagent run/i);
+  assert.equal(deps.agentResults.length, 1);
+  assert.match(deps.agentResults[0]?.text || '', /subagent run aborted/i);
+  assert.doesNotMatch(
+    deps.agentResults[0]?.text || '',
+    /subagent run completed/i,
+  );
+});
+
 test('handleTelegramCommand opens delivery panel when called without args', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     panels: Array<{ chatJid: string; panel: { kind: string } }>;
