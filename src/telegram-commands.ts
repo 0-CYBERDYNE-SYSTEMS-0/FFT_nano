@@ -652,7 +652,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           await deps.promptTelegramSetupInput(
             q.chatJid,
             'add-model-for-provider',
-            `Send the model id to add to ${settingsAction.provider}. Example: gpt-4.1-mini`,
+            `Type a model name for ${settingsAction.provider}.\nExample: gpt-4.1-mini`,
           );
           deps.setTelegramSetupInputProvider(
             q.chatJid,
