@@ -281,6 +281,25 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
   handleTelegramSetupInput: (m: TelegramSetupInputMessage) => Promise<boolean>;
   handleTelegramCommand: (m: TelegramCommandMessage) => Promise<boolean>;
 } {
+  async function sendRunTerminalMessage(params: {
+    chatJid: string;
+    requestId: string;
+    kind: 'coder' | 'subagent';
+    status: 'failed' | 'completed';
+    detail?: string | null;
+  }): Promise<void> {
+    const noun = params.kind === 'coder' ? 'Coder' : 'Subagent';
+    const normalizedDetail = params.detail?.trim();
+    const message =
+      params.status === 'failed'
+        ? `${noun} run failed (${params.requestId}).${normalizedDetail ? `\n\n${normalizedDetail}` : ''}`
+        : `${noun} run completed (${params.requestId}).${normalizedDetail ? `\n\n${normalizedDetail}` : ''}`;
+    const sent = await deps.sendAgentResultMessage(params.chatJid, message);
+    if (!sent) {
+      await deps.sendMessage(params.chatJid, message);
+    }
+  }
+
   async function startCoderRun(params: {
     chatJid: string;
     requestId: string;
@@ -383,6 +402,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           phase: 'error',
           detail: 'coder run failed',
         });
+        await sendRunTerminalMessage({
+          chatJid: params.chatJid,
+          requestId: params.requestId,
+          kind: 'coder',
+          status: 'failed',
+          detail: run.result,
+        });
       } else if (run.result) {
         deps.persistAssistantHistory(
           params.chatJid,
@@ -398,6 +424,19 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           state: 'final',
           message: { role: 'assistant', content: run.result },
           usage: run.usage,
+        });
+        deps.emitTuiAgentEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: run.streamed ? 'streamed' : 'complete',
+        });
+      } else {
+        await sendRunTerminalMessage({
+          chatJid: params.chatJid,
+          requestId: params.requestId,
+          kind: 'coder',
+          status: 'completed',
         });
         deps.emitTuiAgentEvent({
           runId: params.requestId,
@@ -2070,6 +2109,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               phase: 'error',
               detail: 'subagent run failed',
             });
+            await sendRunTerminalMessage({
+              chatJid: m.chatJid,
+              requestId,
+              kind: 'subagent',
+              status: 'failed',
+              detail: run.result,
+            });
           } else if (run.result) {
             deps.persistAssistantHistory(m.chatJid, run.result, requestId);
             if (!run.streamed) {
@@ -2089,6 +2135,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               detail: run.streamed ? 'streamed' : 'complete',
             });
           } else {
+            await sendRunTerminalMessage({
+              chatJid: m.chatJid,
+              requestId,
+              kind: 'subagent',
+              status: 'completed',
+            });
             deps.emitTuiAgentEvent({
               runId: requestId,
               sessionKey: deps.getSessionKeyForChat(m.chatJid),
