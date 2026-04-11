@@ -50,8 +50,14 @@ type CodingRunResult = RunResult & {
 };
 
 type SetupState = {
-  kind: 'provider' | 'model' | 'endpoint' | 'api-key';
+  kind:
+    | 'provider'
+    | 'model'
+    | 'endpoint'
+    | 'api-key'
+    | 'add-model-for-provider';
   startedAt?: number;
+  provider?: string;
 };
 
 export interface TelegramCommandDeps {
@@ -121,6 +127,7 @@ export interface TelegramCommandDeps {
     prompt: string,
   ) => Promise<void>;
   clearTelegramSetupInputState: (chatJid: string) => void;
+  setTelegramSetupInputProvider: (chatJid: string, provider: string) => void;
   getTelegramSetupInputState: (chatJid: string) => SetupState | null;
   getTelegramSettingsPanelAction: (chatJid: string, data: string) => any;
   updateChatRunPreferences: (
@@ -238,9 +245,7 @@ export interface TelegramCommandDeps {
       }
     | { status: 'handled' }
   >;
-  createCoderProject?: (params: {
-    slug: string;
-  }) => Promise<{
+  createCoderProject?: (params: { slug: string }) => Promise<{
     workspaceRoot: string;
     projectLabel: string;
     isGitRepo: boolean;
@@ -313,7 +318,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       runId: params.requestId,
       sessionKey: deps.getSessionKeyForChat(params.chatJid),
       state: 'message',
-      message: { role: 'system', content: `Starting ${params.mode === 'plan' ? 'coder plan' : 'coder'} run (${params.requestId}) for ${params.projectLabel}...` },
+      message: {
+        role: 'system',
+        content: `Starting ${params.mode === 'plan' ? 'coder plan' : 'coder'} run (${params.requestId}) for ${params.projectLabel}...`,
+      },
     });
     deps.emitTuiAgentEvent({
       runId: params.requestId,
@@ -353,7 +361,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             group,
             `[APPROVED CODER ${params.mode.toUpperCase()} REQUEST]\n${params.taskText}`,
             params.chatJid,
-            params.mode === 'plan' ? 'force_delegate_plan' : 'force_delegate_execute',
+            params.mode === 'plan'
+              ? 'force_delegate_plan'
+              : 'force_delegate_execute',
             params.requestId,
             deps.state.chatRunPreferences[params.chatJid] || {},
             {},
@@ -374,7 +384,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           detail: 'coder run failed',
         });
       } else if (run.result) {
-        deps.persistAssistantHistory(params.chatJid, run.result, params.requestId);
+        deps.persistAssistantHistory(
+          params.chatJid,
+          run.result,
+          params.requestId,
+        );
         if (!run.streamed) {
           await deps.sendAgentResultMessage(params.chatJid, run.result);
         }
@@ -443,9 +457,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             chatJid: q.chatJid,
             requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             mode:
-              settingsAction.kind === 'coder-approve-plan'
-                ? 'plan'
-                : 'execute',
+              settingsAction.kind === 'coder-approve-plan' ? 'plan' : 'execute',
             route:
               settingsAction.kind === 'coder-approve-plan'
                 ? 'coder_plan'
@@ -562,10 +574,26 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         case 'show-setup-models':
         case 'show-setup-endpoint':
         case 'show-setup-api-key':
+        case 'show-add-model-for-provider':
           await deps.editTelegramSettingsPanel(
             q.chatJid,
             q.messageId,
             settingsAction,
+          );
+          return;
+        case 'prompt-add-model-for-provider':
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-add-model-for-provider',
+            provider: settingsAction.provider,
+          });
+          await deps.promptTelegramSetupInput(
+            q.chatJid,
+            'add-model-for-provider',
+            `Send the model id to add to ${settingsAction.provider}. Example: gpt-4.1-mini`,
+          );
+          deps.setTelegramSetupInputProvider(
+            q.chatJid,
+            settingsAction.provider,
           );
           return;
         case 'set-model':
@@ -930,6 +958,38 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         await deps.sendMessage(
           m.chatJid,
           `Saved API key in ${snapshot.apiKeyEnv}.`,
+        );
+        return true;
+      }
+      case 'add-model-for-provider': {
+        if (!pending.provider) {
+          deps.clearTelegramSetupInputState(m.chatJid);
+          await deps.sendMessage(
+            m.chatJid,
+            'Session expired. Please try again from /model.',
+          );
+          return true;
+        }
+        const provider = pending.provider;
+        const modelName = content.trim();
+        if (!modelName) {
+          deps.clearTelegramSetupInputState(m.chatJid);
+          return false;
+        }
+        deps.updateChatRunPreferences(m.chatJid, (prefs) => {
+          prefs.provider = provider;
+          prefs.model = modelName;
+          return prefs;
+        });
+        deps.clearTelegramSetupInputState(m.chatJid);
+        await deps.sendTelegramSettingsPanel(m.chatJid, {
+          kind: 'show-models-for-provider',
+          provider,
+          page: 0,
+        });
+        await deps.sendMessage(
+          m.chatJid,
+          `Model set for this chat: ${deps.getEffectiveModelLabel(m.chatJid)}`,
         );
         return true;
       }
