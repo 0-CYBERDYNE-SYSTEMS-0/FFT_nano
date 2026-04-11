@@ -285,15 +285,20 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     chatJid: string;
     requestId: string;
     kind: 'coder' | 'subagent';
-    status: 'failed' | 'completed';
+    status: 'failed' | 'completed' | 'aborted';
     detail?: string | null;
   }): Promise<void> {
     const noun = params.kind === 'coder' ? 'Coder' : 'Subagent';
     const normalizedDetail = params.detail?.trim();
-    const message =
-      params.status === 'failed'
-        ? `${noun} run failed (${params.requestId}).${normalizedDetail ? `\n\n${normalizedDetail}` : ''}`
-        : `${noun} run completed (${params.requestId}).${normalizedDetail ? `\n\n${normalizedDetail}` : ''}`;
+    let message = `${noun} run completed (${params.requestId}).`;
+    if (params.status === 'failed') {
+      message = `${noun} run failed (${params.requestId}).`;
+    } else if (params.status === 'aborted') {
+      message = `${noun} run aborted (${params.requestId}).`;
+    }
+    if (normalizedDetail) {
+      message += `\n\n${normalizedDetail}`;
+    }
     const sent = await deps.sendAgentResultMessage(params.chatJid, message);
     if (!sent) {
       await deps.sendMessage(params.chatJid, message);
@@ -389,6 +394,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             abortController.signal,
           );
       deps.updateChatUsage(params.chatJid, run.usage);
+      const runWasAborted = !run.result && abortController.signal.aborted;
       if (!run.ok) {
         deps.emitTuiChatEvent({
           runId: params.requestId,
@@ -408,6 +414,24 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           kind: 'coder',
           status: 'failed',
           detail: run.result,
+        });
+      } else if (runWasAborted) {
+        deps.emitTuiChatEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'aborted',
+        });
+        deps.emitTuiAgentEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'aborted',
+        });
+        await sendRunTerminalMessage({
+          chatJid: params.chatJid,
+          requestId: params.requestId,
+          kind: 'coder',
+          status: 'aborted',
         });
       } else if (run.result) {
         deps.persistAssistantHistory(
@@ -2096,6 +2120,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
                 abortController.signal,
               );
           deps.updateChatUsage(m.chatJid, run.usage);
+          const runWasAborted = !run.result && abortController.signal.aborted;
           if (!run.ok) {
             deps.emitTuiChatEvent({
               runId: requestId,
@@ -2115,6 +2140,24 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               kind: 'subagent',
               status: 'failed',
               detail: run.result,
+            });
+          } else if (runWasAborted) {
+            deps.emitTuiChatEvent({
+              runId: requestId,
+              sessionKey: deps.getSessionKeyForChat(m.chatJid),
+              state: 'aborted',
+            });
+            deps.emitTuiAgentEvent({
+              runId: requestId,
+              sessionKey: deps.getSessionKeyForChat(m.chatJid),
+              phase: 'end',
+              detail: 'aborted',
+            });
+            await sendRunTerminalMessage({
+              chatJid: m.chatJid,
+              requestId,
+              kind: 'subagent',
+              status: 'aborted',
             });
           } else if (run.result) {
             deps.persistAssistantHistory(m.chatJid, run.result, requestId);
