@@ -281,6 +281,30 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
   handleTelegramSetupInput: (m: TelegramSetupInputMessage) => Promise<boolean>;
   handleTelegramCommand: (m: TelegramCommandMessage) => Promise<boolean>;
 } {
+  async function sendRunTerminalMessage(params: {
+    chatJid: string;
+    requestId: string;
+    kind: 'coder' | 'subagent';
+    status: 'failed' | 'completed' | 'aborted';
+    detail?: string | null;
+  }): Promise<void> {
+    const noun = params.kind === 'coder' ? 'Coder' : 'Subagent';
+    const normalizedDetail = params.detail?.trim();
+    let message = `${noun} run completed (${params.requestId}).`;
+    if (params.status === 'failed') {
+      message = `${noun} run failed (${params.requestId}).`;
+    } else if (params.status === 'aborted') {
+      message = `${noun} run aborted (${params.requestId}).`;
+    }
+    if (normalizedDetail) {
+      message += `\n\n${normalizedDetail}`;
+    }
+    const sent = await deps.sendAgentResultMessage(params.chatJid, message);
+    if (!sent) {
+      await deps.sendMessage(params.chatJid, message);
+    }
+  }
+
   async function startCoderRun(params: {
     chatJid: string;
     requestId: string;
@@ -370,6 +394,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             abortController.signal,
           );
       deps.updateChatUsage(params.chatJid, run.usage);
+      const runWasAborted = !run.result && abortController.signal.aborted;
       if (!run.ok) {
         deps.emitTuiChatEvent({
           runId: params.requestId,
@@ -382,6 +407,31 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           sessionKey: deps.getSessionKeyForChat(params.chatJid),
           phase: 'error',
           detail: 'coder run failed',
+        });
+        await sendRunTerminalMessage({
+          chatJid: params.chatJid,
+          requestId: params.requestId,
+          kind: 'coder',
+          status: 'failed',
+          detail: run.result,
+        });
+      } else if (runWasAborted) {
+        deps.emitTuiChatEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'aborted',
+        });
+        deps.emitTuiAgentEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'aborted',
+        });
+        await sendRunTerminalMessage({
+          chatJid: params.chatJid,
+          requestId: params.requestId,
+          kind: 'coder',
+          status: 'aborted',
         });
       } else if (run.result) {
         deps.persistAssistantHistory(
@@ -398,6 +448,19 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           state: 'final',
           message: { role: 'assistant', content: run.result },
           usage: run.usage,
+        });
+        deps.emitTuiAgentEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: run.streamed ? 'streamed' : 'complete',
+        });
+      } else {
+        await sendRunTerminalMessage({
+          chatJid: params.chatJid,
+          requestId: params.requestId,
+          kind: 'coder',
+          status: 'completed',
         });
         deps.emitTuiAgentEvent({
           runId: params.requestId,
@@ -2057,6 +2120,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
                 abortController.signal,
               );
           deps.updateChatUsage(m.chatJid, run.usage);
+          const runWasAborted = !run.result && abortController.signal.aborted;
           if (!run.ok) {
             deps.emitTuiChatEvent({
               runId: requestId,
@@ -2069,6 +2133,31 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               sessionKey: deps.getSessionKeyForChat(m.chatJid),
               phase: 'error',
               detail: 'subagent run failed',
+            });
+            await sendRunTerminalMessage({
+              chatJid: m.chatJid,
+              requestId,
+              kind: 'subagent',
+              status: 'failed',
+              detail: run.result,
+            });
+          } else if (runWasAborted) {
+            deps.emitTuiChatEvent({
+              runId: requestId,
+              sessionKey: deps.getSessionKeyForChat(m.chatJid),
+              state: 'aborted',
+            });
+            deps.emitTuiAgentEvent({
+              runId: requestId,
+              sessionKey: deps.getSessionKeyForChat(m.chatJid),
+              phase: 'end',
+              detail: 'aborted',
+            });
+            await sendRunTerminalMessage({
+              chatJid: m.chatJid,
+              requestId,
+              kind: 'subagent',
+              status: 'aborted',
             });
           } else if (run.result) {
             deps.persistAssistantHistory(m.chatJid, run.result, requestId);
@@ -2089,6 +2178,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               detail: run.streamed ? 'streamed' : 'complete',
             });
           } else {
+            await sendRunTerminalMessage({
+              chatJid: m.chatJid,
+              requestId,
+              kind: 'subagent',
+              status: 'completed',
+            });
             deps.emitTuiAgentEvent({
               runId: requestId,
               sessionKey: deps.getSessionKeyForChat(m.chatJid),
