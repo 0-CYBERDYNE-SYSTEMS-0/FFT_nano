@@ -652,7 +652,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           await deps.promptTelegramSetupInput(
             q.chatJid,
             'add-model-for-provider',
-            `Send the model id to add to ${settingsAction.provider}. Example: gpt-4.1-mini`,
+            `Type a model name for ${settingsAction.provider}.\nExample: gpt-4.1-mini`,
           );
           deps.setTelegramSetupInputProvider(
             q.chatJid,
@@ -1125,6 +1125,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/models') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       const searchText = rest.join(' ');
+
+      if (!searchText && deps.state.telegramBot) {
+        await deps.sendTelegramSettingsPanel(m.chatJid, {
+          kind: 'show-model-providers',
+        });
+        return true;
+      }
+
       const listed = deps.runPiListModels(searchText);
       deps.emitTuiChatEvent({
         runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
@@ -1132,27 +1140,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         state: 'final',
         message: { role: 'assistant', content: listed.text },
       });
-      if (!searchText && deps.state.telegramBot?.sendMessageWithKeyboard) {
-        await deps.state.telegramBot.sendMessageWithKeyboard(
-          m.chatJid,
-          listed.text,
-          [
-            [
-              {
-                text: 'Open Model Picker',
-                callbackData: deps.registerTelegramSettingsPanelAction(
-                  m.chatJid,
-                  {
-                    kind: 'show-model-providers',
-                  },
-                ),
-              },
-            ],
-          ],
-        );
-      } else {
-        await deps.sendMessage(m.chatJid, listed.text);
-      }
+      await deps.sendMessage(m.chatJid, listed.text);
       return true;
     }
 
