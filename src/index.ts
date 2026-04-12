@@ -229,6 +229,11 @@ import {
   type HostEvent,
 } from './runtime/host-events.js';
 import {
+  createStatusTelemetry,
+  formatStatusReport,
+  isUserAbortedErrorMessage,
+} from './status-report.js';
+import {
   dispatchLegacyMessageEnvelope,
   wrapLegacyActionEnvelope,
   wrapLegacyMessageEnvelope,
@@ -309,6 +314,9 @@ const HEARTBEAT_TARGET_ACCOUNT_ID = PARITY_CONFIG.heartbeat.accountId;
 const HEARTBEAT_SHOW_OK = PARITY_CONFIG.heartbeat.visibility.showOk;
 const HEARTBEAT_SHOW_ALERTS = PARITY_CONFIG.heartbeat.visibility.showAlerts;
 const HEARTBEAT_INCLUDE_REASONING = PARITY_CONFIG.heartbeat.includeReasoning;
+const STATUS_INCIDENT_WINDOW_MS = 30 * 60 * 1000;
+const STATUS_INCIDENT_WINDOW_LABEL = '30m';
+const STATUS_STUCK_WARNING_SECONDS = 120;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
@@ -337,6 +345,10 @@ function resolveGitInfo(): GitInfo {
 }
 
 const GIT_INFO = resolveGitInfo();
+const statusTelemetry = createStatusTelemetry({
+  incidentWindowMs: STATUS_INCIDENT_WINDOW_MS,
+  maxIncidents: 3,
+});
 
 function getChatPrefsRuntime() {
   return {
@@ -2794,54 +2806,59 @@ function formatStatusText(chatJid?: string): string {
   const active = tasks.filter((task) => task.status === 'active').length;
   const paused = tasks.filter((task) => task.status === 'paused').length;
   const completed = tasks.filter((task) => task.status === 'completed').length;
-  const coderRuns = Array.from(activeCoderRuns.values()).sort(
-    (a, b) => a.startedAt - b.startedAt,
-  );
-  const now = Date.now();
-
-  const lines = [
-    `${ASSISTANT_NAME} status:`,
-    `- container_runtime: ${runtime}`,
-    `- telegram_enabled: ${TELEGRAM_BOT_TOKEN ? 'yes' : 'no'}`,
-    `- whatsapp_enabled: ${WHATSAPP_ENABLED ? 'yes' : 'no'}`,
-    `- whatsapp_connected: ${state.sock?.user ? 'yes' : 'no'}`,
-    `- registered_groups: ${Object.keys(state.registeredGroups).length}`,
-    `- main_group: ${mainGroup ? mainGroup.name : 'none'}`,
-    `- tasks_active: ${active}`,
-    `- tasks_paused: ${paused}`,
-    `- tasks_completed: ${completed}`,
-    `- coder_runs_active: ${coderRuns.length}`,
-  ];
-
-  if (chatJid) {
-    lines.push(...formatChatRuntimePreferences(chatJid));
-    const usage = state.chatUsageStats[chatJid];
-    if (usage) {
-      lines.push(
-        `- usage_runs: ${usage.runs}`,
-        `- usage_total_tokens: ${usage.totalTokens}`,
-      );
-    }
-    const activeRun = activeChatRuns.get(chatJid);
-    if (activeRun) {
-      const ageSeconds = Math.max(
-        0,
-        Math.floor((now - activeRun.startedAt) / 1000),
-      );
-      lines.push(`- chat_run_active: yes (${ageSeconds}s)`);
-    } else {
-      lines.push('- chat_run_active: no');
-    }
-  }
-
-  for (const run of coderRuns) {
-    const ageSeconds = Math.max(0, Math.floor((now - run.startedAt) / 1000));
-    lines.push(
-      `- coder_run: ${run.requestId} mode=${run.mode} state=${run.state || 'running'} backend=${run.backend || 'pi'} age=${ageSeconds}s chat=${run.chatJid} group=${run.groupName}${run.parentRequestId ? ` parent=${run.parentRequestId}` : ''}${run.worktreePath ? ` worktree=${run.worktreePath}` : ''}`,
-    );
-  }
-
-  return lines.join('\n');
+  const chatActiveRun = chatJid ? activeChatRuns.get(chatJid) || null : null;
+  return formatStatusReport({
+    assistantName: ASSISTANT_NAME,
+    runtime,
+    serviceStartedAt: SERVICE_STARTED_AT,
+    incidentWindowLabel: STATUS_INCIDENT_WINDOW_LABEL,
+    stuckWarningSeconds: STATUS_STUCK_WARNING_SECONDS,
+    telegramEnabled: Boolean(TELEGRAM_BOT_TOKEN),
+    whatsappEnabled: WHATSAPP_ENABLED,
+    whatsappConnected: Boolean(state.sock?.user),
+    registeredGroupCount: Object.keys(state.registeredGroups).length,
+    mainGroupName: mainGroup?.name,
+    tasks: {
+      active,
+      paused,
+      completed,
+    },
+    activeChatRuns: Array.from(activeChatRunsById.values()).map((run) => ({
+      requestId: run.requestId,
+      chatJid: run.chatJid,
+      startedAt: run.startedAt,
+    })),
+    activeCoderRuns: Array.from(activeCoderRuns.values()).map((run) => ({
+      requestId: run.requestId,
+      mode: run.mode,
+      chatJid: run.chatJid,
+      groupName: run.groupName,
+      startedAt: run.startedAt,
+      parentRequestId: run.parentRequestId,
+      backend: run.backend,
+      route: run.route,
+      state: run.state,
+      worktreePath: run.worktreePath,
+    })),
+    telemetry: statusTelemetry.getSnapshot(),
+    ...(chatJid
+      ? {
+          chatRuntimePreferenceLines: formatChatRuntimePreferences(chatJid),
+          chatUsage: state.chatUsageStats[chatJid]
+            ? {
+                runs: state.chatUsageStats[chatJid].runs,
+                totalTokens: state.chatUsageStats[chatJid].totalTokens,
+              }
+            : undefined,
+          chatActiveRun: chatActiveRun
+            ? {
+                requestId: chatActiveRun.requestId,
+                startedAt: chatActiveRun.startedAt,
+              }
+            : null,
+        }
+      : {}),
+  });
 }
 
 function summarizeTask(taskId: string): string {
@@ -3940,9 +3957,18 @@ async function runAgent(
 
     if (output.status === 'error') {
       if (
+        requestId &&
         typeof output.error === 'string' &&
-        /aborted by user/i.test(output.error)
+        output.error.trim() &&
+        !isUserAbortedErrorMessage(output.error)
       ) {
+        statusTelemetry.noteRuntimeError({
+          runId: requestId,
+          chatJid,
+          errorMessage: output.error,
+        });
+      }
+      if (isUserAbortedErrorMessage(output.error)) {
         return { result: null, streamed: false, ok: true };
       }
       if (options.suppressErrorReply) {
@@ -3981,9 +4007,18 @@ async function runAgent(
         });
         if (retryOutput.status === 'error') {
           if (
+            requestId &&
             typeof retryOutput.error === 'string' &&
-            /aborted by user/i.test(retryOutput.error)
+            retryOutput.error.trim() &&
+            !isUserAbortedErrorMessage(retryOutput.error)
           ) {
+            statusTelemetry.noteRuntimeError({
+              runId: requestId,
+              chatJid,
+              errorMessage: retryOutput.error,
+            });
+          }
+          if (isUserAbortedErrorMessage(retryOutput.error)) {
             return { result: null, streamed: false, ok: true };
           }
           logger.error(
@@ -4017,6 +4052,16 @@ async function runAgent(
     };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
+    if (requestId) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (!isUserAbortedErrorMessage(errorMessage)) {
+        statusTelemetry.noteRuntimeError({
+          runId: requestId,
+          chatJid,
+          errorMessage,
+        });
+      }
+    }
     return { result: null, streamed: false, ok: false };
   } finally {
     if (requestId && isTelegramJid(chatJid)) {
@@ -4771,6 +4816,14 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       return;
     }
     case 'run_progress': {
+      statusTelemetry.noteRunProgress({
+        runId: event.runId,
+        phase: event.phase,
+        text: event.text,
+        detail: event.detail,
+        chatJid: event.chatJid,
+        createdAt: event.createdAt,
+      });
       if (!event.chatJid) return;
       if (!isTelegramJid(event.chatJid)) return;
       if (!state.telegramBot) return;
@@ -4838,6 +4891,21 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       }
       return;
     }
+    case 'run_failed':
+      statusTelemetry.noteRunFailed({
+        runId: event.runId,
+        errorMessage: event.errorMessage,
+        detail: event.detail,
+        chatJid: event.chatJid,
+        createdAt: event.createdAt,
+      });
+      return;
+    case 'run_finished':
+    case 'run_aborted':
+      statusTelemetry.clearRun(event.runId);
+      return;
+    case 'run_started':
+      return;
     default:
       return;
   }
