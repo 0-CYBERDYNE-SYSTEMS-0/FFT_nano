@@ -196,6 +196,7 @@ export function createStatusTelemetry(
 
   function addIncident(incident: StatusIncident): void {
     uniquePushIncidents(incidents, incident);
+    prune(incident.createdAtMs);
   }
 
   return {
