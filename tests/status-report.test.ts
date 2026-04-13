@@ -55,6 +55,30 @@ test('status telemetry keeps most recent incidents in the configured window', ()
   );
 });
 
+test('status telemetry prunes stale incidents when writing new events', () => {
+  const telemetry = createStatusTelemetry({
+    incidentWindowMs: 30 * 60 * 1000,
+    maxIncidents: 3,
+  });
+
+  telemetry.noteRunFailed({
+    runId: 'old',
+    errorMessage: 'timed out after 30s',
+    createdAt: '2026-04-12T10:00:00.000Z',
+  });
+  telemetry.noteRunFailed({
+    runId: 'new',
+    errorMessage: 'worker crash',
+    createdAt: '2026-04-12T11:00:00.000Z',
+  });
+
+  const snapshot = telemetry.getSnapshot(Date.parse('2026-04-12T10:05:00.000Z'));
+  assert.deepEqual(
+    snapshot.incidents.map((incident) => incident.runId),
+    ['new'],
+  );
+});
+
 test('status report renders pulse first and alerts on timeout incidents', () => {
   const telemetry = createStatusTelemetry({
     incidentWindowMs: 30 * 60 * 1000,
