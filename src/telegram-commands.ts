@@ -272,6 +272,14 @@ export interface TelegramCommandDeps {
   hasWhatsAppSocket?: () => boolean;
   syncGroupMetadata?: (force?: boolean) => Promise<void>;
   saveState?: () => void;
+  resumeDirectSessionTurn?: (
+    chatJid: string,
+    text: string,
+    deliver: boolean,
+  ) => Promise<{
+    runId: string;
+    status: 'started' | 'queued' | 'already_running';
+  }>;
 }
 
 export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
@@ -620,6 +628,19 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           });
           return;
         }
+        case 'coder-cancel-resume':
+          await deps.sendMessage(
+            q.chatJid,
+            'Coder request canceled. Continuing in the main chat flow.',
+          );
+          if (deps.resumeDirectSessionTurn) {
+            await deps.resumeDirectSessionTurn(
+              q.chatJid,
+              settingsAction.taskText,
+              true,
+            );
+          }
+          return;
         case 'coder-cancel':
           await deps.sendMessage(q.chatJid, 'Coder request canceled.');
           return;

@@ -1939,7 +1939,8 @@ async function presentCoderSuggestion(params: {
         {
           text: 'Cancel',
           callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
-            kind: 'coder-cancel',
+            kind: 'coder-cancel-resume',
+            taskText: params.taskText,
           }),
         },
       ],
@@ -3533,6 +3534,13 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   hasWhatsAppSocket: () => !!state.sock,
   syncGroupMetadata,
   saveState,
+  resumeDirectSessionTurn: (chatJid, text, deliver) =>
+    messageDispatcher.runDirectSessionTurn({
+      chatJid,
+      text,
+      runId: `resume-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      deliver,
+    }),
 });
 
 async function handleTelegramCallbackQuery(
