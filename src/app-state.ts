@@ -152,6 +152,7 @@ export type TelegramSettingsPanelAction =
       slug: string;
       projectLabel: string;
     }
+  | { kind: 'coder-cancel-resume'; taskText: string }
   | { kind: 'coder-cancel' }
   | { kind: 'show-add-model-for-provider'; provider: string }
   | { kind: 'prompt-add-model-for-provider'; provider: string };

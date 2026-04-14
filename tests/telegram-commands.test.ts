@@ -22,6 +22,8 @@ function createBaseDeps(): TelegramCommandDeps {
   }> = [];
   const audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }> =
     [];
+  const resumedChats: Array<{ chatJid: string; text: string; deliver: boolean }> =
+    [];
 
   const deps: TelegramCommandDeps = {
     state: {
@@ -120,6 +122,10 @@ function createBaseDeps(): TelegramCommandDeps {
     getSessionKeyForChat: (chatJid) => chatJid,
     runAgent: async () => ({ ok: true, result: 'done', streamed: false }),
     runCodingTask: async () => ({ ok: true, result: 'done', streamed: false }),
+    resumeDirectSessionTurn: async (chatJid, text, deliver) => {
+      resumedChats.push({ chatJid, text, deliver });
+      return { runId: 'resume-1', status: 'started' as const };
+    },
     prepareCoderTarget: async ({ taskText }) => ({
       status: 'ready',
       workspaceRoot: '/tmp/projects/agintel-dashboard',
@@ -150,6 +156,7 @@ function createBaseDeps(): TelegramCommandDeps {
     persisted,
     audits,
     keyboardMessages,
+    resumedChats,
   });
   return deps;
 }
@@ -267,6 +274,55 @@ test('handleTelegramCallbackQuery offers plan fallback when execute target is no
 
   assert.match(deps.keyboardMessages[0]?.text || '', /not a git-backed project/i);
   assert.equal(deps.keyboardMessages[0]?.keyboard[0]?.[0]?.text, 'Start Plan Instead');
+});
+
+test('handleTelegramCallbackQuery resumes normal chat when auto-suggest cancel is selected', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    resumedChats: Array<{ chatJid: string; text: string; deliver: boolean }>;
+  };
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'coder-cancel-resume',
+    taskText: 'please build an app with auth and tests',
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-resume',
+    chatJid: 'telegram:main',
+    messageId: 57,
+    data: 'cfg:cancel-resume',
+  });
+
+  assert.equal(deps.sent[0]?.text, 'Coder request canceled. Continuing in the main chat flow.');
+  assert.deepEqual(deps.resumedChats, [
+    {
+      chatJid: 'telegram:main',
+      text: 'please build an app with auth and tests',
+      deliver: true,
+    },
+  ]);
+});
+
+test('handleTelegramCallbackQuery keeps plain coder cancel as cancel only', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    resumedChats: Array<{ chatJid: string; text: string; deliver: boolean }>;
+  };
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'coder-cancel',
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-cancel-only',
+    chatJid: 'telegram:main',
+    messageId: 58,
+    data: 'cfg:cancel-only',
+  });
+
+  assert.equal(deps.sent[0]?.text, 'Coder request canceled.');
+  assert.equal(deps.resumedChats.length, 0);
 });
 
 test('handleTelegramCommand blocks /coder-create-project while onboarding is pending', async () => {
