@@ -246,6 +246,14 @@ Do not start unrelated feature work directly in the root checkout.
 - Personal directories (`fft-experience/`, `.factory/`, `data/`, `groups/`) are gitignored
 - A public release must come from the exact tested commit that will be tagged
 
+### Two-Checkout Operating Model (Local)
+
+- Keep one local release/runtime checkout on `main`.
+- Keep a separate local development checkout for day-to-day feature work.
+- Do implementation work in the development checkout, push feature branches to `origin`, and open a PR to `main`.
+- Never push directly to `origin/main`; promotion to `main` happens only through reviewed PRs.
+- After merge, fast-forward the local release/runtime checkout on `main` before runtime/service validation.
+
 ### Worktrees for Development
 
 Use one reusable general-purpose dev worktree for unrelated feature work:
