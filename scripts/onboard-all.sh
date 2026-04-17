@@ -658,7 +658,7 @@ fi
 
 if [[ -z "$INSTALL_DAEMON" ]] && [[ -t 0 ]]; then
   read -r -p "Install/start host service now? [Y/n]: " install_choice
-  install_choice="${install_choice,,}"
+  install_choice="$(printf '%s' "$install_choice" | tr '[:upper:]' '[:lower:]')"
   if [[ -z "$install_choice" || "$install_choice" == "y" || "$install_choice" == "yes" ]]; then
     INSTALL_DAEMON="1"
   else
