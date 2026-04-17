@@ -108,6 +108,13 @@ function ensureAdminSecret(
   updates.TELEGRAM_ADMIN_SECRET = randomBytes(24).toString('hex');
 }
 
+function getSeedRuntime(
+  envMap: Record<string, string>,
+  fallback: OnboardRuntime,
+): OnboardRuntime {
+  return parseRuntime(envMap.CONTAINER_RUNTIME) || fallback;
+}
+
 function usage(): string {
   return [
     'Usage:',
@@ -568,7 +575,9 @@ async function resolveWizardSelections(
   if (opts.nonInteractive) {
     const flow = opts.flow || 'quickstart';
     const mode = opts.mode || (flow === 'quickstart' ? 'local' : 'local');
-    const runtime = opts.runtime || (mode === 'local' ? 'docker' : 'auto');
+    const runtime =
+      opts.runtime ||
+      (mode === 'local' ? getSeedRuntime(envMap, 'docker') : 'auto');
     const authChoice = opts.authChoice || 'skip';
     const installDaemon = opts.installDaemon ?? true;
     const hatch = opts.hatch || 'tui';
@@ -630,7 +639,12 @@ async function resolveWizardSelections(
 
     const runtime = opts.runtime
       ? opts.runtime
-      : await askSelect(rl, 'Agent runtime', ['docker', 'host'], 'docker');
+      : await askSelect(
+          rl,
+          'Agent runtime',
+          ['docker', 'host'],
+          getSeedRuntime(envMap, 'docker'),
+        );
 
     const authChoice = opts.authChoice
       ? opts.authChoice
@@ -846,10 +860,9 @@ export async function runOnboarding(
           ? String(wizard.gatewayPort)
           : undefined,
       CONTAINER_RUNTIME: wizard.runtime,
+      FFT_NANO_ALLOW_HOST_RUNTIME:
+        wizard.runtime === 'host' ? '1' : undefined,
     };
-    if (wizard.runtime === 'host') {
-      updates.FFT_NANO_ALLOW_HOST_RUNTIME = '1';
-    }
     ensureAdminSecret(updates, envMap);
 
     if (wizard.authChoice !== 'skip') {
@@ -896,9 +909,8 @@ export async function runOnboarding(
     };
     if (opts.runtime) {
       updates.CONTAINER_RUNTIME = wizard.runtime;
-      if (wizard.runtime === 'host') {
-        updates.FFT_NANO_ALLOW_HOST_RUNTIME = '1';
-      }
+      updates.FFT_NANO_ALLOW_HOST_RUNTIME =
+        wizard.runtime === 'host' ? '1' : undefined;
     }
     upsertDotEnv(envPath, updates);
   }

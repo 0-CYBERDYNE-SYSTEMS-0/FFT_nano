@@ -19,8 +19,13 @@ Usage:
   ./scripts/setup.sh [--runtime auto|docker|host]
 
 Options:
-  --runtime <mode>   Runtime preference (default: CONTAINER_RUNTIME or auto)
+  --runtime <mode>   Runtime preference. If omitted, setup uses shell env, then .env, then auto-detect.
   -h, --help         Show this help
+
+Behavior:
+  - Shared install/build steps run before runtime-specific preparation.
+  - If Docker is unavailable and runtime is still unresolved, setup prompts for host or docker.
+  - Host choice persists CONTAINER_RUNTIME=host and FFT_NANO_ALLOW_HOST_RUNTIME=1 in .env.
 USAGE
 }
 
@@ -35,14 +40,16 @@ normalize_runtime_pref() {
 
 SETUP_RUNTIME_PREF=""
 SETUP_RUNTIME_SOURCE=""
+SETUP_RUNTIME_FLAG=""
+SETUP_RUNTIME_SHELL_ENV="${CONTAINER_RUNTIME:-}"
+RESOLVED_RUNTIME=""
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "${1}" in
       --runtime)
         [[ $# -ge 2 ]] || fail "--runtime requires a value"
-        SETUP_RUNTIME_PREF="$(normalize_runtime_pref "$2")"
-        SETUP_RUNTIME_SOURCE="flag --runtime"
+        SETUP_RUNTIME_FLAG="$(normalize_runtime_pref "$2")"
         shift 2
         ;;
       -h|--help)
@@ -54,16 +61,50 @@ parse_args() {
         ;;
     esac
   done
+}
 
-  if [[ -z "$SETUP_RUNTIME_SOURCE" ]]; then
-    if [[ -n "${CONTAINER_RUNTIME:-}" ]]; then
-      SETUP_RUNTIME_PREF="$(normalize_runtime_pref "${CONTAINER_RUNTIME}")"
-      SETUP_RUNTIME_SOURCE="env CONTAINER_RUNTIME"
-    else
-      SETUP_RUNTIME_PREF="auto"
-      SETUP_RUNTIME_SOURCE="default auto"
-    fi
+read_env_value() {
+  local key="$1"
+  [[ -f .env ]] || return
+  local value
+  value="$(grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- || true)"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s' "$value"
+}
+
+load_env_file() {
+  [[ -f .env ]] || return
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+}
+
+resolve_runtime_preference() {
+  local file_pref
+  file_pref="$(read_env_value CONTAINER_RUNTIME)"
+
+  if [[ -n "$SETUP_RUNTIME_FLAG" ]]; then
+    SETUP_RUNTIME_PREF="$SETUP_RUNTIME_FLAG"
+    SETUP_RUNTIME_SOURCE="flag --runtime"
+    return
   fi
+  if [[ -n "$SETUP_RUNTIME_SHELL_ENV" ]]; then
+    SETUP_RUNTIME_PREF="$(normalize_runtime_pref "$SETUP_RUNTIME_SHELL_ENV")"
+    SETUP_RUNTIME_SOURCE="current shell env CONTAINER_RUNTIME"
+    return
+  fi
+  if [[ -n "$file_pref" ]]; then
+    SETUP_RUNTIME_PREF="$(normalize_runtime_pref "$file_pref")"
+    SETUP_RUNTIME_SOURCE=".env CONTAINER_RUNTIME"
+    return
+  fi
+
+  SETUP_RUNTIME_PREF="auto"
+  SETUP_RUNTIME_SOURCE="auto-detect"
 }
 
 is_truthy() {
@@ -90,25 +131,131 @@ node_major() {
   node -p 'process.versions.node.split(".")[0]'
 }
 
-detect_runtime() {
-  local raw="${1:-auto}"
-  raw="$(normalize_runtime_pref "$raw")"
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  local tmp
+  local updated=0
+  tmp="$(mktemp -t fft_nano_env.XXXXXX)"
+  if [[ -f .env ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "${key}="* ]]; then
+        printf '%s=%s\n' "$key" "$value" >>"$tmp"
+        updated=1
+      else
+        printf '%s\n' "$line" >>"$tmp"
+      fi
+    done < .env
+  fi
+  if [[ "$updated" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  fi
+  mv "$tmp" .env
+}
 
-  if [[ "$raw" == "docker" ]]; then
-    echo "docker"; return
+unset_env_value() {
+  local key="$1"
+  local tmp
+  tmp="$(mktemp -t fft_nano_env.XXXXXX)"
+  if [[ -f .env ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "${key}="* ]]; then
+        continue
+      fi
+      printf '%s\n' "$line" >>"$tmp"
+    done < .env
   fi
-  if [[ "$raw" == "host" ]]; then
-    echo "host"; return
+  mv "$tmp" .env
+}
+
+persist_host_runtime() {
+  set_env_value CONTAINER_RUNTIME host
+  set_env_value FFT_NANO_ALLOW_HOST_RUNTIME 1
+  export CONTAINER_RUNTIME=host
+  export FFT_NANO_ALLOW_HOST_RUNTIME=1
+}
+
+persist_docker_first_runtime() {
+  local pref="${1:-auto}"
+  set_env_value CONTAINER_RUNTIME "$pref"
+  unset_env_value FFT_NANO_ALLOW_HOST_RUNTIME
+  export CONTAINER_RUNTIME="$pref"
+  unset FFT_NANO_ALLOW_HOST_RUNTIME || true
+}
+
+docker_available_and_healthy() {
+  command -v docker >/dev/null 2>&1 || return 1
+  local docker_err
+  docker_err="$(mktemp -t fft_nano_docker_info.XXXXXX)"
+  if docker_daemon_healthy "$docker_err"; then
+    rm -f "$docker_err"
+    return 0
+  fi
+  rm -f "$docker_err"
+  return 1
+}
+
+prompt_runtime_choice() {
+  local answer
+  while true; do
+    say ""
+    say "Docker is not currently available for the agent runtime."
+    say "Choose runtime:"
+    say "  host   (default, continues without Docker isolation)"
+    say "  docker (write Docker-first defaults, then stop so you can install/start Docker)"
+    read -r -p "Runtime [host/docker] [host]: " answer
+    answer="$(printf %s "${answer:-}" | tr '[:upper:]' '[:lower:]')"
+    case "$answer" in
+      ""|h|host)
+        printf 'host'
+        return
+        ;;
+      d|docker)
+        printf 'docker'
+        return
+        ;;
+    esac
+    say "Please enter host or docker."
+  done
+}
+
+resolve_runtime() {
+  case "$SETUP_RUNTIME_PREF" in
+    host)
+      persist_host_runtime
+      RESOLVED_RUNTIME="host"
+      return
+      ;;
+    docker)
+      persist_docker_first_runtime docker
+      RESOLVED_RUNTIME="docker"
+      return
+      ;;
+  esac
+
+  if docker_available_and_healthy; then
+    persist_docker_first_runtime auto
+    RESOLVED_RUNTIME="docker"
+    return
   fi
 
-  if command -v docker >/dev/null 2>&1; then
-    echo "docker"; return
-  fi
-  if is_truthy "${FFT_NANO_ALLOW_HOST_RUNTIME:-0}"; then
-    echo "host"; return
+  if [[ ! -t 0 ]]; then
+    fail "Docker is unavailable. Install Docker, or re-run with --runtime host to continue without Docker."
   fi
 
-  fail "No supported runtime found. Install Docker, or set CONTAINER_RUNTIME=host with FFT_NANO_ALLOW_HOST_RUNTIME=1."
+  local choice
+  choice="$(prompt_runtime_choice)"
+  if [[ "$choice" == "host" ]]; then
+    persist_host_runtime
+    RESOLVED_RUNTIME="host"
+    return
+  fi
+
+  persist_docker_first_runtime auto
+  say ""
+  say "Docker-first runtime selected."
+  say "Install/start Docker, then re-run ./scripts/setup.sh to prepare the agent runtime."
+  exit 0
 }
 
 ensure_runtime_ready() {
@@ -207,9 +354,9 @@ if [[ "$maj" -lt 20 ]]; then
   fail "Node.js 20+ required (found $(node -v))."
 fi
 
-runtime="$(detect_runtime "$SETUP_RUNTIME_PREF")"
-say "Detected container runtime: $runtime (preference=${SETUP_RUNTIME_PREF}, source=${SETUP_RUNTIME_SOURCE})"
-ensure_runtime_ready "$runtime"
+scaffold_env
+load_env_file
+resolve_runtime_preference
 
 say "Installing dependencies..."
 if [[ -f package-lock.json ]]; then
@@ -233,6 +380,11 @@ if [[ -f web/control-center/package.json ]]; then
   fi
   npm --prefix web/control-center run build
 fi
+
+resolve_runtime
+runtime="$RESOLVED_RUNTIME"
+say "Detected container runtime: $runtime (preference=${SETUP_RUNTIME_PREF}, source=${SETUP_RUNTIME_SOURCE})"
+ensure_runtime_ready "$runtime"
 
 say "Preparing agent runtime..."
 if [[ "$runtime" == "docker" ]]; then
@@ -260,7 +412,6 @@ else
   say "Skipping CLI global link (FFT_NANO_AUTO_LINK disabled)."
 fi
 
-scaffold_env
 ensure_admin_secret
 scaffold_mount_allowlist
 

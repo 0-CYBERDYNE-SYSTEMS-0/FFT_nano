@@ -9,6 +9,9 @@ backup -> setup -> onboarding wizard -> daemon step -> doctor.
 # guided wrapper (backup/setup/wizard/service/doctor)
 ./scripts/onboard-all.sh
 
+# guided wrapper with explicit host runtime
+./scripts/onboard-all.sh --runtime host
+
 # full guided wrapper (same behavior as onboard-all)
 fft onboard
 
@@ -60,6 +63,7 @@ fft web
 - `--force`: rewrite generated `SOUL.md` and `TODOS.md` even if already customized
 - `--flow <quickstart|advanced|manual>`
 - `--mode <local|remote>`
+- `--runtime <auto|docker|host>`: runtime preference passed into setup/onboarding
 - `--auth-choice <openai|anthropic|gemini|openrouter|zai|skip>`
 - `--model <provider-model>`
 - `--api-key <token>`
@@ -109,11 +113,21 @@ Runtime gate env toggles:
 
 ## Runtime Modes
 
-- Default runtime is Docker (`CONTAINER_RUNTIME=auto` picks Docker when available).
-- Optional host runtime (no container isolation) requires explicit opt-in:
+- `setup.sh` is the single runtime decision point for guided installs.
+- Shared install/build work runs first. Runtime-specific preparation happens later in setup step 2.
+- Default Docker-first behavior:
+  - `CONTAINER_RUNTIME=auto` means “prefer Docker when it is available and healthy”
+  - `CONTAINER_RUNTIME=docker` is an explicit Docker requirement
+- Host runtime (no container isolation) requires explicit opt-in:
   - `CONTAINER_RUNTIME=host`
   - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
   - in production, also set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
+- First-time guided installs without Docker do not silently switch to host:
+  - interactive runs prompt for `host` or `docker` during `setup.sh`
+  - the prompt defaults to `host` when Docker is unavailable
+  - choosing `host` persists the host runtime keys in `.env`
+  - choosing `docker` writes Docker-first defaults and exits cleanly so you can install/start Docker
+  - non-interactive runs must be explicit: use `--runtime host` or provide Docker
 - If Docker reports `EOF`, `Cannot connect`, or `no space left on device`, run:
 
 ```bash
