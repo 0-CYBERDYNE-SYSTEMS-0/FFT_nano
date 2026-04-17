@@ -113,6 +113,36 @@ is_truthy() {
   [[ "$raw" == "1" || "$raw" == "true" || "$raw" == "yes" || "$raw" == "on" ]]
 }
 
+is_placeholder() {
+  local value="${1:-}"
+  [[ -z "$value" || "$value" == "replace-me" || "$value" == "..." ]]
+}
+
+is_runtime_env_configured() {
+  local provider model api_key telegram_token
+  provider="$(read_env_value PI_API)"
+  model="$(read_env_value PI_MODEL)"
+  telegram_token="$(read_env_value TELEGRAM_BOT_TOKEN)"
+  if is_placeholder "$provider" || is_placeholder "$model" || is_placeholder "$telegram_token"; then
+    return 1
+  fi
+  case "$provider" in
+    openai) api_key="$(read_env_value OPENAI_API_KEY)" ;;
+    anthropic) api_key="$(read_env_value ANTHROPIC_API_KEY)" ;;
+    gemini) api_key="$(read_env_value GEMINI_API_KEY)" ;;
+    openrouter) api_key="$(read_env_value OPENROUTER_API_KEY)" ;;
+    zai) api_key="$(read_env_value ZAI_API_KEY)" ;;
+    minimax) api_key="$(read_env_value MINIMAX_API_KEY)" ;;
+    kimi-coding) api_key="$(read_env_value KIMI_API_KEY)" ;;
+    lm-studio|ollama) api_key="local-default" ;;
+    *) api_key="$(read_env_value PI_API_KEY)" ;;
+  esac
+  if is_placeholder "$api_key"; then
+    return 1
+  fi
+  return 0
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
@@ -421,14 +451,20 @@ fi
 
 say ""
 say "Next:"
-say "  edit .env                # set provider key + TELEGRAM_BOT_TOKEN (+ TELEGRAM_ADMIN_SECRET)"
-say "  ./scripts/service.sh restart  # apply .env changes"
-say "  ./scripts/service.sh status   # check daemon/service health"
-say "  ./scripts/service.sh logs     # view recent service logs"
-say "  ./scripts/web.sh              # show FFT CONTROL CENTER URL"
-say "  ./scripts/start.sh tui        # attach TUI to running host"
-say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name OpenClaw --non-interactive"
-say "  Telegram DM: /id then /main <secret>"
+if is_runtime_env_configured; then
+  say "  ./scripts/service.sh restart  # apply .env changes"
+  say "  ./scripts/service.sh status   # check daemon/service health"
+  say "  ./scripts/service.sh logs     # view recent service logs"
+  say "  ./scripts/web.sh              # show FFT CONTROL CENTER URL"
+  say "  ./scripts/start.sh tui        # attach TUI to running host"
+  say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name OpenClaw --non-interactive"
+  say "  Telegram DM: /id then /main <secret>"
+else
+  say "  ./scripts/onboard-all.sh      # launch the browser-first setup wizard"
+  say "  ./scripts/web.sh --open       # open FFT CONTROL CENTER after the host is running"
+  say "  ./scripts/start.sh tui        # optional TUI fallback"
+  say "  Telegram DM: /id then /main <secret> (after the wizard saves your bot token)"
+fi
 say ""
 say "If using WhatsApp, authenticate once:"
 say "  npm run auth"

@@ -29,6 +29,7 @@ export interface AppRuntimeDeps {
     farmStateEnabled?: boolean;
     profileDetection?: unknown;
     whatsappEnabled?: boolean;
+    onboardingMode?: boolean;
     mainWorkspaceDir?: string;
   };
   createTelegramBot: (params: {
@@ -493,6 +494,13 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     );
     if (deps.constants.featureFarm && deps.constants.farmStateEnabled) {
       deps.startFarmStateCollector?.();
+    }
+    if (deps.constants.onboardingMode) {
+      deps.logger.info?.(
+        'Running in onboarding-only mode (web/TUI enabled, channels deferred)',
+      );
+      deps.maybeRunBootMdOnce?.();
+      return;
     }
     const telegramEnabled = !!deps.constants.telegramBotToken;
     const farmOnlyMode =

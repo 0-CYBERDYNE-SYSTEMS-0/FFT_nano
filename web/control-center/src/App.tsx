@@ -36,6 +36,20 @@ interface RuntimeResponse {
   };
 }
 
+interface OnboardingResponse {
+  ok: boolean;
+  onboarding: {
+    active: boolean;
+    providerPreset: string;
+    model: string;
+    apiKeyConfigured: boolean;
+    telegramBotConfigured: boolean;
+    telegramAdminSecretConfigured: boolean;
+    whatsappEnabled: boolean;
+    configComplete: boolean;
+  };
+}
+
 interface SessionSummary {
   sessionKey: string;
   chatJid: string;
@@ -118,6 +132,20 @@ type PendingRequest = {
 const TOKEN_KEY = 'fft_control_center.token';
 const THINK_OPTIONS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 const REASONING_OPTIONS = ['off', 'on', 'stream'];
+const OPENROUTER_SIGNUP_URL = 'https://openrouter.ai/';
+const BOTFATHER_URL = 'https://t.me/BotFather';
+const ONBOARDING_PROVIDER_OPTIONS = [
+  { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'anthropic', label: 'Anthropic' },
+  { id: 'gemini', label: 'Gemini' },
+  { id: 'zai', label: 'ZAI' },
+  { id: 'minimax', label: 'MiniMax' },
+  { id: 'kimi-coding', label: 'Kimi Coding' },
+  { id: 'ollama', label: 'Ollama (local)' },
+  { id: 'lm-studio', label: 'LM Studio (local)' },
+] as const;
+const OPTIONAL_API_KEY_PROVIDERS = new Set(['ollama', 'lm-studio']);
 
 function lineText(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -295,6 +323,13 @@ export function App(): JSX.Element {
   const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) || '');
   const [runtime, setRuntime] = useState<RuntimeResponse | null>(null);
   const [runtimeError, setRuntimeError] = useState<string>('');
+  const [onboarding, setOnboarding] = useState<OnboardingResponse['onboarding'] | null>(null);
+  const [onboardingProvider, setOnboardingProvider] = useState<string>('openrouter');
+  const [onboardingModel, setOnboardingModel] = useState<string>('anthropic/claude-3.5-sonnet');
+  const [onboardingApiKey, setOnboardingApiKey] = useState<string>('');
+  const [onboardingTelegramToken, setOnboardingTelegramToken] = useState<string>('');
+  const [onboardingBusy, setOnboardingBusy] = useState<boolean>(false);
+  const [onboardingStatus, setOnboardingStatus] = useState<string>('');
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSession, setActiveSession] = useState<string>('main');
   const [history, setHistory] = useState<SessionHistoryMessage[]>([]);
@@ -391,6 +426,19 @@ export function App(): JSX.Element {
       setRuntimeError('');
     } catch (err) {
       setRuntimeError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const fetchOnboardingStatus = async () => {
+    try {
+      const res = await fetch('/api/onboarding/status', { headers: authHeaders });
+      if (!res.ok) {
+        throw new Error(`Onboarding status failed: HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as OnboardingResponse;
+      setOnboarding(data.onboarding);
+    } catch (err) {
+      setOnboardingStatus(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -618,6 +666,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     void fetchRuntime();
+    void fetchOnboardingStatus();
     void fetchLogs('host');
     void fetchLogs('error');
     void fetchFileRoots();
@@ -625,12 +674,26 @@ export function App(): JSX.Element {
 
     const timer = window.setInterval(() => {
       void fetchRuntime();
+      void fetchOnboardingStatus();
       void fetchLogs('host');
       void fetchLogs('error');
     }, 10000);
 
     return () => window.clearInterval(timer);
   }, [token]);
+
+  useEffect(() => {
+    if (!onboarding) return;
+    setOnboardingProvider((prev) =>
+      prev ? prev : onboarding.providerPreset || 'openrouter',
+    );
+    setOnboardingModel((prev) => {
+      if (prev && prev !== '(unset)') return prev;
+      return onboarding.model && onboarding.model !== '(unset)'
+        ? onboarding.model
+        : 'anthropic/claude-3.5-sonnet';
+    });
+  }, [onboarding]);
 
   useEffect(() => {
     if (!selectedRoot) return;
@@ -854,6 +917,72 @@ export function App(): JSX.Element {
     }
   };
 
+  const onSubmitOnboarding = async () => {
+    const providerPreset = onboardingProvider.trim();
+    const model = onboardingModel.trim();
+    const apiKey = onboardingApiKey.trim();
+    const telegramBotToken = onboardingTelegramToken.trim();
+
+    if (!providerPreset) {
+      setOnboardingStatus('Choose a provider first.');
+      return;
+    }
+    if (!model) {
+      setOnboardingStatus('Enter a model id.');
+      return;
+    }
+    if (!telegramBotToken) {
+      setOnboardingStatus('Enter your Telegram bot token from BotFather.');
+      return;
+    }
+    if (
+      !OPTIONAL_API_KEY_PROVIDERS.has(providerPreset) &&
+      !apiKey &&
+      !onboarding?.apiKeyConfigured
+    ) {
+      setOnboardingStatus('Enter the provider API key.');
+      return;
+    }
+
+    setOnboardingBusy(true);
+    setOnboardingStatus('Saving onboarding config...');
+    try {
+      const res = await fetch('/api/onboarding/configure', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        body: JSON.stringify({
+          providerPreset,
+          model,
+          apiKey,
+          telegramBotToken,
+          whatsappEnabled: false,
+        }),
+      });
+      const payload = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+      };
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error || `Onboarding configure failed: HTTP ${res.status}`);
+      }
+      setOnboardingStatus(
+        'Config saved. Restarting host to bring Telegram online...',
+      );
+      await onGatewayService('restart');
+      window.setTimeout(() => {
+        void fetchRuntime();
+        void fetchOnboardingStatus();
+      }, 1800);
+    } catch (err) {
+      setOnboardingStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOnboardingBusy(false);
+    }
+  };
+
   const openDir = (dirPath: string) => {
     void loadFileTree(selectedRoot, dirPath);
   };
@@ -883,6 +1012,98 @@ export function App(): JSX.Element {
           <button type="button" onClick={onApplyToken}>Apply</button>
         </div>
       </header>
+
+      {onboarding?.active ? (
+        <section className="panel onboarding-panel">
+          <div className="onboarding-head">
+            <div>
+              <h2>First-Run Wizard</h2>
+              <p>
+                Finish local setup here, then Telegram takes over.
+              </p>
+            </div>
+            <div className="onboarding-links">
+              <a href={OPENROUTER_SIGNUP_URL} target="_blank" rel="noreferrer noopener">
+                OpenRouter Signup
+              </a>
+              <a href={BOTFATHER_URL} target="_blank" rel="noreferrer noopener">
+                BotFather
+              </a>
+            </div>
+          </div>
+
+          <div className="onboarding-grid">
+            <label className="field">
+              <span>Provider</span>
+              <select
+                value={onboardingProvider}
+                onChange={(event) => setOnboardingProvider(event.target.value)}
+              >
+                {ONBOARDING_PROVIDER_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field">
+              <span>Model</span>
+              <input
+                value={onboardingModel}
+                onChange={(event) => setOnboardingModel(event.target.value)}
+                placeholder="anthropic/claude-3.5-sonnet"
+              />
+            </label>
+
+            <label className="field">
+              <span>
+                API Key {OPTIONAL_API_KEY_PROVIDERS.has(onboardingProvider) ? '(optional)' : ''}
+              </span>
+              <input
+                type="password"
+                value={onboardingApiKey}
+                onChange={(event) => setOnboardingApiKey(event.target.value)}
+                placeholder={
+                  OPTIONAL_API_KEY_PROVIDERS.has(onboardingProvider)
+                    ? 'uses local default'
+                    : 'provider API key'
+                }
+              />
+            </label>
+
+            <label className="field">
+              <span>Telegram Bot Token</span>
+              <input
+                type="password"
+                value={onboardingTelegramToken}
+                onChange={(event) => setOnboardingTelegramToken(event.target.value)}
+                placeholder="123456:ABCDEF..."
+              />
+            </label>
+          </div>
+
+          <div className="onboarding-checks">
+            <span>Provider key: {onboarding.apiKeyConfigured ? 'already set' : 'needed'}</span>
+            <span>Telegram token: {onboarding.telegramBotConfigured ? 'already set' : 'needed'}</span>
+            <span>Admin secret: {onboarding.telegramAdminSecretConfigured ? 'ready' : 'will be generated'}</span>
+          </div>
+
+          <div className="composer-actions">
+            <button type="button" onClick={() => void onSubmitOnboarding()} disabled={onboardingBusy}>
+              {onboardingBusy ? 'Saving…' : 'Save + Restart Host'}
+            </button>
+            <button type="button" onClick={() => void fetchOnboardingStatus()} disabled={onboardingBusy}>
+              Refresh Wizard
+            </button>
+          </div>
+
+          <pre className="service-output">
+            {onboardingStatus ||
+              'Use OpenRouter if you need a quick hosted API key. Use BotFather to create the Telegram bot, paste the token here, then restart.'}
+          </pre>
+        </section>
+      ) : null}
 
       {runtimeError ? <div className="error panel">{runtimeError}</div> : null}
 
