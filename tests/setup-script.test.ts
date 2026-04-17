@@ -66,18 +66,13 @@ printf 'docker-build\\n' >> "${dockerLog}"
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "${npmLog}"
-if [[ "$#" -ge 3 && "$1" == "--prefix" && "$2" == "container/agent-runner" && "$3" == "install" ]]; then
-  mkdir -p container/agent-runner/node_modules/.bin
-  cat > container/agent-runner/node_modules/.bin/pi <<'SH'
+if [[ "$#" -ge 1 && ( "$1" == "install" || "$1" == "ci" ) ]]; then
+  mkdir -p node_modules/.bin
+  cat > node_modules/.bin/pi <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
-  chmod +x container/agent-runner/node_modules/.bin/pi
-  exit 0
-fi
-if [[ "$#" -ge 4 && "$1" == "--prefix" && "$2" == "container/agent-runner" && "$3" == "run" && "$4" == "build" ]]; then
-  mkdir -p container/agent-runner/dist
-  printf 'console.log("runner")\\n' > container/agent-runner/dist/index.js
+  chmod +x node_modules/.bin/pi
   exit 0
 fi
 exit 0
@@ -203,8 +198,6 @@ test('setup.sh with no Docker and --runtime host persists host runtime and skips
     'run build',
     '--prefix web/control-center install',
     '--prefix web/control-center run build',
-    '--prefix container/agent-runner install',
-    '--prefix container/agent-runner run build',
   ]);
 });
 
@@ -250,8 +243,6 @@ test('setup.sh respects persisted host runtime from .env without requiring Docke
     'run build',
     '--prefix web/control-center install',
     '--prefix web/control-center run build',
-    '--prefix container/agent-runner install',
-    '--prefix container/agent-runner run build',
   ]);
 });
 
@@ -264,6 +255,7 @@ test('setup.sh interactive host selection persists host runtime instead of falli
   assert.match(result.output, /Runtime \[host\/docker\] \[host\]:/);
   assert.match(result.output, /Detected container runtime: host/);
   assert.doesNotMatch(result.output, /Docker-first runtime selected\./);
+  assert.doesNotMatch(result.output, /Preparing host runtime runner dependencies\.\.\./);
 
   const envBody = readFileSync(path.join(fixtureRoot, '.env'), 'utf8');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
