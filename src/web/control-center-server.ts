@@ -72,7 +72,7 @@ export interface WebControlCenterAdapters {
   getOnboardingStatus?: () => OnboardingStatusPayload;
   applyOnboardingConfig?: (
     payload: OnboardingConfigPayload,
-  ) => Promise<{ ok: boolean; requiresRestart: boolean }>;
+  ) => Promise<{ ok: boolean; requiresRestart: boolean; adminSecret?: string }>;
 }
 
 export interface WebControlCenterServerOptions {
@@ -574,6 +574,7 @@ export async function startWebControlCenterServer(
           sendJson(res, 200, {
             ok: result.ok,
             requiresRestart: result.requiresRestart,
+            adminSecret: result.adminSecret,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

@@ -1457,10 +1457,12 @@ function buildOnboardingStatus() {
 function ensureWebOnboardingAdminSecret(
   updates: Record<string, string | undefined>,
   source: Record<string, string | undefined>,
-): void {
-  if (hasMeaningfulSecret(source.TELEGRAM_ADMIN_SECRET)) return;
-  if (hasMeaningfulSecret(updates.TELEGRAM_ADMIN_SECRET)) return;
-  updates.TELEGRAM_ADMIN_SECRET = randomBytes(24).toString('hex');
+): string | null {
+  if (hasMeaningfulSecret(source.TELEGRAM_ADMIN_SECRET)) return null;
+  if (hasMeaningfulSecret(updates.TELEGRAM_ADMIN_SECRET)) return null;
+  const secret = randomBytes(24).toString('hex');
+  updates.TELEGRAM_ADMIN_SECRET = secret;
+  return secret;
 }
 
 function applyWebOnboardingConfig(payload: {
@@ -1469,7 +1471,7 @@ function applyWebOnboardingConfig(payload: {
   apiKey?: string;
   telegramBotToken?: string;
   whatsappEnabled?: boolean;
-}): { ok: boolean; requiresRestart: boolean } {
+}): { ok: boolean; requiresRestart: boolean; adminSecret?: string } {
   const providerPreset = (payload.providerPreset || '').trim().toLowerCase();
   if (!providerPreset) {
     throw new Error('providerPreset is required');
@@ -1503,9 +1505,12 @@ function applyWebOnboardingConfig(payload: {
   updates.TELEGRAM_BOT_TOKEN = telegramBotToken;
   updates.WHATSAPP_ENABLED = payload.whatsappEnabled ? '1' : '0';
   updates.FFT_NANO_ONBOARDING_MODE = undefined;
-  ensureWebOnboardingAdminSecret(updates, currentEnv);
+  const generatedSecret = ensureWebOnboardingAdminSecret(updates, currentEnv);
+  if (generatedSecret) {
+    updates.TELEGRAM_AUTO_REGISTER = '1';
+  }
   persistRuntimeConfigUpdates(updates);
-  return { ok: true, requiresRestart: true };
+  return { ok: true, requiresRestart: true, adminSecret: generatedSecret || undefined };
 }
 
 function persistRuntimeConfigUpdates(
