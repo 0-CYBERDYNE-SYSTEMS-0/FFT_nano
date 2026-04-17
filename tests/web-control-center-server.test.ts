@@ -292,6 +292,109 @@ test('web control center keeps configured roots even when missing at startup', a
   }
 });
 
+test('web control center exposes onboarding status and accepts onboarding config writes', async () => {
+  const port = await getFreePort();
+  const staticDir = createStaticDir();
+  const logsDir = createLogsDir();
+  let receivedConfig:
+    | {
+        providerPreset?: string;
+        model?: string;
+        apiKey?: string;
+        telegramBotToken?: string;
+        whatsappEnabled?: boolean;
+      }
+    | null = null;
+
+  const server = await startWebControlCenterServer(
+    {
+      getRuntimeStatus: () => ({ runtime: 'host', sessions: 0, activeRuns: 0 }),
+      getProfileStatus: () => ({
+        profile: 'core',
+        featureFarm: false,
+        profileDetection: { source: 'explicit', reason: 'test' },
+      }),
+      getBuildInfo: () => ({
+        startedAt: '2026-04-17T00:00:00.000Z',
+        version: '1.6.1',
+      }),
+      getGatewayStatus: () => ({
+        host: '127.0.0.1',
+        port: 28989,
+        authRequired: false,
+      }),
+      getOnboardingStatus: () => ({
+        active: true,
+        providerPreset: 'openrouter',
+        model: 'anthropic/claude-3.5-sonnet',
+        apiKeyConfigured: false,
+        telegramBotConfigured: false,
+        telegramAdminSecretConfigured: true,
+        whatsappEnabled: false,
+        configComplete: false,
+      }),
+      applyOnboardingConfig: async (payload) => {
+        receivedConfig = payload;
+        return { ok: true, requiresRestart: true };
+      },
+    },
+    {
+      host: '127.0.0.1',
+      port,
+      accessMode: 'localhost',
+      authToken: '',
+      staticDir,
+      logsDir,
+      fileRoots: [{ id: 'workspace', label: 'Workspace', path: staticDir }],
+    },
+  );
+
+  try {
+    const statusRes = await fetch(`http://127.0.0.1:${port}/api/onboarding/status`);
+    assert.equal(statusRes.status, 200);
+    const statusJson = (await statusRes.json()) as {
+      ok: boolean;
+      onboarding: {
+        active: boolean;
+        providerPreset: string;
+        telegramBotConfigured: boolean;
+      };
+    };
+    assert.equal(statusJson.ok, true);
+    assert.equal(statusJson.onboarding.active, true);
+    assert.equal(statusJson.onboarding.providerPreset, 'openrouter');
+    assert.equal(statusJson.onboarding.telegramBotConfigured, false);
+
+    const configRes = await fetch(`http://127.0.0.1:${port}/api/onboarding/configure`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerPreset: 'openrouter',
+        model: 'openai/gpt-4.1-mini',
+        apiKey: 'or-key',
+        telegramBotToken: '123:abc',
+        whatsappEnabled: false,
+      }),
+    });
+    assert.equal(configRes.status, 200);
+    const configJson = (await configRes.json()) as {
+      ok: boolean;
+      requiresRestart: boolean;
+    };
+    assert.equal(configJson.ok, true);
+    assert.equal(configJson.requiresRestart, true);
+    assert.deepEqual(receivedConfig, {
+      providerPreset: 'openrouter',
+      model: 'openai/gpt-4.1-mini',
+      apiKey: 'or-key',
+      telegramBotToken: '123:abc',
+      whatsappEnabled: false,
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test('web control center file read rejects symlink escapes outside root', async (t) => {
   const port = await getFreePort();
   const staticDir = createStaticDir();

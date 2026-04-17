@@ -86,6 +86,54 @@ pre {
   color: var(--muted);
 }
 
+.onboarding-panel {
+  background:
+    linear-gradient(135deg, rgba(255, 79, 0, 0.12), rgba(14, 111, 123, 0.12)),
+    var(--panel);
+}
+
+.onboarding-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.onboarding-head h2 {
+  margin: 0 0 0.2rem;
+}
+
+.onboarding-links {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.onboarding-links a {
+  color: var(--accent-alt);
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  text-decoration: none;
+  border-bottom: 2px solid var(--accent-alt);
+}
+
+.onboarding-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.onboarding-checks {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .token-control {
   display: flex;
   flex-direction: column;

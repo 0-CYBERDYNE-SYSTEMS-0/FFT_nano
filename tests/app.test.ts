@@ -117,3 +117,70 @@ test('startTelegram stops message handling after setup input consumes the event'
   assert.equal(stored, 0);
 });
 
+test('main allows onboarding mode without configured channels', async () => {
+  let tuiStarted = 0;
+  let webStarted = 0;
+  let schedulerStarted = 0;
+  let messageLoopStarted = 0;
+
+  const runtime = createAppRuntime({
+    state: {
+      telegramBot: undefined,
+      registeredGroups: {},
+    },
+    constants: {
+      telegramBotToken: undefined,
+      telegramApiBaseUrl: undefined,
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+      dataDir: '/tmp/fft-nano-test',
+      featureFarm: false,
+      farmStateEnabled: false,
+      whatsappEnabled: false,
+      onboardingMode: true,
+    },
+    createTelegramBot: () => ({
+      startPolling: () => {},
+    }),
+    refreshTelegramCommandMenus: async () => {},
+    handleTelegramCallbackQuery: async () => {},
+    handleTelegramSetupInput: async () => false,
+    handleTelegramCommand: async () => false,
+    storeChatMetadata: () => {},
+    maybeRegisterTelegramChat: () => false,
+    isMainChat: () => false,
+    persistTelegramMedia: async (event) => event.content,
+    storeTextMessage: () => {},
+    logger: {
+      info: () => {},
+      warn: () => {},
+    },
+    ensureContainerSystemRunning: () => {},
+    initDatabase: () => {},
+    loadState: () => {},
+    migrateLegacyClaudeMemoryFiles: () => {},
+    migrateCompactionSummariesFromSoul: () => {},
+    maybePromoteConfiguredTelegramMain: () => {},
+    acquireSingletonLock: () => {},
+    startTuiGatewayService: async () => {
+      tuiStarted += 1;
+    },
+    startWebControlCenterService: async () => {
+      webStarted += 1;
+    },
+    startSchedulerLoop: () => {
+      schedulerStarted += 1;
+    },
+    startMessageLoop: async () => {
+      messageLoopStarted += 1;
+    },
+    maybeRunBootMdOnce: () => {},
+  });
+
+  await runtime.main();
+
+  assert.equal(tuiStarted, 1);
+  assert.equal(webStarted, 1);
+  assert.equal(schedulerStarted, 0);
+  assert.equal(messageLoopStarted, 0);
+});
