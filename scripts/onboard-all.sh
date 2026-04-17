@@ -263,6 +263,35 @@ read_env_value() {
   printf '%s' "$value"
 }
 
+upsert_env_value() {
+  local key="$1"
+  local value="${2-}"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  local replaced=0
+  if [[ -f .env ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" != *"="* ]] || [[ -z "${line//[[:space:]]/}" ]]; then
+        printf '%s\n' "$line" >>"$tmp_file"
+        continue
+      fi
+      local current_key="${line%%=*}"
+      current_key="${current_key#"${current_key%%[![:space:]]*}"}"
+      current_key="${current_key%"${current_key##*[![:space:]]}"}"
+      if [[ "$current_key" == "$key" ]]; then
+        printf '%s=%s\n' "$key" "$value" >>"$tmp_file"
+        replaced=1
+      else
+        printf '%s\n' "$line" >>"$tmp_file"
+      fi
+    done < .env
+  fi
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$value" >>"$tmp_file"
+  fi
+  mv "$tmp_file" .env
+}
+
 is_placeholder() {
   local value="${1:-}"
   [[ -z "$value" || "$value" == "replace-me" || "$value" == "..." ]]
@@ -348,6 +377,32 @@ is_env_configured() {
     return 1
   fi
   return 0
+}
+
+launch_first_run_web_handoff() {
+  say "[3/5] Launching first-run onboarding wizard..."
+  upsert_env_value FFT_NANO_ONBOARDING_MODE 1
+  if is_placeholder "$(read_env_value WHATSAPP_ENABLED)"; then
+    upsert_env_value WHATSAPP_ENABLED 0
+  fi
+  say "      starting host in onboarding-only mode..."
+  ./scripts/service.sh install
+  ./scripts/service.sh restart
+  sleep 1
+  if ./scripts/web.sh --open; then
+    :
+  else
+    ./scripts/web.sh
+  fi
+  say ""
+  say "Continue setup in FFT CONTROL CENTER."
+  say "Enter your provider/API key and Telegram bot token there."
+  say "When you save, the host will restart and Telegram becomes the main interface."
+  say ""
+  say "After restart:"
+  say "  Telegram DM: /id then /main <secret>"
+  say "  TUI fallback: ./scripts/start.sh tui"
+  exit 0
 }
 
 is_service_running() {
@@ -521,11 +576,7 @@ else
 fi
 
 if ! is_env_configured; then
-  say "[env] .env appears incomplete (provider/model/key/telegram token)."
-  say "Edit .env now, then continue."
-  if [[ -t 0 ]]; then
-    read -r -p "Press Enter to continue after updating .env, or Ctrl+C to abort... " _
-  fi
+  launch_first_run_web_handoff
 fi
 
 say "[3/5] Running onboarding..."
