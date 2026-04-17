@@ -964,13 +964,20 @@ export function App(): JSX.Element {
       const payload = (await res.json()) as {
         ok: boolean;
         error?: string;
+        adminSecret?: string;
       };
       if (!res.ok || !payload.ok) {
         throw new Error(payload.error || `Onboarding configure failed: HTTP ${res.status}`);
       }
-      setOnboardingStatus(
-        'Config saved. Restarting host to bring Telegram online...',
-      );
+      if (payload.adminSecret) {
+        setOnboardingStatus(
+          `Config saved. Restarting host...\n\nAdmin secret (save this): ${payload.adminSecret}\nIn Telegram DM: /main ${payload.adminSecret}`,
+        );
+      } else {
+        setOnboardingStatus(
+          'Config saved. Restarting host to bring Telegram online...',
+        );
+      }
       await onGatewayService('restart');
       window.setTimeout(() => {
         void fetchRuntime();
