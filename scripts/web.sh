@@ -49,14 +49,11 @@ if [[ "$show_host" == "0.0.0.0" || "$show_host" == "::" ]]; then
 fi
 
 url="http://${show_host}:${web_port}"
-
-header_args=()
 if [[ -n "${FFT_NANO_WEB_AUTH_TOKEN:-}" ]]; then
-  header_args+=( -H "Authorization: Bearer ${FFT_NANO_WEB_AUTH_TOKEN}" )
+  status_code="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${FFT_NANO_WEB_AUTH_TOKEN}" "${url}/api/runtime/status" || true)"
+else
+  status_code="$(curl -sS -o /dev/null -w '%{http_code}' "${url}/api/runtime/status" || true)"
 fi
-
-status_code="$(curl -sS -o /dev/null -w '%{http_code}' "${header_args[@]}" "${url}/api/runtime/status" || true)"
-
 printf 'FFT CONTROL CENTER\n'
 printf 'URL: %s\n' "$url"
 case "$status_code" in
