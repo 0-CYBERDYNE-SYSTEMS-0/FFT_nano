@@ -197,12 +197,14 @@ docker_available_and_healthy() {
 
 prompt_runtime_choice() {
   local answer
+  local say_err
+  say_err() { printf '%s\n' "$*" >&2; }
   while true; do
-    say ""
-    say "Docker is not currently available for the agent runtime."
-    say "Choose runtime:"
-    say "  host   (default, continues without Docker isolation)"
-    say "  docker (write Docker-first defaults, then stop so you can install/start Docker)"
+    say_err ""
+    say_err "Docker is not currently available for the agent runtime."
+    say_err "Choose runtime:"
+    say_err "  host   (default, continues without Docker isolation)"
+    say_err "  docker (write Docker-first defaults, then stop so you can install/start Docker)"
     read -r -p "Runtime [host/docker] [host]: " answer
     answer="$(printf %s "${answer:-}" | tr '[:upper:]' '[:lower:]')"
     case "$answer" in
@@ -215,7 +217,7 @@ prompt_runtime_choice() {
         return
         ;;
     esac
-    say "Please enter host or docker."
+    say_err "Please enter host or docker."
   done
 }
 
