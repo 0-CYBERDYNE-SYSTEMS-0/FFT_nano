@@ -1,7 +1,12 @@
 # Onboarding
 
 `FFT_nano` includes an OpenClaw-style single command onboarding flow that runs:
-backup -> setup -> onboarding wizard -> daemon step -> doctor.
+backup -> setup -> browser-first onboarding handoff -> daemon step -> doctor.
+
+If provider credentials or `TELEGRAM_BOT_TOKEN` are still missing after setup, `./scripts/onboard-all.sh`
+now launches FFT Control Center as the first-run wizard instead of stopping for manual `.env` edits.
+That wizard is the default place to paste an OpenRouter/provider API key and Telegram bot token before
+Telegram takes over as the main operator interface.
 
 ## Commands
 
@@ -44,6 +49,7 @@ Config edit note:
 - Use `./scripts/onboard.sh` when you want wizard-only edits without backup/setup/doctor steps.
 
 Interactive mode prompts for flow/mode/provider/channel/hatch and identity values.
+For incomplete first-run installs, the guided wrapper automatically prefers the web hatch and opens FFT Control Center.
 
 If hatch is `web`, use:
 
@@ -51,6 +57,10 @@ If hatch is `web`, use:
 fft web
 # or ./scripts/web.sh
 ```
+
+First-run browser wizard links:
+- OpenRouter signup: `https://openrouter.ai/`
+- Telegram BotFather: `https://t.me/BotFather`
 
 ## Flags
 

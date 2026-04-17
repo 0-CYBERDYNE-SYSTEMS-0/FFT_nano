@@ -33,6 +33,25 @@ interface GatewayStatusPayload {
   authRequired: boolean;
 }
 
+interface OnboardingStatusPayload {
+  active: boolean;
+  providerPreset: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  telegramBotConfigured: boolean;
+  telegramAdminSecretConfigured: boolean;
+  whatsappEnabled: boolean;
+  configComplete: boolean;
+}
+
+interface OnboardingConfigPayload {
+  providerPreset?: string;
+  model?: string;
+  apiKey?: string;
+  telegramBotToken?: string;
+  whatsappEnabled?: boolean;
+}
+
 export interface WebControlCenterFileRoot {
   id: string;
   label: string;
@@ -50,6 +69,10 @@ export interface WebControlCenterAdapters {
   getProfileStatus: () => ProfileStatusPayload;
   getBuildInfo: () => BuildInfoPayload;
   getGatewayStatus: () => GatewayStatusPayload;
+  getOnboardingStatus?: () => OnboardingStatusPayload;
+  applyOnboardingConfig?: (
+    payload: OnboardingConfigPayload,
+  ) => Promise<{ ok: boolean; requiresRestart: boolean }>;
 }
 
 export interface WebControlCenterServerOptions {
@@ -505,6 +528,57 @@ export async function startWebControlCenterServer(
             wsUrl: resolveGatewayWsUrl(req, gateway),
           },
         });
+        return;
+      }
+
+      if (requestPath === '/api/onboarding/status') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.getOnboardingStatus) {
+          sendJson(res, 200, {
+            ok: true,
+            onboarding: {
+              active: false,
+              providerPreset: 'manual',
+              model: '(unset)',
+              apiKeyConfigured: false,
+              telegramBotConfigured: false,
+              telegramAdminSecretConfigured: false,
+              whatsappEnabled: false,
+              configComplete: false,
+            },
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          onboarding: adapters.getOnboardingStatus(),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/onboarding/configure') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.applyOnboardingConfig) {
+          sendJson(res, 404, { ok: false, error: 'Onboarding config API unavailable' });
+          return;
+        }
+        try {
+          const payload = await readJsonBody<OnboardingConfigPayload>(req);
+          const result = await adapters.applyOnboardingConfig(payload);
+          sendJson(res, 200, {
+            ok: result.ok,
+            requiresRestart: result.requiresRestart,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          sendJson(res, 400, { ok: false, error: message });
+        }
         return;
       }
 

@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { exec, execSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -14,6 +15,7 @@ import {
   DATA_DIR,
   FEATURE_FARM,
   FARM_STATE_ENABLED,
+  FFT_NANO_ONBOARDING_MODE,
   FFT_NANO_TUI_AUTH_TOKEN,
   FFT_NANO_TUI_ENABLED,
   FFT_NANO_TUI_HOST,
@@ -109,6 +111,7 @@ import {
   getDefaultDotEnvPath,
   getRuntimeProviderDefinitionByPreset,
   getRuntimeProviderDefinitionByPiApi,
+  hasMeaningfulSecret,
   loadDotEnvMap,
   resolveRuntimeConfigSnapshot,
   RUNTIME_PROVIDER_PRESET_ENV,
@@ -1426,6 +1429,83 @@ function getRuntimeConfigSummaryLines(): string[] {
       ? `Endpoint (${snapshot.endpointEnv}): ${snapshot.endpointValue || '(default)'}`
       : 'Endpoint: provider default',
   ];
+}
+
+function buildOnboardingStatus() {
+  const env = getRuntimeConfigEnv();
+  const snapshot = resolveRuntimeConfigSnapshot(env);
+  const telegramBotConfigured = hasMeaningfulSecret(env.TELEGRAM_BOT_TOKEN);
+  const telegramAdminSecretConfigured = hasMeaningfulSecret(
+    env.TELEGRAM_ADMIN_SECRET,
+  );
+  const whatsappEnabled = !['0', 'false', 'no'].includes(
+    String(env.WHATSAPP_ENABLED || '1').trim().toLowerCase(),
+  );
+  const configComplete = snapshot.apiKeyConfigured && telegramBotConfigured;
+  return {
+    active: FFT_NANO_ONBOARDING_MODE || !configComplete,
+    providerPreset: snapshot.providerPreset,
+    model: snapshot.model,
+    apiKeyConfigured: snapshot.apiKeyConfigured,
+    telegramBotConfigured,
+    telegramAdminSecretConfigured,
+    whatsappEnabled,
+    configComplete,
+  };
+}
+
+function ensureWebOnboardingAdminSecret(
+  updates: Record<string, string | undefined>,
+  source: Record<string, string | undefined>,
+): void {
+  if (hasMeaningfulSecret(source.TELEGRAM_ADMIN_SECRET)) return;
+  if (hasMeaningfulSecret(updates.TELEGRAM_ADMIN_SECRET)) return;
+  updates.TELEGRAM_ADMIN_SECRET = randomBytes(24).toString('hex');
+}
+
+function applyWebOnboardingConfig(payload: {
+  providerPreset?: string;
+  model?: string;
+  apiKey?: string;
+  telegramBotToken?: string;
+  whatsappEnabled?: boolean;
+}): { ok: boolean; requiresRestart: boolean } {
+  const providerPreset = (payload.providerPreset || '').trim().toLowerCase();
+  if (!providerPreset) {
+    throw new Error('providerPreset is required');
+  }
+  const matchedPreset = RUNTIME_PROVIDER_DEFINITIONS.find(
+    (entry) => entry.id === providerPreset,
+  );
+  if (!matchedPreset) {
+    throw new Error(`Unknown provider preset: ${providerPreset}`);
+  }
+  const currentEnv = getRuntimeConfigEnv();
+  const provider = getRuntimeProviderDefinitionByPreset(matchedPreset.id);
+  const updates = buildRuntimeProviderPresetUpdates({
+    preset: matchedPreset.id,
+    model: payload.model?.trim() || undefined,
+    source: currentEnv,
+    applyLocalDefaults: true,
+  });
+  const trimmedApiKey = payload.apiKey?.trim() || '';
+  const apiKeyRequired = provider.apiKeyRequired !== false;
+  if (trimmedApiKey) {
+    updates[provider.apiKeyEnv] = trimmedApiKey;
+  } else if (apiKeyRequired && !hasMeaningfulSecret(currentEnv[provider.apiKeyEnv])) {
+    throw new Error(`API key is required for ${provider.label}`);
+  }
+
+  const telegramBotToken = payload.telegramBotToken?.trim() || '';
+  if (!telegramBotToken) {
+    throw new Error('telegramBotToken is required');
+  }
+  updates.TELEGRAM_BOT_TOKEN = telegramBotToken;
+  updates.WHATSAPP_ENABLED = payload.whatsappEnabled ? '1' : '0';
+  updates.FFT_NANO_ONBOARDING_MODE = undefined;
+  ensureWebOnboardingAdminSecret(updates, currentEnv);
+  persistRuntimeConfigUpdates(updates);
+  return { ok: true, requiresRestart: true };
 }
 
 function persistRuntimeConfigUpdates(
@@ -3711,6 +3791,7 @@ const appRuntime = createAppRuntime({
     farmStateEnabled: FARM_STATE_ENABLED,
     profileDetection: PROFILE_DETECTION,
     whatsappEnabled: WHATSAPP_ENABLED,
+    onboardingMode: FFT_NANO_ONBOARDING_MODE,
     mainWorkspaceDir: MAIN_WORKSPACE_DIR,
   },
   createTelegramBot,
@@ -4137,6 +4218,8 @@ function createWebControlCenterAdapters(): WebControlCenterAdapters {
       port: FFT_NANO_TUI_PORT,
       authRequired: FFT_NANO_TUI_AUTH_TOKEN.length > 0,
     }),
+    getOnboardingStatus: () => buildOnboardingStatus(),
+    applyOnboardingConfig: async (payload) => applyWebOnboardingConfig(payload),
   };
 }
 
