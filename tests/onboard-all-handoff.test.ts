@@ -30,6 +30,10 @@ function setupOnboardAllFixture(options: { withMainChatId: boolean }): string {
     path.join(scriptsDir, 'onboard.sh'),
     `#!/usr/bin/env bash
 set -euo pipefail
+log_file="\${FFT_TEST_ONBOARD_LOG:-}"
+if [[ -n "$log_file" ]]; then
+  printf 'args:%s\\n' "$*" > "$log_file"
+fi
 echo "stub onboard complete"
 `,
     'utf8',
@@ -46,6 +50,12 @@ if [[ -n "$log_file" ]]; then
     printf 'args:%s\\n' "$*"
     printf 'allow_host:%s\\n' "\${FFT_NANO_ALLOW_HOST_RUNTIME:-}"
   } > "$log_file"
+fi
+if [[ "\${FFT_TEST_SETUP_WRITE_HOST_ENV:-0}" == "1" ]]; then
+  {
+    printf 'CONTAINER_RUNTIME=host\\n'
+    printf 'FFT_NANO_ALLOW_HOST_RUNTIME=1\\n'
+  } >> .env
 fi
 echo "stub setup complete"
 `,
@@ -99,6 +109,7 @@ function runOnboardAllFixture(
 ): string {
   const serviceState = path.join(fixtureRoot, 'service.state');
   const setupLog = path.join(fixtureRoot, 'setup.log');
+  const onboardLog = path.join(fixtureRoot, 'onboard.log');
   const args = [
     'scripts/onboard-all.sh',
     '--non-interactive',
@@ -136,6 +147,7 @@ function runOnboardAllFixture(
       HOME: path.join(fixtureRoot, 'home'),
       FFT_TEST_SERVICE_STATE: serviceState,
       FFT_TEST_SETUP_LOG: setupLog,
+      FFT_TEST_ONBOARD_LOG: onboardLog,
     },
     encoding: 'utf8',
   });
@@ -166,4 +178,50 @@ test('onboard-all passes explicit host opt-in to setup when runtime=host', () =>
   const setupLog = readFileSync(path.join(fixtureRoot, 'setup.log'), 'utf8');
   assert.match(setupLog, /args:--runtime host/);
   assert.match(setupLog, /allow_host:1/);
+});
+
+test('onboard-all passes runtime persisted by setup into onboarding', () => {
+  const fixtureRoot = setupOnboardAllFixture({ withMainChatId: false });
+  const result = spawnSync(
+    'bash',
+    [
+      'scripts/onboard-all.sh',
+      '--non-interactive',
+      '--accept-risk',
+      '--operator',
+      'Test Operator',
+      '--assistant-name',
+      'FarmFriend',
+      '--flow',
+      'quickstart',
+      '--mode',
+      'local',
+      '--auth-choice',
+      'skip',
+      '--hatch',
+      'later',
+      '--skip-channels',
+      '--skip-skills',
+      '--skip-health',
+      '--skip-ui',
+      '--skip-doctor',
+      '--no-backup',
+    ],
+    {
+      cwd: fixtureRoot,
+      env: {
+        ...process.env,
+        HOME: path.join(fixtureRoot, 'home'),
+        FFT_TEST_SERVICE_STATE: path.join(fixtureRoot, 'service.state'),
+        FFT_TEST_SETUP_LOG: path.join(fixtureRoot, 'setup.log'),
+        FFT_TEST_ONBOARD_LOG: path.join(fixtureRoot, 'onboard.log'),
+        FFT_TEST_SETUP_WRITE_HOST_ENV: '1',
+      },
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  const onboardLog = readFileSync(path.join(fixtureRoot, 'onboard.log'), 'utf8');
+  assert.match(onboardLog, /args:.*--runtime host/);
 });

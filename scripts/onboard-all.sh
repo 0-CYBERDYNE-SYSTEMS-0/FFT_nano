@@ -44,6 +44,10 @@ Options:
 
 This is the one-command onboarding flow:
   backup -> setup -> onboarding wizard -> service step -> doctor
+
+Runtime note:
+  setup.sh is the single runtime decision point. If Docker is unavailable and
+  runtime is unresolved, setup prompts for host or docker during step 2.
 USAGE
 }
 
@@ -503,7 +507,15 @@ if [[ "$SKIP_SETUP" -eq 0 ]]; then
     # Runtime choice in onboarding is explicit user opt-in for host mode.
     setup_env+=(FFT_NANO_ALLOW_HOST_RUNTIME=1)
   fi
-  env "${setup_env[@]}" ./scripts/setup.sh "${setup_args[@]}"
+  if [[ -n "$RUNTIME_ARG" ]]; then
+    env "${setup_env[@]}" ./scripts/setup.sh "${setup_args[@]}"
+  else
+    env "${setup_env[@]}" ./scripts/setup.sh
+  fi
+  persisted_runtime="$(read_env_value CONTAINER_RUNTIME)"
+  if ! is_placeholder "$persisted_runtime"; then
+    RUNTIME_ARG="$(normalize_runtime "$persisted_runtime")"
+  fi
 else
   say "[2/5] Skipping setup (--skip-setup)"
 fi
