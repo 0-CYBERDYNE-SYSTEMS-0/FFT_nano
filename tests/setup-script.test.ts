@@ -121,6 +121,70 @@ function runSetupFixture(
   });
 }
 
+function runSetupFixtureInteractive(
+  fixtureRoot: string,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): { status: number; output: string } {
+  const driver = `
+import json
+import os
+import pty
+import select
+import sys
+
+cmd = sys.argv[1:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvpe(cmd[0], cmd, os.environ)
+
+chunks = []
+sent = False
+
+while True:
+    try:
+        ready, _, _ = select.select([fd], [], [], 1.0)
+    except OSError:
+        break
+    if fd not in ready:
+        continue
+    try:
+        data = os.read(fd, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    text = data.decode("utf-8", "replace")
+    chunks.append(text)
+    joined = "".join(chunks)
+    if (not sent) and "Runtime [host/docker] [host]:" in joined:
+        os.write(fd, b"host\\n")
+        sent = True
+
+_, status = os.waitpid(pid, 0)
+result = {
+    "status": os.waitstatus_to_exitcode(status),
+    "output": "".join(chunks),
+}
+print(json.dumps(result))
+`;
+
+  const result = spawnSync('python3', ['-c', driver, 'bash', 'scripts/setup.sh', ...args], {
+    cwd: fixtureRoot,
+    env: {
+      ...process.env,
+      PATH: `${path.join(fixtureRoot, 'fake-bin')}:${process.env.PATH ?? ''}`,
+      FFT_NANO_AUTO_SERVICE: '0',
+      FFT_NANO_AUTO_LINK: '0',
+      ...extraEnv,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, `python driver failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  return JSON.parse(result.stdout) as { status: number; output: string };
+}
+
 test('setup.sh with no Docker and --runtime host persists host runtime and skips Docker build', () => {
   const { fixtureRoot, npmLog, dockerLog } = setupSetupFixture();
 
@@ -189,4 +253,20 @@ test('setup.sh respects persisted host runtime from .env without requiring Docke
     '--prefix container/agent-runner install',
     '--prefix container/agent-runner run build',
   ]);
+});
+
+test('setup.sh interactive host selection persists host runtime instead of falling through to docker', () => {
+  const { fixtureRoot, dockerLog } = setupSetupFixture();
+
+  const result = runSetupFixtureInteractive(fixtureRoot, []);
+
+  assert.equal(result.status, 0, `output:\n${result.output}`);
+  assert.match(result.output, /Runtime \[host\/docker\] \[host\]:/);
+  assert.match(result.output, /Detected container runtime: host/);
+  assert.doesNotMatch(result.output, /Docker-first runtime selected\./);
+
+  const envBody = readFileSync(path.join(fixtureRoot, '.env'), 'utf8');
+  assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
+  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+  assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /docker-build/);
 });
