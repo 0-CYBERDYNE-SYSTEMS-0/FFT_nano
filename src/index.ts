@@ -833,14 +833,32 @@ function promoteChatToMain(chatJid: string, chatName: string): void {
 }
 
 function maybePromoteConfiguredTelegramMain(): void {
-  // If a Telegram main chat is configured via env var, promote/migrate the
-  // corresponding registered chat to main on startup.
   if (!TELEGRAM_MAIN_CHAT_ID) return;
   const chatJid = `telegram:${TELEGRAM_MAIN_CHAT_ID}`;
   const prev = state.registeredGroups[chatJid];
-  if (!prev) return;
-  if (prev.folder === MAIN_GROUP_FOLDER) return;
 
+  if (prev?.folder === MAIN_GROUP_FOLDER) {
+    logger.info({ chatJid }, 'Configured Telegram main chat already registered');
+    return;
+  }
+
+  if (!prev) {
+    // No registration exists yet — create it so the route is available even
+    // when TELEGRAM_AUTO_REGISTER=0 (launchd default).
+    logger.info(
+      { chatJid },
+      'Configured Telegram main chat not found in registry; creating main registration',
+    );
+    registerGroup(chatJid, {
+      name: `${ASSISTANT_NAME} (main)`,
+      folder: MAIN_GROUP_FOLDER,
+      trigger: `@${ASSISTANT_NAME}`,
+      added_at: new Date().toISOString(),
+    });
+    return;
+  }
+
+  logger.info({ chatJid }, 'Promoting configured Telegram main chat to main folder');
   promoteChatToMain(chatJid, prev.name || `${ASSISTANT_NAME} (main)`);
 }
 

@@ -7,7 +7,7 @@ Primary source of truth:
 ## Core Runtime Defaults (`src/config.ts`)
 
 - `ASSISTANT_NAME` default:
-  - `OpenClaw` in `core` profile
+  - `fft_nano` in `core` profile
   - `FarmFriend` in `farm` profile
 - `POLL_INTERVAL`: `2000` ms
 - `SCHEDULER_POLL_INTERVAL`: `60000` ms
