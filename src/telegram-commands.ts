@@ -1684,7 +1684,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         await deps.sendMessage(
           m.chatJid,
-          'Unauthorized. Usage: /main <secret>',
+          'Secret mismatch. Usage: /main <admin-secret>  (check TELEGRAM_ADMIN_SECRET in .env)',
         );
         return true;
       }

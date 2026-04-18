@@ -463,7 +463,7 @@ if is_runtime_env_configured; then
   say "  ./scripts/service.sh logs     # view recent service logs"
   say "  ./scripts/web.sh              # show FFT CONTROL CENTER URL"
   say "  ./scripts/start.sh tui        # attach TUI to running host"
-  say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name OpenClaw --non-interactive"
+  say "  ./scripts/onboard.sh --operator \"Your Name\" --assistant-name \"Your Assistant Name\" --non-interactive"
   say "  Telegram DM: /id then /main <secret>"
 else
   say "  ./scripts/onboard-all.sh      # launch the browser-first setup wizard"
