@@ -1,6 +1,6 @@
 # Onboarding
 
-`FFT_nano` includes an OpenClaw-style single command onboarding flow that runs:
+`FFT_nano` includes a single command onboarding flow that runs:
 backup -> setup -> browser-first onboarding handoff -> daemon step -> doctor.
 
 If provider credentials or `TELEGRAM_BOT_TOKEN` are still missing after setup, `./scripts/onboard-all.sh`
