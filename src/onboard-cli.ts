@@ -855,6 +855,7 @@ export async function runOnboarding(
 
   if (wizard.mode === 'local') {
     const updates: Record<string, string | undefined> = {
+      ASSISTANT_NAME: resolved.assistantName,
       FFT_NANO_TUI_PORT:
         typeof wizard.gatewayPort === 'number'
           ? String(wizard.gatewayPort)
@@ -905,6 +906,7 @@ export async function runOnboarding(
     upsertDotEnv(envPath, updates);
   } else {
     const updates: Record<string, string | undefined> = {
+      ASSISTANT_NAME: resolved.assistantName,
       FFT_NANO_REMOTE_URL: wizard.remoteUrl?.trim() || '',
     };
     if (opts.runtime) {

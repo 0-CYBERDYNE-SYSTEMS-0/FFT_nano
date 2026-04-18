@@ -397,10 +397,11 @@ launch_first_run_web_handoff() {
   say ""
   say "Continue setup in FFT CONTROL CENTER."
   say "Enter your provider/API key and Telegram bot token there."
-  say "When you save, the host will restart and Telegram becomes the main interface."
+  say "When you save, the host will restart with your Telegram bot active."
   say ""
-  say "After restart:"
-  say "  Telegram DM: /id then /main <secret>"
+  say "After restart, complete Telegram setup (required before the bot answers messages):"
+  say "  1. DM your bot: /id              (get your numeric chat ID)"
+  say "  2. DM your bot: /main <secret>   (bind this DM as the main chat)"
   say "  TUI fallback: ./scripts/start.sh tui"
   exit 0
 }
@@ -535,7 +536,7 @@ render_completion_handoff() {
   print_numbered_list "Optional next:" "${optional_next[@]}"
 }
 
-say "FFT_nano onboard (OpenClaw-style single command)"
+say "FFT_nano onboard (single command)"
 say "Root: $ROOT_DIR"
 say "Workspace: $WORKSPACE_DIR"
 say ""
@@ -658,7 +659,7 @@ fi
 
 if [[ -z "$INSTALL_DAEMON" ]] && [[ -t 0 ]]; then
   read -r -p "Install/start host service now? [Y/n]: " install_choice
-  install_choice="${install_choice,,}"
+  install_choice="$(printf '%s' "$install_choice" | tr '[:upper:]' '[:lower:]')"
   if [[ -z "$install_choice" || "$install_choice" == "y" || "$install_choice" == "yes" ]]; then
     INSTALL_DAEMON="1"
   else
