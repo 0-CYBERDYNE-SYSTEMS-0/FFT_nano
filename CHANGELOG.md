@@ -7,6 +7,33 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-04-19
+
+### Added
+
+- Browser-first onboarding handoff: setup can now complete from a browser session before
+  Telegram registration is required, with automatic handoff into the main-chat flow.
+- Pulse telemetry for `/status`: rich structured output with incident history and live
+  health signals; telemetry buffer is capped to prevent unbounded growth.
+- `/models` now opens the model picker panel directly instead of rendering a text list,
+  with a matching add-model panel flow.
+
+### Fixed
+
+- Telegram main-chat onboarding gap after browser-first handoff — registration is now
+  unblocked correctly at the end of the browser flow.
+- OpenClaw defaults replaced; Telegram main-chat onboarding no longer stalls on
+  provider-specific default values.
+- POSIX-compatible `tr` call in `onboard-all.sh` for Alpine/busybox compatibility.
+- Host runtime installs now bundle the `pi` CLI correctly.
+- Interactive host runtime selection is honored and no longer overridden by the installer.
+- Installer runtime selection flow repaired for edge cases that caused the wrong runtime
+  to be selected silently.
+- Main chat is restored correctly after a coder cancel or resume operation.
+- Fallback aborted coder/subagent runs now classified and reported correctly.
+- Terminal bookend messages guaranteed for all coder run outcomes.
+- Empty-result acknowledgment sent instead of silently dropping delivery.
+
 ## [1.6.1] - 2026-04-08
 
 ### Fixed

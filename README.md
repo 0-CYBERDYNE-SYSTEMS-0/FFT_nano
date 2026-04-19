@@ -337,6 +337,11 @@ Telegram commands (main/admin subset):
 - `/coder-plan <task>`
 - `/tasks [list|due|detail <id>|runs <id> [limit]]`
 
+Model selection note:
+
+- `/models` without a query opens the model provider picker panel directly.
+- `/models <query>` searches and lists models matching the query text.
+
 Tool progress notes:
 
 - `/verbose` cycles `off -> new -> all -> verbose`.
