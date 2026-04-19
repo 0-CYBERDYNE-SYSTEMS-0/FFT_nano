@@ -633,12 +633,17 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             q.chatJid,
             'Coder request canceled. Continuing in the main chat flow.',
           );
-          if (deps.resumeDirectSessionTurn) {
-            await deps.resumeDirectSessionTurn(
+          if (
+            deps.resumeDirectSessionTurn &&
+            settingsAction.taskText
+          ) {
+            deps.resumeDirectSessionTurn(
               q.chatJid,
               settingsAction.taskText,
               true,
-            );
+            ).catch(() => {
+              // Contained - don't propagate to polling loop
+            });
           }
           return;
         case 'coder-cancel':
