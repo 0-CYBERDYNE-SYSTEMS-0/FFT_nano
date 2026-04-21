@@ -321,19 +321,13 @@ ensure_runtime_ready() {
     fail "Host runtime is blocked in production unless FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1"
   fi
 
-  local host_runner="container/agent-runner/dist/index.js"
-  local host_pi="container/agent-runner/node_modules/.bin/pi"
-  if [[ ! -f "$host_runner" || ! -x "$host_pi" ]]; then
-    say "Preparing host runtime runner dependencies..."
-    npm --prefix container/agent-runner install
-    npm --prefix container/agent-runner run build
-  fi
+  local host_pi="$ROOT_DIR/node_modules/.bin/pi"
   if command -v pi >/dev/null 2>&1; then
     return
   fi
 
   if [[ ! -x "$host_pi" ]]; then
-    fail "Host runtime requires pi on PATH or ${host_pi}. Install agent-runner deps: npm --prefix container/agent-runner install"
+    fail "Host runtime requires pi on PATH or ${host_pi}. Re-run npm install, set PI_PATH, or install @mariozechner/pi-coding-agent globally."
   fi
 }
 
@@ -429,7 +423,7 @@ else
   if command -v pi >/dev/null 2>&1; then
     pi --version >/dev/null 2>&1 || true
   else
-    PATH="$ROOT_DIR/container/agent-runner/node_modules/.bin:${PATH}" pi --version >/dev/null 2>&1 || true
+    PATH="$ROOT_DIR/node_modules/.bin:${PATH}" pi --version >/dev/null 2>&1 || true
   fi
 fi
 

@@ -1,6 +1,6 @@
 {
   "name": "fft_nano",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "FFT_nano: autonomous AI coworker that runs on your farm's hardware, learns your operation, and texts you updates. No subscriptions. MIT licensed.",
   "keywords": [
     "autonomous-agents",
@@ -66,6 +66,7 @@
     "format:check": "prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.67.6",
     "@mariozechner/pi-tui": "^0.53.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.8.0",

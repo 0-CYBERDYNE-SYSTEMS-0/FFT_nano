@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # FFT_nano — Project Instructions
 
 ## Architecture
@@ -33,35 +37,34 @@ GitHub Actions gates:
 - `.github/workflows/release-readiness.yml`: typecheck, tests, secret-scan, validate:skills, release-check
 - `.github/workflows/skills-only.yml`: validate:skills for skills-only changes
 
-### Active Refactoring (branch: `refactor/architecture-simplification`)
+### Active Refactoring
 
-A 4-phase simplification is in progress. Current state:
+A 4-phase decomposition of `index.ts` is in progress:
 
-**Phase 1: Extract modules from index.ts** (IN PROGRESS)
-- `src/app-state.ts` — DONE. All global mutable state (20+ Maps), type definitions, and constants extracted. Reassignable `let` vars wrapped in exported `state` object for ESM compatibility.
-- `src/chat-preferences.ts` — DONE. Normalizers, queue parsing, preference persistence, usage stats helpers extracted.
-- `src/telegram-streaming.ts` — IN PROGRESS. Single-path visible preview registry landed; remaining tool progress/final reply extraction still pending.
-- `src/telegram-commands.ts` — PENDING. handleTelegramCommand, settings panels, callback queries (~1200 lines).
-- `src/message-dispatch.ts` — PENDING. processMessage, runDirectSessionTurn, queue logic.
-- `src/app.ts` — PENDING. main(), startup, shutdown, connectWhatsApp.
+**Phase 1: Extract modules from index.ts** — DONE
+- `src/app-state.ts` — All global mutable state (20+ Maps), type definitions, constants. Reassignable `let` vars wrapped in `state` object for ESM compatibility.
+- `src/chat-preferences.ts` — Normalizers, queue parsing, preference persistence, usage stats.
+- `src/telegram-streaming.ts` — Single-path visible preview registry and completion state.
+- `src/telegram-commands.ts` — `handleTelegramCommand`, settings panels, callback queries.
+- `src/message-dispatch.ts` — `processMessage`, `runDirectSessionTurn`, queue logic.
+- `src/app.ts` — `main()`, startup, shutdown, `connectWhatsApp`.
 
 **Phase 2: Replace file-based IPC with EventEmitter** — IN PROGRESS
 - Host-local preview/final delivery in `pi-runner.ts` now emits runtime events instead of writing `messages/*.json`
-- Cross-boundary sandbox IPC files remain in place for agent-authored `messages/`, `tasks/`, `actions/`, and `action_results/`
-- `startIpcWatcher()` still owns filesystem IPC polling; host-local event handling now runs beside it
+- Cross-boundary sandbox IPC files remain for agent-authored `messages/`, `tasks/`, `actions/`, `action_results/`
+- `startIpcWatcher()` still owns filesystem IPC polling; host-local event handling runs beside it
 
 **Phase 3: Simplify draft streaming to one path** — IN PROGRESS
-- Native `sendMessageDraft()` is no longer used for host-local preview delivery
-- Host preview streaming now uses one visible send+edit path via `TelegramPreviewRegistry`
+- Native `sendMessageDraft()` no longer used for host-local preview delivery
+- Host preview streaming uses one visible send+edit path via `TelegramPreviewRegistry`
 - Legacy `telegram-draft-ipc.ts` compatibility remains in-tree pending cleanup
 
 **Phase 4: Collapse completion resolver** — IN PROGRESS
-- Completion now resolves against preview/completed registry state instead of draft/message dual-mode state
-- Final consolidation into a shared message-dispatch helper is still pending
+- Completion resolves against preview/completed registry state instead of draft/message dual-mode state
+- Final consolidation into a shared message-dispatch helper still pending
 
 ### State Access Pattern
 
-After Phase 1 extraction, modules access shared state via:
 ```typescript
 import { state, activeChatRuns, ... } from './app-state.js';
 // Reassignable vars: state.registeredGroups, state.telegramBot, etc.
@@ -72,20 +75,29 @@ import { state, activeChatRuns, ... } from './app-state.js';
 
 | File | Role |
 |---|---|
-| `src/index.ts` | Main orchestrator (6809 lines, being decomposed) |
+| `src/index.ts` | Remaining orchestrator logic (~5700 lines, still being decomposed) |
 | `src/app-state.ts` | All global mutable state and types |
-| `src/pi-runner.ts` | Agent subprocess spawning, snapshots, host runtime event emission |
+| `src/app.ts` | Startup, shutdown, WhatsApp connection |
+| `src/message-dispatch.ts` | Message processing, session turns, queue logic |
+| `src/telegram-commands.ts` | Telegram command handling, settings panels, callback queries |
+| `src/pi-runner.ts` | Agent subprocess spawning, snapshots, runtime event emission |
 | `src/telegram-streaming.ts` | Visible Telegram preview registry and completion state |
-| `src/pi-runtime-events.ts` | Host-local runtime event hub for preview/final delivery |
-| `src/tui/runtime-events.ts` | EventEmitter pattern (34 lines, template for Phase 2) |
+| `src/runtime/host-events.ts` | `HostEventBus` — typed EventEmitter hub for host-local delivery |
 | `src/config.ts` | All configuration constants |
 
 ## Build & Test
 
 ```bash
 npm run build          # TypeScript compilation
-npm test               # 184 tests via node --test
-npx tsc --noEmit       # Type-check without emitting
+npm run dev            # Run with tsx (no build step)
+npm test               # All tests via node --test
+npm run typecheck      # Type-check without emitting
+
+# Run a single test file
+node --import tsx --test tests/<name>.test.ts
+
+npm run format         # Prettier write
+npm run format:check   # Prettier check (CI)
 ```
 
 ## Conventions
