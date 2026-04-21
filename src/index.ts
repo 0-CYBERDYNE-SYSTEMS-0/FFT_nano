@@ -105,6 +105,7 @@ import {
   TELEGRAM_COMMON_COMMANDS,
 } from './telegram-command-spec.js';
 import { resolvePiExecutable } from './pi-executable.js';
+import { parsePiListModelsResult } from './pi-models.js';
 import {
   applyProcessEnvUpdates,
   buildRuntimeProviderPresetUpdates,
@@ -1353,21 +1354,6 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
   return { ok: true, text: bounded };
 }
 
-function parsePiModelListOutput(output: string): PiModelEntry[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .filter((line) => !/^provider\s{2,}model\b/i.test(line))
-    .map((line) => line.trim().split(/\s{2,}/))
-    .filter((parts) => parts.length >= 2)
-    .map((parts) => ({
-      provider: (parts[0] || '').trim(),
-      model: (parts[1] || '').trim(),
-    }))
-    .filter((entry) => entry.provider.length > 0 && entry.model.length > 0);
-}
-
 function loadPiModels(
   forceRefresh = false,
 ): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
@@ -1395,7 +1381,11 @@ function loadPiModels(
   });
   const entries =
     !result.error && result.status === 0
-      ? parsePiModelListOutput(result.stdout || '')
+      ? parsePiListModelsResult({
+          status: result.status,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        })
       : [];
   const piFailureText = result.error
     ? `Failed to load models from ${piExecutable}: ${result.error.message}`
