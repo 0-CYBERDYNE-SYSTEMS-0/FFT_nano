@@ -165,6 +165,7 @@ function helpText(): string {
     '/verbose [off|new|all|verbose]',
     '/deliver <on|off>',
     '/gateway <status|restart|doctor>',
+    '/update - pull, rebuild, and restart',
     '/new or /reset',
     '/abort',
     '/exit',
@@ -654,6 +655,22 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           chatLog.addSystem(`gateway ${action}:\n${result.text}`);
         } else {
           chatLog.addSystem(`gateway ${action} failed:\n${result.text}`);
+        }
+        break;
+      }
+
+      case 'update': {
+        chatLog.addSystem(
+          'Starting update: git pull, npm install, build, then restart...',
+        );
+        const result = await client.request<{ ok: boolean; text: string }>(
+          'host.update',
+          {},
+        );
+        if (result.ok) {
+          chatLog.addSystem(`update complete:\n${result.text}`);
+        } else {
+          chatLog.addSystem(`update failed:\n${result.text}`);
         }
         break;
       }

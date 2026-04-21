@@ -39,6 +39,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'groups', description: 'List registered groups' },
   { command: 'reload', description: 'Refresh command state and metadata' },
   { command: 'panel', description: 'Open admin panel buttons' },
+  { command: 'update', description: 'Pull, rebuild, and restart the service' },
 ] as const;
 
 export type TelegramCommandName =
@@ -74,6 +75,7 @@ export type TelegramCommandName =
   | '/groups'
   | '/reload'
   | '/panel'
+  | '/update'
   | '/coder'
   | '/coding'
   | '/coder-plan'
@@ -113,6 +115,7 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/groups',
   '/reload',
   '/panel',
+  '/update',
   '/coder',
   '/coding',
   '/coder-plan',
@@ -175,6 +178,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/freechat list - list chats with free chat enabled',
     '/reload - refresh command menus and group metadata',
     '/panel - open admin quick actions',
+    '/update - pull latest code, rebuild, and restart service',
     '/coder <task> - explicit delegated coding run',
     '/coding <task> - alias for /coder',
     '/coder-plan <task> - explicit delegated planning run',
