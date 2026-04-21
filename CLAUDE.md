@@ -4,6 +4,35 @@
 
 Single Node.js host process: receives chat messages (Telegram/WhatsApp), runs `pi` agent subprocess, returns responses. SQLite for persistence.
 
+## Development Workflow (Authoritative)
+
+Use a two-checkout model:
+
+1. Do implementation in the dev checkout/worktree (for example `fft_nano-dev`).
+2. Merge via PR to `origin/main`.
+3. Fast-forward the local runtime/release checkout on `main`.
+4. Build/restart the installed service from that local `main` checkout.
+
+This is intentional so runtime behavior matches what end users install from `main`.
+
+Interpretation rules:
+- Dev-checkout path and service-checkout path being different is expected.
+- A checkout mismatch is only a problem when the runtime checkout is not `main` or is behind merged `origin/main`.
+- Runtime debugging should begin from the active service checkout (`.env`, logs, launchd/systemd state), then fixes are implemented in the dev checkout and promoted through PR/merge.
+
+## CI/CD (Required Gates)
+
+Before release/tag promotion, run:
+
+```bash
+npm run release-check
+npm run secret-scan
+```
+
+GitHub Actions gates:
+- `.github/workflows/release-readiness.yml`: typecheck, tests, secret-scan, validate:skills, release-check
+- `.github/workflows/skills-only.yml`: validate:skills for skills-only changes
+
 ### Active Refactoring (branch: `refactor/architecture-simplification`)
 
 A 4-phase simplification is in progress. Current state:
