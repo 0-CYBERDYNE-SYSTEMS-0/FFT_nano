@@ -7,6 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-04-21
+
+### Fixed
+
+- Telegram model overrides now validate against available runtime models, and invalid
+  persisted model preferences are cleared automatically.
+- Pi model-list stderr fallback parsing now requires a valid table header, reducing
+  malformed fallback results.
+- Native Telegram draft streaming is now limited to private chats.
+
+### Changed
+
+- Clarified authoritative local development and release workflow guidance for
+  `main` and worktree usage.
+
 ## [1.7.0] - 2026-04-19
 
 ### Added
