@@ -5489,8 +5489,11 @@ function startIpcWatcher(): void {
             try {
               const request = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               if (request.type === 'farm_action' && request.action === 'deliver_file') {
-                const group = state.registeredGroups[sourceGroup];
-                const chatJid = request.params?.chatJid || group?.name;
+                const groupJid = Object.keys(state.registeredGroups).find(
+                  (jid) => state.registeredGroups[jid].folder === sourceGroup,
+                );
+                const group = groupJid ? state.registeredGroups[groupJid] : undefined;
+                const chatJid = request.params?.chatJid || groupJid;
 
                 await processHostEventOrdered({
                   kind: 'file_delivery_requested',
