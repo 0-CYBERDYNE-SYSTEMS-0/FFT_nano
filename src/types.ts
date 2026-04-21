@@ -271,3 +271,38 @@ export interface MemoryActionResult {
   error?: string;
   executedAt: string;
 }
+
+/**
+ * File delivery request for sending files back to Telegram chat.
+ * The agent writes this to <ipcDir>/deliver_files/*.json and the host
+ * processes it and sends the file via Telegram.
+ */
+export type FileDeliveryKind = 'photo' | 'document' | 'video' | 'audio';
+
+export interface FileDeliveryRequest {
+  type: 'farm_action';
+  action: 'deliver_file';
+  requestId: string;
+  params: {
+    /** Path to file, absolute or relative to group workspace */
+    filePath: string;
+    /** Optional caption to include with the file */
+    caption?: string;
+    /** File kind hint (auto-detected from extension if omitted) */
+    kind?: FileDeliveryKind;
+    /** Override target chatJid (defaults to the group's registered chat) */
+    chatJid?: string;
+  };
+}
+
+export interface FileDeliveryResult {
+  requestId: string;
+  status: 'success' | 'error';
+  result?: {
+    kind: FileDeliveryKind;
+    sizeBytes: number;
+    deliveredTo: string;
+  };
+  error?: string;
+  executedAt: string;
+}

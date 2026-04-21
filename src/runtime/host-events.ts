@@ -57,6 +57,26 @@ export type HostEvent =
       result: unknown;
     })
   | (HostEventBase & {
+      kind: 'file_delivery_requested';
+      sourceGroup: string;
+      isMain: boolean;
+      chatJid: string;
+      requestId: string;
+      filePath: string;
+      mediaKind: 'photo' | 'document' | 'video' | 'audio';
+      caption?: string;
+    })
+  | (HostEventBase & {
+      kind: 'file_delivery_completed';
+      sourceGroup: string;
+      chatJid: string;
+      requestId: string;
+      filePath: string;
+      success: boolean;
+      mediaKind?: 'photo' | 'document' | 'video' | 'audio';
+      error?: string;
+    })
+  | (HostEventBase & {
       kind: 'host_error';
       scope: 'ipc' | 'telegram' | 'runtime' | 'tui';
       detail: string;
