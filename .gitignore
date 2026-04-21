@@ -79,3 +79,6 @@ agents-sdk-docs
 # Dev orchestration (orchestrator/droid infrastructure - local only)
 .factory/
 fft-experience/
+
+# Claude Code planning artifacts (local only)
+docs/superpowers/

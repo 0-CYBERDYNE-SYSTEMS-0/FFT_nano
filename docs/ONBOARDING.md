@@ -132,6 +132,8 @@ Runtime gate env toggles:
   - `CONTAINER_RUNTIME=host`
   - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
   - in production, also set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
+  - guided setup uses the repo-local `pi` CLI from `node_modules/.bin/pi` when available
+  - if that binary is missing, rerun `npm install`, or set `PI_PATH`, or install `@mariozechner/pi-coding-agent` globally
 - First-time guided installs without Docker do not silently switch to host:
   - interactive runs prompt for `host` or `docker` during `setup.sh`
   - the prompt defaults to `host` when Docker is unavailable
