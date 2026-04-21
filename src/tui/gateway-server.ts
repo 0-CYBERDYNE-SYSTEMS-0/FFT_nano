@@ -81,6 +81,7 @@ export interface TuiGatewayAdapters {
   serviceGateway: (params: {
     action: 'status' | 'restart' | 'doctor';
   }) => Promise<{ ok: boolean; text: string }> | { ok: boolean; text: string };
+  hostUpdate: () => { ok: boolean; text: string };
 }
 
 const DEFAULT_PORT = Number(process.env.FFT_NANO_TUI_PORT || 28989);
@@ -489,6 +490,23 @@ export async function startTuiGatewayServer(
           }
 
           void Promise.resolve(adapters.serviceGateway({ action }))
+            .then((result) => {
+              sendFrame(ws, response(frame.id, result));
+            })
+            .catch((err) => {
+              sendFrame(
+                ws,
+                failure(
+                  frame.id,
+                  err instanceof Error ? err.message : String(err),
+                ),
+              );
+            });
+          break;
+        }
+
+        case 'host.update': {
+          void Promise.resolve(adapters.hostUpdate())
             .then((result) => {
               sendFrame(ws, response(frame.id, result));
             })
