@@ -89,6 +89,7 @@ import { acquireSingletonLock } from './singleton-lock.js';
 import {
   createTelegramBot,
   isTelegramJid,
+  isTelegramPrivateChatJid,
   parseTelegramChatId,
   splitTelegramText,
 } from './telegram.js';
@@ -2620,7 +2621,7 @@ function buildDeliveryPanel(chatJid: string): {
       `Current: ${current}`,
       '',
       'partial: one in-flight message may be edited during the run',
-      'draft: Telegram-native draft stream in all chats',
+      'draft: Telegram-native draft stream in private chats',
       'off: no visible preview, send only the completed final answer',
     ].join('\n'),
     keyboard: [
@@ -4692,7 +4693,7 @@ function getTelegramDeliveryMode(chatJid: string): TelegramDeliveryMode {
 }
 
 function canUseTelegramNativeDraft(_chatJid: string): boolean {
-  return Boolean(state.telegramBot);
+  return Boolean(state.telegramBot) && isTelegramPrivateChatJid(_chatJid);
 }
 
 async function deliverRuntimeAgentMessage(params: {
