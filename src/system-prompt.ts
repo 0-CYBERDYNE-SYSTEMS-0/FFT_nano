@@ -143,13 +143,17 @@ function resolveDurableMemoryFallbackPath(params: {
 }): { label: string; path: string } | null {
   if (params.readFileIfExists(params.primaryPath) !== null) {
     return {
-      label: params.primaryPath.endsWith('/MEMORY.md') ? 'MEMORY.md' : 'memory.md',
+      label: params.primaryPath.endsWith('/MEMORY.md')
+        ? 'MEMORY.md'
+        : 'memory.md',
       path: params.primaryPath,
     };
   }
   if (params.readFileIfExists(params.legacyPath) !== null) {
     return {
-      label: params.legacyPath.endsWith('/MEMORY.md') ? 'MEMORY.md' : 'memory.md',
+      label: params.legacyPath.endsWith('/MEMORY.md')
+        ? 'MEMORY.md'
+        : 'memory.md',
       path: params.legacyPath,
     };
   }
@@ -708,10 +712,18 @@ function renderBasePrompt(params: {
   lines.push(
     '- In non-main/shared runs, group/global MEMORY.md falls back into the prompt when present. Use memory_search or memory_get for broader recall.',
   );
-  lines.push('- Search: {"type":"memory_action","action":"memory_search","requestId":"<id>","params":{"query":"...","topK":8,"sources":"all"}}');
-  lines.push('- Get: {"type":"memory_action","action":"memory_get","requestId":"<id>","params":{"path":"MEMORY.md"}}');
-  lines.push('- Write: {"type":"memory_action","action":"memory_write","requestId":"<id>","params":{"intent":"todo_upsert_task","payload":{"entryId":"T1","text":"...","status":"PENDING"}}}');
-  lines.push('For writes, wait for status=success before reporting completion to the user.');
+  lines.push(
+    '- Search: {"type":"memory_action","action":"memory_search","requestId":"<id>","params":{"query":"...","topK":8,"sources":"all"}}',
+  );
+  lines.push(
+    '- Get: {"type":"memory_action","action":"memory_get","requestId":"<id>","params":{"path":"MEMORY.md"}}',
+  );
+  lines.push(
+    '- Write: {"type":"memory_action","action":"memory_write","requestId":"<id>","params":{"intent":"todo_upsert_task","payload":{"entryId":"T1","text":"...","status":"PENDING"}}}',
+  );
+  lines.push(
+    'For writes, wait for status=success before reporting completion to the user.',
+  );
   lines.push('');
   lines.push('## File Delivery IPC');
   lines.push(
@@ -730,9 +742,30 @@ function renderBasePrompt(params: {
   lines.push('}');
   lines.push('```');
   lines.push('- filePath: absolute path or path relative to group workspace');
-  lines.push('- kind: "photo"|"document"|"video"|"audio" (auto-detected from extension if omitted)');
-  lines.push('- chatJid: optional, defaults to the group\'s registered chat');
+  lines.push(
+    '- kind: "photo"|"document"|"video"|"audio" (auto-detected from extension if omitted)',
+  );
+  lines.push("- chatJid: optional, defaults to the group's registered chat");
   lines.push('- Write atomically (temp file then rename).');
+  lines.push('');
+  lines.push('## Completion Gate');
+  lines.push(
+    'Before declaring completion, verify side effects succeeded (files exist, IPC writes were processed, and delivery/action requests produced result files).',
+  );
+  lines.push(
+    `For deliver_file requests, confirm ${params.paths.ipcDir}/action_results/<requestId>.json exists and has status=success before reporting delivered.`,
+  );
+  lines.push(
+    'A new inbound message does not automatically cancel unresolved work; only treat prior work as dropped when the user explicitly cancels or completion is confirmed.',
+  );
+  lines.push('');
+  lines.push('## Reasoning And Delivery Safety');
+  lines.push(
+    'If think_level is low, stay concise in output but still perform the same completion checks before claiming limitations or success.',
+  );
+  lines.push(
+    'If output may stream in partial chunks, do not treat truncated visible output as task completion; finish the underlying work first.',
+  );
   lines.push('');
   lines.push('## Output Style');
   lines.push(
@@ -894,12 +927,15 @@ export function buildSystemPrompt(
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
   const now = options.now?.() ?? new Date();
   const rawTimezone =
-    options.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    options.timezone ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    'UTC';
   const timezone = resolveEffectiveTimezone(rawTimezone);
   const isHeartbeatRun =
     input.isHeartbeatTask === true ||
     (input.requestId || '').startsWith('heartbeat-');
-  const includeHeartbeatContext = input.isScheduledTask === true || isHeartbeatRun;
+  const includeHeartbeatContext =
+    input.isScheduledTask === true || isHeartbeatRun;
 
   const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
   const autoDelegationEnabled =
@@ -916,13 +952,13 @@ export function buildSystemPrompt(
   const contextState = input.isMain
     ? buildMainContextEntries({
         readFileIfExists,
-      includeHeartbeat: includeHeartbeatContext,
-      fileMaxChars,
-      totalMaxChars,
-      groupDir: paths.groupDir,
-      now,
-      timezone,
-    })
+        includeHeartbeat: includeHeartbeatContext,
+        fileMaxChars,
+        totalMaxChars,
+        groupDir: paths.groupDir,
+        now,
+        timezone,
+      })
     : buildNonMainContextEntries({
         readFileIfExists,
         includeHeartbeat: includeHeartbeatContext,

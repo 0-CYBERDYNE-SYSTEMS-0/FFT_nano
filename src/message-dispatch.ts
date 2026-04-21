@@ -369,9 +369,23 @@ export interface MessageDispatcherDeps {
     runId: string,
   ) => void;
   writePromptInputLog?: (payload: PromptInputLogEntry) => void;
+  getUnresolvedWorkSummary?: (chatJid: string) => string | null;
+  noteRunStarted?: (params: {
+    chatJid: string;
+    requestId: string;
+    latestUserText: string;
+  }) => void;
+  noteRunSettled?: (params: {
+    chatJid: string;
+    requestId: string;
+    ok: boolean;
+    result: string | null;
+  }) => void;
 }
 
-function formatPromptLine(message: Pick<NewMessage, 'timestamp' | 'sender_name' | 'content'>): string {
+function formatPromptLine(
+  message: Pick<NewMessage, 'timestamp' | 'sender_name' | 'content'>,
+): string {
   return `[${message.timestamp}] ${message.sender_name}: ${message.content}`;
 }
 
@@ -488,7 +502,7 @@ function buildInteractivePrompt(params: {
   if (params.queueMode === 'interrupt') {
     finalPrompt =
       `${finalPrompt}\n\n[QUEUE MODE: interrupt]\n` +
-      'Prioritize the latest message and ignore stale unresolved asks unless explicitly requested.';
+      'Prioritize the latest user intent, but do not drop unresolved work unless it is completed or explicitly cancelled by the user.';
   } else if (params.queueMode === 'steer') {
     finalPrompt =
       `${finalPrompt}\n\n[QUEUE MODE: steer]\n` +
@@ -539,7 +553,8 @@ function prepareInteractivePrompt(params: {
 
   const recentConversationLimit =
     PARITY_CONFIG.prompt.recentConversationMaxMessages;
-  const recentConversationChars = PARITY_CONFIG.prompt.recentConversationMaxChars;
+  const recentConversationChars =
+    PARITY_CONFIG.prompt.recentConversationMaxChars;
   const fetchLimit = Math.max(
     recentConversationLimit * 3,
     recentConversationLimit + params.selectedMessages.length + 4,
@@ -608,6 +623,23 @@ function selectRunRoute(
     : 'agent';
 }
 
+function injectUnresolvedWorkPreamble(
+  finalPrompt: string,
+  unresolvedSummary: string | null | undefined,
+): string {
+  const summary = unresolvedSummary?.trim();
+  if (!summary) return finalPrompt;
+  return [
+    '[UNRESOLVED CONTINUITY CHECK]',
+    summary,
+    '',
+    '[CONTINUITY RULE]',
+    'Carry unresolved work forward before marking the task complete.',
+    '',
+    finalPrompt,
+  ].join('\n');
+}
+
 export async function finalizeCompletedRun(
   params: FinalizeCompletedRunParams,
 ): Promise<void> {
@@ -648,10 +680,7 @@ export async function finalizeCompletedRun(
       params.runId,
     );
     if (assistantTimestamp) {
-      params.persistLastAgentTimestamp?.(
-        params.chatJid,
-        assistantTimestamp,
-      );
+      params.persistLastAgentTimestamp?.(params.chatJid, assistantTimestamp);
     }
     let finalizedPreview = false;
     if (!params.externallyCompleted && params.telegramPreviewState) {
@@ -672,14 +701,16 @@ export async function finalizeCompletedRun(
     const shouldSend =
       params.deliverToChat !== false &&
       !params.externallyCompleted &&
-      (!params.streamed ||
-        !params.telegramPreviewState ||
-        !finalizedPreview);
+      (!params.streamed || !params.telegramPreviewState || !finalizedPreview);
 
     if (shouldSend) {
-      const sent = await params.sendAgentResultMessage(params.chatJid, effectiveResult, {
-        prefixWhatsApp: true,
-      });
+      const sent = await params.sendAgentResultMessage(
+        params.chatJid,
+        effectiveResult,
+        {
+          prefixWhatsApp: true,
+        },
+      );
       if (!sent) {
         logger.error(
           { chatJid: params.chatJid, runId: params.runId },
@@ -729,6 +760,73 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     status: 'started' | 'queued' | 'already_running';
   }>;
 } {
+  type ProcessMessageOutcome = 'ignored' | 'queued' | 'started';
+  const inboundMessageQueue = new Map<string, NewMessage>();
+
+  function enqueueInboundMessage(msg: NewMessage): void {
+    // Keep only the latest pending inbound trigger per chat.
+    // buildDispatchRequest() already rehydrates backlog via getMessagesSince().
+    inboundMessageQueue.set(msg.chat_jid, msg);
+  }
+
+  function shiftQueuedInbound(chatJid: string): NewMessage | null {
+    const next = inboundMessageQueue.get(chatJid) || null;
+    if (next) inboundMessageQueue.delete(chatJid);
+    return next;
+  }
+
+  function shiftQueuedTui(
+    chatJid: string,
+  ): { text: string; runId: string; deliver: boolean } | null {
+    const queue = deps.tuiMessageQueue.get(chatJid);
+    const next = queue?.shift() || null;
+    if (queue && queue.length === 0) deps.tuiMessageQueue.delete(chatJid);
+    return next;
+  }
+
+  function drainQueuedWork(chatJid: string): void {
+    if (deps.activeChatRuns.has(chatJid)) return;
+    const nextInbound = shiftQueuedInbound(chatJid);
+    if (nextInbound) {
+      void (async () => {
+        const outcome = await processMessageWithOutcome(nextInbound);
+        if (outcome !== 'started') {
+          // The queued inbound item did not start a run (ignored/queued), so keep draining.
+          drainQueuedWork(chatJid);
+        }
+      })().catch((err) => {
+        deps.logger?.error?.(
+          { chatJid, err },
+          'Failed to drain queued inbound message',
+        );
+      });
+      return;
+    }
+    const nextTuiMessage = shiftQueuedTui(chatJid);
+    if (!nextTuiMessage) return;
+    void runDirectSessionTurn({
+      chatJid,
+      text: nextTuiMessage.text,
+      runId: nextTuiMessage.runId,
+      deliver: nextTuiMessage.deliver,
+    }).catch((err) => {
+      deps.logger?.error?.(
+        { chatJid, err },
+        'Failed to drain queued TUI message',
+      );
+    });
+  }
+
+  function maybeInjectUnresolvedWork(
+    chatJid: string,
+    finalPrompt: string,
+  ): string {
+    return injectUnresolvedWorkPreamble(
+      finalPrompt,
+      deps.getUnresolvedWorkSummary?.(chatJid),
+    );
+  }
+
   async function finalizeRun(params: {
     chatJid: string;
     runId: string;
@@ -749,10 +847,16 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           })
         : {
             externallyCompleted: deps.isTelegramJid(params.chatJid)
-              ? deps.consumeTelegramHostCompletedRun(params.chatJid, params.runId)
+              ? deps.consumeTelegramHostCompletedRun(
+                  params.chatJid,
+                  params.runId,
+                )
               : false,
             previewState: deps.isTelegramJid(params.chatJid)
-              ? deps.consumeTelegramHostStreamState(params.chatJid, params.runId)
+              ? deps.consumeTelegramHostStreamState(
+                  params.chatJid,
+                  params.runId,
+                )
               : null,
           };
     const telegramCompletionState = deps.resolveTelegramStreamCompletionState({
@@ -818,6 +922,11 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
     deps.activeChatRuns.set(params.chatJid, activeRun);
     deps.activeChatRunsById.set(params.requestId, activeRun);
+    deps.noteRunStarted?.({
+      chatJid: params.chatJid,
+      requestId: params.requestId,
+      latestUserText: params.latestUserText,
+    });
     deps.emitTuiChatEvent({
       runId: params.requestId,
       sessionKey: params.sessionKey,
@@ -842,198 +951,218 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
     // Capture reflection data immediately after run completes - this creates a stable closure
     // that won't be affected by subsequent calls to executeDispatchRun
-    let capturedReflectionData: {
-      workerResult: CodingRunResult['workerResult'];
-      taskText: string;
-      groupFolder: string;
-    } | undefined;
+    let capturedReflectionData:
+      | {
+          workerResult: CodingRunResult['workerResult'];
+          taskText: string;
+          groupFolder: string;
+        }
+      | undefined;
 
     try {
-      const run: RunCompletion =
-        params.route === 'coding_worker' && deps.runCodingTask
-          ? await deps.runCodingTask({
-              requestId: params.requestId,
-              mode:
-                params.codingHint === 'force_delegate_plan' ? 'plan' : 'execute',
-              route: params.codingRoute || 'auto_execute',
-              originChatJid: params.chatJid,
-              originGroupFolder: params.group.folder,
+      try {
+        const run: RunCompletion =
+          params.route === 'coding_worker' && deps.runCodingTask
+            ? await deps.runCodingTask({
+                requestId: params.requestId,
+                mode:
+                  params.codingHint === 'force_delegate_plan'
+                    ? 'plan'
+                    : 'execute',
+                route: params.codingRoute || 'auto_execute',
+                originChatJid: params.chatJid,
+                originGroupFolder: params.group.folder,
+                taskText: params.delegationInstruction || params.latestUserText,
+                workspaceMode:
+                  params.codingHint === 'force_delegate_plan'
+                    ? 'read_only'
+                    : 'ephemeral_worktree',
+                timeoutSeconds: 1800,
+                allowFanout:
+                  params.codingRoute === 'coder_execute' ||
+                  params.codingRoute === 'auto_execute',
+                sessionContext: params.finalPrompt,
+                assistantName: deps.constants.assistantName,
+                sessionKey: params.sessionKey,
+                group: params.group,
+                workspaceRoot: params.workspaceRoot,
+                runtimePrefs: params.runPreferences,
+                abortController,
+              })
+            : await deps.runAgent(
+                params.group,
+                params.finalPrompt,
+                params.chatJid,
+                params.codingHint,
+                params.requestId,
+                params.runPreferences,
+                {},
+                abortController.signal,
+              );
+
+        deps.logger?.info?.(
+          {
+            group: params.group.name,
+            ok: run.ok,
+            hasResult: !!run.result,
+            resultLength: run.result?.length,
+            route: params.route,
+          },
+          'Agent run completed',
+        );
+        result = run.result;
+        streamed = run.streamed;
+        ok = run.ok;
+        usage = run.usage;
+
+        // Capture worker result for reflection (async MEMORY write after completion path)
+        // Only for coding execute routes (exclude plan mode for coder-plan).
+        if (
+          params.route === 'coding_worker' &&
+          params.codingHint !== 'force_delegate_plan'
+        ) {
+          const workerResult = (run as CodingRunResult).workerResult;
+          if (workerResult) {
+            capturedReflectionData = {
+              workerResult,
               taskText:
-                params.delegationInstruction || params.latestUserText,
-              workspaceMode:
-                params.codingHint === 'force_delegate_plan'
-                  ? 'read_only'
-                  : 'ephemeral_worktree',
-              timeoutSeconds: 1800,
-              allowFanout:
-                params.codingRoute === 'coder_execute' ||
-                params.codingRoute === 'auto_execute',
-              sessionContext: params.finalPrompt,
-              assistantName: deps.constants.assistantName,
-              sessionKey: params.sessionKey,
-              group: params.group,
-              workspaceRoot: params.workspaceRoot,
-              runtimePrefs: params.runPreferences,
-              abortController,
-            })
-          : await deps.runAgent(
-              params.group,
-              params.finalPrompt,
-              params.chatJid,
-              params.codingHint,
-              params.requestId,
-              params.runPreferences,
-              {},
-              abortController.signal,
-            );
+                params.delegationInstruction || params.latestUserText || '',
+              groupFolder: params.group.folder,
+            };
+          }
+        }
+      } finally {
+        await deps.setTyping(params.chatJid, false);
+        if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
+          deps.activeChatRuns.delete(params.chatJid);
+        }
+        deps.activeChatRunsById.delete(params.requestId);
+        deps.noteRunSettled?.({
+          chatJid: params.chatJid,
+          requestId: params.requestId,
+          ok,
+          result,
+        });
+      }
 
-      deps.logger?.info?.(
-        {
-          group: params.group.name,
-          ok: run.ok,
-          hasResult: !!run.result,
-          resultLength: run.result?.length,
-          route: params.route,
-        },
-        'Agent run completed',
-      );
-      result = run.result;
-      streamed = run.streamed;
-      ok = run.ok;
-      usage = run.usage;
-
-      // Capture worker result for reflection (async MEMORY write after completion path)
-      // Only for coding execute routes (exclude plan mode for coder-plan).
-      if (
-        params.route === 'coding_worker' &&
-        params.codingHint !== 'force_delegate_plan'
-      ) {
-        const workerResult = (run as CodingRunResult).workerResult;
-        if (workerResult) {
-          capturedReflectionData = {
-            workerResult,
-            taskText: params.delegationInstruction || params.latestUserText || '',
-            groupFolder: params.group.folder,
-          };
+      if (ok && params.onboardingGate.active) {
+        const completion = deps.extractOnboardingCompletion(result);
+        result = completion.text;
+        if (completion.completed) {
+          deps.completeMainWorkspaceOnboarding({
+            workspaceDir: deps.constants.mainWorkspaceDir,
+          });
+          if (!result) result = 'Onboarding complete.';
+          deps.logger?.info?.(
+            { chatJid: params.chatJid, requestId: params.requestId },
+            'Completed main workspace onboarding from gated run',
+          );
         }
       }
-    } finally {
-      await deps.setTyping(params.chatJid, false);
-      if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
-        deps.activeChatRuns.delete(params.chatJid);
-      }
-      deps.activeChatRunsById.delete(params.requestId);
-      params.onSettled?.();
-    }
 
-    if (ok && params.onboardingGate.active) {
-      const completion = deps.extractOnboardingCompletion(result);
-      result = completion.text;
-      if (completion.completed) {
-        deps.completeMainWorkspaceOnboarding({
-          workspaceDir: deps.constants.mainWorkspaceDir,
+      const triggerAsyncCoderReflection = () => {
+        if (!capturedReflectionData) return;
+        const { workerResult, taskText, groupFolder } = capturedReflectionData;
+
+        if (deps.recordCoderLearning) {
+          Promise.resolve(
+            deps.recordCoderLearning({
+              workerResult: workerResult as NonNullable<
+                CodingRunResult['workerResult']
+              >,
+              taskText,
+              groupFolder,
+            }),
+          ).catch((err) => {
+            deps.logger?.error?.(
+              { err, groupFolder, taskText },
+              'Failed to record coder learning via injected hook — coder reflection skipped',
+            );
+          });
+          return;
+        }
+
+        import('./coder-learnings.js')
+          .then(({ reflectOnCoderRun, writeCoderLearningsToMemory }) => {
+            reflectOnCoderRun(workerResult as CodingWorkerResult, taskText)
+              .then((entry) => writeCoderLearningsToMemory(entry, groupFolder))
+              .catch((err) => {
+                deps.logger?.error?.(
+                  { err, groupFolder },
+                  'Failed to write coder learnings to MEMORY.md',
+                );
+              });
+          })
+          .catch((err) => {
+            deps.logger?.error?.(
+              { err, groupFolder },
+              'Failed to import coder-learnings module for reflection',
+            );
+          });
+      };
+
+      if (ok) {
+        await finalizeRun({
+          chatJid: params.chatJid,
+          runId: params.requestId,
+          sessionKey: params.sessionKey,
+          result,
+          streamed,
+          usage,
+          abortSignal: abortController.signal,
+          timestampToPersist: params.timestampToPersist,
+          deliverToChat: params.deliverToChat,
         });
-        if (!result) result = 'Onboarding complete.';
-        deps.logger?.info?.(
-          { chatJid: params.chatJid, requestId: params.requestId },
-          'Completed main workspace onboarding from gated run',
-        );
-      }
-    }
 
-    const triggerAsyncCoderReflection = () => {
-      if (!capturedReflectionData) return;
-      const { workerResult, taskText, groupFolder } = capturedReflectionData;
+        // Fire-and-forget reflection after success completion.
+        triggerAsyncCoderReflection();
 
-      if (deps.recordCoderLearning) {
-        Promise.resolve(
-          deps.recordCoderLearning({
-            workerResult: workerResult as NonNullable<
-              CodingRunResult['workerResult']
-            >,
-            taskText,
-            groupFolder,
-          }),
-        ).catch((err) => {
-          deps.logger?.error?.(
-            { err, groupFolder, taskText },
-            'Failed to record coder learning via injected hook — coder reflection skipped',
-          );
-        });
         return;
       }
 
-      import('./coder-learnings.js')
-        .then(({ reflectOnCoderRun, writeCoderLearningsToMemory }) => {
-          reflectOnCoderRun(workerResult as CodingWorkerResult, taskText)
-            .then((entry) => writeCoderLearningsToMemory(entry, groupFolder))
-            .catch((err) => {
-              deps.logger?.error?.(
-                { err, groupFolder },
-                'Failed to write coder learnings to MEMORY.md',
-              );
-            });
-        })
-        .catch((err) => {
-          deps.logger?.error?.(
-            { err, groupFolder },
-            'Failed to import coder-learnings module for reflection',
-          );
-        });
-    };
-
-    if (ok) {
-      await finalizeRun({
-        chatJid: params.chatJid,
+      deps.emitTuiChatEvent({
         runId: params.requestId,
         sessionKey: params.sessionKey,
-        result,
-        streamed,
-        usage,
-        abortSignal: abortController.signal,
-        timestampToPersist: params.timestampToPersist,
-        deliverToChat: params.deliverToChat,
+        state: 'error',
+        errorMessage: 'Run failed',
+      });
+      deps.emitTuiAgentEvent({
+        runId: params.requestId,
+        sessionKey: params.sessionKey,
+        phase: 'error',
+        detail: 'run failed',
       });
 
-      // Fire-and-forget reflection after success completion.
-      triggerAsyncCoderReflection();
-
-      return;
-    }
-
-    deps.emitTuiChatEvent({
-      runId: params.requestId,
-      sessionKey: params.sessionKey,
-      state: 'error',
-      errorMessage: 'Run failed',
-    });
-    deps.emitTuiAgentEvent({
-      runId: params.requestId,
-      sessionKey: params.sessionKey,
-      phase: 'error',
-      detail: 'run failed',
-    });
-
-    if (deps.isTelegramJid(params.chatJid)) {
-      deps.deleteTelegramPreviewMessage?.(params.chatJid, 0).catch(() => {});
-      deps.consumeTelegramHostStreamState?.(params.chatJid, params.requestId);
-      deps.consumeTelegramHostCompletedRun?.(params.chatJid, params.requestId);
-
-      const errorMsg =
-        result || 'Sorry, there was an error processing your message.';
-      const sent = await deps.sendAgentResultMessage(params.chatJid, errorMsg, {
-        prefixWhatsApp: true,
-      });
-      if (!sent) {
-        logger.error(
-          { chatJid: params.chatJid, runId: params.requestId },
-          'Agent error message delivery failed; user may not have been notified of the run failure',
+      if (deps.isTelegramJid(params.chatJid)) {
+        deps.deleteTelegramPreviewMessage?.(params.chatJid, 0).catch(() => {});
+        deps.consumeTelegramHostStreamState?.(params.chatJid, params.requestId);
+        deps.consumeTelegramHostCompletedRun?.(
+          params.chatJid,
+          params.requestId,
         );
-      }
-    }
 
-    // Fire-and-forget reflection after failure completion.
-    triggerAsyncCoderReflection();
+        const errorMsg =
+          result || 'Sorry, there was an error processing your message.';
+        const sent = await deps.sendAgentResultMessage(
+          params.chatJid,
+          errorMsg,
+          {
+            prefixWhatsApp: true,
+          },
+        );
+        if (!sent) {
+          logger.error(
+            { chatJid: params.chatJid, runId: params.requestId },
+            'Agent error message delivery failed; user may not have been notified of the run failure',
+          );
+        }
+      }
+
+      // Fire-and-forget reflection after failure completion.
+      triggerAsyncCoderReflection();
+    } finally {
+      params.onSettled?.();
+    }
   }
 
   async function buildDispatchRequest(
@@ -1101,7 +1230,9 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     }
 
     if (wantsDelegation) {
-      codingHint = wantsCreateProject ? 'force_delegate_plan' : parsedTrigger.hint;
+      codingHint = wantsCreateProject
+        ? 'force_delegate_plan'
+        : parsedTrigger.hint;
       codingRoute = wantsCreateProject
         ? 'coder_plan'
         : codingHint === 'force_delegate_plan'
@@ -1189,7 +1320,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       runPreferences.nextRunNoContinue = true;
     }
     if (deps.sanitizeRunPreferences) {
-      const sanitized = deps.sanitizeRunPreferences(msg.chat_jid, runPreferences);
+      const sanitized = deps.sanitizeRunPreferences(
+        msg.chat_jid,
+        runPreferences,
+      );
       runPreferences = sanitized.runPreferences;
       if (sanitized.noticeText) {
         await deps.sendMessage(msg.chat_jid, sanitized.noticeText);
@@ -1250,6 +1384,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         latestUserText,
       });
     }
+    finalPrompt = maybeInjectUnresolvedWork(msg.chat_jid, finalPrompt);
 
     deps.logger?.info?.(
       {
@@ -1294,12 +1429,22 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     };
   }
 
-  async function processMessage(msg: NewMessage): Promise<boolean> {
+  async function processMessageWithOutcome(
+    msg: NewMessage,
+  ): Promise<ProcessMessageOutcome> {
     const classified = classifyInboundMessage(msg, deps);
-    if (!classified) return true;
+    if (!classified) return 'ignored';
+    if (classified.origin === 'user' && deps.activeChatRuns.has(msg.chat_jid)) {
+      enqueueInboundMessage(msg);
+      return 'queued';
+    }
 
     const request = await buildDispatchRequest(msg, classified);
-    if (!request) return true;
+    if (!request) return 'ignored';
+    if (deps.activeChatRuns.has(msg.chat_jid)) {
+      enqueueInboundMessage(msg);
+      return 'queued';
+    }
 
     await executeDispatchRun({
       chatJid: msg.chat_jid,
@@ -1315,8 +1460,16 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       onboardingGate: request.onboardingGate,
       route: selectRunRoute(request, deps),
       timestampToPersist: request.timestampToPersist,
+      onSettled: () => {
+        drainQueuedWork(msg.chat_jid);
+      },
       workspaceRoot: request.workspaceRoot,
     });
+    return 'started';
+  }
+
+  async function processMessage(msg: NewMessage): Promise<boolean> {
+    await processMessageWithOutcome(msg);
     return true;
   }
 
@@ -1379,12 +1532,13 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       includeRecentConversation: runPreferences.nextRunNoContinue !== true,
       includeTuiMessagesInRecentConversation: true,
     });
-    const prompt = onboardingGate.active
+    const promptBase = onboardingGate.active
       ? deps.buildOnboardingInterviewPrompt({
           prompt: preparedPrompt.finalPrompt,
           latestUserText: text,
         })
       : preparedPrompt.finalPrompt;
+    const prompt = maybeInjectUnresolvedWork(chatJid, promptBase);
     deps.writePromptInputLog?.({
       groupFolder: group.folder,
       requestId: runId,
@@ -1413,17 +1567,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         route: 'agent',
         deliverToChat: deliver,
         onSettled: () => {
-          const tuiQueue = deps.tuiMessageQueue.get(chatJid);
-          const nextTuiMessage = tuiQueue?.shift();
-          if (nextTuiMessage) {
-            if (tuiQueue?.length === 0) deps.tuiMessageQueue.delete(chatJid);
-            void runDirectSessionTurn({
-              chatJid,
-              text: nextTuiMessage.text,
-              runId: nextTuiMessage.runId,
-              deliver: nextTuiMessage.deliver,
-            });
-          }
+          drainQueuedWork(chatJid);
         },
       });
     })();
