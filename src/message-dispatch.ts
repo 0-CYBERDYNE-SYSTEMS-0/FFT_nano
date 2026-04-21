@@ -359,6 +359,10 @@ export interface MessageDispatcherDeps {
     taskText: string;
     groupFolder: string;
   }) => Promise<void> | void;
+  sanitizeRunPreferences?: (
+    chatJid: string,
+    runPreferences: Record<string, any>,
+  ) => { runPreferences: Record<string, any>; noticeText?: string };
   persistTuiUserHistory?: (
     chatJid: string,
     text: string,
@@ -1178,11 +1182,18 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         ? [selectedMessages[selectedMessages.length - 1] as NewMessage]
         : [];
     }
-    const runPreferences: Record<string, any> = {
+    let runPreferences: Record<string, any> = {
       ...(deps.state.chatRunPreferences[msg.chat_jid] || {}),
     };
     if (deps.consumeNextRunNoContinue(msg.chat_jid)) {
       runPreferences.nextRunNoContinue = true;
+    }
+    if (deps.sanitizeRunPreferences) {
+      const sanitized = deps.sanitizeRunPreferences(msg.chat_jid, runPreferences);
+      runPreferences = sanitized.runPreferences;
+      if (sanitized.noticeText) {
+        await deps.sendMessage(msg.chat_jid, sanitized.noticeText);
+      }
     }
     const preparedPrompt = prepareInteractivePrompt({
       chatJid: msg.chat_jid,
@@ -1333,11 +1344,18 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     const onboardingGate = deps.resolveMainOnboardingGate(chatJid);
     const sessionKey = deps.getSessionKeyForChat(chatJid);
     deps.persistTuiUserHistory?.(chatJid, text, runId);
-    const runPreferences: Record<string, any> = {
+    let runPreferences: Record<string, any> = {
       ...(deps.state.chatRunPreferences[chatJid] || {}),
     };
     if (deps.consumeNextRunNoContinue(chatJid)) {
       runPreferences.nextRunNoContinue = true;
+    }
+    if (deps.sanitizeRunPreferences) {
+      const sanitized = deps.sanitizeRunPreferences(chatJid, runPreferences);
+      runPreferences = sanitized.runPreferences;
+      if (sanitized.noticeText) {
+        await deps.sendMessage(chatJid, sanitized.noticeText);
+      }
     }
     const timestamp = new Date().toISOString();
     const preparedPrompt = prepareInteractivePrompt({
