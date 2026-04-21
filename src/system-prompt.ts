@@ -713,6 +713,27 @@ function renderBasePrompt(params: {
   lines.push('- Write: {"type":"memory_action","action":"memory_write","requestId":"<id>","params":{"intent":"todo_upsert_task","payload":{"entryId":"T1","text":"...","status":"PENDING"}}}');
   lines.push('For writes, wait for status=success before reporting completion to the user.');
   lines.push('');
+  lines.push('## File Delivery IPC');
+  lines.push(
+    `To send files/images back to the Telegram chat, write delivery requests into ${params.paths.ipcDir}/deliver_files/*.json:`,
+  );
+  lines.push('```json');
+  lines.push('{');
+  lines.push('  "type":"farm_action",');
+  lines.push('  "action":"deliver_file",');
+  lines.push('  "requestId":"<unique-id>",');
+  lines.push('  "params":{');
+  lines.push('    "filePath":"path/to/file.jpg",');
+  lines.push('    "caption":"Optional caption text",');
+  lines.push('    "kind":"photo"');
+  lines.push('  }');
+  lines.push('}');
+  lines.push('```');
+  lines.push('- filePath: absolute path or path relative to group workspace');
+  lines.push('- kind: "photo"|"document"|"video"|"audio" (auto-detected from extension if omitted)');
+  lines.push('- chatJid: optional, defaults to the group\'s registered chat');
+  lines.push('- Write atomically (temp file then rename).');
+  lines.push('');
   lines.push('## Output Style');
   lines.push(
     'For user-facing replies, prefer short paragraphs and plain bullets.',
