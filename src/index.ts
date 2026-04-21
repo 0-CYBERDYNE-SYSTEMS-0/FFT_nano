@@ -154,6 +154,7 @@ import {
 } from './coding-orchestrator.js';
 import { resolveCoderProjectTarget } from './coder-project-resolver.js';
 import { executeFarmAction } from './farm-action-gateway.js';
+import { processFileDeliveryRequest } from './file-delivery.js';
 import {
   startFarmStateCollector,
   stopFarmStateCollector,
@@ -5228,6 +5229,41 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       return;
     case 'run_started':
       return;
+    case 'file_delivery_requested':
+      logger.info(
+        {
+          sourceGroup: event.sourceGroup,
+          requestId: event.requestId,
+          filePath: event.filePath,
+          mediaKind: event.mediaKind,
+          chatJid: event.chatJid,
+        },
+        'File delivery requested via IPC',
+      );
+      return;
+    case 'file_delivery_completed':
+      if (event.success) {
+        logger.info(
+          {
+            sourceGroup: event.sourceGroup,
+            requestId: event.requestId,
+            filePath: event.filePath,
+            mediaKind: event.mediaKind,
+          },
+          'File delivery completed successfully',
+        );
+      } else {
+        logger.warn(
+          {
+            sourceGroup: event.sourceGroup,
+            requestId: event.requestId,
+            filePath: event.filePath,
+            error: event.error,
+          },
+          'File delivery failed',
+        );
+      }
+      return;
     default:
       return;
   }
@@ -5439,6 +5475,94 @@ function startIpcWatcher(): void {
         logger.error(
           { err, sourceGroup },
           'Error reading IPC actions directory',
+        );
+      }
+
+      // Process file delivery requests from this group's IPC directory
+      try {
+        const deliverFilesDir = path.join(ipcBaseDir, sourceGroup, 'deliver_files');
+        if (fs.existsSync(deliverFilesDir)) {
+          const deliveryFiles = fs
+            .readdirSync(deliverFilesDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of deliveryFiles) {
+            const filePath = path.join(deliverFilesDir, file);
+            try {
+              const request = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              if (request.type === 'farm_action' && request.action === 'deliver_file') {
+                const group = state.registeredGroups[sourceGroup];
+                const chatJid = request.params?.chatJid || group?.name;
+
+                await processHostEventOrdered({
+                  kind: 'file_delivery_requested',
+                  id: `fd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  createdAt: new Date().toISOString(),
+                  source: 'ipc-boundary',
+                  sourceGroup,
+                  isMain,
+                  chatJid: chatJid || '',
+                  requestId: request.requestId,
+                  filePath: request.params?.filePath || '',
+                  mediaKind: request.params?.kind || 'document',
+                  caption: request.params?.caption,
+                });
+
+                const result = await processFileDeliveryRequest(
+                  request,
+                  { sourceGroup, isMain, chatJid },
+                  {
+                    telegramBot: state.telegramBot ?? undefined,
+                    registeredGroups: state.registeredGroups,
+                    resolveGroupWorkspaceDir: (folder) => {
+                      const groupPath = resolveGroupFolderPath(folder);
+                      return groupPath;
+                    },
+                  },
+                );
+
+                await processHostEventOrdered({
+                  kind: 'file_delivery_completed',
+                  id: `fdc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  createdAt: new Date().toISOString(),
+                  source: 'ipc-boundary',
+                  sourceGroup,
+                  chatJid: chatJid || '',
+                  requestId: request.requestId,
+                  filePath: request.params?.filePath || '',
+                  success: result.status === 'success',
+                  mediaKind: result.result?.kind,
+                  error: result.error,
+                });
+
+                fs.unlinkSync(filePath);
+                logger.info(
+                  { sourceGroup, requestId: request.requestId, status: result.status },
+                  'File delivery processed',
+                );
+              } else {
+                logger.warn(
+                  { sourceGroup, file },
+                  'Ignoring IPC file delivery: expected farm_action deliver_file',
+                );
+              }
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing file delivery request',
+              );
+              const errorDir = path.join(ipcBaseDir, 'errors');
+              fs.mkdirSync(errorDir, { recursive: true });
+              fs.renameSync(
+                filePath,
+                path.join(errorDir, `delivery-${sourceGroup}-${file}`),
+              );
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading IPC deliver_files directory',
         );
       }
     }
