@@ -254,6 +254,20 @@ Do not start unrelated feature work directly in the root checkout.
 - Never push directly to `origin/main`; promotion to `main` happens only through reviewed PRs.
 - After merge, fast-forward the local release/runtime checkout on `main` before runtime/service validation.
 
+### Authoritative Local Workflow (Release-Parity Runtime)
+
+This is the canonical operator workflow and is intentional:
+
+1. Implement and test in the dev checkout/worktree (for example `fft_nano-dev`).
+2. Open PR and merge to `origin/main`.
+3. Fast-forward the local runtime/release checkout on `main`.
+4. Build/restart service from that local `main` checkout.
+
+Implications:
+- Seeing code edits in a dev checkout while the service runs from a separate local `main` checkout is expected.
+- Treat checkout-path differences as context, not as a workflow error, unless the runtime checkout is not on `main` or is not fast-forwarded after merge.
+- Runtime behavior investigation should always start from the active service checkout and its `.env`/logs, then map findings back to the dev checkout for fixes.
+
 ### Worktrees for Development
 
 Use one reusable general-purpose dev worktree for unrelated feature work:
