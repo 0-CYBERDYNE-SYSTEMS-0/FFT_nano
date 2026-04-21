@@ -3007,6 +3007,102 @@ function runGatewayServiceCommand(action: 'status' | 'restart' | 'doctor'): {
   };
 }
 
+function runUpdateCommand(): { ok: boolean; text: string } {
+  const steps: { label: string; args: string[]; cwd?: string }[] = [
+    { label: 'git pull', args: ['git', 'pull', '--ff-only'] },
+    { label: 'npm install', args: ['npm', 'install'] },
+    { label: 'npm run build', args: ['npm', 'run', 'build'] },
+  ];
+
+  const outputLines: string[] = [];
+
+  for (const step of steps) {
+    outputLines.push(`--- ${step.label} ---`);
+    const result = spawnSync(step.args[0], step.args.slice(1), {
+      encoding: 'utf8',
+      env: process.env,
+      maxBuffer: 8 * 1024 * 1024,
+      ...(step.cwd ? { cwd: step.cwd } : {}),
+    });
+
+    const combined = [result.stdout || '', result.stderr || '']
+      .filter((part) => part.trim().length > 0)
+      .join('\n')
+      .trim();
+
+    if (result.error) {
+      outputLines.push(`Failed: ${result.error.message}`);
+      return { ok: false, text: outputLines.join('\n') };
+    }
+
+    if (combined) {
+      const bounded =
+        combined.length > 4000
+          ? `${combined.slice(0, 4000)}\n...truncated...`
+          : combined;
+      outputLines.push(bounded);
+    }
+
+    if (result.status !== 0) {
+      outputLines.push(
+        `${step.label} failed with exit code ${result.status ?? 'unknown'}. Update aborted.`,
+      );
+      return { ok: false, text: outputLines.join('\n') };
+    }
+  }
+
+  outputLines.push('--- restart ---');
+  const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+  if (!fs.existsSync(scriptPath)) {
+    outputLines.push('Service script not found. Restart manually.');
+    return { ok: false, text: outputLines.join('\n') };
+  }
+
+  const restartResult = spawnSync('bash', [scriptPath, 'restart'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      FFT_NANO_GATEWAY_CALL: '1',
+      FFT_NANO_NONINTERACTIVE: '1',
+    },
+    maxBuffer: 8 * 1024 * 1024,
+  });
+
+  const restartOutput = [
+    restartResult.stdout || '',
+    restartResult.stderr || '',
+  ]
+    .filter((part) => part.trim().length > 0)
+    .join('\n')
+    .trim();
+
+  if (restartOutput) {
+    const bounded =
+      restartOutput.length > 4000
+        ? `${restartOutput.slice(0, 4000)}\n...truncated...`
+        : restartOutput;
+    outputLines.push(bounded);
+  }
+
+  if (
+    restartResult.status === null &&
+    (restartResult.signal === 'SIGTERM' || restartResult.signal === 'SIGKILL')
+  ) {
+    outputLines.push('Update complete. Service restarting.');
+    return { ok: true, text: outputLines.join('\n') };
+  }
+
+  if (restartResult.status !== 0) {
+    outputLines.push(
+      `Service restart failed with exit code ${restartResult.status ?? 'unknown'}. Update applied but service may need manual restart.`,
+    );
+    return { ok: false, text: outputLines.join('\n') };
+  }
+
+  outputLines.push('Update complete. Service restarted.');
+  return { ok: true, text: outputLines.join('\n') };
+}
+
 function formatStatusText(chatJid?: string): string {
   const runtime = getContainerRuntime();
   const mainGroup = Object.values(state.registeredGroups).find(
@@ -3719,6 +3815,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   refreshTelegramCommandMenus,
   hasMainGroup,
   runGatewayServiceCommand,
+  runUpdateCommand,
   buildRuntimeProviderPresetUpdates,
   getRuntimeConfigEnv,
   persistRuntimeConfigUpdates,
@@ -4324,6 +4421,7 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
       return { aborted: true };
     },
     serviceGateway: async ({ action }) => runGatewayServiceCommand(action),
+    hostUpdate: () => runUpdateCommand(),
   };
 }
 
@@ -4351,6 +4449,7 @@ function createWebControlCenterAdapters(): WebControlCenterAdapters {
     }),
     getOnboardingStatus: () => buildOnboardingStatus(),
     applyOnboardingConfig: async (payload) => applyWebOnboardingConfig(payload),
+    hostUpdate: () => runUpdateCommand(),
   };
 }
 
