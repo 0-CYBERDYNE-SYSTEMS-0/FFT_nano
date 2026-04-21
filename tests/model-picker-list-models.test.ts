@@ -42,10 +42,18 @@ test('parsePiListModelsResult returns empty for non-zero exit error output', () 
   );
 });
 
+test('parsePiListModelsResult ignores stderr fallback rows without a model table header', () => {
+  const stderr = 'INFO  startup complete    cache warm';
+
+  assert.deepEqual(
+    parsePiListModelsResult({ status: 0, stdout: '', stderr }),
+    [],
+  );
+});
+
 test('parsePiListModelsResult returns empty when both streams contain no table rows', () => {
   assert.deepEqual(
     parsePiListModelsResult({ status: 0, stdout: '', stderr: '' }),
     [],
   );
 });
-

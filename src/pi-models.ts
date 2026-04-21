@@ -4,6 +4,11 @@ function stripAnsi(input: string): string {
   return input.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
+function hasPiModelTableHeader(output: string): boolean {
+  const cleaned = stripAnsi(output);
+  return /^provider\s{2,}model\b/im.test(cleaned);
+}
+
 export function parsePiModelListOutput(output: string): PiModelEntry[] {
   const cleaned = stripAnsi(output);
   return cleaned
@@ -33,11 +38,13 @@ export function parsePiListModelsResult(result: {
   if (entries.length > 0) return entries;
 
   // Some pi builds print the model table to stderr while exiting 0.
-  if (result.status === 0) {
+  if (result.status === 0 && hasPiModelTableHeader(stderr)) {
     entries = parsePiModelListOutput(stderr);
     if (entries.length > 0) return entries;
   }
 
-  // Final fallback for mixed/noisy streams.
-  return parsePiModelListOutput(`${stdout}\n${stderr}`);
+  // Final fallback for mixed/noisy streams, but only with an actual table header.
+  const merged = `${stdout}\n${stderr}`;
+  if (!hasPiModelTableHeader(merged)) return [];
+  return parsePiModelListOutput(merged);
 }
