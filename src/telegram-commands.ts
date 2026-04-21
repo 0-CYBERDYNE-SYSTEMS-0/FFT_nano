@@ -180,6 +180,10 @@ export interface TelegramCommandDeps {
     ok: boolean;
     text: string;
   };
+  runUpdateCommand: () => {
+    ok: boolean;
+    text: string;
+  };
   buildRuntimeProviderPresetUpdates: (
     params: any,
   ) => Record<string, string | undefined>;
@@ -2064,6 +2068,24 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         'Admin panel:',
         deps.buildAdminPanelKeyboard(),
       );
+      return true;
+    }
+
+    if (cmd === '/update') {
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'update started');
+      await deps.sendMessage(
+        m.chatJid,
+        'Starting update: git pull, npm install, build, then restart.\nThis will take a moment...',
+      );
+      const result = deps.runUpdateCommand();
+      const label = result.ok ? 'Update complete' : 'Update failed';
+      deps.logTelegramCommandAudit(
+        m.chatJid,
+        cmd,
+        result.ok,
+        result.ok ? 'update succeeded' : 'update failed',
+      );
+      await deps.sendMessage(m.chatJid, `${label}:\n${result.text}`);
       return true;
     }
 

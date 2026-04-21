@@ -73,6 +73,7 @@ export interface WebControlCenterAdapters {
   applyOnboardingConfig?: (
     payload: OnboardingConfigPayload,
   ) => Promise<{ ok: boolean; requiresRestart: boolean; adminSecret?: string }>;
+  hostUpdate?: () => { ok: boolean; text: string };
 }
 
 export interface WebControlCenterServerOptions {
@@ -823,6 +824,33 @@ export async function startWebControlCenterServer(
           });
         } catch (err) {
           sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/update') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.hostUpdate) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Update not available',
+          });
+          return;
+        }
+        try {
+          const result = adapters.hostUpdate();
+          sendJson(res, result.ok ? 200 : 500, {
+            ok: result.ok,
+            text: result.text,
+          });
+        } catch (err) {
+          sendJson(res, 500, {
             ok: false,
             error: err instanceof Error ? err.message : String(err),
           });
