@@ -89,7 +89,6 @@ import { acquireSingletonLock } from './singleton-lock.js';
 import {
   createTelegramBot,
   isTelegramJid,
-  isTelegramPrivateChatJid,
   parseTelegramChatId,
   splitTelegramText,
 } from './telegram.js';
@@ -841,7 +840,10 @@ function maybePromoteConfiguredTelegramMain(): void {
   const prev = state.registeredGroups[chatJid];
 
   if (prev?.folder === MAIN_GROUP_FOLDER) {
-    logger.info({ chatJid }, 'Configured Telegram main chat already registered');
+    logger.info(
+      { chatJid },
+      'Configured Telegram main chat already registered',
+    );
     return;
   }
 
@@ -861,7 +863,10 @@ function maybePromoteConfiguredTelegramMain(): void {
     return;
   }
 
-  logger.info({ chatJid }, 'Promoting configured Telegram main chat to main folder');
+  logger.info(
+    { chatJid },
+    'Promoting configured Telegram main chat to main folder',
+  );
   promoteChatToMain(chatJid, prev.name || `${ASSISTANT_NAME} (main)`);
 }
 
@@ -1469,7 +1474,9 @@ function validateProviderModelRef(
       text: `Unknown provider "${normalizedProvider}". Use /models or /model picker.`,
     };
   }
-  if (!modelExistsInPiModels(loaded.entries, normalizedProvider, normalizedModel)) {
+  if (
+    !modelExistsInPiModels(loaded.entries, normalizedProvider, normalizedModel)
+  ) {
     return {
       ok: false,
       text: `Model "${normalizedProvider}/${normalizedModel}" is unavailable. Use /models or /model picker.`,
@@ -1502,7 +1509,10 @@ function sanitizeRunPreferencesModelOverride(
     return { runPreferences: nextPrefs };
   }
 
-  const providerKnown = providerExistsInPiModels(loaded.entries, effectiveProvider);
+  const providerKnown = providerExistsInPiModels(
+    loaded.entries,
+    effectiveProvider,
+  );
   const modelKnown = rawModel
     ? modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
     : providerKnown;
@@ -1565,7 +1575,9 @@ function buildOnboardingStatus() {
     env.TELEGRAM_ADMIN_SECRET,
   );
   const whatsappEnabled = !['0', 'false', 'no'].includes(
-    String(env.WHATSAPP_ENABLED || '1').trim().toLowerCase(),
+    String(env.WHATSAPP_ENABLED || '1')
+      .trim()
+      .toLowerCase(),
   );
   const configComplete = snapshot.apiKeyConfigured && telegramBotConfigured;
   return {
@@ -1620,7 +1632,10 @@ function applyWebOnboardingConfig(payload: {
   const apiKeyRequired = provider.apiKeyRequired !== false;
   if (trimmedApiKey) {
     updates[provider.apiKeyEnv] = trimmedApiKey;
-  } else if (apiKeyRequired && !hasMeaningfulSecret(currentEnv[provider.apiKeyEnv])) {
+  } else if (
+    apiKeyRequired &&
+    !hasMeaningfulSecret(currentEnv[provider.apiKeyEnv])
+  ) {
     throw new Error(`API key is required for ${provider.label}`);
   }
 
@@ -1636,7 +1651,11 @@ function applyWebOnboardingConfig(payload: {
     updates.TELEGRAM_AUTO_REGISTER = '1';
   }
   persistRuntimeConfigUpdates(updates);
-  return { ok: true, requiresRestart: true, adminSecret: generatedSecret || undefined };
+  return {
+    ok: true,
+    requiresRestart: true,
+    adminSecret: generatedSecret || undefined,
+  };
 }
 
 function persistRuntimeConfigUpdates(
@@ -2738,7 +2757,7 @@ function buildDeliveryPanel(chatJid: string): {
       `Current: ${current}`,
       '',
       'partial: one in-flight message may be edited during the run',
-      'draft: Telegram-native draft stream in private chats',
+      'draft: Telegram-native draft stream in all chats',
       'off: no visible preview, send only the completed final answer',
     ].join('\n'),
     keyboard: [
@@ -3070,10 +3089,7 @@ function runUpdateCommand(): { ok: boolean; text: string } {
     maxBuffer: 8 * 1024 * 1024,
   });
 
-  const restartOutput = [
-    restartResult.stdout || '',
-    restartResult.stderr || '',
-  ]
+  const restartOutput = [restartResult.stdout || '', restartResult.stderr || '']
     .filter((part) => part.trim().length > 0)
     .join('\n')
     .trim();
@@ -3937,6 +3953,157 @@ async function handleTelegramCommand(m: {
   return telegramCommandHandlers.handleTelegramCommand(m);
 }
 
+interface ContinuityLedgerEntry {
+  latestObjective: string | null;
+  latestRequestId: string | null;
+  failedRun: {
+    requestId: string;
+    objective: string | null;
+    notedAt: string;
+    result: string | null;
+  } | null;
+  pendingDeliveries: Set<string>;
+  failedDeliveries: Map<string, string>;
+}
+
+const continuityLedger = new Map<string, ContinuityLedgerEntry>();
+
+function getContinuityLedgerEntry(chatJid: string): ContinuityLedgerEntry {
+  const existing = continuityLedger.get(chatJid);
+  if (existing) return existing;
+  const created: ContinuityLedgerEntry = {
+    latestObjective: null,
+    latestRequestId: null,
+    failedRun: null,
+    pendingDeliveries: new Set<string>(),
+    failedDeliveries: new Map<string, string>(),
+  };
+  continuityLedger.set(chatJid, created);
+  return created;
+}
+
+function summarizeObjective(text: string): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= 200) return compact;
+  return `${compact.slice(0, 197)}...`;
+}
+
+function noteContinuityRunStarted(params: {
+  chatJid: string;
+  requestId: string;
+  latestUserText: string;
+}): void {
+  const entry = getContinuityLedgerEntry(params.chatJid);
+  entry.latestRequestId = params.requestId;
+  entry.latestObjective = summarizeObjective(params.latestUserText || '');
+}
+
+function noteContinuityRunSettled(params: {
+  chatJid: string;
+  requestId: string;
+  ok: boolean;
+  result: string | null;
+}): void {
+  const entry = getContinuityLedgerEntry(params.chatJid);
+  if (params.ok) {
+    entry.failedRun = null;
+    return;
+  }
+  entry.failedRun = {
+    requestId: params.requestId,
+    objective: entry.latestObjective,
+    notedAt: new Date().toISOString(),
+    result: params.result,
+  };
+}
+
+function noteDeliveryPending(
+  chatJid: string | null | undefined,
+  requestId: string,
+): void {
+  if (!chatJid) return;
+  const entry = getContinuityLedgerEntry(chatJid);
+  entry.pendingDeliveries.add(requestId);
+}
+
+function noteDeliverySettled(params: {
+  chatJid: string | null | undefined;
+  requestId: string;
+  status: 'success' | 'error';
+  error?: string;
+}): void {
+  if (!params.chatJid) return;
+  const entry = getContinuityLedgerEntry(params.chatJid);
+  entry.pendingDeliveries.delete(params.requestId);
+  if (params.status === 'success') {
+    entry.failedDeliveries.delete(params.requestId);
+    return;
+  }
+  entry.failedDeliveries.set(
+    params.requestId,
+    params.error || 'delivery failed',
+  );
+}
+
+function listPendingDeliveryFiles(groupFolder: string): string[] {
+  const deliverFilesDir = path.join(
+    DATA_DIR,
+    'ipc',
+    groupFolder,
+    'deliver_files',
+  );
+  if (!fs.existsSync(deliverFilesDir)) return [];
+  try {
+    return fs
+      .readdirSync(deliverFilesDir)
+      .filter((fileName) => fileName.endsWith('.json'));
+  } catch (err) {
+    logger.warn({ err, groupFolder }, 'Unable to read deliver_files directory');
+    return [];
+  }
+}
+
+function buildUnresolvedWorkSummary(chatJid: string): string | null {
+  const entry = continuityLedger.get(chatJid);
+  const group = state.registeredGroups[chatJid];
+  const pendingFileCount = group
+    ? listPendingDeliveryFiles(group.folder).length
+    : 0;
+  const pendingDeliveryCount = Math.max(
+    pendingFileCount,
+    entry?.pendingDeliveries.size || 0,
+  );
+  const failedDeliveryCount = entry?.failedDeliveries.size || 0;
+  const lines: string[] = [];
+  if (pendingDeliveryCount > 0) {
+    lines.push(
+      `Pending file delivery requests: ${pendingDeliveryCount}. Verify action_results/<requestId>.json before declaring completion.`,
+    );
+  }
+  if (failedDeliveryCount > 0) {
+    lines.push(
+      `Failed file delivery requests remain unresolved: ${Array.from(
+        entry?.failedDeliveries.keys() || [],
+      )
+        .slice(0, 3)
+        .join(', ')}.`,
+    );
+  }
+  if (entry?.failedRun) {
+    lines.push(
+      `Previous run ${entry.failedRun.requestId} failed${entry.failedRun.objective ? ` while working on: "${entry.failedRun.objective}"` : ''}.`,
+    );
+  }
+  if (lines.length === 0) return null;
+  return lines.join('\n');
+}
+
+function writeJsonAtomic(filePath: string, payload: unknown): void {
+  const tmpPath = `${filePath}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
+  fs.renameSync(tmpPath, filePath);
+}
+
 const messageDispatcher = createMessageDispatcher({
   state,
   constants: {
@@ -3987,6 +4154,9 @@ const messageDispatcher = createMessageDispatcher({
   makeRunId,
   logger,
   persistTuiUserHistory,
+  getUnresolvedWorkSummary: buildUnresolvedWorkSummary,
+  noteRunStarted: noteContinuityRunStarted,
+  noteRunSettled: noteContinuityRunSettled,
   writePromptInputLog: (entry: PromptInputLogEntry) => {
     try {
       writePromptInputLogFile(entry);
@@ -4911,7 +5081,7 @@ function getTelegramDeliveryMode(chatJid: string): TelegramDeliveryMode {
 }
 
 function canUseTelegramNativeDraft(_chatJid: string): boolean {
-  return Boolean(state.telegramBot) && isTelegramPrivateChatJid(_chatJid);
+  return Boolean(state.telegramBot);
 }
 
 async function deliverRuntimeAgentMessage(params: {
@@ -5480,18 +5650,38 @@ function startIpcWatcher(): void {
 
       // Process file delivery requests from this group's IPC directory
       try {
-        const deliverFilesDir = path.join(ipcBaseDir, sourceGroup, 'deliver_files');
+        const deliverFilesDir = path.join(
+          ipcBaseDir,
+          sourceGroup,
+          'deliver_files',
+        );
         if (fs.existsSync(deliverFilesDir)) {
           const deliveryFiles = fs
             .readdirSync(deliverFilesDir)
             .filter((f) => f.endsWith('.json'));
           for (const file of deliveryFiles) {
             const filePath = path.join(deliverFilesDir, file);
+            let trackedRequestId: string | null = null;
+            let trackedChatJid: string | null = null;
             try {
               const request = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (request.type === 'farm_action' && request.action === 'deliver_file') {
-                const group = state.registeredGroups[sourceGroup];
-                const chatJid = request.params?.chatJid || group?.name;
+              if (
+                request.type === 'farm_action' &&
+                request.action === 'deliver_file'
+              ) {
+                const groupJid = Object.keys(state.registeredGroups).find(
+                  (jid) => state.registeredGroups[jid].folder === sourceGroup,
+                );
+                const chatJid = request.params?.chatJid || groupJid;
+                trackedRequestId =
+                  typeof request.requestId === 'string'
+                    ? request.requestId
+                    : null;
+                trackedChatJid = chatJid || null;
+                if (!trackedRequestId) {
+                  throw new Error('File delivery request missing requestId');
+                }
+                noteDeliveryPending(trackedChatJid, trackedRequestId);
 
                 await processHostEventOrdered({
                   kind: 'file_delivery_requested',
@@ -5519,6 +5709,23 @@ function startIpcWatcher(): void {
                     },
                   },
                 );
+                const resultDir = path.join(
+                  ipcBaseDir,
+                  sourceGroup,
+                  'action_results',
+                );
+                fs.mkdirSync(resultDir, { recursive: true });
+                const resultPath = path.join(
+                  resultDir,
+                  `${request.requestId}.json`,
+                );
+                writeJsonAtomic(resultPath, result);
+                noteDeliverySettled({
+                  chatJid: trackedChatJid,
+                  requestId: request.requestId,
+                  status: result.status,
+                  error: result.error,
+                });
 
                 await processHostEventOrdered({
                   kind: 'file_delivery_completed',
@@ -5536,7 +5743,11 @@ function startIpcWatcher(): void {
 
                 fs.unlinkSync(filePath);
                 logger.info(
-                  { sourceGroup, requestId: request.requestId, status: result.status },
+                  {
+                    sourceGroup,
+                    requestId: request.requestId,
+                    status: result.status,
+                  },
                   'File delivery processed',
                 );
               } else {
@@ -5546,6 +5757,14 @@ function startIpcWatcher(): void {
                 );
               }
             } catch (err) {
+              if (trackedRequestId) {
+                noteDeliverySettled({
+                  chatJid: trackedChatJid,
+                  requestId: trackedRequestId,
+                  status: 'error',
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
               logger.error(
                 { file, sourceGroup, err },
                 'Error processing file delivery request',

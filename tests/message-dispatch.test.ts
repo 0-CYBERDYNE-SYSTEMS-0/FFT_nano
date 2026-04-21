@@ -2,10 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { TelegramMessagePreviewState } from '../src/telegram-streaming.js';
-import { createMessageDispatcher, finalizeCompletedRun } from '../src/message-dispatch.js';
+import {
+  createMessageDispatcher,
+  finalizeCompletedRun,
+} from '../src/message-dispatch.js';
 
 function createEmitter() {
-  const events: Array<{ kind: 'chat' | 'agent'; payload: Record<string, unknown> }> = [];
+  const events: Array<{
+    kind: 'chat' | 'agent';
+    payload: Record<string, unknown>;
+  }> = [];
   return {
     events,
     emitTuiChatEvent: (payload: Record<string, unknown>) => {
@@ -156,12 +162,20 @@ test('runDirectSessionTurn queues behind an active run', async () => {
       },
     ],
   ]);
-  const tuiMessageQueue = new Map<string, Array<{ text: string; runId: string; deliver: boolean }>>();
+  const tuiMessageQueue = new Map<
+    string,
+    Array<{ text: string; runId: string; deliver: boolean }>
+  >();
 
   const dispatcher = createMessageDispatcher({
     state: {
       registeredGroups: {
-        'telegram:1': { jid: 'telegram:1', name: 'Test', folder: 'test', trigger: '@FarmFriend' },
+        'telegram:1': {
+          jid: 'telegram:1',
+          name: 'Test',
+          folder: 'test',
+          trigger: '@FarmFriend',
+        },
       },
       chatRunPreferences: {},
     },
@@ -196,7 +210,10 @@ test('runDirectSessionTurn queues behind an active run', async () => {
     isTelegramJid: () => true,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -217,13 +234,21 @@ test('runDirectSessionTurn queues behind an active run', async () => {
 });
 
 test('runDirectSessionTurn does not double-count usage when finalizer updates stats', async () => {
-  const usageCalls: Array<{ chatJid: string; usage?: { totalTokens?: number } }> = [];
+  const usageCalls: Array<{
+    chatJid: string;
+    usage?: { totalTokens?: number };
+  }> = [];
   const finalized: string[] = [];
 
   const dispatcher = createMessageDispatcher({
     state: {
       registeredGroups: {
-        'telegram:1': { jid: 'telegram:1', name: 'Test', folder: 'test', trigger: '@FarmFriend' },
+        'telegram:1': {
+          jid: 'telegram:1',
+          name: 'Test',
+          folder: 'test',
+          trigger: '@FarmFriend',
+        },
       },
       chatRunPreferences: {},
     },
@@ -265,7 +290,10 @@ test('runDirectSessionTurn does not double-count usage when finalizer updates st
     isTelegramJid: () => false,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -344,7 +372,10 @@ test('runDirectSessionTurn emits one user message and one start event', async ()
     isTelegramJid: () => false,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -414,7 +445,8 @@ test('processMessage injects recent assistant context alongside new inbound mess
         chat_jid: 'telegram:continuity',
         sender: 'telegram:continuity',
         sender_name: 'TD',
-        content: 'do you not remember when you just told me about the news stories?',
+        content:
+          'do you not remember when you just told me about the news stories?',
         timestamp: '2026-03-29T18:05:12.000Z',
         is_from_me: 0,
       },
@@ -440,7 +472,10 @@ test('processMessage injects recent assistant context alongside new inbound mess
     isTelegramJid: () => false,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -469,7 +504,8 @@ test('processMessage injects recent assistant context alongside new inbound mess
         chat_jid: 'telegram:continuity',
         sender: 'telegram:continuity',
         sender_name: 'TD',
-        content: 'do you not remember when you just told me about the news stories?',
+        content:
+          'do you not remember when you just told me about the news stories?',
         timestamp: '2026-03-29T18:05:12.000Z',
         is_from_me: 0,
       },
@@ -481,15 +517,22 @@ test('processMessage injects recent assistant context alongside new inbound mess
     chat_jid: 'telegram:continuity',
     sender: 'telegram:continuity',
     sender_name: 'TD',
-    content: 'do you not remember when you just told me about the news stories?',
+    content:
+      'do you not remember when you just told me about the news stories?',
     timestamp: '2026-03-29T18:05:12.000Z',
     is_from_me: 0,
   });
 
   assert.match(capturedPrompt, /\[RECENT CONVERSATION\]/);
   assert.match(capturedPrompt, /\[NEW INBOUND MESSAGES\]/);
-  assert.match(capturedPrompt, /FarmFriend: Here are the agtech and AI agent headlines\./);
-  assert.match(capturedPrompt, /do you not remember when you just told me about the news stories\?/);
+  assert.match(
+    capturedPrompt,
+    /FarmFriend: Here are the agtech and AI agent headlines\./,
+  );
+  assert.match(
+    capturedPrompt,
+    /do you not remember when you just told me about the news stories\?/,
+  );
 });
 
 test('processMessage excludes hidden TUI rows from recent conversation', async () => {
@@ -554,7 +597,10 @@ test('processMessage excludes hidden TUI rows from recent conversation', async (
     isTelegramJid: () => false,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -688,7 +734,10 @@ test('processMessage keeps interrupt queue semantics only for new inbound messag
     isTelegramJid: () => false,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -729,6 +778,571 @@ test('processMessage keeps interrupt queue semantics only for new inbound messag
   assert.match(capturedPrompt, /latest burst/);
   assert.doesNotMatch(capturedPrompt, /first burst/);
   assert.doesNotMatch(capturedPrompt, /second burst/);
+  assert.match(
+    capturedPrompt,
+    /Prioritize the latest user intent, but do not drop unresolved work/,
+  );
+});
+
+test('processMessage drains queued user messages after the active run settles', async () => {
+  let runCount = 0;
+  const capturedPrompts: string[] = [];
+  let releaseFirstRun: (() => void) | null = null;
+  let markFirstRunStarted: (() => void) | null = null;
+  const firstRunStarted = new Promise<void>((resolve) => {
+    markFirstRunStarted = resolve;
+  });
+  const firstRunGate = new Promise<void>((resolve) => {
+    releaseFirstRun = resolve;
+  });
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        'telegram:drain': {
+          jid: 'telegram:drain',
+          name: 'Drain',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => {},
+    setTyping: async () => {},
+    getMessagesSince: () => [],
+    getSessionKeyForChat: () => 'main',
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, prompt) => {
+      runCount += 1;
+      capturedPrompts.push(prompt);
+      if (runCount === 1) {
+        markFirstRunStarted?.();
+        await firstRunGate;
+      }
+      return { ok: true, result: `done-${runCount}`, streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => {},
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => false,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+  } as any);
+
+  const firstDispatch = dispatcher.processMessage({
+    id: 'u-first',
+    chat_jid: 'telegram:drain',
+    sender: 'telegram:drain',
+    sender_name: 'TD',
+    content: 'first question',
+    timestamp: '2026-03-29T18:05:12.000Z',
+    is_from_me: 0,
+  });
+  await firstRunStarted;
+  await dispatcher.processMessage({
+    id: 'u-second',
+    chat_jid: 'telegram:drain',
+    sender: 'telegram:drain',
+    sender_name: 'TD',
+    content: 'second question',
+    timestamp: '2026-03-29T18:05:13.000Z',
+    is_from_me: 0,
+  });
+
+  assert.equal(runCount, 1);
+  releaseFirstRun?.();
+  await firstDispatch;
+
+  const waitUntil = async (predicate: () => boolean) => {
+    const timeoutAt = Date.now() + 1500;
+    while (Date.now() < timeoutAt) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail('Timed out waiting for queued message drain');
+  };
+  await waitUntil(() => runCount === 2);
+  assert.match(capturedPrompts[1] || '', /second question/);
+});
+
+test('processMessage drains queued inbound only after watermark finalization', async () => {
+  const chatJid = 'telegram:watermark';
+  const ts0 = '2026-03-29T18:05:10.000Z';
+  const ts1 = '2026-03-29T18:05:12.000Z';
+  let secondArrived = false;
+  let runCount = 0;
+  const capturedPrompts: string[] = [];
+  let releaseFirstRun: (() => void) | null = null;
+  let markFirstRunStarted: (() => void) | null = null;
+  const firstRunStarted = new Promise<void>((resolve) => {
+    markFirstRunStarted = resolve;
+  });
+  const firstRunGate = new Promise<void>((resolve) => {
+    releaseFirstRun = resolve;
+  });
+  const msg1 = {
+    id: 'u-watermark-1',
+    chat_jid: chatJid,
+    sender: chatJid,
+    sender_name: 'TD',
+    content: 'first message',
+    timestamp: '2026-03-29T18:05:11.000Z',
+    is_from_me: 0,
+  };
+  const msg2 = {
+    id: 'u-watermark-2',
+    chat_jid: chatJid,
+    sender: chatJid,
+    sender_name: 'TD',
+    content: 'second message',
+    timestamp: '2026-03-29T18:05:12.000Z',
+    is_from_me: 0,
+  };
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        [chatJid]: {
+          jid: chatJid,
+          name: 'Watermark',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+      lastAgentTimestamp: {
+        [chatJid]: ts0,
+      },
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => {},
+    setTyping: async () => {},
+    getMessagesSince: (_jid, sinceTimestamp) => {
+      if (sinceTimestamp === ts1) return [msg2];
+      if (sinceTimestamp === ts0) return secondArrived ? [msg1, msg2] : [msg1];
+      return [];
+    },
+    getSessionKeyForChat: () => 'main',
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, prompt) => {
+      runCount += 1;
+      capturedPrompts.push(prompt);
+      if (runCount === 1) {
+        markFirstRunStarted?.();
+        await firstRunGate;
+      }
+      return { ok: true, result: `done-${runCount}`, streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => {},
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => false,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun: async (params) => {
+      params.persistLastAgentTimestamp?.(params.chatJid, ts1);
+    },
+  } as any);
+
+  const firstDispatch = dispatcher.processMessage(msg1 as any);
+  await firstRunStarted;
+  secondArrived = true;
+  await dispatcher.processMessage(msg2 as any);
+  releaseFirstRun?.();
+  await firstDispatch;
+
+  const waitUntil = async (predicate: () => boolean) => {
+    const timeoutAt = Date.now() + 1500;
+    while (Date.now() < timeoutAt) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail('Timed out waiting for watermark drain');
+  };
+  await waitUntil(() => runCount === 2);
+
+  assert.match(capturedPrompts[1] || '', /second message/);
+  assert.doesNotMatch(capturedPrompts[1] || '', /first message/);
+});
+
+test('processMessage drains inbound backlog once without duplicate reruns', async () => {
+  let runCount = 0;
+  const capturedPrompts: string[] = [];
+  let getMessagesSinceCalls = 0;
+  let releaseFirstRun: (() => void) | null = null;
+  let markFirstRunStarted: (() => void) | null = null;
+  const firstRunStarted = new Promise<void>((resolve) => {
+    markFirstRunStarted = resolve;
+  });
+  const firstRunGate = new Promise<void>((resolve) => {
+    releaseFirstRun = resolve;
+  });
+
+  const backlogMessages = [
+    {
+      id: 'u-backlog-1',
+      chat_jid: 'telegram:dedupe',
+      sender: 'telegram:dedupe',
+      sender_name: 'TD',
+      content: 'second question while busy',
+      timestamp: '2026-03-29T18:05:13.000Z',
+      is_from_me: 0,
+    },
+    {
+      id: 'u-backlog-2',
+      chat_jid: 'telegram:dedupe',
+      sender: 'telegram:dedupe',
+      sender_name: 'TD',
+      content: 'third question while busy',
+      timestamp: '2026-03-29T18:05:14.000Z',
+      is_from_me: 0,
+    },
+  ];
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        'telegram:dedupe': {
+          jid: 'telegram:dedupe',
+          name: 'Dedupe',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => {},
+    setTyping: async () => {},
+    getMessagesSince: () => {
+      getMessagesSinceCalls += 1;
+      return getMessagesSinceCalls === 1 ? [] : backlogMessages;
+    },
+    getSessionKeyForChat: () => 'main',
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, prompt) => {
+      runCount += 1;
+      capturedPrompts.push(prompt);
+      if (runCount === 1) {
+        markFirstRunStarted?.();
+        await firstRunGate;
+      }
+      return { ok: true, result: `done-${runCount}`, streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => {},
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => false,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+  } as any);
+
+  const firstDispatch = dispatcher.processMessage({
+    id: 'u-initial',
+    chat_jid: 'telegram:dedupe',
+    sender: 'telegram:dedupe',
+    sender_name: 'TD',
+    content: 'first question',
+    timestamp: '2026-03-29T18:05:12.000Z',
+    is_from_me: 0,
+  });
+  await firstRunStarted;
+  await dispatcher.processMessage(backlogMessages[0] as any);
+  await dispatcher.processMessage(backlogMessages[1] as any);
+
+  releaseFirstRun?.();
+  await firstDispatch;
+
+  const waitUntil = async (predicate: () => boolean) => {
+    const timeoutAt = Date.now() + 1500;
+    while (Date.now() < timeoutAt) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail('Timed out waiting for backlog drain');
+  };
+  await waitUntil(() => runCount >= 2);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  assert.equal(runCount, 2);
+  assert.match(capturedPrompts[1] || '', /second question while busy/);
+  assert.match(capturedPrompts[1] || '', /third question while busy/);
+});
+
+test('drain continues to queued TUI when queued inbound is ignored', async () => {
+  const chatJid = 'telegram:non-main';
+  let runCount = 0;
+  const capturedPrompts: string[] = [];
+  let releaseFirstRun: (() => void) | null = null;
+  let markFirstRunStarted: (() => void) | null = null;
+  const firstRunStarted = new Promise<void>((resolve) => {
+    markFirstRunStarted = resolve;
+  });
+  const firstRunGate = new Promise<void>((resolve) => {
+    releaseFirstRun = resolve;
+  });
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        [chatJid]: {
+          jid: chatJid,
+          name: 'Non Main',
+          folder: 'group-a',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => {},
+    setTyping: async () => {},
+    getMessagesSince: () => [],
+    getSessionKeyForChat: () => chatJid,
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, prompt) => {
+      runCount += 1;
+      capturedPrompts.push(prompt);
+      if (runCount === 1) {
+        markFirstRunStarted?.();
+        await firstRunGate;
+      }
+      return { ok: true, result: `done-${runCount}`, streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => {},
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => false,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+  } as any);
+
+  const firstDispatch = dispatcher.processMessage({
+    id: 'u-non-main-start',
+    chat_jid: chatJid,
+    sender: chatJid,
+    sender_name: 'TD',
+    content: '@FarmFriend start',
+    timestamp: '2026-03-29T18:05:12.000Z',
+    is_from_me: 0,
+  });
+  await firstRunStarted;
+
+  await dispatcher.processMessage({
+    id: 'u-non-main-ignored',
+    chat_jid: chatJid,
+    sender: chatJid,
+    sender_name: 'TD',
+    content: 'this should be ignored without trigger',
+    timestamp: '2026-03-29T18:05:13.000Z',
+    is_from_me: 0,
+  });
+  const queued = await dispatcher.runDirectSessionTurn({
+    chatJid,
+    text: 'queued tui turn',
+    runId: 'tui-queued-1',
+    deliver: false,
+  });
+  assert.equal(queued.status, 'queued');
+
+  releaseFirstRun?.();
+  await firstDispatch;
+
+  const waitUntil = async (predicate: () => boolean) => {
+    const timeoutAt = Date.now() + 1500;
+    while (Date.now() < timeoutAt) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail('Timed out waiting for TUI drain');
+  };
+  await waitUntil(() => runCount === 2);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(runCount, 2);
+  assert.match(capturedPrompts[1] || '', /queued tui turn/);
+});
+
+test('processMessage prepends unresolved continuity summary when provided', async () => {
+  let capturedPrompt = '';
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        'telegram:continuity-preamble': {
+          jid: 'telegram:continuity-preamble',
+          name: 'Continuity Preamble',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => {},
+    setTyping: async () => {},
+    getMessagesSince: () => [],
+    getSessionKeyForChat: () => 'main',
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, prompt) => {
+      capturedPrompt = prompt;
+      return { ok: true, result: 'done', streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => {},
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => false,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+    getUnresolvedWorkSummary: () =>
+      'Pending file delivery requests: 1. Verify action_results/<requestId>.json before declaring completion.',
+  } as any);
+
+  await dispatcher.processMessage({
+    id: 'u-continuity',
+    chat_jid: 'telegram:continuity-preamble',
+    sender: 'telegram:continuity-preamble',
+    sender_name: 'TD',
+    content: 'send me the generated image',
+    timestamp: '2026-03-29T18:05:12.000Z',
+    is_from_me: 0,
+  });
+
+  assert.match(capturedPrompt, /\[UNRESOLVED CONTINUITY CHECK\]/);
+  assert.match(
+    capturedPrompt,
+    /Pending file delivery requests: 1\. Verify action_results\/<requestId>\.json before declaring completion\./,
+  );
 });
 
 test('processMessage skips recent context when the next run disables continuation', async () => {
@@ -779,7 +1393,14 @@ test('processMessage skips recent context when the next run disables continuatio
     extractOnboardingCompletion: (text) => ({ text, completed: false }),
     completeMainWorkspaceOnboarding: () => {},
     rememberHeartbeatTarget: () => {},
-    runAgent: async (_group, prompt, _chatJid, _codingHint, _requestId, runtimePrefs) => {
+    runAgent: async (
+      _group,
+      prompt,
+      _chatJid,
+      _codingHint,
+      _requestId,
+      runtimePrefs,
+    ) => {
       capturedPrompt = prompt;
       assert.equal(runtimePrefs.nextRunNoContinue, true);
       return { ok: true, result: 'done', streamed: false };
@@ -795,7 +1416,10 @@ test('processMessage skips recent context when the next run disables continuatio
     isTelegramJid: () => false,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -891,7 +1515,10 @@ test('processMessage emits prompt input diagnostics with metadata and final prom
     isTelegramJid: () => false,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -927,8 +1554,14 @@ test('processMessage emits prompt input diagnostics with metadata and final prom
   assert.equal(promptLogs[0]?.queueMode, 'collect');
   assert.equal(promptLogs[0]?.selectedMessageCount, 1);
   assert.equal(promptLogs[0]?.recentContextCount, 1);
-  assert.match(String(promptLogs[0]?.finalPrompt || ''), /\[RECENT CONVERSATION\]/);
-  assert.match(String(promptLogs[0]?.finalPrompt || ''), /capture the prompt log/);
+  assert.match(
+    String(promptLogs[0]?.finalPrompt || ''),
+    /\[RECENT CONVERSATION\]/,
+  );
+  assert.match(
+    String(promptLogs[0]?.finalPrompt || ''),
+    /capture the prompt log/,
+  );
 });
 
 test('processMessage sanitizes invalid persisted model overrides before run dispatch', async () => {
@@ -974,7 +1607,14 @@ test('processMessage sanitizes invalid persisted model overrides before run disp
     extractOnboardingCompletion: (text) => ({ text, completed: false }),
     completeMainWorkspaceOnboarding: () => {},
     rememberHeartbeatTarget: () => {},
-    runAgent: async (_group, _prompt, _chatJid, _codingHint, _requestId, runtimePrefs) => {
+    runAgent: async (
+      _group,
+      _prompt,
+      _chatJid,
+      _codingHint,
+      _requestId,
+      runtimePrefs,
+    ) => {
       capturedRuntimePrefs = { ...runtimePrefs };
       return { ok: true, result: 'done', streamed: false };
     },
@@ -989,7 +1629,10 @@ test('processMessage sanitizes invalid persisted model overrides before run disp
     isTelegramJid: () => true,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
@@ -1061,7 +1704,14 @@ test('runDirectSessionTurn applies sanitized model preferences before run starts
     extractOnboardingCompletion: (text) => ({ text, completed: false }),
     completeMainWorkspaceOnboarding: () => {},
     rememberHeartbeatTarget: () => {},
-    runAgent: async (_group, _prompt, _chatJid, _codingHint, _requestId, runtimePrefs) => {
+    runAgent: async (
+      _group,
+      _prompt,
+      _chatJid,
+      _codingHint,
+      _requestId,
+      runtimePrefs,
+    ) => {
       capturedRuntimePrefs = { ...runtimePrefs };
       return { ok: true, result: 'done', streamed: false };
     },
@@ -1076,7 +1726,10 @@ test('runDirectSessionTurn applies sanitized model preferences before run starts
     isTelegramJid: () => true,
     consumeTelegramHostCompletedRun: () => false,
     consumeTelegramHostStreamState: () => null,
-    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
       effectiveStreamed: externallyCompleted,
       messagePreviewState: previewState,
     }),
