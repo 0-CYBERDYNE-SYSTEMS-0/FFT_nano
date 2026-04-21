@@ -72,6 +72,7 @@ function createBaseDeps(): TelegramCommandDeps {
     summarizeTask: () => 'task detail',
     formatTaskRunsText: () => 'task runs',
     runPiListModels: () => ({ text: 'models' }),
+    validateProviderModelRef: () => ({ ok: true }),
     normalizeThinkLevel: () => null,
     normalizeReasoningLevel: () => null,
     normalizeTelegramDeliveryMode: (value) =>
@@ -630,4 +631,134 @@ test('handleTelegramCommand reports canonical delivery modes in help text', asyn
 
   assert.equal(handled, true);
   assert.match(deps.sent[0]?.text || '', /Delivery mode set to off/i);
+});
+
+test('handleTelegramCommand rejects invalid /model provider/model overrides', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }>;
+  };
+  deps.validateProviderModelRef = (provider, model) => ({
+    ok: false,
+    text: `Model "${provider}/${model}" is unavailable. Use /models or /model picker.`,
+  });
+  deps.updateChatRunPreferences = (chatJid, updater) => {
+    const current = deps.state.chatRunPreferences[chatJid] || {};
+    deps.state.chatRunPreferences[chatJid] = updater({ ...current });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/model kimi-coding/not-a-real-model',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(deps.state.chatRunPreferences, {});
+  assert.match(deps.sent[0]?.text || '', /is unavailable/i);
+  assert.deepEqual(deps.audits[0], {
+    chatJid: 'telegram:1',
+    command: '/model',
+    allowed: false,
+    reason: 'invalid model override',
+  });
+});
+
+test('handleTelegramCommand /model <model> resolves provider context and persists validated pair', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.getEffectiveModelLabel = () => 'minimax/MiniMax-M2.1';
+  deps.validateProviderModelRef = (provider, model) =>
+    provider === 'minimax' && model === 'MiniMax-M2.7'
+      ? ({ ok: true } as const)
+      : ({
+          ok: false,
+          text: `Model "${provider}/${model}" is unavailable. Use /models or /model picker.`,
+        } as const);
+  deps.updateChatRunPreferences = (chatJid, updater) => {
+    const current = deps.state.chatRunPreferences[chatJid] || {};
+    deps.state.chatRunPreferences[chatJid] = updater({ ...current });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/model MiniMax-M2.7',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(deps.state.chatRunPreferences['telegram:1'], {
+    provider: 'minimax',
+    model: 'MiniMax-M2.7',
+  });
+  assert.match(deps.sent[0]?.text || '', /Model set for this chat/i);
+});
+
+test('handleTelegramSetupInput rejects invalid typed add-model-for-provider values', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.getTelegramSetupInputState = () => ({
+    kind: 'add-model-for-provider',
+    provider: 'minimax',
+    startedAt: Date.now(),
+  });
+  deps.validateProviderModelRef = (provider, model) => ({
+    ok: false,
+    text: `Model "${provider}/${model}" is unavailable. Use /models or /model picker.`,
+  });
+  deps.updateChatRunPreferences = (chatJid, updater) => {
+    const current = deps.state.chatRunPreferences[chatJid] || {};
+    deps.state.chatRunPreferences[chatJid] = updater({ ...current });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramSetupInput({
+    chatJid: 'telegram:1',
+    content: 'invalid-model',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(deps.state.chatRunPreferences, {});
+  assert.match(deps.sent[0]?.text || '', /is unavailable/i);
+});
+
+test('handleTelegramCallbackQuery rejects invalid set-model callback payloads', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  const editedPanels: Array<{ chatJid: string; messageId: number; panel: { kind: string } }> = [];
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'set-model',
+    provider: 'minimax',
+    model: 'not-real',
+    returnTo: 'models',
+  });
+  deps.validateProviderModelRef = (provider, model) => ({
+    ok: false,
+    text: `Model "${provider}/${model}" is unavailable. Use /models or /model picker.`,
+  });
+  deps.editTelegramSettingsPanel = async (chatJid, messageId, panel) => {
+    editedPanels.push({ chatJid, messageId, panel });
+  };
+  deps.updateChatRunPreferences = (chatJid, updater) => {
+    const current = deps.state.chatRunPreferences[chatJid] || {};
+    deps.state.chatRunPreferences[chatJid] = updater({ ...current });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-invalid-model',
+    chatJid: 'telegram:1',
+    messageId: 91,
+    data: 'settings:stale',
+  });
+
+  assert.deepEqual(deps.state.chatRunPreferences, {});
+  assert.equal(editedPanels.length, 1);
+  assert.deepEqual(editedPanels[0]?.panel, { kind: 'show-model-providers' });
+  assert.match(deps.sent[0]?.text || '', /is unavailable/i);
 });

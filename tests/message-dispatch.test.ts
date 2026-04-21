@@ -930,3 +930,179 @@ test('processMessage emits prompt input diagnostics with metadata and final prom
   assert.match(String(promptLogs[0]?.finalPrompt || ''), /\[RECENT CONVERSATION\]/);
   assert.match(String(promptLogs[0]?.finalPrompt || ''), /capture the prompt log/);
 });
+
+test('processMessage sanitizes invalid persisted model overrides before run dispatch', async () => {
+  const sent: string[] = [];
+  let capturedRuntimePrefs: Record<string, any> | null = null;
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        'telegram:sanitize': {
+          jid: 'telegram:sanitize',
+          name: 'Sanitize',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {
+        'telegram:sanitize': {
+          provider: 'kimi',
+          model: 'invalid-model',
+        },
+      },
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    setTyping: async () => {},
+    getMessagesSince: () => [],
+    getSessionKeyForChat: () => 'main',
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, _prompt, _chatJid, _codingHint, _requestId, runtimePrefs) => {
+      capturedRuntimePrefs = { ...runtimePrefs };
+      return { ok: true, result: 'done', streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => true,
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => true,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+    sanitizeRunPreferences: (_chatJid, runtimePrefs) => {
+      assert.equal(runtimePrefs.provider, 'kimi');
+      assert.equal(runtimePrefs.model, 'invalid-model');
+      return {
+        runPreferences: {},
+        noticeText: 'Cleared invalid model override.',
+      };
+    },
+  } as any);
+
+  await dispatcher.processMessage({
+    id: 'u-sanitize',
+    chat_jid: 'telegram:sanitize',
+    sender: 'telegram:sanitize',
+    sender_name: 'TD',
+    content: 'hello',
+    timestamp: '2026-03-29T18:05:12.000Z',
+    is_from_me: 0,
+  });
+
+  assert.deepEqual(capturedRuntimePrefs, {});
+  assert.equal(sent[0], 'Cleared invalid model override.');
+});
+
+test('runDirectSessionTurn applies sanitized model preferences before run starts', async () => {
+  const sent: string[] = [];
+  let capturedRuntimePrefs: Record<string, any> | null = null;
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        'telegram:direct-sanitize': {
+          jid: 'telegram:direct-sanitize',
+          name: 'Direct Sanitize',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {
+        'telegram:direct-sanitize': {
+          provider: 'kimi',
+          model: 'invalid-model',
+        },
+      },
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    setTyping: async () => {},
+    getMessagesSince: () => [],
+    getSessionKeyForChat: () => 'main',
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, _prompt, _chatJid, _codingHint, _requestId, runtimePrefs) => {
+      capturedRuntimePrefs = { ...runtimePrefs };
+      return { ok: true, result: 'done', streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => true,
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => true,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({ externallyCompleted, previewState }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+    sanitizeRunPreferences: (_chatJid, runtimePrefs) => {
+      assert.equal(runtimePrefs.provider, 'kimi');
+      assert.equal(runtimePrefs.model, 'invalid-model');
+      return {
+        runPreferences: { model: 'MiniMax-M2.1', provider: 'minimax' },
+        noticeText: 'Cleared invalid model override.',
+      };
+    },
+  } as any);
+
+  const start = await dispatcher.runDirectSessionTurn({
+    chatJid: 'telegram:direct-sanitize',
+    text: 'hello',
+    runId: 'sanitize-run',
+    deliver: false,
+  });
+
+  assert.deepEqual(start, { runId: 'sanitize-run', status: 'started' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(capturedRuntimePrefs, {
+    model: 'MiniMax-M2.1',
+    provider: 'minimax',
+  });
+  assert.equal(sent[0], 'Cleared invalid model override.');
+});
