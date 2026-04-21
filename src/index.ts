@@ -1419,6 +1419,122 @@ function loadPiModels(
   return { ok: true, entries };
 }
 
+function providerExistsInPiModels(
+  entries: PiModelEntry[],
+  provider: string,
+): boolean {
+  return entries.some((entry) => entry.provider === provider);
+}
+
+function modelExistsInPiModels(
+  entries: PiModelEntry[],
+  provider: string,
+  model: string,
+): boolean {
+  return entries.some(
+    (entry) => entry.provider === provider && entry.model === model,
+  );
+}
+
+function parseProviderFromModelLabel(label: string): string | null {
+  const slash = label.indexOf('/');
+  if (slash <= 0) return null;
+  const provider = label.slice(0, slash).trim();
+  return provider || null;
+}
+
+function validateProviderModelRef(
+  provider: string,
+  model: string,
+): { ok: true } | { ok: false; text: string } {
+  const normalizedProvider = provider.trim();
+  const normalizedModel = model.trim();
+  if (!normalizedProvider || !normalizedModel) {
+    return {
+      ok: false,
+      text: 'Usage: /model <provider/model> or /model reset',
+    };
+  }
+  const loaded = loadPiModels();
+  if (!loaded.ok) {
+    return {
+      ok: false,
+      text: `Cannot validate model right now: ${loaded.text}\nRun /models and retry once picker data is available.`,
+    };
+  }
+  if (!providerExistsInPiModels(loaded.entries, normalizedProvider)) {
+    return {
+      ok: false,
+      text: `Unknown provider "${normalizedProvider}". Use /models or /model picker.`,
+    };
+  }
+  if (!modelExistsInPiModels(loaded.entries, normalizedProvider, normalizedModel)) {
+    return {
+      ok: false,
+      text: `Model "${normalizedProvider}/${normalizedModel}" is unavailable. Use /models or /model picker.`,
+    };
+  }
+  return { ok: true };
+}
+
+function sanitizeRunPreferencesModelOverride(
+  chatJid: string,
+  runPreferences: Record<string, any>,
+): { runPreferences: Record<string, any>; noticeText?: string } {
+  const nextPrefs: Record<string, any> = { ...runPreferences };
+  const rawProvider =
+    typeof nextPrefs.provider === 'string' ? nextPrefs.provider.trim() : '';
+  const rawModel =
+    typeof nextPrefs.model === 'string' ? nextPrefs.model.trim() : '';
+  if (!rawProvider && !rawModel) {
+    return { runPreferences: nextPrefs };
+  }
+
+  const effectiveProvider =
+    rawProvider || parseProviderFromModelLabel(getEffectiveModelLabel(chatJid));
+  if (!effectiveProvider) {
+    return { runPreferences: nextPrefs };
+  }
+
+  const loaded = loadPiModels();
+  if (!loaded.ok) {
+    return { runPreferences: nextPrefs };
+  }
+
+  const providerKnown = providerExistsInPiModels(loaded.entries, effectiveProvider);
+  const modelKnown = rawModel
+    ? modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
+    : providerKnown;
+  if (providerKnown && modelKnown) {
+    return { runPreferences: nextPrefs };
+  }
+
+  const hadPersistedOverride =
+    !!state.chatRunPreferences[chatJid]?.provider ||
+    !!state.chatRunPreferences[chatJid]?.model;
+  if (hadPersistedOverride) {
+    updateChatRunPreferences(chatJid, (prefs) => {
+      delete prefs.provider;
+      delete prefs.model;
+      return prefs;
+    });
+  }
+
+  delete nextPrefs.provider;
+  delete nextPrefs.model;
+  if (!hadPersistedOverride || !isTelegramJid(chatJid)) {
+    return { runPreferences: nextPrefs };
+  }
+
+  const attempted = rawModel
+    ? `${effectiveProvider}/${rawModel}`
+    : `${effectiveProvider}/(default-model)`;
+  return {
+    runPreferences: nextPrefs,
+    noticeText: `Cleared invalid model override (${attempted}). Active model: ${getEffectiveModelLabel(chatJid)}. Use /models or /model to set a valid override.`,
+  };
+}
+
 function getRuntimeConfigEnv(): Record<string, string | undefined> {
   const saved = loadDotEnvMap(getDefaultDotEnvPath(process.cwd()));
   return { ...saved, ...process.env };
@@ -3585,6 +3701,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   summarizeTask,
   formatTaskRunsText,
   runPiListModels,
+  validateProviderModelRef,
   normalizeThinkLevel,
   normalizeReasoningLevel,
   normalizeTelegramDeliveryMode,
@@ -3761,6 +3878,7 @@ const messageDispatcher = createMessageDispatcher({
   consumeTelegramHostStreamState,
   resolveTelegramStreamCompletionState,
   finalizeCompletedRun,
+  sanitizeRunPreferences: sanitizeRunPreferencesModelOverride,
   parseDelegationTrigger,
   isSubstantialCodingTask,
   presentCoderSuggestion,

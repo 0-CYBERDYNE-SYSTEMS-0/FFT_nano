@@ -144,6 +144,10 @@ export interface TelegramCommandDeps {
   summarizeTask: (taskId: string) => string;
   formatTaskRunsText: (taskId: string, limit: number) => string;
   runPiListModels: (searchText: string) => { text: string };
+  validateProviderModelRef: (
+    provider: string,
+    model: string,
+  ) => { ok: true } | { ok: false; text: string };
   normalizeThinkLevel: (value: string) => string | null | undefined;
   normalizeReasoningLevel: (value: string) => string | null | undefined;
   normalizeTelegramDeliveryMode: (value: string) => string | null | undefined;
@@ -289,6 +293,28 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
   handleTelegramSetupInput: (m: TelegramSetupInputMessage) => Promise<boolean>;
   handleTelegramCommand: (m: TelegramCommandMessage) => Promise<boolean>;
 } {
+  function parseProviderFromModelLabel(label: string): string | null {
+    const slash = label.indexOf('/');
+    if (slash <= 0) return null;
+    const provider = label.slice(0, slash).trim();
+    return provider || null;
+  }
+
+  function resolveEffectiveProvider(chatJid: string): string | null {
+    return parseProviderFromModelLabel(deps.getEffectiveModelLabel(chatJid));
+  }
+
+  async function validateModelSelection(params: {
+    chatJid: string;
+    provider: string;
+    model: string;
+  }): Promise<{ ok: true } | { ok: false }> {
+    const validation = deps.validateProviderModelRef(params.provider, params.model);
+    if (validation.ok) return validation;
+    await deps.sendMessage(params.chatJid, validation.text);
+    return { ok: false };
+  }
+
   async function sendRunTerminalMessage(params: {
     chatJid: string;
     requestId: string;
@@ -686,6 +712,18 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           );
           return;
         case 'set-model':
+          if (
+            !(await validateModelSelection({
+              chatJid: q.chatJid,
+              provider: settingsAction.provider,
+              model: settingsAction.model,
+            })).ok
+          ) {
+            await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+              kind: 'show-model-providers',
+            });
+            return;
+          }
           deps.updateChatRunPreferences(q.chatJid, (prefs) => {
             prefs.provider = settingsAction.provider;
             prefs.model = settingsAction.model;
@@ -1065,6 +1103,15 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           deps.clearTelegramSetupInputState(m.chatJid);
           return false;
         }
+        if (
+          !(await validateModelSelection({
+            chatJid: m.chatJid,
+            provider,
+            model: modelName,
+          })).ok
+        ) {
+          return true;
+        }
         deps.updateChatRunPreferences(m.chatJid, (prefs) => {
           prefs.provider = provider;
           prefs.model = modelName;
@@ -1231,9 +1278,39 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         nextModel = argText;
       }
 
+      const resolvedProvider = nextProvider || resolveEffectiveProvider(m.chatJid);
+      if (!resolvedProvider || resolvedProvider.startsWith('(')) {
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'missing provider context',
+        );
+        await deps.sendMessage(
+          m.chatJid,
+          'Please specify provider/model explicitly. Usage: /model <provider/model> or /model reset',
+        );
+        return true;
+      }
+      if (
+        !(await validateModelSelection({
+          chatJid: m.chatJid,
+          provider: resolvedProvider,
+          model: nextModel || '',
+        })).ok
+      ) {
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'invalid model override',
+        );
+        return true;
+      }
+      nextProvider = resolvedProvider;
+
       deps.updateChatRunPreferences(m.chatJid, (prefs) => {
         if (nextProvider) prefs.provider = nextProvider;
-        else delete prefs.provider;
         if (nextModel) prefs.model = nextModel;
         return prefs;
       });
