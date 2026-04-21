@@ -51,6 +51,17 @@ COPY agent-runner/ ./
 # Build TypeScript
 RUN npm run build
 
+# Install pi-autoresearch extension
+COPY extensions/ /tmp/extensions/
+RUN npm install -g typescript && \
+    mkdir -p /home/node/.pi/agent/extensions/pi-autoresearch && \
+    cp /tmp/extensions/pi-autoresearch/index.ts /home/node/.pi/agent/extensions/pi-autoresearch/ && \
+    cd /home/node/.pi/agent/extensions/pi-autoresearch && \
+    npx tsc --esModuleInterop --module commonjs --target es2022 --lib es2022 index.ts && \
+    cp /tmp/extensions/pi-autoresearch/template.html /home/node/.pi/agent/extensions/pi-autoresearch/ && \
+    rm /home/node/.pi/agent/extensions/pi-autoresearch/index.ts && \
+    chown -R node:node /home/node/.pi/agent/extensions/
+
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks
 
