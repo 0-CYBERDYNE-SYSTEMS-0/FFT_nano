@@ -1,6 +1,6 @@
 {
   "name": "fft_nano",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "FFT_nano: autonomous AI coworker that runs on your farm's hardware, learns your operation, and texts you updates. No subscriptions. MIT licensed.",
   "keywords": [
     "autonomous-agents",
