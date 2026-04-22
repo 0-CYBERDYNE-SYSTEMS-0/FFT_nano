@@ -199,7 +199,7 @@ test('invalid external override falls back to valid project required skill', () 
   }
 });
 
-test('non-required project custom skill without sections syncs with warning only', () => {
+test('non-required project custom skill without section headings syncs without warnings', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
 
   try {
@@ -224,13 +224,75 @@ test('non-required project custom skill without sections syncs with warning only
     assert.ok(res.copied.includes('custom-skill'));
     assert.equal(res.skippedInvalid.includes('custom-skill'), false);
     assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'custom-skill', 'SKILL.md')), true);
+    assert.equal(res.warnings.length, 0);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('high-risk non-required skill without non-use guidance warns but still syncs', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const srcSkillsRoot = path.join(projectRoot, 'skills', 'runtime');
+    const dstSkillsRoot = path.join(groupPiHome, 'skills');
+
+    fs.mkdirSync(srcSkillsRoot, { recursive: true });
+    fs.mkdirSync(dstSkillsRoot, { recursive: true });
+
+    const customSkillDir = path.join(srcSkillsRoot, 'deploy-helper');
+    fs.mkdirSync(customSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(customSkillDir, 'SKILL.md'),
+      '---\nname: deploy-helper\ndescription: Deploy runtime components safely. Use when deploying services.\n---\n\n# Deploy Helper\n',
+    );
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome);
+
+    assert.equal(res.sourceDirExists, true);
+    assert.ok(res.copied.includes('deploy-helper'));
+    assert.equal(res.skippedInvalid.includes('deploy-helper'), false);
+    assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'deploy-helper', 'SKILL.md')), true);
     assert.equal(
       res.warnings.some(
         (warning) =>
-          warning.file.endsWith(path.join('custom-skill', 'SKILL.md')) &&
-          warning.message.includes('When to use'),
+          warning.file.endsWith(path.join('deploy-helper', 'SKILL.md')) &&
+          warning.message.includes('when not to use'),
       ),
       true,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('high-risk non-required skill with explicit non-use guidance does not warn', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const srcSkillsRoot = path.join(projectRoot, 'skills', 'runtime');
+
+    fs.mkdirSync(srcSkillsRoot, { recursive: true });
+
+    const customSkillDir = path.join(srcSkillsRoot, 'deploy-helper');
+    fs.mkdirSync(customSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(customSkillDir, 'SKILL.md'),
+      '---\nname: deploy-helper\ndescription: Deploy runtime components safely. Use when deploying services. Do not use for incident triage or debugging.\n---\n\n# Deploy Helper\n',
+    );
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome);
+
+    assert.ok(res.copied.includes('deploy-helper'));
+    assert.equal(
+      res.warnings.some((warning) =>
+        warning.file.endsWith(path.join('deploy-helper', 'SKILL.md')),
+      ),
+      false,
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });

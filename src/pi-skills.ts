@@ -78,8 +78,7 @@ type SkillSectionPolicy = 'required' | 'recommended' | 'none';
 
 interface SkillValidationOptions {
   enforceFftPolicy: boolean;
-  whenToUsePolicy: SkillSectionPolicy;
-  whenNotToUsePolicy: SkillSectionPolicy;
+  highRiskNegativeScopePolicy: SkillSectionPolicy;
 }
 
 interface SkillMarkdownValidation {
@@ -149,10 +148,6 @@ function validateMetadataMap(
   }
 }
 
-function hasWhenToUseSection(body: string): boolean {
-  return WHEN_TO_USE_SECTION_PATTERN.test(body);
-}
-
 function hasWhenNotToUseSection(body: string): boolean {
   return (
     WHEN_NOT_TO_USE_SECTION_PATTERN.test(body) ||
@@ -160,7 +155,7 @@ function hasWhenNotToUseSection(body: string): boolean {
   );
 }
 
-function addSectionPolicyIssue(
+function addPolicyIssue(
   policy: SkillSectionPolicy,
   issue: SkillValidationIssue,
   issues: SkillValidationIssue[],
@@ -178,25 +173,30 @@ function isHighRiskSkillName(skillName: string): boolean {
   return HIGH_RISK_SKILL_NAME_PATTERN.test(skillName);
 }
 
-function requiredSkillSectionPolicy(skillName: string): {
-  whenToUsePolicy: SkillSectionPolicy;
-  whenNotToUsePolicy: SkillSectionPolicy;
+function hasNegativeScopeGuidance(description: string, body: string): boolean {
+  if (hasWhenNotToUseSection(body)) return true;
+  return /\b(?:do not use|don't use|not for|avoid using|skip this skill|limitations?)\b/i.test(
+    `${description}\n${body}`,
+  );
+}
+
+function requiredSkillValidationPolicy(skillName: string): {
+  highRiskNegativeScopePolicy: SkillSectionPolicy;
 } {
   return {
-    whenToUsePolicy: 'required',
-    whenNotToUsePolicy: isHighRiskSkillName(skillName)
+    highRiskNegativeScopePolicy: isHighRiskSkillName(skillName)
       ? 'required'
-      : 'recommended',
+      : 'none',
   };
 }
 
-function nonRequiredSkillSectionPolicy(skillName: string): {
-  whenToUsePolicy: SkillSectionPolicy;
-  whenNotToUsePolicy: SkillSectionPolicy;
+function nonRequiredSkillValidationPolicy(skillName: string): {
+  highRiskNegativeScopePolicy: SkillSectionPolicy;
 } {
   return {
-    whenToUsePolicy: 'recommended',
-    whenNotToUsePolicy: isHighRiskSkillName(skillName) ? 'recommended' : 'none',
+    highRiskNegativeScopePolicy: isHighRiskSkillName(skillName)
+      ? 'recommended'
+      : 'none',
   };
 }
 
@@ -323,25 +323,16 @@ function validateSkillMarkdown(
 
   validateMetadataMap(frontmatter.metadata, skillMarkdownPath, issues);
 
-  if (!hasWhenToUseSection(body)) {
-    addSectionPolicyIssue(
-      options.whenToUsePolicy,
-      {
-        file: skillMarkdownPath,
-        message: 'Missing section: "## When to use this skill"',
-      },
-      issues,
-      warnings,
-    );
-  }
-
-  if (!hasWhenNotToUseSection(body)) {
-    addSectionPolicyIssue(
-      options.whenNotToUsePolicy,
+  if (
+    isHighRiskSkillName(expectedSkillName) &&
+    !hasNegativeScopeGuidance(rawDescription ?? '', body)
+  ) {
+    addPolicyIssue(
+      options.highRiskNegativeScopePolicy,
       {
         file: skillMarkdownPath,
         message:
-          'Missing section: "## When not to use this skill" (or "## Limitations")',
+          'High-risk skill missing clear "when not to use" guidance (add "## When not to use this skill"/"## Limitations" or explicit non-use wording in description/body)',
       },
       issues,
       warnings,
@@ -642,7 +633,7 @@ export function validateProjectPiSkills(
     const skillMarkdownPath = path.join(skillPath, 'SKILL.md');
     const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
       enforceFftPolicy: true,
-      ...requiredSkillSectionPolicy(skillName),
+      ...requiredSkillValidationPolicy(skillName),
     });
     issues.push(...validation.issues);
     warnings.push(...validation.warnings);
@@ -654,7 +645,7 @@ export function validateProjectPiSkills(
     const skillMarkdownPath = path.join(skillsRoot, skillName, 'SKILL.md');
     const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
       enforceFftPolicy: false,
-      ...nonRequiredSkillSectionPolicy(skillName),
+      ...nonRequiredSkillValidationPolicy(skillName),
     });
     issues.push(...validation.issues);
     warnings.push(...validation.warnings);
@@ -749,9 +740,9 @@ export function syncProjectPiSkillsToGroupPiHome(
   for (const [skillName, entries] of mergedSkills.entries()) {
     const invalidCandidates: SkillValidationIssue[] = [];
     const isRequiredSkill = REQUIRED_PROJECT_PI_SKILL_SET.has(skillName);
-    const sectionPolicy = isRequiredSkill
-      ? requiredSkillSectionPolicy(skillName)
-      : nonRequiredSkillSectionPolicy(skillName);
+    const validationPolicy = isRequiredSkill
+      ? requiredSkillValidationPolicy(skillName)
+      : nonRequiredSkillValidationPolicy(skillName);
     let selectedSkillPath: string | null = null;
 
     for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -759,7 +750,7 @@ export function syncProjectPiSkillsToGroupPiHome(
       const skillMarkdownPath = path.join(entry.skillPath, 'SKILL.md');
       const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
         enforceFftPolicy: isRequiredSkill,
-        ...sectionPolicy,
+        ...validationPolicy,
       });
       if (validation.issues.length > 0) {
         invalidCandidates.push(...validation.issues);
