@@ -7,6 +7,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-04-22
+
+### Added
+
+- `/update` command support across Telegram, TUI, and web control surfaces.
+- Bidirectional Telegram file delivery flow for agent/operator file exchange.
+- Pi autoresearch extension and paired runtime skills for create/finalize workflows.
+
+### Changed
+
+- Skill validator policy now aligns with skill-creator guidance.
+
 ## [1.7.1] - 2026-04-21
 
 ### Fixed
