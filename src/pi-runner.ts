@@ -594,15 +594,22 @@ function syncSkills(
   return skillSync;
 }
 
-function resolveExtensionPath(): string | null {
-  const candidates = [
-    path.resolve(process.cwd(), 'src', 'extensions', 'fft-permission-gate.ts'),
-    path.resolve(process.cwd(), 'dist', 'extensions', 'fft-permission-gate.js'),
+function resolveExtensionPaths(): string[] {
+  const extensions = [
+    ['fft-permission-gate', 'fft-permission-gate.ts', 'fft-permission-gate.js'],
+    ['pi-autoresearch', 'pi-autoresearch/index.ts', 'pi-autoresearch/index.js'],
   ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+  const found: string[] = [];
+  for (const [, srcName, distName] of extensions) {
+    const srcPath = path.resolve(process.cwd(), 'src', 'extensions', srcName);
+    const distPath = path.resolve(process.cwd(), 'dist', 'extensions', distName);
+    if (fs.existsSync(srcPath)) {
+      found.push(srcPath);
+    } else if (fs.existsSync(distPath)) {
+      found.push(distPath);
+    }
   }
-  return null;
+  return found;
 }
 
 type PiTransportMode = 'json' | 'rpc';
@@ -629,12 +636,14 @@ function buildPiArgs(params: {
   const args: string[] = ['--mode', transportMode];
   if (useContinue) args.push('-c');
 
-  const extensionPath = resolveExtensionPath();
-  if (extensionPath) {
-    args.push('--extension', extensionPath);
+  const extensionPaths = resolveExtensionPaths();
+  if (extensionPaths.length > 0) {
+    for (const ext of extensionPaths) {
+      args.push('--extension', ext);
+    }
   } else {
     logger.warn(
-      'Permission gate extension not found at src/extensions/ or dist/extensions/. Destructive commands will NOT be blocked at runtime.',
+      'No extensions found at src/extensions/ or dist/extensions/. Destructive commands will NOT be blocked at runtime.',
     );
   }
 
