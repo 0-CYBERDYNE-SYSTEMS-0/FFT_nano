@@ -633,6 +633,46 @@ test('handleTelegramCommand reports canonical delivery modes in help text', asyn
   assert.match(deps.sent[0]?.text || '', /Delivery mode set to off/i);
 });
 
+test('handleTelegramCommand /title keeps persisted value consistent with confirmation text', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.updateChatRunPreferences = (chatJid, updater) => {
+    const current = deps.state.chatRunPreferences[chatJid] || {};
+    const next = updater({ ...current });
+    if (next.sessionTitle?.trim()) {
+      next.sessionTitle = next.sessionTitle.trim().slice(0, 120);
+    } else {
+      delete next.sessionTitle;
+    }
+    deps.state.chatRunPreferences[chatJid] = next;
+  };
+
+  const longTitle = 'x'.repeat(140);
+  const handlers = createTelegramCommandHandlers(deps);
+  const setHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: `/title ${longTitle}`,
+  });
+
+  assert.equal(setHandled, true);
+  const confirmation = deps.sent[0]?.text || '';
+  assert.match(confirmation, /^Session title set: /);
+  const echoedTitle = confirmation.replace(/^Session title set: /, '');
+  assert.equal(deps.state.chatRunPreferences['telegram:1']?.sessionTitle, echoedTitle);
+  assert.ok(echoedTitle.length <= 120);
+
+  const showHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/title',
+  });
+
+  assert.equal(showHandled, true);
+  assert.equal(deps.sent[1]?.text, `Session title: ${echoedTitle}`);
+});
+
 test('handleTelegramCommand rejects invalid /model provider/model overrides', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;

@@ -1199,6 +1199,51 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
+    if (cmd === '/title') {
+      const argText = rest.join(' ').trim();
+      const currentTitle = (
+        deps.state.chatRunPreferences[m.chatJid]?.sessionTitle || ''
+      ).trim();
+      if (!argText) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        await deps.sendMessage(
+          m.chatJid,
+          currentTitle
+            ? `Session title: ${currentTitle}`
+            : 'Session title is not set for this chat.',
+        );
+        return true;
+      }
+
+      const lowered = argText.toLowerCase();
+      if (['reset', 'clear', 'default', 'off'].includes(lowered)) {
+        deps.updateChatRunPreferences(m.chatJid, (prefs) => {
+          delete prefs.sessionTitle;
+          return prefs;
+        });
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
+        await deps.sendMessage(m.chatJid, 'Session title cleared.');
+        return true;
+      }
+
+      const normalized = argText.replace(/\s+/g, ' ').trim();
+      const maxSessionTitleLength = 120;
+      const truncationSuffix = '...';
+      const bounded =
+        normalized.length > maxSessionTitleLength
+          ? `${normalized
+              .slice(0, maxSessionTitleLength - truncationSuffix.length)
+              .trimEnd()}${truncationSuffix}`
+          : normalized;
+      deps.updateChatRunPreferences(m.chatJid, (prefs) => {
+        prefs.sessionTitle = bounded;
+        return prefs;
+      });
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      await deps.sendMessage(m.chatJid, `Session title set: ${bounded}`);
+      return true;
+    }
+
     if (cmd === '/models') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       const searchText = rest.join(' ');
