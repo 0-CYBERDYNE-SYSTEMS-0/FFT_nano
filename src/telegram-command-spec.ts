@@ -34,6 +34,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
   { command: 'tasks', description: 'List scheduled tasks' },
+  { command: 'knowledge', description: 'Manage knowledge wiki/librarian' },
   { command: 'task_pause', description: 'Pause a task: /task_pause <id>' },
   { command: 'task_resume', description: 'Resume a task: /task_resume <id>' },
   { command: 'task_cancel', description: 'Cancel a task: /task_cancel <id>' },
@@ -71,6 +72,7 @@ export type TelegramCommandName =
   | '/restart'
   | '/setup'
   | '/tasks'
+  | '/knowledge'
   | '/task_pause'
   | '/task_resume'
   | '/task_cancel'
@@ -112,6 +114,7 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/restart',
   '/setup',
   '/tasks',
+  '/knowledge',
   '/task_pause',
   '/task_resume',
   '/task_cancel',
@@ -173,6 +176,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/restart - alias for /gateway restart',
     '/setup [cancel] - runtime setup wizard for provider/model/key',
     '/tasks [list|due|detail|runs] - inspect scheduled tasks',
+    '/knowledge [status|init|task|ingest|lint] - knowledge wiki/librarian controls',
     '/task_pause <id> - pause task',
     '/task_resume <id> - resume task',
     '/task_cancel <id> - cancel task',
