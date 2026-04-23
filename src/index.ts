@@ -196,6 +196,17 @@ import {
   readMainWorkspaceState,
 } from './workspace-bootstrap.js';
 import {
+  captureKnowledgeRawNote,
+  ensureKnowledgeWikiScaffold,
+  formatKnowledgeWikiStatusText,
+  readKnowledgeWikiStatus,
+  runKnowledgeWikiLint,
+} from './knowledge-wiki.js';
+import {
+  ensureKnowledgeNightlyTask,
+  KNOWLEDGE_NIGHTLY_TASK_ID,
+} from './knowledge-wiki-task.js';
+import {
   extractOnboardingCompletion,
   MAIN_ONBOARDING_COMPLETION_TOKEN,
 } from './onboarding-completion.js';
@@ -797,6 +808,20 @@ function hasMainGroup(): boolean {
   );
 }
 
+function ensureKnowledgeRuntimeSetup(mainChatJid: string | null): {
+  createdPaths: string[];
+  nightlyTask: ReturnType<typeof ensureKnowledgeNightlyTask>;
+} {
+  const scaffold = ensureKnowledgeWikiScaffold({
+    workspaceDir: MAIN_WORKSPACE_DIR,
+  });
+  const nightlyTask = ensureKnowledgeNightlyTask({ mainChatJid });
+  return {
+    createdPaths: scaffold.createdPaths,
+    nightlyTask,
+  };
+}
+
 function promoteChatToMain(chatJid: string, chatName: string): void {
   const prev = state.registeredGroups[chatJid];
   if (prev?.folder === MAIN_GROUP_FOLDER) return;
@@ -832,6 +857,17 @@ function promoteChatToMain(chatJid: string, chatName: string): void {
     added_at: new Date().toISOString(),
     containerConfig: prev?.containerConfig,
   });
+  const setup = ensureKnowledgeRuntimeSetup(chatJid);
+  if (setup.nightlyTask.created) {
+    logger.info(
+      {
+        taskId: setup.nightlyTask.taskId,
+        schedule: setup.nightlyTask.schedule,
+        nextRun: setup.nightlyTask.nextRun,
+      },
+      'Provisioned nightly knowledge librarian task',
+    );
+  }
 }
 
 function maybePromoteConfiguredTelegramMain(): void {
@@ -840,6 +876,7 @@ function maybePromoteConfiguredTelegramMain(): void {
   const prev = state.registeredGroups[chatJid];
 
   if (prev?.folder === MAIN_GROUP_FOLDER) {
+    ensureKnowledgeRuntimeSetup(chatJid);
     logger.info(
       { chatJid },
       'Configured Telegram main chat already registered',
@@ -860,6 +897,7 @@ function maybePromoteConfiguredTelegramMain(): void {
       trigger: `@${ASSISTANT_NAME}`,
       added_at: new Date().toISOString(),
     });
+    ensureKnowledgeRuntimeSetup(chatJid);
     return;
   }
 
@@ -1015,7 +1053,26 @@ function resolveHeartbeatTargetJid(mainChatJid: string): string | null {
 }
 
 async function maybeRunBootMdOnce(): Promise<void> {
-  if (!PARITY_CONFIG.workspace.enableBootMd || state.bootRunInFlight) return;
+  if (state.bootRunInFlight) return;
+  const mainChatJid = findMainChatJid();
+  const knowledgeSetup = ensureKnowledgeRuntimeSetup(mainChatJid);
+  if (knowledgeSetup.createdPaths.length > 0) {
+    logger.info(
+      { created: knowledgeSetup.createdPaths },
+      'Initialized knowledge wiki scaffold in main workspace',
+    );
+  }
+  if (knowledgeSetup.nightlyTask.created) {
+    logger.info(
+      {
+        taskId: knowledgeSetup.nightlyTask.taskId,
+        schedule: knowledgeSetup.nightlyTask.schedule,
+        nextRun: knowledgeSetup.nightlyTask.nextRun,
+      },
+      'Created nightly knowledge task at startup',
+    );
+  }
+  if (!PARITY_CONFIG.workspace.enableBootMd) return;
   const bootPath = path.join(MAIN_WORKSPACE_DIR, 'BOOT.md');
   let bootBody = '';
   try {
@@ -1033,7 +1090,6 @@ async function maybeRunBootMdOnce(): Promise<void> {
     return;
   }
 
-  const mainChatJid = findMainChatJid();
   if (!mainChatJid) {
     logger.debug('Skipping BOOT.md run: main chat not registered yet');
     return;
@@ -3121,6 +3177,122 @@ function runUpdateCommand(): { ok: boolean; text: string } {
   return { ok: true, text: outputLines.join('\n') };
 }
 
+function resolveKnowledgeRuntimeSnapshot(): {
+  status: ReturnType<typeof readKnowledgeWikiStatus>;
+  nightlyTaskStatus: string;
+  nightlyTaskNextRun: string | null;
+} {
+  const status = readKnowledgeWikiStatus({ workspaceDir: MAIN_WORKSPACE_DIR });
+  const nightlyTask = getTaskById(KNOWLEDGE_NIGHTLY_TASK_ID);
+  return {
+    status,
+    nightlyTaskStatus: nightlyTask?.status || 'missing',
+    nightlyTaskNextRun: nightlyTask?.next_run || null,
+  };
+}
+
+function handleKnowledgeCommand(params: {
+  action: string;
+  input: string;
+  chatJid: string;
+}): string {
+  const action = params.action.trim().toLowerCase();
+  if (!action || action === 'status') {
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    return formatKnowledgeWikiStatusText({
+      status: snapshot.status,
+      nightlyTaskStatus: snapshot.nightlyTaskStatus,
+      nightlyTaskNextRun: snapshot.nightlyTaskNextRun,
+    });
+  }
+
+  if (action === 'help') {
+    return [
+      'Usage: /knowledge <status|init|task|ingest|lint|help>',
+      '',
+      '- /knowledge status',
+      '- /knowledge init',
+      '- /knowledge task',
+      '- /knowledge ingest <note text>',
+      '- /knowledge lint',
+    ].join('\n');
+  }
+
+  if (action === 'init') {
+    const setup = ensureKnowledgeRuntimeSetup(params.chatJid);
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    const lines = [
+      'Knowledge wiki initialized.',
+      `- created_paths: ${setup.createdPaths.length}`,
+      `- nightly_task: ${setup.nightlyTask.status}`,
+      `- nightly_next_run: ${setup.nightlyTask.nextRun || 'n/a'}`,
+    ];
+    if (setup.createdPaths.length > 0) {
+      lines.push(
+        '',
+        'Created paths:',
+        ...setup.createdPaths.map((entry) => `- ${entry}`),
+      );
+    }
+    if (setup.nightlyTask.skippedReason) {
+      lines.push('', `Task setup skipped: ${setup.nightlyTask.skippedReason}`);
+    }
+    lines.push(
+      '',
+      formatKnowledgeWikiStatusText({
+        status: snapshot.status,
+        nightlyTaskStatus: snapshot.nightlyTaskStatus,
+        nightlyTaskNextRun: snapshot.nightlyTaskNextRun,
+      }),
+    );
+    return lines.join('\n');
+  }
+
+  if (action === 'task') {
+    const result = ensureKnowledgeNightlyTask({ mainChatJid: params.chatJid });
+    if (!result.ensured) {
+      return `Knowledge nightly task not created: ${result.skippedReason || 'unknown reason'}`;
+    }
+    return [
+      `Knowledge nightly task ${result.created ? 'created' : 'already present'}.`,
+      `- task_id: ${result.taskId}`,
+      `- status: ${result.status}`,
+      `- schedule: ${result.schedule}`,
+      `- next_run: ${result.nextRun || 'n/a'}`,
+    ].join('\n');
+  }
+
+  if (action === 'ingest' || action === 'capture') {
+    if (!params.input.trim()) {
+      return 'Usage: /knowledge ingest <note text>';
+    }
+    const capture = captureKnowledgeRawNote({
+      workspaceDir: MAIN_WORKSPACE_DIR,
+      text: params.input,
+      source: params.chatJid,
+    });
+    return [
+      'Knowledge raw capture saved.',
+      `- path: ${capture.relativePath}`,
+      `- captured_at: ${capture.capturedAt}`,
+    ].join('\n');
+  }
+
+  if (action === 'lint') {
+    const report = runKnowledgeWikiLint({ workspaceDir: MAIN_WORKSPACE_DIR });
+    return [
+      `Knowledge lint ${report.ok ? 'passed' : 'failed'}.`,
+      `- report: ${report.reportRelativePath}`,
+      `- errors: ${report.errors.length}`,
+      `- warnings: ${report.warnings.length}`,
+      '',
+      report.text,
+    ].join('\n');
+  }
+
+  return 'Usage: /knowledge <status|init|task|ingest|lint|help>';
+}
+
 function formatStatusText(chatJid?: string): string {
   const runtime = getContainerRuntime();
   const version = [
@@ -3138,6 +3310,7 @@ function formatStatusText(chatJid?: string): string {
   const active = tasks.filter((task) => task.status === 'active').length;
   const paused = tasks.filter((task) => task.status === 'paused').length;
   const completed = tasks.filter((task) => task.status === 'completed').length;
+  const knowledgeSnapshot = resolveKnowledgeRuntimeSnapshot();
   const chatActiveRun = chatJid ? activeChatRuns.get(chatJid) || null : null;
   const agentRunning = chatJid
     ? chatActiveRun !== null ||
@@ -3165,6 +3338,14 @@ function formatStatusText(chatJid?: string): string {
       active,
       paused,
       completed,
+    },
+    knowledge: {
+      ready: knowledgeSnapshot.status.ready,
+      rawCaptures: knowledgeSnapshot.status.rawCaptureCount,
+      wikiDocs: knowledgeSnapshot.status.wikiDocCount,
+      lastProgressUpdateAt: knowledgeSnapshot.status.lastProgressUpdateAt,
+      nightlyTaskStatus: knowledgeSnapshot.nightlyTaskStatus,
+      nightlyTaskNextRun: knowledgeSnapshot.nightlyTaskNextRun,
     },
     activeChatRuns: Array.from(activeChatRunsById.values()).map((run) => ({
       requestId: run.requestId,
@@ -3833,6 +4014,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   formatActiveSubagentsText,
   summarizeTask,
   formatTaskRunsText,
+  handleKnowledgeCommand,
   runPiListModels,
   validateProviderModelRef,
   normalizeThinkLevel,
