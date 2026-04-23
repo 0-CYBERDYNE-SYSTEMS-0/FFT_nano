@@ -143,6 +143,11 @@ export interface TelegramCommandDeps {
   formatActiveSubagentsText: () => string;
   summarizeTask: (taskId: string) => string;
   formatTaskRunsText: (taskId: string, limit: number) => string;
+  handleKnowledgeCommand?: (params: {
+    action: string;
+    input: string;
+    chatJid: string;
+  }) => Promise<string> | string;
   runPiListModels: (searchText: string) => { text: string };
   validateProviderModelRef: (
     provider: string,
@@ -313,7 +318,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     provider: string;
     model: string;
   }): Promise<{ ok: true } | { ok: false }> {
-    const validation = deps.validateProviderModelRef(params.provider, params.model);
+    const validation = deps.validateProviderModelRef(
+      params.provider,
+      params.model,
+    );
     if (validation.ok) return validation;
     await deps.sendMessage(params.chatJid, validation.text);
     return { ok: false };
@@ -663,17 +671,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             q.chatJid,
             'Coder request canceled. Continuing in the main chat flow.',
           );
-          if (
-            deps.resumeDirectSessionTurn &&
-            settingsAction.taskText
-          ) {
-            deps.resumeDirectSessionTurn(
-              q.chatJid,
-              settingsAction.taskText,
-              true,
-            ).catch(() => {
-              // Contained - don't propagate to polling loop
-            });
+          if (deps.resumeDirectSessionTurn && settingsAction.taskText) {
+            deps
+              .resumeDirectSessionTurn(q.chatJid, settingsAction.taskText, true)
+              .catch(() => {
+                // Contained - don't propagate to polling loop
+              });
           }
           return;
         case 'coder-cancel':
@@ -717,11 +720,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           return;
         case 'set-model':
           if (
-            !(await validateModelSelection({
-              chatJid: q.chatJid,
-              provider: settingsAction.provider,
-              model: settingsAction.model,
-            })).ok
+            !(
+              await validateModelSelection({
+                chatJid: q.chatJid,
+                provider: settingsAction.provider,
+                model: settingsAction.model,
+              })
+            ).ok
           ) {
             await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
               kind: 'show-model-providers',
@@ -838,6 +843,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         case 'trigger-new':
           deps.updateChatRunPreferences(q.chatJid, (prefs) => {
             prefs.nextRunNoContinue = true;
+            delete prefs.sessionTitle;
             return prefs;
           });
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
@@ -1108,11 +1114,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           return false;
         }
         if (
-          !(await validateModelSelection({
-            chatJid: m.chatJid,
-            provider,
-            model: modelName,
-          })).ok
+          !(
+            await validateModelSelection({
+              chatJid: m.chatJid,
+              provider,
+              model: modelName,
+            })
+          ).ok
         ) {
           return true;
         }
@@ -1327,7 +1335,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         nextModel = argText;
       }
 
-      const resolvedProvider = nextProvider || resolveEffectiveProvider(m.chatJid);
+      const resolvedProvider =
+        nextProvider || resolveEffectiveProvider(m.chatJid);
       if (!resolvedProvider || resolvedProvider.startsWith('(')) {
         deps.logTelegramCommandAudit(
           m.chatJid,
@@ -1342,11 +1351,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       if (
-        !(await validateModelSelection({
-          chatJid: m.chatJid,
-          provider: resolvedProvider,
-          model: nextModel || '',
-        })).ok
+        !(
+          await validateModelSelection({
+            chatJid: m.chatJid,
+            provider: resolvedProvider,
+            model: nextModel || '',
+          })
+        ).ok
       ) {
         deps.logTelegramCommandAudit(
           m.chatJid,
@@ -1573,12 +1584,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/new' || cmd === '/reset') {
       deps.updateChatRunPreferences(m.chatJid, (prefs) => {
         prefs.nextRunNoContinue = true;
+        delete prefs.sessionTitle;
         return prefs;
       });
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       await deps.sendMessage(
         m.chatJid,
-        'New session requested. The next model run will start fresh (no /continue).',
+        'New session requested. The next model run will start fresh (no /continue). Session title was cleared for this chat.',
       );
       return true;
     }
@@ -2049,6 +2061,32 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         m.chatJid,
         'Usage: /tasks [list|due|detail <taskId>|runs <taskId> [limit]]',
       );
+      return true;
+    }
+
+    if (cmd === '/knowledge') {
+      if (!deps.handleKnowledgeCommand) {
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'handler unavailable',
+        );
+        await deps.sendMessage(
+          m.chatJid,
+          'Knowledge wiki subsystem is unavailable in this runtime.',
+        );
+        return true;
+      }
+      const action = (rest[0] || 'status').toLowerCase();
+      const input = rest.slice(1).join(' ').trim();
+      const response = await deps.handleKnowledgeCommand({
+        action,
+        input,
+        chatJid: m.chatJid,
+      });
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, action);
+      await deps.sendMessage(m.chatJid, response);
       return true;
     }
 

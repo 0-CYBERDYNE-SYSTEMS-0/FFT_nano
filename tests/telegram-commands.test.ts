@@ -20,10 +20,17 @@ function createBaseDeps(): TelegramCommandDeps {
     text: string;
     keyboard: Array<Array<{ text: string; callbackData: string }>>;
   }> = [];
-  const audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }> =
-    [];
-  const resumedChats: Array<{ chatJid: string; text: string; deliver: boolean }> =
-    [];
+  const audits: Array<{
+    chatJid: string;
+    command: string;
+    allowed: boolean;
+    reason: string;
+  }> = [];
+  const resumedChats: Array<{
+    chatJid: string;
+    text: string;
+    deliver: boolean;
+  }> = [];
 
   const deps: TelegramCommandDeps = {
     state: {
@@ -77,7 +84,7 @@ function createBaseDeps(): TelegramCommandDeps {
     normalizeReasoningLevel: () => null,
     normalizeTelegramDeliveryMode: (value) =>
       (
-        {
+        ({
           off: 'off',
           partial: 'partial',
           block: 'partial',
@@ -87,7 +94,7 @@ function createBaseDeps(): TelegramCommandDeps {
           live: 'partial',
           persistent: 'partial',
           final: 'off',
-        } as Record<string, string>
+        }) as Record<string, string>
       )[value.trim().toLowerCase()] ?? null,
     parseQueueArgs: () => ({}),
     parseVerboseDirective: () => ({ kind: 'none' }),
@@ -168,7 +175,10 @@ test('handleTelegramSetupInput persists provider value and confirms to chat', as
     panels: Array<{ chatJid: string; panel: { kind: string } }>;
     persisted: Array<Record<string, string | undefined>>;
   };
-  deps.getTelegramSetupInputState = () => ({ kind: 'provider', startedAt: Date.now() });
+  deps.getTelegramSetupInputState = () => ({
+    kind: 'provider',
+    startedAt: Date.now(),
+  });
 
   const handlers = createTelegramCommandHandlers(deps);
   const handled = await handlers.handleTelegramSetupInput({
@@ -192,7 +202,12 @@ test('handleTelegramSetupInput persists provider value and confirms to chat', as
 test('handleTelegramCallbackQuery routes admin panel actions for main chat', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
-    audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
   };
   deps.isMainChat = () => true;
 
@@ -244,7 +259,10 @@ test('handleTelegramCallbackQuery starts a coder plan from approval actions', as
 
   assert.equal(codingCalls.length, 1);
   assert.equal(codingCalls[0]?.mode, 'plan');
-  assert.equal(codingCalls[0]?.workspaceRoot, '/tmp/projects/agintel-dashboard');
+  assert.equal(
+    codingCalls[0]?.workspaceRoot,
+    '/tmp/projects/agintel-dashboard',
+  );
   assert.match(deps.sent[0]?.text || '', /Starting coder plan run/);
 });
 
@@ -273,8 +291,14 @@ test('handleTelegramCallbackQuery offers plan fallback when execute target is no
     data: 'cfg:exec',
   });
 
-  assert.match(deps.keyboardMessages[0]?.text || '', /not a git-backed project/i);
-  assert.equal(deps.keyboardMessages[0]?.keyboard[0]?.[0]?.text, 'Start Plan Instead');
+  assert.match(
+    deps.keyboardMessages[0]?.text || '',
+    /not a git-backed project/i,
+  );
+  assert.equal(
+    deps.keyboardMessages[0]?.keyboard[0]?.[0]?.text,
+    'Start Plan Instead',
+  );
 });
 
 test('handleTelegramCallbackQuery resumes normal chat when auto-suggest cancel is selected', async () => {
@@ -295,7 +319,10 @@ test('handleTelegramCallbackQuery resumes normal chat when auto-suggest cancel i
     data: 'cfg:cancel-resume',
   });
 
-  assert.equal(deps.sent[0]?.text, 'Coder request canceled. Continuing in the main chat flow.');
+  assert.equal(
+    deps.sent[0]?.text,
+    'Coder request canceled. Continuing in the main chat flow.',
+  );
   assert.deepEqual(deps.resumedChats, [
     {
       chatJid: 'telegram:main',
@@ -329,7 +356,12 @@ test('handleTelegramCallbackQuery keeps plain coder cancel as cancel only', asyn
 test('handleTelegramCommand blocks /coder-create-project while onboarding is pending', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
-    audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
   };
   deps.isMainChat = () => true;
   deps.resolveMainOnboardingGate = () => ({ active: true });
@@ -353,7 +385,12 @@ test('handleTelegramCommand blocks /coder-create-project while onboarding is pen
 
 test('handleTelegramCommand registers spawned subagent runs in both active maps', async () => {
   let resolveRun:
-    | ((value: { ok: boolean; result: string; streamed: boolean; usage?: { totalTokens?: number } }) => void)
+    | ((value: {
+        ok: boolean;
+        result: string;
+        streamed: boolean;
+        usage?: { totalTokens?: number };
+      }) => void)
     | undefined;
   const deps = createBaseDeps() as TelegramCommandDeps & {
     activeChatRunsById: Map<string, unknown>;
@@ -380,7 +417,9 @@ test('handleTelegramCommand registers spawned subagent runs in both active maps'
   });
 
   await new Promise((resolve) => setImmediate(resolve));
-  const activeRun = deps.activeChatRuns.get('telegram:main') as { requestId: string } | undefined;
+  const activeRun = deps.activeChatRuns.get('telegram:main') as
+    | { requestId: string }
+    | undefined;
   assert.ok(activeRun);
   assert.equal(deps.activeChatRunsById.has(activeRun!.requestId), true);
 
@@ -477,9 +516,9 @@ test('handleTelegramCallbackQuery reports aborted when fallback runAgent returns
   });
   deps.runCodingTask = undefined;
   deps.runAgent = async (_group, _prompt, chatJid) => {
-    deps.activeChatRuns.get(chatJid)?.abortController.abort(
-      new Error('Stopped by user via /stop'),
-    );
+    deps.activeChatRuns
+      .get(chatJid)
+      ?.abortController.abort(new Error('Stopped by user via /stop'));
     return {
       ok: true,
       result: null,
@@ -515,9 +554,11 @@ test('handleTelegramCommand reports aborted when subagent fallback runAgent is s
   deps.isMainChat = () => true;
   deps.runCodingTask = undefined;
   deps.runAgent = async (_group, _prompt, chatJid) => {
-    deps.activeChatRuns.get(chatJid)?.abortController.abort(
-      new Error('Stopped by user via /subagents stop current'),
-    );
+    deps.activeChatRuns
+      .get(chatJid)
+      ?.abortController.abort(
+        new Error('Stopped by user via /subagents stop current'),
+      );
     return {
       ok: true,
       result: null,
@@ -569,7 +610,8 @@ test('handleTelegramCommand normalizes delivery aliases to canonical persisted v
     updates.push(updater({}));
   };
   deps.state.chatRunPreferences['telegram:1'] = {};
-  deps.normalizeTelegramCommandToken = (value) => value.split('@')[0]!.toLowerCase();
+  deps.normalizeTelegramCommandToken = (value) =>
+    value.split('@')[0]!.toLowerCase();
   (deps as any).normalizeTelegramDeliveryMode = (value: string) =>
     ({
       off: 'off',
@@ -620,7 +662,9 @@ test('handleTelegramCommand reports canonical delivery modes in help text', asyn
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
   };
-  deps.state.chatRunPreferences['telegram:1'] = { telegramDeliveryMode: 'partial' } as any;
+  deps.state.chatRunPreferences['telegram:1'] = {
+    telegramDeliveryMode: 'partial',
+  } as any;
 
   const handlers = createTelegramCommandHandlers(deps);
   const handled = await handlers.handleTelegramCommand({
@@ -660,7 +704,10 @@ test('handleTelegramCommand /title keeps persisted value consistent with confirm
   const confirmation = deps.sent[0]?.text || '';
   assert.match(confirmation, /^Session title set: /);
   const echoedTitle = confirmation.replace(/^Session title set: /, '');
-  assert.equal(deps.state.chatRunPreferences['telegram:1']?.sessionTitle, echoedTitle);
+  assert.equal(
+    deps.state.chatRunPreferences['telegram:1']?.sessionTitle,
+    echoedTitle,
+  );
   assert.ok(echoedTitle.length <= 120);
 
   const showHandled = await handlers.handleTelegramCommand({
@@ -676,7 +723,12 @@ test('handleTelegramCommand /title keeps persisted value consistent with confirm
 test('handleTelegramCommand rejects invalid /model provider/model overrides', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
-    audits: Array<{ chatJid: string; command: string; allowed: boolean; reason: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
   };
   deps.validateProviderModelRef = (provider, model) => ({
     ok: false,
@@ -770,7 +822,11 @@ test('handleTelegramCallbackQuery rejects invalid set-model callback payloads', 
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
   };
-  const editedPanels: Array<{ chatJid: string; messageId: number; panel: { kind: string } }> = [];
+  const editedPanels: Array<{
+    chatJid: string;
+    messageId: number;
+    panel: { kind: string };
+  }> = [];
   deps.getTelegramSettingsPanelAction = () => ({
     kind: 'set-model',
     provider: 'minimax',
@@ -801,4 +857,101 @@ test('handleTelegramCallbackQuery rejects invalid set-model callback payloads', 
   assert.equal(editedPanels.length, 1);
   assert.deepEqual(editedPanels[0]?.panel, { kind: 'show-model-providers' });
   assert.match(deps.sent[0]?.text || '', /is unavailable/i);
+});
+
+test('handleTelegramCommand /knowledge routes to host knowledge handler in main chat', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.handleKnowledgeCommand = ({ action, input, chatJid }) =>
+    `knowledge:${action}:${input}:${chatJid}`;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/knowledge ingest check irrigation pressure',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(
+    deps.sent[0]?.text,
+    'knowledge:ingest:check irrigation pressure:telegram:main',
+  );
+  assert.deepEqual(deps.audits[0], {
+    chatJid: 'telegram:main',
+    command: '/knowledge',
+    allowed: true,
+    reason: 'ingest',
+  });
+});
+
+test('handleTelegramCommand /new sets fresh-run flag and clears session title', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.state.chatRunPreferences['telegram:1'] = {
+    sessionTitle: 'Old Session',
+  };
+  deps.updateChatRunPreferences = (chatJid, updater) => {
+    const current = deps.state.chatRunPreferences[chatJid] || {};
+    deps.state.chatRunPreferences[chatJid] = updater({ ...current });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/new',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(
+    deps.state.chatRunPreferences['telegram:1']?.nextRunNoContinue,
+    true,
+  );
+  assert.equal(
+    deps.state.chatRunPreferences['telegram:1']?.sessionTitle,
+    undefined,
+  );
+  assert.match(
+    deps.sent[0]?.text || '',
+    /Session title was cleared for this chat\./,
+  );
+});
+
+test('handleTelegramCallbackQuery trigger-new clears session title', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps;
+  deps.state.chatRunPreferences['telegram:1'] = {
+    sessionTitle: 'Panel Session',
+  };
+  deps.getTelegramSettingsPanelAction = () => ({ kind: 'trigger-new' });
+  deps.updateChatRunPreferences = (chatJid, updater) => {
+    const current = deps.state.chatRunPreferences[chatJid] || {};
+    deps.state.chatRunPreferences[chatJid] = updater({ ...current });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-trigger-new',
+    chatJid: 'telegram:1',
+    messageId: 92,
+    data: 'settings:new',
+  });
+
+  assert.equal(
+    deps.state.chatRunPreferences['telegram:1']?.nextRunNoContinue,
+    true,
+  );
+  assert.equal(
+    deps.state.chatRunPreferences['telegram:1']?.sessionTitle,
+    undefined,
+  );
 });
