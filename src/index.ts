@@ -3123,6 +3123,14 @@ function runUpdateCommand(): { ok: boolean; text: string } {
 
 function formatStatusText(chatJid?: string): string {
   const runtime = getContainerRuntime();
+  const version = [
+    APP_VERSION || 'unknown',
+    GIT_INFO.branch && GIT_INFO.commit
+      ? `${GIT_INFO.branch}@${GIT_INFO.commit}`
+      : GIT_INFO.branch || GIT_INFO.commit || '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   const mainGroup = Object.values(state.registeredGroups).find(
     (group) => group.folder === MAIN_GROUP_FOLDER,
   );
@@ -3131,8 +3139,19 @@ function formatStatusText(chatJid?: string): string {
   const paused = tasks.filter((task) => task.status === 'paused').length;
   const completed = tasks.filter((task) => task.status === 'completed').length;
   const chatActiveRun = chatJid ? activeChatRuns.get(chatJid) || null : null;
+  const agentRunning = chatJid
+    ? chatActiveRun !== null ||
+      Array.from(activeCoderRuns.values()).some(
+        (run) =>
+          run.chatJid === chatJid &&
+          run.state !== 'completed' &&
+          run.state !== 'failed' &&
+          run.state !== 'aborted',
+      )
+    : activeChatRunsById.size > 0 || activeCoderRuns.size > 0;
   return formatStatusReport({
     assistantName: ASSISTANT_NAME,
+    version,
     runtime,
     serviceStartedAt: SERVICE_STARTED_AT,
     incidentWindowLabel: STATUS_INCIDENT_WINDOW_LABEL,
@@ -3165,6 +3184,7 @@ function formatStatusText(chatJid?: string): string {
       worktreePath: run.worktreePath,
     })),
     telemetry: statusTelemetry.getSnapshot(),
+    agentRunning,
     ...(chatJid
       ? {
           chatRuntimePreferenceLines: formatChatRuntimePreferences(chatJid),
