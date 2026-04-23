@@ -10,7 +10,10 @@ import {
 test('isUserAbortedErrorMessage detects operator-initiated cancels', () => {
   assert.equal(isUserAbortedErrorMessage('Aborted by user'), true);
   assert.equal(isUserAbortedErrorMessage('execution ABORTED BY USER'), true);
-  assert.equal(isUserAbortedErrorMessage('timed out while waiting for provider'), false);
+  assert.equal(
+    isUserAbortedErrorMessage('timed out while waiting for provider'),
+    false,
+  );
   assert.equal(isUserAbortedErrorMessage(undefined), false);
 });
 
@@ -72,7 +75,9 @@ test('status telemetry prunes stale incidents when writing new events', () => {
     createdAt: '2026-04-12T11:00:00.000Z',
   });
 
-  const snapshot = telemetry.getSnapshot(Date.parse('2026-04-12T10:05:00.000Z'));
+  const snapshot = telemetry.getSnapshot(
+    Date.parse('2026-04-12T10:05:00.000Z'),
+  );
   assert.deepEqual(
     snapshot.incidents.map((incident) => incident.runId),
     ['new'],
@@ -199,4 +204,48 @@ test('status report marks warn when active run progress is stale beyond threshol
 
   assert.match(text, /^FarmFriend pulse: WARN/m);
   assert.match(text, /warnings: stuck_runs=1/);
+});
+
+test('status report includes knowledge section when knowledge telemetry is provided', () => {
+  const telemetry = createStatusTelemetry({
+    incidentWindowMs: 30 * 60 * 1000,
+    maxIncidents: 3,
+  });
+
+  const text = formatStatusReport({
+    assistantName: 'FarmFriend',
+    version: '1.2.3 main@abc1234',
+    runtime: 'docker',
+    serviceStartedAt: '2026-04-12T11:00:00.000Z',
+    incidentWindowLabel: '30m',
+    stuckWarningSeconds: 120,
+    nowMs: Date.parse('2026-04-12T12:00:00.000Z'),
+    telegramEnabled: true,
+    whatsappEnabled: true,
+    whatsappConnected: true,
+    registeredGroupCount: 1,
+    mainGroupName: 'main',
+    tasks: { active: 1, paused: 0, completed: 2 },
+    knowledge: {
+      ready: true,
+      rawCaptures: 4,
+      wikiDocs: 7,
+      lastProgressUpdateAt: '2026-04-12T09:00:00.000Z',
+      nightlyTaskStatus: 'active',
+      nightlyTaskNextRun: '2026-04-13T02:17:00.000Z',
+    },
+    activeChatRuns: [],
+    activeCoderRuns: [],
+    telemetry: telemetry.getSnapshot(Date.parse('2026-04-12T12:00:00.000Z')),
+    agentRunning: false,
+  });
+
+  assert.match(
+    text,
+    /- knowledge: ready=yes wiki_docs=7 raw_captures=4 task=active/,
+  );
+  assert.match(
+    text,
+    /- knowledge_progress: last_update=2026-04-12T09:00:00.000Z next_task_run=2026-04-13T02:17:00.000Z/,
+  );
 });

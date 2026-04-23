@@ -71,6 +71,14 @@ export interface FormatStatusReportParams {
     paused: number;
     completed: number;
   };
+  knowledge?: {
+    ready: boolean;
+    rawCaptures: number;
+    wikiDocs: number;
+    lastProgressUpdateAt?: string | null;
+    nightlyTaskStatus?: string;
+    nightlyTaskNextRun?: string | null;
+  };
   activeChatRuns: Array<{
     requestId: string;
     chatJid: string;
@@ -106,7 +114,8 @@ export interface FormatStatusReportParams {
   } | null;
 }
 
-const TIMEOUT_PATTERN = /timed out|timeout|etimedout|stale_no_progress|retry exhausted/i;
+const TIMEOUT_PATTERN =
+  /timed out|timeout|etimedout|stale_no_progress|retry exhausted/i;
 const USER_ABORT_PATTERN = /aborted by user/i;
 
 export function isUserAbortedErrorMessage(message?: string): boolean {
@@ -247,7 +256,9 @@ export function createStatusTelemetry(
     },
     getSnapshot(nowMs = Date.now()) {
       prune(nowMs);
-      const sorted = [...incidents].sort((a, b) => b.createdAtMs - a.createdAtMs);
+      const sorted = [...incidents].sort(
+        (a, b) => b.createdAtMs - a.createdAtMs,
+      );
       return {
         incidents: sorted.slice(0, params.maxIncidents),
         progressByRunId: new Map(progressByRunId),
@@ -303,6 +314,12 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
     `- channels: telegram=${params.telegramEnabled ? 'yes' : 'no'} whatsapp=${params.whatsappEnabled ? 'yes' : 'no'} connected=${params.whatsappConnected ? 'yes' : 'no'}`,
     `- groups: registered=${params.registeredGroupCount} main=${params.mainGroupName || 'none'}`,
     `- tasks: active=${params.tasks.active} paused=${params.tasks.paused} completed=${params.tasks.completed}`,
+    ...(params.knowledge
+      ? [
+          `- knowledge: ready=${params.knowledge.ready ? 'yes' : 'no'} wiki_docs=${params.knowledge.wikiDocs} raw_captures=${params.knowledge.rawCaptures} task=${params.knowledge.nightlyTaskStatus || 'missing'}`,
+          `- knowledge_progress: last_update=${params.knowledge.lastProgressUpdateAt || 'n/a'} next_task_run=${params.knowledge.nightlyTaskNextRun || 'n/a'}`,
+        ]
+      : []),
     `- health_${params.incidentWindowLabel}: incidents=${incidents.length} (${summarizeIncidentCounts(incidents)})`,
   ];
 
@@ -355,7 +372,10 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
     }
   }
 
-  if (params.chatRuntimePreferenceLines && params.chatRuntimePreferenceLines.length > 0) {
+  if (
+    params.chatRuntimePreferenceLines &&
+    params.chatRuntimePreferenceLines.length > 0
+  ) {
     lines.push('', 'Chat context:');
     lines.push(...params.chatRuntimePreferenceLines);
     if (params.chatUsage) {
