@@ -59,6 +59,7 @@ export type PanelScope =
 export interface ChatRunPreferences {
   provider?: string;
   model?: string;
+  sessionTitle?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
   telegramDeliveryMode?: TelegramDeliveryMode;

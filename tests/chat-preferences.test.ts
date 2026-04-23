@@ -123,6 +123,31 @@ test('legacy Telegram delivery modes normalize to partial when persisted', () =>
   assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
 });
 
+test('updateChatRunPreferences preserves sessionTitle through compaction', () => {
+  const runtime = createRuntime();
+
+  const titled = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
+    prefs.sessionTitle = '  Farm Ops  ';
+    return prefs;
+  });
+  assert.equal(titled.sessionTitle, 'Farm Ops');
+  assert.equal(runtime.chatRunPreferences['telegram:1']?.sessionTitle, 'Farm Ops');
+
+  const withProvider = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
+    prefs.provider = 'zai';
+    return prefs;
+  });
+  assert.equal(withProvider.provider, 'zai');
+  assert.equal(withProvider.sessionTitle, 'Farm Ops');
+
+  updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
+    delete prefs.provider;
+    delete prefs.sessionTitle;
+    return prefs;
+  });
+  assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
+});
+
 test('getEffectiveModelLabel falls back to configured defaults', () => {
   const runtime = createRuntime();
   runtime.chatRunPreferences['telegram:2'] = {

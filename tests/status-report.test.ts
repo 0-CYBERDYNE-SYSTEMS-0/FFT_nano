@@ -102,6 +102,7 @@ test('status report renders pulse first and alerts on timeout incidents', () => 
 
   const text = formatStatusReport({
     assistantName: 'FarmFriend',
+    version: '1.2.3 main@abc1234',
     runtime: 'docker',
     serviceStartedAt: '2026-04-12T10:00:00.000Z',
     incidentWindowLabel: '30m',
@@ -132,6 +133,7 @@ test('status report renders pulse first and alerts on timeout incidents', () => 
       },
     ],
     telemetry: telemetry.getSnapshot(Date.parse('2026-04-12T12:00:00.000Z')),
+    agentRunning: true,
     chatRuntimePreferenceLines: ['- model: zai/glm-4.7'],
     chatUsage: { runs: 5, totalTokens: 12345 },
     chatActiveRun: {
@@ -141,6 +143,8 @@ test('status report renders pulse first and alerts on timeout incidents', () => 
   });
 
   assert.match(text, /^FarmFriend pulse: ALERT/m);
+  assert.match(text, /- version: 1.2.3 main@abc1234/);
+  assert.match(text, /- agent_running: working/);
   assert.match(text, /- active_runs: agent=1 coder=1 subagent=0/);
   assert.match(text, /Active coder\/subagent runs:/);
   assert.match(text, /phase=tool_running\(bash\)/);
@@ -165,6 +169,7 @@ test('status report marks warn when active run progress is stale beyond threshol
 
   const text = formatStatusReport({
     assistantName: 'FarmFriend',
+    version: '1.2.3 main@abc1234',
     runtime: 'docker',
     serviceStartedAt: '2026-04-12T11:00:00.000Z',
     incidentWindowLabel: '30m',
@@ -189,6 +194,7 @@ test('status report marks warn when active run progress is stale beyond threshol
       },
     ],
     telemetry: telemetry.getSnapshot(Date.parse('2026-04-12T12:00:00.000Z')),
+    agentRunning: true,
   });
 
   assert.match(text, /^FarmFriend pulse: WARN/m);

@@ -174,6 +174,9 @@ export function compactChatRunPreferences(
   const next: ChatRunPreferences = {};
   if (prefs.provider?.trim()) next.provider = prefs.provider.trim();
   if (prefs.model?.trim()) next.model = prefs.model.trim();
+  if (prefs.sessionTitle?.trim()) {
+    next.sessionTitle = prefs.sessionTitle.trim().slice(0, 120);
+  }
   if (prefs.thinkLevel && prefs.thinkLevel !== 'off')
     next.thinkLevel = prefs.thinkLevel;
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
@@ -331,6 +334,7 @@ export function formatChatRuntimePreferences(
   chatJid: string,
 ): string[] {
   const prefs = runtime.chatRunPreferences[chatJid] || {};
+  const sessionTitle = (prefs.sessionTitle || '').trim();
   const think = prefs.thinkLevel || 'off';
   const reasoning = prefs.reasoningLevel || 'off';
   const verbose = runtime.getEffectiveVerboseMode
@@ -343,6 +347,7 @@ export function formatChatRuntimePreferences(
   const queueCap = prefs.queueCap || 0;
   const queueDrop = prefs.queueDrop || 'old';
   return [
+    `- chat_title: ${sessionTitle || '(default)'}`,
     `- chat_model: ${getEffectiveModelLabel(runtime, chatJid)}`,
     `- chat_think: ${think}`,
     `- chat_reasoning: ${reasoning}`,
