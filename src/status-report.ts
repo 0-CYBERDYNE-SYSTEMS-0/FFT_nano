@@ -55,6 +55,7 @@ export interface CreateStatusTelemetryParams {
 
 export interface FormatStatusReportParams {
   assistantName: string;
+  version: string;
   runtime: string;
   serviceStartedAt: string;
   incidentWindowLabel: string;
@@ -93,6 +94,7 @@ export interface FormatStatusReportParams {
     worktreePath?: string;
   }>;
   telemetry: StatusTelemetrySnapshot;
+  agentRunning: boolean;
   chatRuntimePreferenceLines?: string[];
   chatUsage?: {
     runs: number;
@@ -294,7 +296,9 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
   const lines: string[] = [
     `${params.assistantName} pulse: ${severity}`,
     `- uptime: ${formatDurationShort(uptimeMs)}`,
+    `- version: ${params.version}`,
     `- runtime: ${params.runtime}`,
+    `- agent_running: ${params.agentRunning ? 'working' : 'idle'}`,
     `- active_runs: agent=${params.activeChatRuns.length} coder=${coderRuns} subagent=${subagentRuns}`,
     `- channels: telegram=${params.telegramEnabled ? 'yes' : 'no'} whatsapp=${params.whatsappEnabled ? 'yes' : 'no'} connected=${params.whatsappConnected ? 'yes' : 'no'}`,
     `- groups: registered=${params.registeredGroupCount} main=${params.mainGroupName || 'none'}`,

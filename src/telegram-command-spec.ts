@@ -1,6 +1,7 @@
 export const TELEGRAM_COMMON_COMMANDS = [
   { command: 'help', description: 'Show command help' },
   { command: 'status', description: 'Show runtime status' },
+  { command: 'title', description: 'Show/set session title' },
   { command: 'id', description: 'Show this chat id' },
   { command: 'models', description: 'List available models' },
   { command: 'model', description: 'Show/set model override' },
@@ -45,6 +46,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
 export type TelegramCommandName =
   | '/help'
   | '/status'
+  | '/title'
   | '/id'
   | '/models'
   | '/model'
@@ -85,6 +87,7 @@ export type TelegramCommandName =
 const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/help',
   '/status',
+  '/title',
   '/id',
   '/models',
   '/model',
@@ -138,6 +141,7 @@ export function formatHelpText(isMainGroup: boolean): string {
   const common = [
     '/help - show this help',
     '/status - runtime and queue status',
+    '/title [text|reset] - set a per-chat session title',
     '/id - show current Telegram chat id',
     '/models [query] - list/search available models',
     '/model [provider/model|reset] - show/set chat model',
