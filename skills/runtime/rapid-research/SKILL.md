@@ -3,17 +3,17 @@ name: rapid-research
 description: Lightweight research playbook optimized for the FF-Terminal agent.
   Keeps citation tracking, evidence grading, and summary drafting predictable
   even when multiple investigations run in parallel.
-allowed-tools: read_file web_search tavily_search
+allowed-tools: read_file ddgs_search
 metadata:
   legacy_slug: rapid_research
   legacy_summary: Fast-turn desk research with cite-first synthesis.
-  legacy_version: 0.1.0
+  legacy_version: 0.2.0
   legacy_author: ff-terminal-core
   legacy_priority: default
   legacy_tags: '["research","analysis","writing"]'
   legacy_triggers: '["research","investigate","summarize","comparison","briefing"]'
   legacy_assets: '["templates/research_brief_template.md","templates/source_log_template.md"]'
-  legacy_recommended_tools: '["read_file","web_search","tavily_search"]'
+  legacy_recommended_tools: '["read_file","ddgs_search"]'
 ---
 
 # Rapid Research Loop
@@ -64,7 +64,24 @@ metadata:
 | --- | --- | --- | --- | --- |
 ```
 
-## Deterministic helpers to pair with
-- `read_file` / `search_code` for mining local notes or logs.
-- `analyze_data` for CSV-to-table workflows.
-- `tavily_search` or `web_page_reader` for live web lookups.
+## Web Search with ddgs
+
+Use `ddgs` (DuckDuckGo) for free, no-API-key web search. Available as CLI:
+
+```bash
+ddgs text -q "search query" -m 5        # text search, 5 results
+ddgs news -q "search query" -m 5         # news search
+ddgs images -q "search query" -m 5       # image search
+```
+
+Example research workflow:
+```bash
+# Search for evidence
+ddgs text -q "OpenAI GPT-5 release date" -m 3
+ddgs text -q "Claude 4 release date" -m 3
+
+# Extract key facts from results
+# (results include title, href, body/snippet)
+```
+
+**ddgs is pre-installed in the pi container runtime.** Use bash to invoke it.
