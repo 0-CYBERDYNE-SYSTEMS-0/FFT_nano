@@ -131,6 +131,7 @@ is_runtime_env_configured() {
     anthropic) api_key="$(read_env_value ANTHROPIC_API_KEY)" ;;
     gemini) api_key="$(read_env_value GEMINI_API_KEY)" ;;
     openrouter) api_key="$(read_env_value OPENROUTER_API_KEY)" ;;
+    opencode-go) api_key="$(read_env_value OPENCODE_API_KEY)" ;;
     zai) api_key="$(read_env_value ZAI_API_KEY)" ;;
     minimax) api_key="$(read_env_value MINIMAX_API_KEY)" ;;
     kimi-coding) api_key="$(read_env_value KIMI_API_KEY)" ;;
