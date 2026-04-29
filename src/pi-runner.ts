@@ -58,6 +58,7 @@ import {
   extractToolDeltaFromPiEvent,
 } from './pi-stream-parser.js';
 import { getPiApiKeyOverride } from './provider-auth.js';
+import { ensureOpenCodeGoModels } from './opencode-go-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox } from './sandbox.js';
@@ -446,6 +447,7 @@ export function collectRuntimeSecrets(
     'ANTHROPIC_API_KEY',
     'GEMINI_API_KEY',
     'OPENROUTER_API_KEY',
+    'OPENCODE_API_KEY',
     'GROQ_API_KEY',
     'ZAI_API_KEY',
     'MINIMAX_API_KEY',
@@ -482,6 +484,13 @@ export function collectRuntimeSecrets(
   const merged: Record<string, string> = { ...fromDotEnv, ...fromProcess };
   if (merged.PI_BASE_URL && !merged.OPENAI_BASE_URL) {
     merged.OPENAI_BASE_URL = merged.PI_BASE_URL;
+  }
+  if (
+    merged.PI_API?.trim().toLowerCase() === 'opencode-go' &&
+    merged.PI_API_KEY &&
+    !merged.OPENCODE_API_KEY
+  ) {
+    merged.OPENCODE_API_KEY = merged.PI_API_KEY;
   }
 
   merged.TZ = TIMEZONE;
@@ -528,6 +537,15 @@ function ensureGroupDirs(
 ): void {
   fs.mkdirSync(wp.groupDir, { recursive: true });
   fs.mkdirSync(wp.piHomeDir, { recursive: true });
+  const modelSeed = ensureOpenCodeGoModels(wp.piAgentDir);
+  if (!modelSeed.ok) {
+    logger.warn(
+      { path: modelSeed.path, error: modelSeed.error },
+      'Failed to seed OpenCode Go models',
+    );
+  } else if (modelSeed.changed) {
+    logger.debug({ path: modelSeed.path }, 'Seeded OpenCode Go models');
+  }
   fs.mkdirSync(path.join(wp.ipcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'actions'), { recursive: true });
@@ -597,6 +615,11 @@ function syncSkills(
 function resolveExtensionPaths(): string[] {
   const extensions = [
     ['fft-permission-gate', 'fft-permission-gate.ts', 'fft-permission-gate.js'],
+    [
+      'deepseek-v4-flash-compaction',
+      'deepseek-v4-flash-compaction.ts',
+      'deepseek-v4-flash-compaction.js',
+    ],
     ['pi-autoresearch', 'pi-autoresearch/index.ts', 'pi-autoresearch/index.js'],
   ];
   const found: string[] = [];
