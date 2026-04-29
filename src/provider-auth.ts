@@ -13,7 +13,7 @@ export function getPiApiKeyOverride(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   const apiKey = env.PI_API_KEY?.trim();
-  if (!apiKey) return undefined;
+  const opencodeApiKey = env.OPENCODE_API_KEY?.trim();
 
   const rawProvider = (input.provider || env.PI_API || '').trim().toLowerCase();
   const provider = ALLOWED_PI_API_KEY_PROVIDERS.has(rawProvider)
@@ -28,7 +28,7 @@ export function getPiApiKeyOverride(
   }
 
   if (provider === 'ollama') return apiKey;
-  if (provider === 'opencode-go') return apiKey;
+  if (provider === 'opencode-go') return opencodeApiKey || apiKey;
   if (provider === 'openai') {
     return preset === 'lm-studio' || !preset || preset === 'manual'
       ? apiKey
