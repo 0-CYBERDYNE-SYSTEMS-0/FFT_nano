@@ -13,7 +13,7 @@ import {
   upsertDotEnv,
 } from '../src/runtime-config.js';
 
-test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, ollama, and lm-studio presets', () => {
+test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, opencode-go, ollama, and lm-studio presets', () => {
   const minimax = resolveRuntimeConfigSnapshot({
     PI_API: 'minimax',
     PI_MODEL: 'MiniMax-M2.1',
@@ -31,6 +31,25 @@ test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, ollama, and lm
   assert.equal(kimi.providerPreset, 'kimi-coding');
   assert.equal(kimi.apiKeyEnv, 'KIMI_API_KEY');
   assert.equal(kimi.apiKeyConfigured, true);
+
+  const opencodeGo = resolveRuntimeConfigSnapshot({
+    PI_API: 'opencode-go',
+    PI_MODEL: 'deepseek-v4-pro',
+    OPENCODE_API_KEY: 'secret',
+  });
+  assert.equal(opencodeGo.providerPreset, 'opencode-go');
+  assert.equal(opencodeGo.provider, 'opencode-go');
+  assert.equal(opencodeGo.model, 'deepseek-v4-pro');
+  assert.equal(opencodeGo.apiKeyEnv, 'OPENCODE_API_KEY');
+  assert.equal(opencodeGo.apiKeyConfigured, true);
+
+  const opencodeGoFallback = resolveRuntimeConfigSnapshot({
+    PI_API: 'opencode-go',
+    PI_MODEL: 'deepseek-v4-flash',
+    PI_API_KEY: 'secret',
+  });
+  assert.equal(opencodeGoFallback.providerPreset, 'opencode-go');
+  assert.equal(opencodeGoFallback.apiKeyConfigured, true);
 
   const ollama = resolveRuntimeConfigSnapshot({
     PI_API: 'ollama',
@@ -59,6 +78,14 @@ test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, ollama, and lm
 });
 
 test('buildRuntimeProviderPresetUpdates applies local defaults for ollama and lm-studio', () => {
+  const opencodeGoUpdates = buildRuntimeProviderPresetUpdates({
+    preset: 'opencode-go',
+    source: {},
+  });
+  assert.equal(opencodeGoUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'opencode-go');
+  assert.equal(opencodeGoUpdates.PI_API, 'opencode-go');
+  assert.equal(opencodeGoUpdates.PI_MODEL, 'deepseek-v4-pro');
+
   const ollamaUpdates = buildRuntimeProviderPresetUpdates({
     preset: 'ollama',
     source: {},

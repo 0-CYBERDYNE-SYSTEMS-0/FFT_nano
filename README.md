@@ -152,6 +152,7 @@ Recommended provider paths:
 - Anthropic: `PI_API=anthropic`, `PI_MODEL=...`, `ANTHROPIC_API_KEY=...`
 - Gemini: `PI_API=gemini`, `PI_MODEL=...`, `GEMINI_API_KEY=...`
 - OpenRouter: `PI_API=openrouter`, `PI_MODEL=...`, `OPENROUTER_API_KEY=...`
+- OpenCode Go: `FFT_NANO_RUNTIME_PROVIDER_PRESET=opencode-go`, `PI_API=opencode-go`, `PI_MODEL=deepseek-v4-pro`, `OPENCODE_API_KEY=...`
 
 After editing `.env`, apply it by restarting the host:
 

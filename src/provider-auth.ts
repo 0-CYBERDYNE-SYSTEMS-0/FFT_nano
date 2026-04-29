@@ -1,4 +1,8 @@
-const ALLOWED_PI_API_KEY_PROVIDERS = new Set(['ollama', 'openai']);
+const ALLOWED_PI_API_KEY_PROVIDERS = new Set([
+  'ollama',
+  'openai',
+  'opencode-go',
+]);
 
 interface ProviderAuthOverrideInput {
   provider?: string;
@@ -24,6 +28,7 @@ export function getPiApiKeyOverride(
   }
 
   if (provider === 'ollama') return apiKey;
+  if (provider === 'opencode-go') return apiKey;
   if (provider === 'openai') {
     return preset === 'lm-studio' || !preset || preset === 'manual'
       ? apiKey
