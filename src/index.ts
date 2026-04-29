@@ -106,6 +106,7 @@ import {
 } from './telegram-command-spec.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { parsePiListModelsResult } from './pi-models.js';
+import { ensureOpenCodeGoModels } from './opencode-go-models.js';
 import {
   applyProcessEnvUpdates,
   buildRuntimeProviderPresetUpdates,
@@ -1437,9 +1438,35 @@ function loadPiModels(
     };
   }
 
+  const piAgentDir = path.join(
+    DATA_DIR,
+    'pi',
+    MAIN_GROUP_FOLDER,
+    '.pi',
+    'agent-fft',
+  );
+  const seedResult = ensureOpenCodeGoModels(piAgentDir);
+  if (!seedResult.ok) {
+    logger.error(
+      { path: seedResult.path, error: seedResult.error },
+      'Failed to seed OpenCode Go models — picker may not show deepseek-v4-pro or deepseek-v4-flash',
+    );
+  }
+  const runtimeEnv = getRuntimeConfigEnv();
+  if (
+    runtimeEnv.PI_API?.trim().toLowerCase() === 'opencode-go' &&
+    runtimeEnv.PI_API_KEY &&
+    !runtimeEnv.OPENCODE_API_KEY
+  ) {
+    runtimeEnv.OPENCODE_API_KEY = runtimeEnv.PI_API_KEY;
+  }
   const result = spawnSync(piExecutable, ['--list-models'], {
     encoding: 'utf8',
-    env: process.env,
+    env: {
+      ...process.env,
+      ...runtimeEnv,
+      PI_CODING_AGENT_DIR: piAgentDir,
+    },
     maxBuffer: 4 * 1024 * 1024,
   });
   const entries =

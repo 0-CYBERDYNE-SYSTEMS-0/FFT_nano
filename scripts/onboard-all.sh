@@ -304,6 +304,7 @@ provider_env_key() {
     anthropic) printf '%s' "ANTHROPIC_API_KEY" ;;
     gemini) printf '%s' "GEMINI_API_KEY" ;;
     openrouter) printf '%s' "OPENROUTER_API_KEY" ;;
+    opencode-go) printf '%s' "OPENCODE_API_KEY" ;;
     zai) printf '%s' "ZAI_API_KEY" ;;
     *) printf '' ;;
   esac
