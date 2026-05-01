@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-30
+
+### Reset
+
+- Reset versioning to semver-conventional 0.1.0 starting point.
+- Previous releases v1.0.1 through v1.7.2 have been removed from the release page.
+- All existing code and features are preserved — this is a version label change only.
+
 ## [1.7.2] - 2026-04-22
 
 ### Added
