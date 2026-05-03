@@ -15,6 +15,7 @@ import {
 import { closeDatabase, getAllTasks, initDatabaseAtPath } from './db.js';
 import { parseHeartbeatActiveHours } from './heartbeat-policy.js';
 import type { SystemPromptReport } from './system-prompt.js';
+import { readWatchdogStatus } from './watchdog.js';
 import { readMainWorkspaceState } from './workspace-bootstrap.js';
 
 type CheckLevel = 'pass' | 'warn' | 'fail';
@@ -358,6 +359,49 @@ function checkPromptLifecycle(): CheckResult {
   }
 }
 
+function checkWatchdogStatus(): CheckResult {
+  const status = readWatchdogStatus(DATA_DIR);
+  const incidentTotal = Object.values(status.incidentCounts).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+  const detail = [
+    `last_scan=${status.lastScanAt || 'never'}`,
+    `last_file_scan=${status.lastFileScanAt || 'never'}`,
+    `incidents=${incidentTotal}`,
+    `stale_runs=${status.staleRunCount}`,
+    `quarantined=${status.quarantinedFileCount}`,
+    status.latestIncident
+      ? `latest=${status.latestIncident.kind}:${status.latestIncident.action}`
+      : 'latest=none',
+  ].join(' ');
+  if (!status.enabled) {
+    return {
+      id: 'watchdog.status',
+      level: 'warn',
+      summary: 'Watchdog is disabled',
+      detail,
+    };
+  }
+  if (status.staleRunCount > 0) {
+    return {
+      id: 'watchdog.status',
+      level: 'fail',
+      summary: 'Watchdog reports active stale runs',
+      detail,
+    };
+  }
+  return {
+    id: 'watchdog.status',
+    level: incidentTotal > 0 ? 'warn' : 'pass',
+    summary:
+      incidentTotal > 0
+        ? 'Watchdog is enabled with prior incidents'
+        : 'Watchdog is enabled',
+    detail,
+  };
+}
+
 function checkStateDirs(): CheckResult {
   const exists = fs.existsSync(DATA_DIR);
   return {
@@ -399,6 +443,7 @@ export function buildDoctorReport(): DoctorReport {
     checkCronHealth(),
     checkMemoryConfig(),
     checkPromptLifecycle(),
+    checkWatchdogStatus(),
   ];
   return {
     status: summarizeStatus(checks),

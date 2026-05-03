@@ -66,7 +66,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-stale-'));
     const fakePiPath = writeFakePiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -120,7 +122,9 @@ test(
     assert.equal(output.status, 'success');
     assert.equal(output.result, 'fresh ok');
 
-    const spawnEvents = progressEvents.filter((event) => event.kind === 'spawn');
+    const spawnEvents = progressEvents.filter(
+      (event) => event.kind === 'spawn',
+    );
     assert.equal(spawnEvents.length, 2);
     assert.equal(spawnEvents[0]?.resumed, true);
     assert.equal(spawnEvents[1]?.resumed, false);
@@ -173,7 +177,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-fresh-'));
     const fakePiPath = writeDelayedFreshPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -234,7 +240,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-hung-'));
     const fakePiPath = writeHungFreshPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -284,11 +292,13 @@ test(
 
     const duration = Date.now() - startedAt;
     assert.equal(output.status, 'error');
-    assert.match(output.error || '', /Pi run stalled before producing progress/);
+    assert.match(
+      output.error || '',
+      /Pi run stalled before producing progress/,
+    );
     assert.equal(
       progressEvents.some(
-        (event) =>
-          event.kind === 'stale' && event.retryingFresh === false,
+        (event) => event.kind === 'stale' && event.retryingFresh === false,
       ),
       true,
     );
@@ -374,7 +384,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-slow-tool-'));
     const fakePiPath = writeSlowToolPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -417,12 +429,14 @@ test(
 );
 
 test(
-  'runContainerAgent avoids generic Telegram draft previews before assistant text exists',
+  'runContainerAgent creates an early Telegram draft before assistant text exists',
   { timeout: 5000, concurrency: false },
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-draft-'));
     const fakePiPath = writeToolFirstPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -476,7 +490,7 @@ test(
       seenPreviewTexts.some((text) =>
         text.includes('Working on your reply...'),
       ),
-      false,
+      true,
     );
     assert.equal(
       seenPreviewTexts.some((text) => text.includes('final answer')),
@@ -559,7 +573,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-long-tool-'));
     const fakePiPath = writeLongQuietToolPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -606,9 +622,13 @@ test(
   'runContainerAgent reverts to interactive stale timeout after tool completion',
   { timeout: 10000, concurrency: false },
   async (t) => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-tool-end-hang-'));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-pi-tool-end-hang-'),
+    );
     const fakePiPath = writeToolEndThenHangPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -631,34 +651,37 @@ test(
 
     let toolEndedAt: number | null = null;
     let firstStaleAt: number | null = null;
-    const output = await runContainerAgent(group, {
-      prompt: 'reply once',
-      groupFolder,
-      chatJid: 'telegram:test',
-      isMain: false,
-      assistantName: 'FarmFriend',
-      requestId: 'req-tool-end-hang-1',
-      noContinue: true,
-      workspaceDirOverride: workspaceDir,
-      piExecutableOverride: fakePiPath,
-      lifecyclePolicyOverride: {
-        staleAfterMs: 220,
-        toolActiveStaleMs: 1200,
-        hardTimeoutMs: 2500,
-        allowFreshSessionFallback: false,
+    const output = await runContainerAgent(
+      group,
+      {
+        prompt: 'reply once',
+        groupFolder,
+        chatJid: 'telegram:test',
+        isMain: false,
+        assistantName: 'FarmFriend',
+        requestId: 'req-tool-end-hang-1',
+        noContinue: true,
+        workspaceDirOverride: workspaceDir,
+        piExecutableOverride: fakePiPath,
+        lifecyclePolicyOverride: {
+          staleAfterMs: 220,
+          toolActiveStaleMs: 1200,
+          hardTimeoutMs: 2500,
+          allowFreshSessionFallback: false,
+        },
       },
-    },
-    undefined,
-    undefined,
-    undefined,
-    (event) => {
-      if (event.kind === 'tool' && event.status === 'ok') {
-        toolEndedAt = event.at;
-      }
-      if (event.kind === 'stale' && firstStaleAt === null) {
-        firstStaleAt = event.at;
-      }
-    });
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        if (event.kind === 'tool' && event.status === 'ok') {
+          toolEndedAt = event.at;
+        }
+        if (event.kind === 'stale' && firstStaleAt === null) {
+          firstStaleAt = event.at;
+        }
+      },
+    );
 
     assert.equal(output.status, 'error');
     assert.ok(toolEndedAt !== null, 'expected tool end progress event');
@@ -772,7 +795,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-rpc-ui-'));
     const fakePiPath = writeRpcPermissionGatePiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);

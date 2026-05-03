@@ -916,6 +916,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     const activeRun = {
       chatJid: params.chatJid,
       startedAt: Date.now(),
+      lastProgressAt: Date.now(),
       requestId: params.requestId,
       abortController,
     };
