@@ -100,6 +100,75 @@ test('finalizeCompletedRun skips duplicate send when Telegram delivery already c
   assert.equal(emitter.events.at(-1)?.kind, 'agent');
 });
 
+test('finalizeCompletedRun sends diagnostic for empty final output', async () => {
+  const emitter = createEmitter();
+  const persisted: string[] = [];
+  const sent: string[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-empty',
+    sessionKey: 'telegram:1',
+    result: '   ',
+    streamed: false,
+    usage: { totalTokens: 12, provider: 'zai', model: 'glm-4.7' },
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: null,
+    updateChatUsage: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+    },
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.equal(sent.length, 1);
+  assert.equal(persisted.length, 1);
+  assert.match(sent[0], /LLM produced no user-visible final response/);
+  assert.match(sent[0], /run=run-empty/);
+  assert.match(sent[0], /provider=zai/);
+  assert.doesNotMatch(sent[0], /Task completed/);
+  assert.equal(sent[0], persisted[0]);
+});
+
+test('finalizeCompletedRun does not trust external completion for empty final output', async () => {
+  const emitter = createEmitter();
+  const sent: string[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-empty-external',
+    sessionKey: 'telegram:1',
+    result: null,
+    streamed: true,
+    usage: undefined,
+    abortSignal: new AbortController().signal,
+    externallyCompleted: true,
+    telegramPreviewState: null,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /LLM produced no user-visible final response/);
+  assert.match(sent[0], /external_delivery=yes/);
+});
+
 test('finalizeCompletedRun deletes preview on abort and emits aborted state', async () => {
   const emitter = createEmitter();
   const deleted: number[] = [];
