@@ -95,6 +95,40 @@ const IPC_QUEUE_DIRS = [
   'deliver_files',
 ] as const;
 
+const MAIN_GROUP_FOLDER = 'main';
+
+function normalizeRegisteredGroupFolderName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === MAIN_GROUP_FOLDER) return null;
+  if (trimmed === '.' || trimmed === '..') return null;
+  return path.basename(trimmed) === trimmed ? trimmed : null;
+}
+
+function resolveRegisteredGroupDirs(dataDir: string, groupsDir: string): string[] {
+  const registeredPath = path.join(dataDir, 'registered_groups.json');
+  if (!fs.existsSync(registeredPath)) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = safeReadJson(registeredPath);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object') return [];
+
+  const folders = new Set<string>();
+  for (const value of Object.values(parsed as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue;
+    const folder = normalizeRegisteredGroupFolderName(
+      (value as Record<string, unknown>).folder,
+    );
+    if (folder) folders.add(folder);
+  }
+
+  return Array.from(folders).map((folder) => path.join(groupsDir, folder));
+}
+
 function envFlag(value: string | undefined, defaultValue: boolean): boolean {
   if (typeof value !== 'string') return defaultValue;
   const normalized = value.trim().toLowerCase();
@@ -544,11 +578,9 @@ export function createWatchdog(
     await scanMarkdownRoot(deps.mainWorkspaceDir, MAIN_MARKDOWN_FILES);
 
     if (!fs.existsSync(deps.groupsDir)) return;
-    const groupDirs = fs
-      .readdirSync(deps.groupsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(deps.groupsDir, entry.name));
+    const groupDirs = resolveRegisteredGroupDirs(deps.dataDir, deps.groupsDir);
     for (const groupDir of groupDirs) {
+      if (!fs.existsSync(groupDir)) continue;
       await scanMarkdownRoot(groupDir, GROUP_MARKDOWN_FILES);
     }
   }
