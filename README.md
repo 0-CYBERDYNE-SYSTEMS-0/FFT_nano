@@ -11,9 +11,7 @@ An autonomous AI coworker that runs on your farm's hardware. It learns your oper
 ## Quick Start
 
 ```bash
-git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
-cd FFT_nano
-./scripts/onboard-all.sh
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
 ```
 
 Runs on Raspberry Pi, your own server, or local hardware. Chat via Telegram or WhatsApp.
@@ -42,7 +40,15 @@ Built by a farmer with 24 years of field experience. Three years of real operati
 
 This is the canonical install-and-run flow.
 
-### 1. Clone and run guided onboarding
+### 1. Run the installer
+
+```bash
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
+```
+
+The installer downloads the latest stable release, installs missing basics where it can, chooses Docker when it is already healthy, falls back to host runtime when Docker is unavailable, then runs `./scripts/onboard-all.sh`.
+
+Developer/manual install:
 
 ```bash
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
@@ -50,7 +56,7 @@ cd FFT_nano
 ./scripts/onboard-all.sh
 ```
 
-`./scripts/onboard-all.sh` performs:
+The guided flow performs:
 
 - safety backup (`~/nano`, `.env`, `data/`, `groups/`)
 - dependency install (`npm ci` when lockfile exists)
@@ -84,11 +90,11 @@ Backups are written to `./backups/` by default.
 Choose runtime at install time:
 
 ```bash
-# default/recommended isolated runtime
-./scripts/onboard-all.sh --runtime docker
+# isolated Docker runtime
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime docker
 
-# unisolated host runtime (advanced)
-./scripts/onboard-all.sh --runtime host
+# host runtime fallback
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime host
 ```
 
 ### All Setup Options
