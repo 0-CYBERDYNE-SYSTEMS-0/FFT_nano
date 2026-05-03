@@ -5344,7 +5344,6 @@ async function deliverRuntimeAgentMessage(params: {
       params.chatJid,
       requestId,
     );
-    noteTelegramHostCompletedRun(params.chatJid, requestId);
     if (previewState) {
       const finalized = await finalizeTelegramPreviewMessage(
         params.chatJid,
@@ -5352,15 +5351,21 @@ async function deliverRuntimeAgentMessage(params: {
         params.text,
       );
       if (!finalized) {
-        await sendTelegramAgentReply(params.chatJid, params.text);
+        const sent = await sendTelegramAgentReply(params.chatJid, params.text);
+        if (sent) noteTelegramHostCompletedRun(params.chatJid, requestId);
+        return;
       }
+      noteTelegramHostCompletedRun(params.chatJid, requestId);
       return;
     }
   }
 
-  await sendAgentResultMessage(params.chatJid, params.text, {
+  const sent = await sendAgentResultMessage(params.chatJid, params.text, {
     prefixWhatsApp: params.prefixWhatsApp,
   });
+  if (isTelegramJid(params.chatJid) && requestId && sent) {
+    noteTelegramHostCompletedRun(params.chatJid, requestId);
+  }
 }
 
 async function prepareTelegramCompletionState(params: {
