@@ -1,5 +1,9 @@
 import { PARITY_CONFIG } from './config.js';
 import { logger } from './logger.js';
+import {
+  formatEmptyFinalOutputDiagnostic,
+  hasUserVisibleText,
+} from './agent-empty-output.js';
 import type { TelegramMessagePreviewState } from './telegram-streaming.js';
 import type { NewMessage } from './types.js';
 import type { CodingWorkerResult } from './coding-orchestrator.js';
@@ -672,7 +676,21 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  const effectiveResult = params.result || 'Task completed.';
+  const hasVisibleFinalResult = hasUserVisibleText(params.result);
+  const trustedExternalCompletion =
+    params.externallyCompleted && hasVisibleFinalResult;
+  const effectiveResult = hasVisibleFinalResult
+    ? params.result!.trim()
+    : formatEmptyFinalOutputDiagnostic({
+        runId: params.runId,
+        streamed: params.streamed,
+        externallyCompleted: params.externallyCompleted,
+        provider: params.usage?.provider,
+        model: params.usage?.model,
+        inputTokens: params.usage?.inputTokens,
+        outputTokens: params.usage?.outputTokens,
+        totalTokens: params.usage?.totalTokens,
+      });
   if (effectiveResult) {
     const assistantTimestamp = params.persistAssistantHistory(
       params.chatJid,
@@ -683,7 +701,7 @@ export async function finalizeCompletedRun(
       params.persistLastAgentTimestamp?.(params.chatJid, assistantTimestamp);
     }
     let finalizedPreview = false;
-    if (!params.externallyCompleted && params.telegramPreviewState) {
+    if (!trustedExternalCompletion && params.telegramPreviewState) {
       finalizedPreview = await params.finalizeTelegramPreviewMessage(
         params.chatJid,
         params.telegramPreviewState.messageId,
@@ -700,7 +718,7 @@ export async function finalizeCompletedRun(
     //               streaming layer did not actually deliver anything)
     const shouldSend =
       params.deliverToChat !== false &&
-      !params.externallyCompleted &&
+      !trustedExternalCompletion &&
       (!params.streamed || !params.telegramPreviewState || !finalizedPreview);
 
     if (shouldSend) {
