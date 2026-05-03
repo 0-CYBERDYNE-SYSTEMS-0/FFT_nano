@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 echo "Release check: validating skills"
 npm run validate:skills
 
+echo "Release check: installer syntax"
+bash -n scripts/install.sh
+
 echo "Release check: typecheck"
 npm run typecheck
 

@@ -11,11 +11,17 @@ Telegram takes over as the main operator interface.
 ## Commands
 
 ```bash
+# public installer (latest stable release)
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
+
 # guided wrapper (backup/setup/wizard/service/doctor)
 ./scripts/onboard-all.sh
 
 # guided wrapper with explicit host runtime
 ./scripts/onboard-all.sh --runtime host
+
+# public installer with explicit host runtime
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime host
 
 # full guided wrapper (same behavior as onboard-all)
 fft onboard
@@ -50,6 +56,15 @@ Config edit note:
 
 Interactive mode prompts for flow/mode/provider/channel/hatch and identity values.
 For incomplete first-run installs, the guided wrapper automatically prefers the web hatch and opens FFT Control Center.
+
+Installer environment overrides:
+- `FFT_NANO_INSTALL_DIR=/path/to/install`: install somewhere other than `~/FFT_nano`
+- `FFT_NANO_REF=v1.7.2`: install a specific release tag
+- `FFT_NANO_REF=main`: install current public `main`
+- `FFT_NANO_FORCE=1`: replace a non-empty install directory
+- `FFT_NANO_AUTO_LINK=0`: skip global `npm link`
+
+The public installer chooses Docker when it is already installed and healthy. If Docker is missing or unhealthy, it uses host runtime and writes the required host-runtime opt-in values before onboarding.
 
 If hatch is `web`, use:
 
