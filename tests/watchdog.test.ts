@@ -37,6 +37,25 @@ function makeDirs(): {
   return { root, dataDir, groupsDir, mainWorkspaceDir };
 }
 
+function writeRegisteredGroups(
+  dataDir: string,
+  groups: Array<{ jid: string; folder: string }>,
+): void {
+  const payload: Record<string, { folder: string; name: string; trigger: string }> = {};
+  for (const group of groups) {
+    payload[group.jid] = {
+      folder: group.folder,
+      name: group.jid,
+      trigger: '@FarmFriend',
+    };
+  }
+  fs.writeFileSync(
+    path.join(dataDir, 'registered_groups.json'),
+    JSON.stringify(payload, null, 2),
+    'utf-8',
+  );
+}
+
 function writeCriticalMarkdown(root: string): void {
   for (const file of [
     'MEMORY.md',
@@ -267,6 +286,7 @@ test('watchdog treats group HEARTBEAT.md as optional', async () => {
   for (const file of ['MEMORY.md', 'SOUL.md', 'TODOS.md', 'NANO.md']) {
     fs.writeFileSync(path.join(groupDir, file), `# ${file}\n\nok\n`, 'utf-8');
   }
+  writeRegisteredGroups(dirs.dataDir, [{ jid: 'telegram:normal', folder: 'normal-group' }]);
   const alerts: string[] = [];
   const watchdog = createWatchdog(
     {
@@ -285,4 +305,47 @@ test('watchdog treats group HEARTBEAT.md as optional', async () => {
   await watchdog.scan();
   assert.equal(fs.existsSync(path.join(groupDir, 'HEARTBEAT.md')), false);
   assert.doesNotMatch(alerts.join('\n'), /HEARTBEAT\.md/);
+});
+
+test('watchdog scans only registered non-main group folders', async () => {
+  const dirs = makeDirs();
+  writeCriticalMarkdown(dirs.mainWorkspaceDir);
+
+  const registeredDir = path.join(dirs.groupsDir, 'registered-group');
+  fs.mkdirSync(registeredDir, { recursive: true });
+  for (const file of ['MEMORY.md', 'SOUL.md', 'TODOS.md']) {
+    fs.writeFileSync(path.join(registeredDir, file), `# ${file}\n\nok\n`, 'utf-8');
+  }
+
+  const orphanDir = path.join(dirs.groupsDir, 'orphan-group');
+  fs.mkdirSync(orphanDir, { recursive: true });
+
+  const mainShadowDir = path.join(dirs.groupsDir, 'main');
+  fs.mkdirSync(mainShadowDir, { recursive: true });
+
+  writeRegisteredGroups(dirs.dataDir, [
+    { jid: 'telegram:main', folder: 'main' },
+    { jid: 'telegram:child', folder: 'registered-group' },
+  ]);
+
+  const alerts: string[] = [];
+  const watchdog = createWatchdog(
+    {
+      activeChatRuns: new Map(),
+      activeChatRunsById: new Map(),
+      activeCoderRuns: new Map(),
+      ...dirs,
+      now: () => 10_000,
+      sendAlert: (msg) => {
+        alerts.push(msg);
+      },
+    },
+    makeConfig({ fileScanMs: 0 }),
+  );
+
+  await watchdog.scan();
+  const combined = alerts.join('\n');
+  assert.match(combined, /registered-group\/NANO\.md/);
+  assert.doesNotMatch(combined, /orphan-group\/NANO\.md/);
+  assert.doesNotMatch(combined, /groups\/main\/NANO\.md/);
 });
