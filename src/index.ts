@@ -250,6 +250,7 @@ import {
   formatStatusReport,
   isUserAbortedErrorMessage,
 } from './status-report.js';
+import { createWatchdog } from './watchdog.js';
 import {
   dispatchLegacyMessageEnvelope,
   wrapLegacyActionEnvelope,
@@ -337,6 +338,7 @@ const STATUS_STUCK_WARNING_SECONDS = 120;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
+let watchdogRuntime: ReturnType<typeof createWatchdog> | null = null;
 interface GitInfo {
   branch?: string;
   commit?: string;
@@ -3742,9 +3744,11 @@ async function runCompactionForChat(
   };
   delete prefs.nextRunNoContinue;
   const abortController = new AbortController();
+  const startedAt = Date.now();
   const activeRun: ActiveChatRun = {
     chatJid,
-    startedAt: Date.now(),
+    startedAt,
+    lastProgressAt: startedAt,
     requestId: compactRequestId,
     abortController,
   };
@@ -4471,6 +4475,7 @@ const appRuntime = createAppRuntime({
   stopWebControlCenterService,
   startFarmStateCollector,
   stopFarmStateCollector,
+  startWatchdogLoop,
   startHeartbeatLoop,
   maybeRunBootMdOnce,
   getContainerRuntime,
@@ -4518,6 +4523,12 @@ async function runAgent(
   };
 }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
+  const touchActiveRun = () => {
+    if (!requestId) return;
+    const active = activeChatRunsById.get(requestId);
+    if (active) active.lastProgressAt = Date.now();
+  };
+  touchActiveRun();
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -4635,6 +4646,7 @@ async function runAgent(
         },
         abortSignal,
         (event) => {
+          touchActiveRun();
           if (event.kind !== 'tool' || !requestId) return;
           hadToolSideEffects = true;
           if (isTelegramJid(chatJid)) {
@@ -4664,6 +4676,9 @@ async function runAgent(
           });
         },
         (request) => handlePermissionGateRequest(chatJid, request),
+        () => {
+          touchActiveRun();
+        },
       );
       return {
         ...output,
@@ -6329,9 +6344,11 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
 
   const requestId = `heartbeat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const abortController = new AbortController();
+  const startedAt = Date.now();
   const activeRun: ActiveChatRun = {
     chatJid: mainChatJid,
-    startedAt: Date.now(),
+    startedAt,
+    lastProgressAt: startedAt,
     requestId,
     abortController,
   };
@@ -6467,6 +6484,30 @@ function startHeartbeatLoop(): void {
     void runHeartbeatTurn('interval');
   }, HEARTBEAT_INTERVAL_MS);
   logger.info({ everyMs: HEARTBEAT_INTERVAL_MS }, 'Heartbeat loop started');
+}
+
+function startWatchdogLoop(): void {
+  if (watchdogRuntime) return;
+  watchdogRuntime = createWatchdog({
+    activeChatRuns,
+    activeChatRunsById,
+    activeCoderRuns,
+    dataDir: DATA_DIR,
+    groupsDir: GROUPS_DIR,
+    mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+    isShuttingDown: () => state.shuttingDown,
+    logger,
+    sendAlert: async (text) => {
+      const mainChatJid = findMainChatJid();
+      if (!mainChatJid) {
+        logger.warn({ text }, 'Watchdog alert has no main chat destination');
+        return;
+      }
+      await sendMessage(mainChatJid, text);
+      rememberHeartbeatTarget(mainChatJid);
+    },
+  });
+  watchdogRuntime.start();
 }
 
 function requestHeartbeatNow(reason = 'manual'): void {

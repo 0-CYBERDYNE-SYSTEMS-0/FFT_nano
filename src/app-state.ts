@@ -18,6 +18,8 @@ export interface ActiveCoderRun {
   chatJid: string;
   groupName: string;
   startedAt: number;
+  lastProgressAt?: number;
+  watchdogAbortAt?: number;
   parentRequestId?: string;
   backend?: 'pi';
   route?:
@@ -161,6 +163,8 @@ export type TelegramSettingsPanelAction =
 export interface ActiveChatRun {
   chatJid: string;
   startedAt: number;
+  lastProgressAt?: number;
+  watchdogAbortAt?: number;
   requestId: string;
   abortController: AbortController;
 }

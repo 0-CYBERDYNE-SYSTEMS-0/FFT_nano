@@ -102,6 +102,7 @@ export interface AppRuntimeDeps {
   stopWebControlCenterService?: () => Promise<void>;
   startFarmStateCollector?: () => void;
   stopFarmStateCollector?: () => void;
+  startWatchdogLoop?: () => void;
   startHeartbeatLoop?: () => void;
   maybeRunBootMdOnce?: () => void;
   getContainerRuntime?: () => string;
@@ -131,7 +132,11 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.state.telegramBot.startPolling(async (event: any) => {
       try {
         deps.logger.debug?.(
-          { kind: event.kind, chatJid: event.chatJid, contentLength: event.content?.length },
+          {
+            kind: event.kind,
+            chatJid: event.chatJid,
+            contentLength: event.content?.length,
+          },
           'Telegram event received from polling',
         );
 
@@ -142,7 +147,10 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
 
         const m = event;
         deps.storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
-        const didRegister = deps.maybeRegisterTelegramChat(m.chatJid, m.chatName);
+        const didRegister = deps.maybeRegisterTelegramChat(
+          m.chatJid,
+          m.chatName,
+        );
         if (didRegister && deps.isMainChat(m.chatJid)) {
           await deps.refreshTelegramCommandMenus();
         }
@@ -482,6 +490,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.migrateLegacyClaudeMemoryFiles?.();
     deps.migrateCompactionSummariesFromSoul?.();
     deps.maybePromoteConfiguredTelegramMain?.();
+    deps.startWatchdogLoop?.();
     await deps.startTuiGatewayService?.();
     await deps.startWebControlCenterService?.();
     deps.logger.info?.(
