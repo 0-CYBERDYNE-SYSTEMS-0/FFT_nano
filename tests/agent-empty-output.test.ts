@@ -50,7 +50,7 @@ test('heartbeat runs stay silent and do not trigger empty-output retry policy', 
   assert.equal(outcome.finalRun.result, '');
 });
 
-test('non-heartbeat empty output with tool side effects still retries', async () => {
+test('non-heartbeat empty output with tool side effects retries and returns recovered response', async () => {
   let retries = 0;
   const outcome = await applyNonHeartbeatEmptyOutputPolicy({
     isHeartbeatRun: false,
@@ -69,4 +69,26 @@ test('non-heartbeat empty output with tool side effects still retries', async ()
   assert.equal(retries, 1);
   assert.equal(outcome.retried, true);
   assert.equal(outcome.finalRun.result, 'Recovered response');
+  assert.equal(outcome.finalRun.ok, true);
+});
+
+test('non-heartbeat empty output with tool side effects and streamed draft still retries', async () => {
+  let retries = 0;
+  const outcome = await applyNonHeartbeatEmptyOutputPolicy({
+    isHeartbeatRun: false,
+    firstRun: {
+      result: '',
+      streamed: true,
+      ok: true,
+      hadToolSideEffects: true,
+    },
+    retryRun: async () => {
+      retries += 1;
+      return { result: 'Recovered after streamed draft', streamed: false, ok: true };
+    },
+  });
+
+  assert.equal(retries, 1);
+  assert.equal(outcome.retried, true);
+  assert.equal(outcome.finalRun.result, 'Recovered after streamed draft');
 });
