@@ -15,6 +15,7 @@ backups/
 
 # Runtime-generated group folders (keep template groups in repo)
 groups/telegram-*/
+groups/test-*/
 groups/**/logs/
 groups/main/*
 !groups/main/.gitkeep
@@ -22,6 +23,7 @@ groups/main/*
 # Secrets
 *.keys.json
 .env
+env2.md
 
 # Personal and optional skills (keep only core install skills in git)
 skills/runtime/applescript-automation/

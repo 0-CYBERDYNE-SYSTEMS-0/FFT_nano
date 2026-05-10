@@ -306,3 +306,6 @@ export interface FileDeliveryResult {
   error?: string;
   executedAt: string;
 }
+
+
+export type RunType = 'chat' | 'coding' | 'scheduled' | 'cron' | 'heartbeat' | 'subagent';
