@@ -254,6 +254,7 @@ interface TelegramFileInfo {
 export interface TelegramInlineKeyboardButton {
   text: string;
   callbackData: string;
+  style?: 'danger' | 'success' | 'primary';
 }
 
 export type TelegramInlineKeyboard = TelegramInlineKeyboardButton[][];
@@ -644,7 +645,9 @@ function buildCommandScopePayload(
 }
 
 function buildReplyMarkup(keyboard: TelegramInlineKeyboard): {
-  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+  inline_keyboard: Array<
+    Array<{ text: string; callback_data: string; style?: string }>
+  >;
 } {
   const inlineKeyboard = keyboard.map((row) =>
     row.map((button) => {
@@ -661,6 +664,7 @@ function buildReplyMarkup(keyboard: TelegramInlineKeyboard): {
       return {
         text: button.text,
         callback_data: button.callbackData,
+        ...(button.style ? { style: button.style } : {}),
       };
     }),
   );

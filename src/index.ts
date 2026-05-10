@@ -2460,7 +2460,7 @@ function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
     `Model: ${getEffectiveModelLabel(chatJid)}`,
     `Think: ${prefs.thinkLevel || 'off'}`,
     `Reasoning: ${prefs.reasoningLevel || 'off'}`,
-    `Delivery: ${prefs.telegramDeliveryMode || 'partial'}`,
+    `Delivery: ${prefs.telegramDeliveryMode || 'draft'}`,
     `Tool progress: ${getEffectiveVerboseMode(prefs.verboseMode)}`,
     `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
   ];
@@ -2510,6 +2510,7 @@ function buildTelegramSettingsHomePanel(chatJid: string): {
           callbackData: registerTelegramSettingsPanelAction(chatJid, {
             kind: 'trigger-new',
           }),
+          style: 'primary' as const,
         },
         {
           text: 'Reasoning',
@@ -2531,6 +2532,7 @@ function buildTelegramSettingsHomePanel(chatJid: string): {
             kind: 'reset-model',
             returnTo: 'home',
           }),
+          style: 'danger' as const,
         },
       ],
     ],
@@ -2849,16 +2851,16 @@ function buildDeliveryPanel(chatJid: string): {
   keyboard: TelegramInlineKeyboard;
 } {
   const current =
-    state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
-  const modes: TelegramDeliveryMode[] = ['partial', 'draft', 'off'];
+    state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'draft';
+  const modes: TelegramDeliveryMode[] = ['draft', 'partial', 'off'];
   return {
     text: [
       'Select Telegram text delivery mode:',
       `Current: ${current}`,
       '',
-      'partial: one in-flight message may be edited during the run',
-      'draft: Telegram-native draft stream in all chats',
-      'off: no visible preview, send only the completed final answer',
+      'draft: native streaming bubble in all chat types (default)',
+      'partial: one in-flight message edited during the run',
+      'off: no preview — final answer only',
     ].join('\n'),
     keyboard: [
       modes.map((value) => ({
@@ -2867,6 +2869,12 @@ function buildDeliveryPanel(chatJid: string): {
           kind: 'set-delivery',
           value,
         }),
+        style:
+          value === current
+            ? ('success' as const)
+            : value === 'off'
+              ? ('danger' as const)
+              : undefined,
       })),
       [
         {
@@ -2897,6 +2905,12 @@ function buildVerbosePanel(chatJid: string): {
           kind: 'set-verbose',
           value,
         }),
+        style:
+          value === current
+            ? ('success' as const)
+            : value === 'off'
+              ? ('danger' as const)
+              : undefined,
       })),
     );
   }
@@ -4594,7 +4608,7 @@ async function runAgent(
             think_level: runtimePrefs.thinkLevel || null,
             reasoning_level: runtimePrefs.reasoningLevel || null,
             telegram_delivery_mode:
-              runtimePrefs.telegramDeliveryMode || 'partial',
+              runtimePrefs.telegramDeliveryMode || 'draft',
             verbose_mode: runtimePrefs.verboseMode || null,
             container_runtime: runtime,
           },
@@ -4661,7 +4675,7 @@ async function runAgent(
             queueTelegramToolProgressUpdate(
               chatJid,
               requestId,
-              runPrefs.telegramDeliveryMode || 'partial',
+              runPrefs.telegramDeliveryMode || 'draft',
               runPrefs.verboseMode,
               {
                 toolName: event.toolName,
@@ -5354,7 +5368,7 @@ function pruneTelegramHostStreamedRuns(): void {
 }
 
 function getTelegramDeliveryMode(chatJid: string): TelegramDeliveryMode {
-  return state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'partial';
+  return state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'draft';
 }
 
 function canUseTelegramNativeDraft(_chatJid: string): boolean {
