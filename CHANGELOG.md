@@ -7,6 +7,42 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-10
+
+### Added
+
+- Universal evaluator pass for all long-running agent actions (`src/evaluator.ts`).
+  A threshold-gated second `pi` call independently verifies every qualifying run
+  actually accomplished its task, addressing self-evaluation bias in autonomous operation.
+  - Heartbeat, scheduled, and cron runs: always evaluated (no human watching)
+  - Coding execute runs: blocking evaluation when files are changed; up to 2 refinement
+    passes with targeted feedback before delivering best result
+  - Chat and subagent runs: evaluated when duration ≥45s, tools ≥3, or output ≥1500 chars;
+    non-blocking follow-up sent only when issues are found
+  - `isEvaluatorRun` flag on `ContainerInput` prevents recursive evaluation
+- `RunType` union type added to `src/types.ts` for evaluator context typing.
+
+### Fixed
+
+- Long-horizon stability for multi-day autonomous operation:
+  - `process.on('unhandledRejection')` and `'uncaughtException'` handlers registered
+    at startup so silent async failures surface in logs instead of disappearing
+  - `pruneStaleState()` on a stored, cancellable 6-hour interval caps unbounded Map
+    growth in `activeChatRuns`, `activeCoderRuns`, `telegramSettingsPanelActions`,
+    `telegramSetupInputStates`, `telegramToolProgressRuns`, and `tuiMessageQueue`
+  - `tuiMessageQueue` hard-capped at 50 entries per chat with oldest-drop eviction
+  - Group-sync and heartbeat `setInterval` handles stored and cancelled at shutdown;
+    `unref()` prevents them from blocking process exit
+  - `hostEventBus.subscribe()` return value captured and torn down during shutdown
+  - Parent timeout handle cleared before entering provider fallback loop so a stale
+    parent timer cannot kill the fallback child process
+- `finalizeCompletedRun` now sends a structured diagnostic when result is empty/null/
+  whitespace: `LLM produced no user-visible final response | run=X | provider=Y`.
+  `externallyCompleted` no longer suppresses the diagnostic — it appends
+  `external_delivery=yes` instead.
+- Telegram draft preview now publishes `Working on your reply...` immediately when a
+  tool call starts before any assistant text has been produced.
+
 ## [0.1.0] - 2026-04-30
 
 ### Reset
