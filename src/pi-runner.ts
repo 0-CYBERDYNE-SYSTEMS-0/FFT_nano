@@ -19,7 +19,9 @@ import {
   PARITY_CONFIG,
   TIMEZONE,
 } from './config.js';
-import { getEffectiveTimezone } from './time-context.js';
+import {
+  getEffectiveTimezone,
+} from './time-context.js';
 import {
   assertValidGroupFolder,
   resolveGroupFolderPath,
@@ -57,6 +59,7 @@ import {
 } from './pi-stream-parser.js';
 import { getPiApiKeyOverride } from './provider-auth.js';
 import { ensureOpenCodeGoModels } from './opencode-go-models.js';
+import { ensureLocalProviderModels } from './local-provider-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox } from './sandbox.js';
@@ -103,6 +106,8 @@ export interface ContainerInput {
   effectiveTimezone?: string;
   // Internal guardrail for provider fallback sequencing.
   attemptedProviders?: string[];
+  // Marks this as an evaluator run — prevents recursive evaluation.
+  isEvaluatorRun?: boolean;
 }
 
 export interface ContainerOutput {
@@ -304,8 +309,7 @@ function resolvePiRunLifecyclePolicy(params: {
     allowFreshSessionFallback: boolean;
   }) => ({
     hardTimeoutMs:
-      params.input.lifecyclePolicyOverride?.hardTimeoutMs ??
-      policy.hardTimeoutMs,
+      params.input.lifecyclePolicyOverride?.hardTimeoutMs ?? policy.hardTimeoutMs,
     staleAfterMs:
       params.input.lifecyclePolicyOverride?.staleAfterMs ?? policy.staleAfterMs,
     toolActiveStaleMs:
@@ -336,10 +340,7 @@ function resolvePiRunLifecyclePolicy(params: {
 
   const interactive = isInteractivePiRun(params);
   if (!interactive) {
-    const configuredTimeout = Math.max(
-      params.groupTimeoutMs,
-      CONTAINER_TIMEOUT,
-    );
+    const configuredTimeout = Math.max(params.groupTimeoutMs, CONTAINER_TIMEOUT);
     return applyOverride({
       hardTimeoutMs: Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000),
       staleAfterMs: null,
@@ -367,19 +368,13 @@ function resolvePiRunLifecyclePolicy(params: {
   );
   const toolActiveStaleMs = parseRuntimeMs(
     process.env.FFT_NANO_INTERACTIVE_TOOL_STALE_MS,
-    Math.min(
-      Math.max(100, hardTimeoutMs - 100),
-      Math.max(staleAfterMs, 5 * 60 * 1000),
-    ),
+    Math.min(Math.max(100, hardTimeoutMs - 100), Math.max(staleAfterMs, 5 * 60 * 1000)),
     100,
     Math.max(100, hardTimeoutMs - 100),
   );
   const waitStateStaleMs = parseRuntimeMs(
     process.env.FFT_NANO_INTERACTIVE_WAIT_STALE_MS,
-    Math.min(
-      Math.max(100, hardTimeoutMs - 100),
-      Math.max(staleAfterMs, 3 * 60 * 1000),
-    ),
+    Math.min(Math.max(100, hardTimeoutMs - 100), Math.max(staleAfterMs, 3 * 60 * 1000)),
     100,
     Math.max(100, hardTimeoutMs - 100),
   );
@@ -456,6 +451,7 @@ export function collectRuntimeSecrets(
     'GEMINI_API_KEY',
     'OPENROUTER_API_KEY',
     'OPENCODE_API_KEY',
+    'OPENCODE_API_KEY_FALLBACK',
     'GROQ_API_KEY',
     'ZAI_API_KEY',
     'MINIMAX_API_KEY',
@@ -554,6 +550,18 @@ function ensureGroupDirs(
   } else if (modelSeed.changed) {
     logger.debug({ path: modelSeed.path }, 'Seeded OpenCode Go models');
   }
+  const localModelSeed = ensureLocalProviderModels(wp.piAgentDir);
+  if (!localModelSeed.ok) {
+    logger.warn(
+      { path: localModelSeed.path, errors: localModelSeed.errors },
+      'Failed to refresh local provider models',
+    );
+  } else if (localModelSeed.changed) {
+    logger.debug(
+      { path: localModelSeed.path, discovered: localModelSeed.discovered },
+      'Refreshed local provider models',
+    );
+  }
   fs.mkdirSync(path.join(wp.ipcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'actions'), { recursive: true });
@@ -633,12 +641,7 @@ function resolveExtensionPaths(): string[] {
   const found: string[] = [];
   for (const [, srcName, distName] of extensions) {
     const srcPath = path.resolve(process.cwd(), 'src', 'extensions', srcName);
-    const distPath = path.resolve(
-      process.cwd(),
-      'dist',
-      'extensions',
-      distName,
-    );
+    const distPath = path.resolve(process.cwd(), 'dist', 'extensions', distName);
     if (fs.existsSync(srcPath)) {
       found.push(srcPath);
     } else if (fs.existsSync(distPath)) {
@@ -710,7 +713,7 @@ function buildPiArgs(params: {
         : 'read,bash,edit,write,grep,find,ls',
     );
   } else {
-    args.push('--tools', 'read,bash,edit,write,grep,find,ls');
+    args.push('--tools', 'read,bash,edit,write,grep,find,ls,agent');
   }
 
   if (transportMode === 'json') {
@@ -759,16 +762,15 @@ function classifyRunError(stderr: string, code: number | null): RunErrorClass {
   }
 
   // Explicit rate limit
-  if (/429|rate\s*limit|too\s*many\s*requests/i.test(stderr))
-    return 'rate_limit';
+  if (/429|rate\s*limit|too\s*many\s*requests/i.test(stderr)) return 'rate_limit';
 
   // Timeout / failover codes
-  if (/408|502|503|504|ETIMEDOUT|ECONNRESET|ECONNABORTED/i.test(stderr))
-    return 'timeout';
+  if (/408|502|503|504|ETIMEDOUT|ECONNRESET|ECONNABORTED/i.test(stderr)) return 'timeout';
 
   // Hard failures — never retry
-  if (/context\s*(length|size)\s*exceeded|overflow|token\s*limit/i.test(stderr))
-    return 'non_retryable';
+  if (
+    /context\s*(length|size)\s*exceeded|overflow|token\s*limit/i.test(stderr)
+  ) return 'non_retryable';
   if (/401|403|invalid.*api.*key|auth|unauthorized/i.test(stderr))
     return 'non_retryable';
   if (/SIGKILL|killed/i.test(stderr)) return 'non_retryable';
@@ -1286,7 +1288,6 @@ export async function runContainerAgent(
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
-      const initialDraftText = 'Working on your reply...';
       const publishDraftPreview = (text: string, force = false) => {
         if (!canStreamTelegramDraft) return;
         const normalized = normalizeTelegramDraftText(text);
@@ -1426,21 +1427,14 @@ export async function runContainerAgent(
               : thinkingSoFar;
           previewText = `Reasoning:\n\`\`\`\n${thinkingBlock}\n\`\`\`\n\n${assistantSoFar}`;
         }
-        publishDraftPreview(
-          previewText,
-          force || lastDraftText === initialDraftText,
-        );
+        publishDraftPreview(previewText, force);
       };
 
       const sendExtensionUIResponse = (
         requestId: string,
         response: ExtensionUIResponse,
       ) => {
-        if (
-          !child.stdin ||
-          child.stdin.destroyed ||
-          child.stdin.writableEnded
-        ) {
+        if (!child.stdin || child.stdin.destroyed || child.stdin.writableEnded) {
           logger.warn(
             { requestId, group: group.name },
             'Cannot send extension UI response because pi stdin is unavailable',
@@ -1473,14 +1467,6 @@ export async function runContainerAgent(
           at: Date.now(),
           reason: 'extension_ui',
         });
-        noteWaitState(
-          Math.max(
-            lifecyclePolicy.waitStateStaleMs ??
-              lifecyclePolicy.staleAfterMs ??
-              0,
-            (request.timeout ?? 60_000) + 1_000,
-          ),
-        );
 
         const fireAndForgetMethods = new Set([
           'notify',
@@ -1490,16 +1476,24 @@ export async function runContainerAgent(
           'set_editor_text',
         ]);
         if (fireAndForgetMethods.has(request.method)) {
+          // Reset the stale timer without marking meaningful progress — UI decorations
+          // are not evidence the LLM responded to anything.
+          noteActivity();
           return;
         }
 
+        noteWaitState(
+          Math.max(
+            lifecyclePolicy.waitStateStaleMs ??
+              lifecyclePolicy.staleAfterMs ??
+              0,
+            (request.timeout ?? 60_000) + 1_000,
+          ),
+        );
+
         if (!onExtensionUIRequest) {
           logger.warn(
-            {
-              requestId: request.id,
-              method: request.method,
-              group: group.name,
-            },
+            { requestId: request.id, method: request.method, group: group.name },
             'No extension UI handler registered, auto-denying',
           );
           if (request.method === 'confirm') {
@@ -1515,12 +1509,7 @@ export async function runContainerAgent(
           sendExtensionUIResponse(request.id, response);
         } catch (err) {
           logger.error(
-            {
-              requestId: request.id,
-              method: request.method,
-              err,
-              group: group.name,
-            },
+            { requestId: request.id, method: request.method, err, group: group.name },
             'Extension UI handler failed, auto-denying',
           );
           if (request.method === 'confirm') {
@@ -1551,9 +1540,7 @@ export async function runContainerAgent(
             typeof parsed.id === 'string' &&
             typeof parsed.method === 'string'
           ) {
-            void handleExtensionUIRequest(
-              parsed as unknown as ExtensionUIRequest,
-            );
+            void handleExtensionUIRequest(parsed as unknown as ExtensionUIRequest);
             return;
           }
           if (
@@ -1634,8 +1621,6 @@ export async function runContainerAgent(
         }
       };
 
-      publishDraftPreview(initialDraftText, true);
-
       ticker = canStreamTelegramDraft
         ? setInterval(() => maybeSendDraft(false), 1000)
         : null;
@@ -1702,7 +1687,7 @@ export async function runContainerAgent(
     }
 
     const timeoutMs = lifecyclePolicy.hardTimeoutMs;
-    const timeoutHandle = setTimeout(() => {
+    let timeoutHandle = setTimeout(() => {
       killActiveChild();
       finish({
         status: 'error',
@@ -1739,8 +1724,7 @@ export async function runContainerAgent(
 
           // Hard fail — do not retry
           if (errClass === 'non_retryable') {
-            finalError =
-              lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
+            finalError = lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
             break;
           }
 
@@ -1757,26 +1741,34 @@ export async function runContainerAgent(
               at: retryAt,
               reason: 'stale_no_progress',
             });
+            // Give the fresh attempt its own full budget — the stale attempt already
+            // consumed most of the original ceiling and would starve this retry.
+            clearTimeout(timeoutHandle);
+            timeoutHandle = setTimeout(() => {
+              killActiveChild();
+              finish({
+                status: 'error',
+                result: null,
+                error: `Pi runner timed out after ${timeoutMs}ms`,
+              });
+            }, timeoutMs);
             lastRes = await runPi(false);
             if (lastRes.code === 0) break;
-            finalError =
-              lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
+            finalError = lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
             break;
           }
 
           // If we already did a fresh retry, no more retries — exit
           if (didFreshRetry) {
             exhausted = true;
-            finalError =
-              lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
+            finalError = lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
             break;
           }
 
           attempt++;
           if (attempt >= FFT_NANO_MAX_RETRIES) {
             exhausted = true;
-            finalError =
-              lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
+            finalError = lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
             break;
           }
 
@@ -1802,8 +1794,16 @@ export async function runContainerAgent(
           FFT_NANO_PROVIDER_FALLBACK_ENABLED &&
           FFT_NANO_PROVIDER_FALLBACK_ORDER.length > 0
         ) {
+          // Stop the parent timer — each recursive fallback call gets its own
+          // fresh timeout, preventing the parent clock from killing the fallback child.
+          clearTimeout(timeoutHandle);
+          if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
+
           const primaryProvider =
-            input.provider || secrets.PI_API || process.env.PI_API || '';
+            input.provider ||
+            secrets.PI_API ||
+            process.env.PI_API ||
+            '';
           const fallbackProviders = getProviderFallbackCandidates({
             primaryProvider,
             configuredOrder: FFT_NANO_PROVIDER_FALLBACK_ORDER,
@@ -1838,8 +1838,7 @@ export async function runContainerAgent(
 
             if (fallbackResult.status === 'success') {
               clearTimeout(timeoutHandle);
-              if (abortSignal)
-                abortSignal.removeEventListener('abort', onAbort);
+              if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
               if (settled) return;
               finish(fallbackResult);
               return;
@@ -1875,21 +1874,13 @@ export async function runContainerAgent(
           }
 
           logger.error(
-            {
-              group: group.name,
-              code: lastRes.code,
-              duration,
-              stderr: lastRes.stderr.slice(-500),
-            },
+            { group: group.name, code: lastRes.code, duration, stderr: lastRes.stderr.slice(-500) },
             'Pi exited with error',
           );
           finish({
             status: 'error',
             result: null,
-            error:
-              finalError ||
-              lastRes.stderr.trim() ||
-              `pi exited with code ${lastRes.code}`,
+            error: finalError || lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`,
           });
           return;
         }
@@ -1902,11 +1893,7 @@ export async function runContainerAgent(
         });
         const result = isTelegramChatJid(input.chatJid)
           ? parsed.result
-          : appendToolVerboseSection(
-              parsed.result,
-              input.verboseMode,
-              parsed.toolExecutions,
-            );
+          : appendToolVerboseSection(parsed.result, input.verboseMode, parsed.toolExecutions);
 
         let finalResult: string | null = result;
         let finalStreamed = lastRes!.streamedDraft;

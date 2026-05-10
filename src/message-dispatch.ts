@@ -1,9 +1,5 @@
 import { PARITY_CONFIG } from './config.js';
 import { logger } from './logger.js';
-import {
-  formatEmptyFinalOutputDiagnostic,
-  hasUserVisibleText,
-} from './agent-empty-output.js';
 import type { TelegramMessagePreviewState } from './telegram-streaming.js';
 import type { NewMessage } from './types.js';
 import type { CodingWorkerResult } from './coding-orchestrator.js';
@@ -676,21 +672,7 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  const hasVisibleFinalResult = hasUserVisibleText(params.result);
-  const trustedExternalCompletion =
-    params.externallyCompleted && hasVisibleFinalResult;
-  const effectiveResult = hasVisibleFinalResult
-    ? params.result!.trim()
-    : formatEmptyFinalOutputDiagnostic({
-        runId: params.runId,
-        streamed: params.streamed,
-        externallyCompleted: params.externallyCompleted,
-        provider: params.usage?.provider,
-        model: params.usage?.model,
-        inputTokens: params.usage?.inputTokens,
-        outputTokens: params.usage?.outputTokens,
-        totalTokens: params.usage?.totalTokens,
-      });
+  const effectiveResult = params.result || 'Task completed.';
   if (effectiveResult) {
     const assistantTimestamp = params.persistAssistantHistory(
       params.chatJid,
@@ -701,7 +683,7 @@ export async function finalizeCompletedRun(
       params.persistLastAgentTimestamp?.(params.chatJid, assistantTimestamp);
     }
     let finalizedPreview = false;
-    if (!trustedExternalCompletion && params.telegramPreviewState) {
+    if (!params.externallyCompleted && params.telegramPreviewState) {
       finalizedPreview = await params.finalizeTelegramPreviewMessage(
         params.chatJid,
         params.telegramPreviewState.messageId,
@@ -718,7 +700,7 @@ export async function finalizeCompletedRun(
     //               streaming layer did not actually deliver anything)
     const shouldSend =
       params.deliverToChat !== false &&
-      !trustedExternalCompletion &&
+      !params.externallyCompleted &&
       (!params.streamed || !params.telegramPreviewState || !finalizedPreview);
 
     if (shouldSend) {
@@ -934,7 +916,6 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     const activeRun = {
       chatJid: params.chatJid,
       startedAt: Date.now(),
-      lastProgressAt: Date.now(),
       requestId: params.requestId,
       abortController,
     };
@@ -1510,6 +1491,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     if (existing) {
       const queue = deps.tuiMessageQueue.get(chatJid) ?? [];
       queue.push({ text, runId, deliver });
+      const TUI_QUEUE_CAP = 50;
+      while (queue.length > TUI_QUEUE_CAP) queue.shift();
       deps.tuiMessageQueue.set(chatJid, queue);
       return { runId: existing.requestId, status: 'queued' };
     }

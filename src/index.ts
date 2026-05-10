@@ -107,6 +107,7 @@ import {
 import { resolvePiExecutable } from './pi-executable.js';
 import { parsePiListModelsResult } from './pi-models.js';
 import { ensureOpenCodeGoModels } from './opencode-go-models.js';
+import { ensureLocalProviderModels } from './local-provider-models.js';
 import {
   applyProcessEnvUpdates,
   buildRuntimeProviderPresetUpdates,
@@ -250,7 +251,6 @@ import {
   formatStatusReport,
   isUserAbortedErrorMessage,
 } from './status-report.js';
-import { createWatchdog } from './watchdog.js';
 import {
   dispatchLegacyMessageEnvelope,
   wrapLegacyActionEnvelope,
@@ -258,6 +258,7 @@ import {
   wrapLegacyTaskEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
+import { runEvaluatorPass, buildRefinementPrompt } from './evaluator.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
@@ -338,7 +339,6 @@ const STATUS_STUCK_WARNING_SECONDS = 120;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
-let watchdogRuntime: ReturnType<typeof createWatchdog> | null = null;
 interface GitInfo {
   branch?: string;
   commit?: string;
@@ -1452,6 +1452,21 @@ function loadPiModels(
     logger.error(
       { path: seedResult.path, error: seedResult.error },
       'Failed to seed OpenCode Go models — picker may not show deepseek-v4-pro or deepseek-v4-flash',
+    );
+  }
+  const localSeedResult = ensureLocalProviderModels(
+    piAgentDir,
+    getRuntimeConfigEnv(),
+  );
+  if (!localSeedResult.ok) {
+    logger.warn(
+      { path: localSeedResult.path, errors: localSeedResult.errors },
+      'Failed to refresh local provider models',
+    );
+  } else if (localSeedResult.changed) {
+    logger.info(
+      { discovered: localSeedResult.discovered },
+      'Refreshed local provider models',
     );
   }
   const runtimeEnv = getRuntimeConfigEnv();
@@ -3744,11 +3759,9 @@ async function runCompactionForChat(
   };
   delete prefs.nextRunNoContinue;
   const abortController = new AbortController();
-  const startedAt = Date.now();
   const activeRun: ActiveChatRun = {
     chatJid,
-    startedAt,
-    lastProgressAt: startedAt,
+    startedAt: Date.now(),
     requestId: compactRequestId,
     abortController,
   };
@@ -4475,7 +4488,6 @@ const appRuntime = createAppRuntime({
   stopWebControlCenterService,
   startFarmStateCollector,
   stopFarmStateCollector,
-  startWatchdogLoop,
   startHeartbeatLoop,
   maybeRunBootMdOnce,
   getContainerRuntime,
@@ -4523,12 +4535,7 @@ async function runAgent(
   };
 }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
-  const touchActiveRun = () => {
-    if (!requestId) return;
-    const active = activeChatRunsById.get(requestId);
-    if (active) active.lastProgressAt = Date.now();
-  };
-  touchActiveRun();
+  const runAgentStartedAt = Date.now();
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -4620,6 +4627,8 @@ async function runAgent(
     };
 
     const sessionKey = getSessionKeyForChat(chatJid);
+    let runToolsInvoked = 0;
+
     const executeRun = async (
       runPrefs: ChatRunPreferences,
     ): Promise<{
@@ -4646,7 +4655,6 @@ async function runAgent(
         },
         abortSignal,
         (event) => {
-          touchActiveRun();
           if (event.kind !== 'tool' || !requestId) return;
           hadToolSideEffects = true;
           if (isTelegramJid(chatJid)) {
@@ -4676,10 +4684,8 @@ async function runAgent(
           });
         },
         (request) => handlePermissionGateRequest(chatJid, request),
-        () => {
-          touchActiveRun();
-        },
       );
+      runToolsInvoked = output.toolExecutions?.length ?? 0;
       return {
         ...output,
         hadToolSideEffects,
@@ -4777,11 +4783,38 @@ async function runAgent(
       },
     });
 
+    const finalResult = emptyOutputPolicy.finalRun;
+
+    // Evaluator pass — non-blocking for chat/heartbeat: deliver result first,
+    // then evaluate and send a follow-up only if issues are found.
+    if (finalResult.ok && finalResult.result) {
+      const runType = options.isHeartbeatTask ? 'heartbeat' : 'chat';
+      void runEvaluatorPass({
+        runType,
+        originalTask: prompt,
+        agentOutput: finalResult.result,
+        durationMs: Date.now() - runAgentStartedAt,
+        toolsInvoked: runToolsInvoked,
+        group,
+        chatJid,
+        abortSignal,
+      }).then((verdict) => {
+        if (verdict.skipped || verdict.pass) return;
+        const followUp =
+          `⚠️ Quality check flagged potential issues (score ${verdict.score}/10):\n` +
+          (verdict.issues.length > 0 ? verdict.issues.map((i) => `• ${i}`).join('\n') + '\n' : '') +
+          (verdict.feedback ? verdict.feedback : '');
+        void sendMessage(chatJid, followUp);
+      }).catch((err) => {
+        logger.warn({ err, chatJid }, 'Evaluator pass threw in background');
+      });
+    }
+
     return {
-      result: emptyOutputPolicy.finalRun.result,
-      streamed: emptyOutputPolicy.finalRun.streamed,
-      ok: emptyOutputPolicy.finalRun.ok,
-      usage: emptyOutputPolicy.finalRun.usage,
+      result: finalResult.result,
+      streamed: finalResult.streamed,
+      ok: finalResult.ok,
+      usage: finalResult.usage,
     };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
@@ -5344,6 +5377,7 @@ async function deliverRuntimeAgentMessage(params: {
       params.chatJid,
       requestId,
     );
+    noteTelegramHostCompletedRun(params.chatJid, requestId);
     if (previewState) {
       const finalized = await finalizeTelegramPreviewMessage(
         params.chatJid,
@@ -5351,21 +5385,15 @@ async function deliverRuntimeAgentMessage(params: {
         params.text,
       );
       if (!finalized) {
-        const sent = await sendTelegramAgentReply(params.chatJid, params.text);
-        if (sent) noteTelegramHostCompletedRun(params.chatJid, requestId);
-        return;
+        await sendTelegramAgentReply(params.chatJid, params.text);
       }
-      noteTelegramHostCompletedRun(params.chatJid, requestId);
       return;
     }
   }
 
-  const sent = await sendAgentResultMessage(params.chatJid, params.text, {
+  await sendAgentResultMessage(params.chatJid, params.text, {
     prefixWhatsApp: params.prefixWhatsApp,
   });
-  if (isTelegramJid(params.chatJid) && requestId && sent) {
-    noteTelegramHostCompletedRun(params.chatJid, requestId);
-  }
 }
 
 async function prepareTelegramCompletionState(params: {
@@ -5706,7 +5734,7 @@ function startIpcWatcher(): void {
       );
     },
   );
-  hostEventBus.subscribe((event) => {
+  ipcEventUnsubscribe = hostEventBus.subscribe((event) => {
     processHostEventOrdered(event);
   });
 
@@ -6349,11 +6377,9 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
 
   const requestId = `heartbeat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const abortController = new AbortController();
-  const startedAt = Date.now();
   const activeRun: ActiveChatRun = {
     chatJid: mainChatJid,
-    startedAt,
-    lastProgressAt: startedAt,
+    startedAt: Date.now(),
     requestId,
     abortController,
   };
@@ -6481,38 +6507,30 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
   }
 }
 
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let ipcEventUnsubscribe: (() => void) | null = null;
+
 function startHeartbeatLoop(): void {
   if (!HEARTBEAT_ENABLED || state.heartbeatLoopStarted) return;
   state.heartbeatLoopStarted = true;
-  setInterval(() => {
+  heartbeatTimer = setInterval(() => {
     if (state.shuttingDown) return;
     void runHeartbeatTurn('interval');
   }, HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
   logger.info({ everyMs: HEARTBEAT_INTERVAL_MS }, 'Heartbeat loop started');
 }
 
-function startWatchdogLoop(): void {
-  if (watchdogRuntime) return;
-  watchdogRuntime = createWatchdog({
-    activeChatRuns,
-    activeChatRunsById,
-    activeCoderRuns,
-    dataDir: DATA_DIR,
-    groupsDir: GROUPS_DIR,
-    mainWorkspaceDir: MAIN_WORKSPACE_DIR,
-    isShuttingDown: () => state.shuttingDown,
-    logger,
-    sendAlert: async (text) => {
-      const mainChatJid = findMainChatJid();
-      if (!mainChatJid) {
-        logger.warn({ text }, 'Watchdog alert has no main chat destination');
-        return;
-      }
-      await sendMessage(mainChatJid, text);
-      rememberHeartbeatTarget(mainChatJid);
-    },
-  });
-  watchdogRuntime.start();
+function stopHeartbeatLoop(): void {
+  if (heartbeatTimer !== null) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+    state.heartbeatLoopStarted = false;
+  }
+  if (ipcEventUnsubscribe !== null) {
+    ipcEventUnsubscribe();
+    ipcEventUnsubscribe = null;
+  }
 }
 
 function requestHeartbeatNow(reason = 'manual'): void {
@@ -6525,6 +6543,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 function stopFarmServicesForShutdown(signal: string): void {
+  stopHeartbeatLoop();
   appRuntime.stopFarmServicesForShutdown(signal);
 }
 
@@ -6532,6 +6551,7 @@ async function shutdownAndExit(
   signal: string,
   exitCode: number,
 ): Promise<void> {
+  stopHeartbeatLoop();
   await appRuntime.shutdownAndExit(signal, exitCode);
 }
 
