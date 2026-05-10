@@ -413,10 +413,12 @@ function applyTodoMutation(input: {
 
 function assertDurableMemoryPath(relPath: string): void {
   const normalized = relPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
-  const isMemoryRoot = normalized === 'MEMORY.md' || normalized === 'memory.md';
+  const lower = normalized.toLowerCase();
+  const isMemoryRoot = lower === 'memory.md';
+  const isTodosRoot = lower === 'todos.md';
   const isMemoryNote = /^memory\/[^/].*\.md$/i.test(normalized);
   const isCanonicalNote = /^canonical\/[^/].*\.md$/i.test(normalized);
-  if (!isMemoryRoot && !isMemoryNote && !isCanonicalNote) {
+  if (!isMemoryRoot && !isTodosRoot && !isMemoryNote && !isCanonicalNote) {
     throw new Error(`Path "${relPath}" is not a writable durable memory file`);
   }
 }
