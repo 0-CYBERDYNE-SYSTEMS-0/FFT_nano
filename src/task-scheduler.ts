@@ -7,6 +7,7 @@ import {
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
 import { runContainerAgent, writeTasksSnapshot } from './pi-runner.js';
+import { runEvaluatorPass } from './evaluator.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -140,6 +141,29 @@ async function runLegacyTask(
       error = output.error || 'Unknown error';
     } else {
       result = output.result;
+
+      // Evaluator pass for scheduled tasks — always runs
+      if (result && group) {
+        const verdict = await runEvaluatorPass({
+          runType: 'scheduled',
+          originalTask: task.prompt,
+          agentOutput: result,
+          durationMs: Date.now() - startTime,
+          toolsInvoked: output.toolExecutions?.length ?? 0,
+          group,
+          chatJid: task.chat_jid,
+        }).catch((err) => {
+          logger.warn({ err, taskId: task.id }, 'Evaluator pass failed for scheduled task');
+          return null;
+        });
+        if (verdict && !verdict.skipped && !verdict.pass) {
+          logger.warn(
+            { taskId: task.id, score: verdict.score, issues: verdict.issues },
+            'Scheduled task evaluator flagged issues',
+          );
+          result = `${result}\n\n[Evaluator: score ${verdict.score}/10 — ${verdict.feedback}${verdict.issues.length > 0 ? '\nIssues: ' + verdict.issues.join('; ') : ''}]`;
+        }
+      }
     }
 
     logger.info(
