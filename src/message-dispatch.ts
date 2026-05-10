@@ -672,7 +672,27 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  const effectiveResult = params.result || 'Task completed.';
+  const finalText = typeof params.result === 'string' ? params.result.trim() : '';
+  const hasVisibleFinalText = finalText.length > 0;
+
+  if (!hasVisibleFinalText) {
+    const parts = ['LLM produced no user-visible final response', `run=${params.runId}`];
+    if (params.usage?.provider) parts.push(`provider=${params.usage.provider}`);
+    if (params.usage?.model) parts.push(`model=${params.usage.model}`);
+    if (params.externallyCompleted) parts.push('external_delivery=yes');
+    const diagnostic = parts.join(' | ');
+    params.persistAssistantHistory(params.chatJid, diagnostic, params.runId);
+    await params.sendAgentResultMessage(params.chatJid, diagnostic);
+    params.emitTuiAgentEvent({
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      phase: 'end',
+      detail: 'complete',
+    });
+    return;
+  }
+
+  const effectiveResult = finalText;
   if (effectiveResult) {
     const assistantTimestamp = params.persistAssistantHistory(
       params.chatJid,
