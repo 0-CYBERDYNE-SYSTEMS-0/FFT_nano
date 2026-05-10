@@ -32,21 +32,16 @@
 **Evidence:** `ls skills/runtime/` — 12 directories each with `SKILL.md`
 
 ### Setup Skills (Operator-facing, one-time)
-**Count: 8 setup skills**
+**Count: 3 setup skills**
 **Location:** `skills/setup/`
 
 | Skill | Purpose |
 |-------|---------|
-| `add-gmail` | Gmail integration setup |
-| `add-parallel` | Parallel execution setup |
-| `add-voice-transcription` | Voice-to-text via OpenAI Whisper API |
-| `convert-to-docker` | Convert host install to Docker |
 | `customize` | Agent customization guide |
 | `debug` | Debugging setup guide |
 | `setup` | Initial setup guide |
-| `x-integration` | X/Twitter integration (post, like, retweet, reply, quote) |
 
-**Evidence:** `ls skills/setup/` — 8 directories each with `SKILL.md`
+**Evidence:** `ls skills/setup/` — 3 directories each with `SKILL.md`
 
 ### Required Skills (hardcoded)
 **Count: 4 required skills**
