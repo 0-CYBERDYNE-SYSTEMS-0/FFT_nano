@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { runEvaluatorPass, buildRefinementPrompt } from './evaluator.js';
 
 import type { RegisteredGroup } from './types.js';
 import type {
@@ -100,8 +101,6 @@ interface ActiveCodingRunState {
   chatJid: string;
   groupName: string;
   startedAt: number;
-  lastProgressAt?: number;
-  watchdogAbortAt?: number;
   parentRequestId?: string;
   backend?: 'pi';
   route?: CodingWorkerRoute;
@@ -207,10 +206,7 @@ function formatFinalMessage(params: {
   return lines.filter(Boolean).join('\n\n');
 }
 
-function buildWorkerPrompt(
-  request: CodingWorkerRequest,
-  learningsContext: string = '',
-): string {
+function buildWorkerPrompt(request: CodingWorkerRequest, learningsContext: string = ''): string {
   const lines = [
     '[REAL CODING WORKER RUN]',
     'You are the dedicated coding worker for FFT_nano.',
@@ -516,10 +512,7 @@ export async function createDefaultEphemeralWorktree(params: {
     ];
     await runCommand('rsync', rsyncArgs, { signal: params.signal });
     // Initialize the worktree as a fresh git repo
-    await runCommand('git', ['init'], {
-      cwd: worktreePath,
-      signal: params.signal,
-    });
+    await runCommand('git', ['init'], { cwd: worktreePath, signal: params.signal });
   } else {
     await runCommand(
       'git',
@@ -599,15 +592,11 @@ export async function createDefaultEphemeralWorktree(params: {
  * Computes the worktree base directory path for a given workspace.
  * Useful for calling pruneRetainedWorktrees before creating a worktree.
  */
-export function getWorktreeBaseDir(
-  sourceWorkspaceDir: string,
-): Promise<string> {
-  return runCommand('git', [
-    '-C',
-    path.resolve(sourceWorkspaceDir),
-    'rev-parse',
-    '--show-toplevel',
-  ]).then(({ stdout }) => {
+export function getWorktreeBaseDir(sourceWorkspaceDir: string): Promise<string> {
+  return runCommand(
+    'git',
+    ['-C', path.resolve(sourceWorkspaceDir), 'rev-parse', '--show-toplevel'],
+  ).then(({ stdout }) => {
     const gitTopLevel = stdout.trim();
     if (!gitTopLevel) {
       throw new Error(`Could not resolve git root for ${sourceWorkspaceDir}`);
@@ -637,10 +626,8 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       chatJid: request.originChatJid,
       heartbeatMs: Math.max(
         5_000,
-        Number.parseInt(
-          process.env.FFT_NANO_PROGRESS_HEARTBEAT_MS || '30000',
-          10,
-        ) || 30_000,
+        Number.parseInt(process.env.FFT_NANO_PROGRESS_HEARTBEAT_MS || '30000', 10) ||
+          30_000,
       ),
       emit: (event) => deps.publishEvent(event),
     });
@@ -651,7 +638,6 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       chatJid: request.originChatJid,
       groupName: request.group.name,
       startedAt: Date.now(),
-      lastProgressAt: Date.now(),
       parentRequestId: request.parentRequestId,
       backend: 'pi',
       route: request.route,
@@ -755,7 +741,6 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         },
         request.abortController?.signal,
         (event) => {
-          activeRun.lastProgressAt = Date.now();
           deps.publishEvent({
             kind: 'tool_progress',
             id: createHostEventId('tool'),
@@ -774,7 +759,6 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         },
         undefined,
         (event) => {
-          activeRun.lastProgressAt = Date.now();
           runProgress.handle(event);
         },
       );
@@ -832,6 +816,81 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         usage: output.usage,
       };
 
+      // Evaluator pass — blocking with refinement loop for execute runs.
+      // Plan-only runs are skipped (no side effects to verify).
+      if (request.mode === 'execute') {
+        const EVAL_MAX_REFINEMENTS = 2;
+        let evalTaskText = request.taskText;
+        let evalOutput = output;
+        let evalChangedFiles = changedFiles;
+
+        for (let attempt = 0; attempt < EVAL_MAX_REFINEMENTS; attempt++) {
+          const verdict = await runEvaluatorPass({
+            runType: isSubagentRoute(request.route) ? 'subagent' : 'coding',
+            originalTask: evalTaskText,
+            agentOutput: evalOutput.result ?? '',
+            durationMs: Date.now() - new Date(startedAt).getTime(),
+            toolsInvoked: evalOutput.toolExecutions?.length ?? 0,
+            changedFiles: evalChangedFiles,
+            group: request.group,
+            chatJid: request.originChatJid,
+            abortSignal: request.abortController?.signal,
+          });
+
+          if (verdict.skipped || verdict.pass) break;
+
+          // Evaluator found issues — run a refinement pass
+          const refinedPrompt = buildRefinementPrompt(evalTaskText, verdict);
+          const refinedOutput = await deps.runContainerAgent(
+            request.group,
+            {
+              prompt: buildWorkerPrompt({ ...request, taskText: refinedPrompt }, learningsContext),
+              groupFolder: request.group.folder,
+              chatJid: request.originChatJid,
+              isMain: request.group.folder === request.originGroupFolder,
+              isSubagent: isSubagentRoute(request.route),
+              assistantName: request.assistantName,
+              requestId: request.requestId,
+              codingHint: 'none',
+              noContinue: true,
+              toolMode: 'full',
+              workspaceDirOverride,
+              provider: request.runtimePrefs?.provider,
+              model: request.runtimePrefs?.model,
+            },
+            request.abortController?.signal,
+          );
+
+          if (refinedOutput.status === 'success' && refinedOutput.result) {
+            evalOutput = refinedOutput;
+            evalChangedFiles = worktree ? worktree.listChangedFiles() : evalChangedFiles;
+            evalTaskText = refinedPrompt;
+          } else {
+            // Refinement failed — keep best result and stop
+            break;
+          }
+        }
+
+        // Rebuild final result from potentially-refined output
+        const finalCommandsRun = extractCommands(evalOutput.toolExecutions);
+        const finalTestsRun = extractTestsRun(finalCommandsRun);
+        const finalChangedFiles = evalChangedFiles;
+        const finalBase = evalOutput.result?.trim() || baseResult;
+        const finalDiff = worktree ? worktree.getDiffSummary() : diffSummary;
+        const refinedFinalMessage = formatFinalMessage({
+          baseResult: finalBase,
+          worktreePath: worktree?.worktreePath,
+          diffSummary: finalDiff,
+          changedFiles: finalChangedFiles,
+          testsRun: finalTestsRun,
+        });
+        workerResult.finalMessage = refinedFinalMessage;
+        workerResult.changedFiles = finalChangedFiles;
+        workerResult.commandsRun = finalCommandsRun;
+        workerResult.testsRun = finalTestsRun;
+        workerResult.summary = summarizeText(finalBase);
+      }
+
       activeRun.state = 'completed';
       deps.publishEvent({
         kind: 'run_finished',
@@ -845,7 +904,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       });
       return {
         ok: true,
-        result: finalMessage,
+        result: workerResult.finalMessage,
         streamed: false,
         usage: output.usage,
         workerResult,

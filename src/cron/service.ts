@@ -10,6 +10,7 @@ import {
   TIMEZONE,
 } from '../config.js';
 import { runContainerAgent, writeTasksSnapshot } from '../pi-runner.js';
+import { runEvaluatorPass } from '../evaluator.js';
 import {
   deleteTask,
   getAllTasks,
@@ -381,6 +382,30 @@ export async function runScheduledTaskV2(
         outputError = output.error || 'Unknown scheduled task error';
       } else {
         outputResult = output.result;
+
+        // Evaluator pass for cron tasks — always runs
+        if (outputResult) {
+          const verdict = await runEvaluatorPass({
+            runType: 'cron',
+            originalTask: task.prompt,
+            agentOutput: outputResult,
+            durationMs: Date.now() - startedAt,
+            toolsInvoked: output.toolExecutions?.length ?? 0,
+            group,
+            chatJid: task.chat_jid,
+            abortSignal: abortController.signal,
+          }).catch((err) => {
+            logger.warn({ err, taskId: task.id }, 'Evaluator pass failed for cron task');
+            return null;
+          });
+          if (verdict && !verdict.skipped && !verdict.pass) {
+            logger.warn(
+              { taskId: task.id, score: verdict.score, issues: verdict.issues },
+              'Cron task evaluator flagged issues',
+            );
+            outputResult = `${outputResult}\n\n[Evaluator: score ${verdict.score}/10 — ${verdict.feedback}${verdict.issues.length > 0 ? '\nIssues: ' + verdict.issues.join('; ') : ''}]`;
+          }
+        }
       }
     }
   } catch (err) {
