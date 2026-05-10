@@ -310,8 +310,18 @@ export function parsePiJsonOutput(
       if (evt?.message?.role !== 'assistant') continue;
       sawAssistantMessageEnd = true;
 
+      const msgStopReason =
+        typeof evt?.message?.stopReason === 'string'
+          ? evt.message.stopReason
+          : '';
       const extracted = extractTextFromContent(evt?.message?.content).trim();
-      if (extracted) lastAssistant = extracted;
+      if (extracted) {
+        lastAssistant = extracted;
+      } else if (msgStopReason === 'end_turn' || msgStopReason === 'max_tokens') {
+        // Final turn produced no text — preamble text from prior tool-use turns
+        // is not a final response; clear it so empty-output retry logic fires.
+        lastAssistant = '';
+      }
     } catch {
       // Ignore non-JSON lines
     }
