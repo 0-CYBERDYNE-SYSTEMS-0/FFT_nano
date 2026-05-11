@@ -97,7 +97,7 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     id: 'kimi-coding',
     label: 'Kimi Coding',
     piApi: 'kimi-coding',
-    defaultModel: 'kimi-k2-thinking',
+    defaultModel: 'kimi-k2.6',
     apiKeyEnv: 'KIMI_API_KEY',
   },
   {
