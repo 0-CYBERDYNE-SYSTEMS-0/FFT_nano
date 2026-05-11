@@ -33,6 +33,34 @@ test('getProviderFallbackCandidates preserves forward-only fallback progression'
   );
 });
 
+test('runContainerAgent handles an already aborted signal without throwing', async () => {
+  const abortController = new AbortController();
+  abortController.abort(new Error('stop before start'));
+  const group: RegisteredGroup = {
+    name: 'Test Group',
+    folder: `testrun_aborted_${Date.now().toString(36)}`,
+    trigger: '@FarmFriend',
+    added_at: '2026-03-31T00:00:00.000Z',
+  };
+
+  const output = await runContainerAgent(
+    group,
+    {
+      prompt: 'should not run',
+      groupFolder: group.folder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      requestId: 'req-aborted-before-start',
+      piExecutableOverride: '/bin/false',
+    },
+    abortController.signal,
+  );
+
+  assert.equal(output.status, 'error');
+  assert.equal(output.error, 'Aborted by user');
+});
+
 function writeFakePiExecutable(dir: string): string {
   const executablePath = path.join(dir, 'fake-pi.js');
   fs.writeFileSync(
