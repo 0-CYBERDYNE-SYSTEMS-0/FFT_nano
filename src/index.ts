@@ -2457,7 +2457,7 @@ function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
     `Model: ${getEffectiveModelLabel(chatJid)}`,
     `Think: ${prefs.thinkLevel || 'off'}`,
     `Reasoning: ${prefs.reasoningLevel || 'off'}`,
-    `Delivery: ${prefs.telegramDeliveryMode || 'draft'}`,
+    `Delivery: ${prefs.telegramDeliveryMode || 'stream'}`,
     `Tool progress: ${getEffectiveVerboseMode(prefs.verboseMode)}`,
     `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
   ];
@@ -2848,17 +2848,16 @@ function buildDeliveryPanel(chatJid: string): {
   keyboard: TelegramInlineKeyboard;
 } {
   const current =
-    state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'draft';
-  const modes: TelegramDeliveryMode[] = ['draft', 'append', 'partial', 'off'];
+    state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'stream';
+  const modes: TelegramDeliveryMode[] = ['stream', 'off', 'draft'];
   return {
     text: [
       'Select Telegram text delivery mode:',
       `Current: ${current}`,
       '',
-      'draft: native streaming bubble in all chat types (default)',
-      'append: send progress and final as separate messages; never edit/delete',
-      'partial: one in-flight message edited during the run',
+      'stream: durable streaming message (default)',
       'off: no preview — final answer only',
+      'draft: native Telegram draft preview (ephemeral)',
     ].join('\n'),
     keyboard: [
       modes.map((value) => ({
@@ -4606,7 +4605,7 @@ async function runAgent(
             think_level: runtimePrefs.thinkLevel || null,
             reasoning_level: runtimePrefs.reasoningLevel || null,
             telegram_delivery_mode:
-              runtimePrefs.telegramDeliveryMode || 'draft',
+              runtimePrefs.telegramDeliveryMode || 'stream',
             verbose_mode: runtimePrefs.verboseMode || null,
             container_runtime: runtime,
           },
@@ -4643,6 +4642,8 @@ async function runAgent(
 
     const executeRun = async (
       runPrefs: ChatRunPreferences,
+      attemptRequestId = requestId,
+      suppressPreviewStreaming = false,
     ): Promise<{
       status: 'success' | 'error';
       result: string | null;
@@ -4662,18 +4663,21 @@ async function runAgent(
         group,
         {
           ...input,
+          requestId: attemptRequestId,
           verboseMode: runPrefs.verboseMode,
           noContinue: runPrefs.nextRunNoContinue === true,
+          suppressPreviewStreaming:
+            suppressPreviewStreaming || input.suppressPreviewStreaming,
         },
         abortSignal,
         (event) => {
-          if (event.kind !== 'tool' || !requestId) return;
+          if (event.kind !== 'tool' || !attemptRequestId) return;
           hadToolSideEffects = true;
           if (isTelegramJid(chatJid)) {
             queueTelegramToolProgressUpdate(
               chatJid,
-              requestId,
-              runPrefs.telegramDeliveryMode || 'draft',
+              attemptRequestId,
+              runPrefs.telegramDeliveryMode || 'stream',
               runPrefs.verboseMode,
               {
                 toolName: event.toolName,
@@ -4685,7 +4689,7 @@ async function runAgent(
             );
           }
           emitTuiToolEvent({
-            runId: requestId,
+            runId: attemptRequestId,
             sessionKey,
             index: event.index,
             toolName: event.toolName,
@@ -4752,10 +4756,15 @@ async function runAgent(
         usage: output.usage,
       },
       retryRun: async () => {
-        const retryOutput = await executeRun({
-          ...runtimePrefs,
-          nextRunNoContinue: true,
-        });
+        const retryRequestId = requestId ? `${requestId}:retry` : requestId;
+        const retryOutput = await executeRun(
+          {
+            ...runtimePrefs,
+            nextRunNoContinue: true,
+          },
+          retryRequestId,
+          true,
+        );
         if (retryOutput.status === 'error') {
           if (
             requestId &&
@@ -4811,16 +4820,20 @@ async function runAgent(
         group,
         chatJid,
         abortSignal,
-      }).then((verdict) => {
-        if (verdict.skipped || verdict.pass) return;
-        const followUp =
-          `⚠️ Quality check flagged potential issues (score ${verdict.score}/10):\n` +
-          (verdict.issues.length > 0 ? verdict.issues.map((i) => `• ${i}`).join('\n') + '\n' : '') +
-          (verdict.feedback ? verdict.feedback : '');
-        void sendMessage(chatJid, followUp);
-      }).catch((err) => {
-        logger.warn({ err, chatJid }, 'Evaluator pass threw in background');
-      });
+      })
+        .then((verdict) => {
+          if (verdict.skipped || verdict.pass) return;
+          const followUp =
+            `⚠️ Quality check flagged potential issues (score ${verdict.score}/10):\n` +
+            (verdict.issues.length > 0
+              ? verdict.issues.map((i) => `• ${i}`).join('\n') + '\n'
+              : '') +
+            (verdict.feedback ? verdict.feedback : '');
+          void sendMessage(chatJid, followUp);
+        })
+        .catch((err) => {
+          logger.warn({ err, chatJid }, 'Evaluator pass threw in background');
+        });
     }
 
     return {
@@ -5206,15 +5219,7 @@ function queueTelegramToolProgressUpdate(
   const effectiveMode = getEffectiveVerboseMode(mode);
 
   if (effectiveMode === 'off') return;
-
-  if (effectiveMode === 'new') {
-    queueTelegramToolProgressReaction(chatJid, requestId, event);
-    return;
-  }
-
-  if (effectiveMode === 'all' && deliveryMode === 'partial') {
-    queueTelegramToolProgressReaction(chatJid, requestId, event);
-  }
+  if (effectiveMode === 'new') return;
 
   if (
     shouldUseTelegramPreviewToolTrail({
@@ -5284,10 +5289,9 @@ async function finalizeTelegramPreviewMessage(
 
   const extracted = extractTelegramAttachmentHintsFromReply(text);
   if (extracted.hints.length > 0) {
-    await deleteTelegramPreviewMessage(chatJid, messageId);
     const sent = await sendTelegramAgentReply(chatJid, text);
     logger.info(
-      { chatJid, messageId, finalizeMode: 'delete-then-send' },
+      { chatJid, messageId, finalizeMode: 'send-full-reply' },
       'Telegram streaming preview finalized',
     );
     return sent;
@@ -5295,9 +5299,8 @@ async function finalizeTelegramPreviewMessage(
 
   const chunks = splitTelegramText(text);
   if (chunks.length === 0) {
-    await deleteTelegramPreviewMessage(chatJid, messageId);
     logger.info(
-      { chatJid, messageId, finalizeMode: 'delete-empty' },
+      { chatJid, messageId, finalizeMode: 'leave-existing-empty-final' },
       'Telegram streaming preview finalized',
     );
     return true;
@@ -5310,7 +5313,6 @@ async function finalizeTelegramPreviewMessage(
       { chatJid, messageId, err },
       'Failed to finalize Telegram streaming preview in place',
     );
-    await deleteTelegramPreviewMessage(chatJid, messageId);
     // Fallback: send the full text as a plain message
     return await sendMessage(chatJid, text);
   }
@@ -5362,12 +5364,62 @@ function consumeTelegramHostStreamState(
   );
 }
 
+function getTelegramHostAttemptStreamKeys(
+  chatJid: string,
+  requestId: string,
+): string[] {
+  const baseKey = getTelegramHostStreamKey(chatJid, requestId);
+  return [baseKey, getTelegramHostStreamKey(chatJid, `${requestId}:retry`)];
+}
+
+function consumeTelegramHostAttemptDraftStates(
+  chatJid: string,
+  requestId: string,
+): void {
+  for (const streamKey of getTelegramHostAttemptStreamKeys(
+    chatJid,
+    requestId,
+  )) {
+    telegramPreviewRegistry.consumeDraftState(streamKey);
+  }
+}
+
+function consumeTelegramHostAttemptPreviewStates(
+  chatJid: string,
+  requestId: string,
+): TelegramMessagePreviewState | null {
+  let previewState: TelegramMessagePreviewState | null = null;
+  for (const streamKey of getTelegramHostAttemptStreamKeys(
+    chatJid,
+    requestId,
+  )) {
+    const consumed = telegramPreviewRegistry.consumePreviewState(streamKey);
+    previewState ||= consumed;
+  }
+  return previewState;
+}
+
+function consumeTelegramHostAttemptCompletions(
+  chatJid: string,
+  requestId: string,
+): boolean {
+  let completed = false;
+  for (const streamKey of getTelegramHostAttemptStreamKeys(
+    chatJid,
+    requestId,
+  )) {
+    completed =
+      telegramPreviewRegistry.consumeCompleted(streamKey) || completed;
+  }
+  return completed;
+}
+
 function pruneTelegramHostStreamedRuns(): void {
   telegramPreviewRegistry.prune();
 }
 
 function getTelegramDeliveryMode(chatJid: string): TelegramDeliveryMode {
-  return state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'draft';
+  return state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'stream';
 }
 
 function canUseTelegramNativeDraft(_chatJid: string): boolean {
@@ -5419,13 +5471,9 @@ async function prepareTelegramCompletionState(params: {
 }> {
   const deliveryMode = getTelegramDeliveryMode(params.chatJid);
   if (deliveryMode === 'append') {
-    consumeTelegramHostCompletedRun(params.chatJid, params.runId);
-    telegramPreviewRegistry.consumePreviewState(
-      getTelegramHostStreamKey(params.chatJid, params.runId),
-    );
-    telegramPreviewRegistry.consumeDraftState(
-      getTelegramHostStreamKey(params.chatJid, params.runId),
-    );
+    consumeTelegramHostAttemptCompletions(params.chatJid, params.runId);
+    consumeTelegramHostAttemptPreviewStates(params.chatJid, params.runId);
+    consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
     return {
       externallyCompleted: false,
       previewState: null,
@@ -5433,11 +5481,9 @@ async function prepareTelegramCompletionState(params: {
   }
 
   if (deliveryMode === 'draft' && canUseTelegramNativeDraft(params.chatJid)) {
-    telegramPreviewRegistry.consumeDraftState(
-      getTelegramHostStreamKey(params.chatJid, params.runId),
-    );
+    consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
     return {
-      externallyCompleted: consumeTelegramHostCompletedRun(
+      externallyCompleted: consumeTelegramHostAttemptCompletions(
         params.chatJid,
         params.runId,
       ),
@@ -5446,11 +5492,14 @@ async function prepareTelegramCompletionState(params: {
   }
 
   return {
-    externallyCompleted: consumeTelegramHostCompletedRun(
+    externallyCompleted: consumeTelegramHostAttemptCompletions(
       params.chatJid,
       params.runId,
     ),
-    previewState: consumeTelegramHostStreamState(params.chatJid, params.runId),
+    previewState: consumeTelegramHostAttemptPreviewStates(
+      params.chatJid,
+      params.runId,
+    ),
   };
 }
 
@@ -6022,8 +6071,9 @@ function startIpcWatcher(): void {
                     telegramBot: state.telegramBot ?? undefined,
                     registeredGroups: state.registeredGroups,
                     resolveGroupWorkspaceDir: (folder) => {
-                      const groupPath = resolveGroupFolderPath(folder);
-                      return groupPath;
+                      return folder === MAIN_GROUP_FOLDER
+                        ? MAIN_WORKSPACE_DIR
+                        : resolveGroupFolderPath(folder);
                     },
                   },
                 );

@@ -86,14 +86,15 @@ function createBaseDeps(): TelegramCommandDeps {
       (
         ({
           off: 'off',
-          partial: 'partial',
-          block: 'partial',
+          stream: 'stream',
+          partial: 'stream',
+          block: 'stream',
           draft: 'draft',
           native: 'draft',
-          progress: 'partial',
-          live: 'partial',
-          persistent: 'append',
-          append: 'append',
+          progress: 'stream',
+          live: 'stream',
+          persistent: 'stream',
+          append: 'stream',
           final: 'off',
         }) as Record<string, string>
       )[value.trim().toLowerCase()] ?? null,
@@ -616,14 +617,15 @@ test('handleTelegramCommand normalizes delivery aliases to canonical persisted v
   (deps as any).normalizeTelegramDeliveryMode = (value: string) =>
     ({
       off: 'off',
-      partial: 'partial',
-      block: 'partial',
+      stream: 'stream',
+      partial: 'stream',
+      block: 'stream',
       draft: 'draft',
       native: 'draft',
-      progress: 'partial',
-      live: 'partial',
-      persistent: 'append',
-      append: 'append',
+      progress: 'stream',
+      live: 'stream',
+      persistent: 'stream',
+      append: 'stream',
       final: 'off',
     })[value];
 
@@ -635,8 +637,8 @@ test('handleTelegramCommand normalizes delivery aliases to canonical persisted v
   });
 
   assert.equal(handled, true);
-  assert.deepEqual(updates, [{ telegramDeliveryMode: 'partial' }]);
-  assert.match(deps.sent[0]?.text || '', /Delivery mode set to partial/i);
+  assert.deepEqual(updates, [{ telegramDeliveryMode: 'stream' }]);
+  assert.match(deps.sent[0]?.text || '', /Delivery mode set to stream/i);
 });
 
 test('handleTelegramCommand accepts the native Telegram draft delivery mode', async () => {
@@ -660,7 +662,7 @@ test('handleTelegramCommand accepts the native Telegram draft delivery mode', as
   assert.match(deps.sent[0]?.text || '', /Delivery mode set to draft/i);
 });
 
-test('handleTelegramCommand accepts append delivery mode', async () => {
+test('handleTelegramCommand maps append delivery mode to durable stream', async () => {
   const updates: Array<Record<string, any>> = [];
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
@@ -677,8 +679,8 @@ test('handleTelegramCommand accepts append delivery mode', async () => {
   });
 
   assert.equal(handled, true);
-  assert.deepEqual(updates, [{ telegramDeliveryMode: 'append' }]);
-  assert.match(deps.sent[0]?.text || '', /Delivery mode set to append/i);
+  assert.deepEqual(updates, [{ telegramDeliveryMode: 'stream' }]);
+  assert.match(deps.sent[0]?.text || '', /Delivery mode set to stream/i);
 });
 
 test('handleTelegramCommand reports canonical delivery modes in help text', async () => {

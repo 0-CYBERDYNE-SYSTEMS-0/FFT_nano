@@ -37,18 +37,10 @@ const EVAL_DURATION_MS = 45_000;
 const EVAL_TOOL_COUNT = 3;
 const EVAL_OUTPUT_CHARS = 1500;
 
-// Run types that are always evaluated regardless of duration/tool/output thresholds.
-const ALWAYS_EVAL_TYPES = new Set<RunType>(['scheduled', 'cron', 'heartbeat']);
-
 export function shouldEvaluate(ctx: EvaluatorContext): { evaluate: boolean; reason: string } {
   // Never evaluate empty output regardless of run type
   if (!ctx.agentOutput || ctx.agentOutput.trim().length === 0) {
     return { evaluate: false, reason: 'empty output' };
-  }
-
-  // Always-eval run types bypass all other thresholds
-  if (ALWAYS_EVAL_TYPES.has(ctx.runType)) {
-    return { evaluate: true, reason: `always-eval run type: ${ctx.runType}` };
   }
 
   if (ctx.runType === 'coding' && (ctx.changedFiles?.length ?? 0) > 0) {
