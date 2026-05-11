@@ -92,3 +92,20 @@ test('non-heartbeat empty output with tool side effects and streamed draft still
   assert.equal(outcome.retried, true);
   assert.equal(outcome.finalRun.result, 'Recovered after streamed draft');
 });
+
+test('aborted empty-output retry does not synthesize fallback response', async () => {
+  let aborted = false;
+  const outcome = await applyNonHeartbeatEmptyOutputPolicy({
+    isHeartbeatRun: false,
+    firstRun: { result: '', streamed: false, ok: true },
+    retryRun: async () => {
+      aborted = true;
+      return { result: null, streamed: false, ok: true };
+    },
+    isAborted: () => aborted,
+  });
+
+  assert.equal(outcome.retried, true);
+  assert.equal(outcome.finalRun.result, null);
+  assert.equal(outcome.finalRun.ok, true);
+});

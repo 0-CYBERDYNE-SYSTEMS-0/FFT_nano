@@ -4793,13 +4793,14 @@ async function runAgent(
           usage: retryOutput.usage,
         };
       },
+      isAborted: () => abortSignal?.aborted === true,
     });
 
     const finalResult = emptyOutputPolicy.finalRun;
 
     // Evaluator pass — non-blocking for chat/heartbeat: deliver result first,
     // then evaluate and send a follow-up only if issues are found.
-    if (finalResult.ok && finalResult.result) {
+    if (finalResult.ok && finalResult.result && abortSignal?.aborted !== true) {
       const runType = options.isHeartbeatTask ? 'heartbeat' : 'chat';
       void runEvaluatorPass({
         runType,
