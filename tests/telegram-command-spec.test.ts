@@ -37,8 +37,8 @@ test('main chat help includes admin restart alias and non-main help does not', (
   const mainHelp = formatHelpText(true);
   const nonMainHelp = formatHelpText(false);
 
-  assert.match(mainHelp, /\/delivery \[off\|draft\]/);
-  assert.match(nonMainHelp, /\/delivery \[off\|draft\]/);
+  assert.match(mainHelp, /\/delivery \[stream\|off\|draft\]/);
+  assert.match(nonMainHelp, /\/delivery \[stream\|off\|draft\]/);
   assert.match(
     mainHelp,
     /\/knowledge \[status\|init\|task\|ingest\|lint\] - knowledge wiki\/librarian controls/,

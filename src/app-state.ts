@@ -42,7 +42,12 @@ export type ThinkLevel =
   | 'high'
   | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
-export type TelegramDeliveryMode = 'off' | 'partial' | 'draft' | 'append';
+export type TelegramDeliveryMode =
+  | 'off'
+  | 'stream'
+  | 'draft'
+  | 'partial'
+  | 'append';
 export type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -345,7 +350,14 @@ export function pruneStaleState(): {
     }
   }
 
-  return { staleChatRuns, staleCoderRuns, expiredPanelActions, expiredSetupInputs, expiredToolProgress, staleTuiQueues };
+  return {
+    staleChatRuns,
+    staleCoderRuns,
+    expiredPanelActions,
+    expiredSetupInputs,
+    expiredToolProgress,
+    staleTuiQueues,
+  };
 }
 
 // ---------------------------------------------------------------------------

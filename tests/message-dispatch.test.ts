@@ -170,6 +170,57 @@ test('finalizeCompletedRun does not trust external completion for empty final ou
   assert.match(sent[0], /external_delivery=yes/);
 });
 
+test('finalizeCompletedRun preserves streamed Telegram preview when final output is empty', async () => {
+  const emitter = createEmitter();
+  const persisted: string[] = [];
+  const sent: string[] = [];
+  const finalized: Array<{ messageId: number; text: string }> = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-empty-preview',
+    sessionKey: 'telegram:1',
+    result: '',
+    streamed: true,
+    usage: undefined,
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: {
+      messageId: 444,
+      lastText: 'This streamed answer should remain in chat.',
+      updatedAt: Date.now(),
+    },
+    updateChatUsage: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+      return '2026-05-11T00:00:00.000Z';
+    },
+    deleteTelegramPreviewMessage: async () => {
+      throw new Error('should not delete streamed preview');
+    },
+    finalizeTelegramPreviewMessage: async (_chatJid, messageId, text) => {
+      finalized.push({ messageId, text });
+      return true;
+    },
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(persisted, ['This streamed answer should remain in chat.']);
+  assert.deepEqual(finalized, [
+    { messageId: 444, text: 'This streamed answer should remain in chat.' },
+  ]);
+  assert.deepEqual(sent, []);
+  assert.equal(
+    emitter.events.some((event) => event.kind === 'chat'),
+    true,
+  );
+});
+
 test('finalizeCompletedRun sends durable fallback after streamed empty retry output', async () => {
   const emitter = createEmitter();
   const persisted: string[] = [];

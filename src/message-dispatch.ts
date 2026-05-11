@@ -672,11 +672,50 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  const finalText = typeof params.result === 'string' ? params.result.trim() : '';
+  const finalText =
+    typeof params.result === 'string' ? params.result.trim() : '';
   const hasVisibleFinalText = finalText.length > 0;
 
   if (!hasVisibleFinalText) {
-    const parts = ['LLM produced no user-visible final response', `run=${params.runId}`];
+    const streamedText = params.telegramPreviewState?.lastText?.trim() || '';
+    if (streamedText) {
+      const assistantTimestamp = params.persistAssistantHistory(
+        params.chatJid,
+        streamedText,
+        params.runId,
+      );
+      if (assistantTimestamp) {
+        params.persistLastAgentTimestamp?.(params.chatJid, assistantTimestamp);
+      }
+      const finalizedPreview = await params.finalizeTelegramPreviewMessage(
+        params.chatJid,
+        params.telegramPreviewState!.messageId,
+        streamedText,
+      );
+      if (!finalizedPreview && params.deliverToChat !== false) {
+        await params.sendAgentResultMessage(params.chatJid, streamedText, {
+          prefixWhatsApp: true,
+        });
+      }
+      params.emitTuiChatEvent({
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        state: 'final',
+        message: { role: 'assistant', content: streamedText },
+        usage: params.usage,
+      });
+      params.emitTuiAgentEvent({
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        phase: 'end',
+        detail: 'streamed',
+      });
+      return;
+    }
+    const parts = [
+      'LLM produced no user-visible final response',
+      `run=${params.runId}`,
+    ];
     if (params.usage?.provider) parts.push(`provider=${params.usage.provider}`);
     if (params.usage?.model) parts.push(`model=${params.usage.model}`);
     if (params.externallyCompleted) parts.push('external_delivery=yes');

@@ -527,6 +527,67 @@ test(
   },
 );
 
+test(
+  'runContainerAgent uses streamed visible text when final assistant message is missing',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-stream-'));
+    const fakePiPath = path.join(tempDir, 'fake-pi-stream.js');
+    fs.writeFileSync(
+      fakePiPath,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'text_delta', delta: 'visible ' }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'text_delta', delta: 'answer' }) + '\\n');
+setTimeout(() => process.exit(0), 10);
+`,
+      'utf8',
+    );
+    fs.chmodSync(fakePiPath, 0o755);
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: true,
+      assistantName: 'FarmFriend',
+      requestId: `req-stream-${Date.now().toString(36)}`,
+      noContinue: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 2500,
+        hardTimeoutMs: 2500,
+      },
+    });
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, 'visible answer');
+    assert.equal(output.visibleAssistantText, 'visible answer');
+  },
+);
+
 function writeLongQuietToolPiExecutable(dir: string): string {
   const executablePath = path.join(dir, 'fake-pi-long-tool.js');
   fs.writeFileSync(
