@@ -64,8 +64,8 @@ The guided flow performs:
 - `npm run build`
 - pinned `~/.local/bin/fft` launcher plus global CLI link (`npm link`) so `fft ...` commands are available
 - runtime prep:
-  - Docker runtime: build agent image
-  - Host runtime: prepare host `pi` runner deps (no image build)
+  - Docker runtime: build agent image with the repo-pinned `pi` coding agent package
+  - Host runtime: use the repo-local `node_modules/.bin/pi` before any global `pi`
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
 - onboarding wizard (`risk gate`, `quickstart|advanced`, `local|remote`, provider/channel/hatch)
