@@ -7,6 +7,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-11
+
+### Added
+
+- `/delivery append` Telegram mode sends progress and final replies as separate
+  messages, avoiding edits or deletes after text has been printed.
+- Setup now installs a pinned `~/.local/bin/fft` launcher and PATH block so `fft tui`,
+  `fft web`, and service commands work from any directory after onboarding.
+
+### Fixed
+
+- Pi JSON parsing now distinguishes tool-use assistant preambles from terminal final
+  answers, preventing "let me research..." text from being delivered as the completed
+  response.
+- Empty terminal assistant turns after tool use now remain empty so the host retry/
+  diagnostic path runs instead of leaking earlier progress text.
+
 ## [0.2.0] - 2026-05-10
 
 ### Added
