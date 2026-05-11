@@ -57,13 +57,23 @@ export function normalizeTelegramDeliveryMode(
   const key = raw.trim().toLowerCase();
   if (!key) return undefined;
   if (['off', 'final', 'final-only', 'quiet'].includes(key)) return 'off';
-  if (['partial', 'progress', 'live', 'block'].includes(key)) {
-    return 'partial';
+  if (
+    [
+      'partial',
+      'progress',
+      'live',
+      'block',
+      'append',
+      'persistent',
+      'persist',
+      'transcript',
+      'draft',
+      'native',
+      'native-draft',
+    ].includes(key)
+  ) {
+    return 'draft';
   }
-  if (['append', 'persistent', 'persist', 'transcript'].includes(key)) {
-    return 'append';
-  }
-  if (['draft', 'native', 'native-draft'].includes(key)) return 'draft';
   return undefined;
 }
 
@@ -181,7 +191,7 @@ export function compactChatRunPreferences(
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
     next.reasoningLevel = prefs.reasoningLevel;
   }
-  if (prefs.telegramDeliveryMode && prefs.telegramDeliveryMode !== 'partial') {
+  if (prefs.telegramDeliveryMode === 'off') {
     next.telegramDeliveryMode = prefs.telegramDeliveryMode;
   }
   if (prefs.showReasoning === true) {

@@ -38,15 +38,15 @@ test('normalizeThinkLevel maps aliases', () => {
 
 test('normalizeTelegramDeliveryMode maps supported values', () => {
   assert.equal(normalizeTelegramDeliveryMode('off'), 'off');
-  assert.equal(normalizeTelegramDeliveryMode('partial'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('block'), 'partial');
+  assert.equal(normalizeTelegramDeliveryMode('partial'), 'draft');
+  assert.equal(normalizeTelegramDeliveryMode('block'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('draft'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('native'), 'draft');
-  assert.equal(normalizeTelegramDeliveryMode('progress'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('live'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('append'), 'append');
-  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'append');
-  assert.equal(normalizeTelegramDeliveryMode('transcript'), 'append');
+  assert.equal(normalizeTelegramDeliveryMode('progress'), 'draft');
+  assert.equal(normalizeTelegramDeliveryMode('live'), 'draft');
+  assert.equal(normalizeTelegramDeliveryMode('append'), 'draft');
+  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'draft');
+  assert.equal(normalizeTelegramDeliveryMode('transcript'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('final'), 'off');
   assert.equal(normalizeTelegramDeliveryMode(''), undefined);
 });
@@ -113,7 +113,7 @@ test('updateChatRunPreferences compacts defaults and persists', () => {
   assert.equal(runtime.getSaveCount(), 4);
 });
 
-test('persistent Telegram delivery aliases normalize to append when persisted', () => {
+test('legacy Telegram delivery aliases normalize to draft and compact away', () => {
   const runtime = createRuntime();
 
   const next = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
@@ -121,8 +121,8 @@ test('persistent Telegram delivery aliases normalize to append when persisted', 
     return prefs;
   });
 
-  assert.equal(next.telegramDeliveryMode, 'append');
-  assert.equal(runtime.chatRunPreferences['telegram:1']?.telegramDeliveryMode, 'append');
+  assert.equal(next.telegramDeliveryMode, undefined);
+  assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
 });
 
 test('updateChatRunPreferences preserves sessionTitle through compaction', () => {

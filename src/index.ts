@@ -2849,15 +2849,13 @@ function buildDeliveryPanel(chatJid: string): {
 } {
   const current =
     state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'draft';
-  const modes: TelegramDeliveryMode[] = ['draft', 'append', 'partial', 'off'];
+  const modes: TelegramDeliveryMode[] = ['draft', 'off'];
   return {
     text: [
       'Select Telegram text delivery mode:',
       `Current: ${current}`,
       '',
       'draft: native streaming bubble in all chat types (default)',
-      'append: send progress and final as separate messages; never edit/delete',
-      'partial: one in-flight message edited during the run',
       'off: no preview — final answer only',
     ].join('\n'),
     keyboard: [
@@ -4644,6 +4642,7 @@ async function runAgent(
     const executeRun = async (
       runPrefs: ChatRunPreferences,
       attemptRequestId = requestId,
+      suppressPreviewStreaming = false,
     ): Promise<{
       status: 'success' | 'error';
       result: string | null;
@@ -4666,6 +4665,8 @@ async function runAgent(
           requestId: attemptRequestId,
           verboseMode: runPrefs.verboseMode,
           noContinue: runPrefs.nextRunNoContinue === true,
+          suppressPreviewStreaming:
+            suppressPreviewStreaming || input.suppressPreviewStreaming,
         },
         abortSignal,
         (event) => {
@@ -4755,10 +4756,14 @@ async function runAgent(
       },
       retryRun: async () => {
         const retryRequestId = requestId ? `${requestId}:retry` : requestId;
-        const retryOutput = await executeRun({
-          ...runtimePrefs,
-          nextRunNoContinue: true,
-        }, retryRequestId);
+        const retryOutput = await executeRun(
+          {
+            ...runtimePrefs,
+            nextRunNoContinue: true,
+          },
+          retryRequestId,
+          true,
+        );
         if (retryOutput.status === 'error') {
           if (
             requestId &&
@@ -5209,15 +5214,7 @@ function queueTelegramToolProgressUpdate(
   const effectiveMode = getEffectiveVerboseMode(mode);
 
   if (effectiveMode === 'off') return;
-
-  if (effectiveMode === 'new') {
-    queueTelegramToolProgressReaction(chatJid, requestId, event);
-    return;
-  }
-
-  if (effectiveMode === 'all' && deliveryMode === 'partial') {
-    queueTelegramToolProgressReaction(chatJid, requestId, event);
-  }
+  if (effectiveMode === 'new') return;
 
   if (
     shouldUseTelegramPreviewToolTrail({
