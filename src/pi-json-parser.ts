@@ -188,6 +188,36 @@ interface PendingToolExecution {
   args?: string;
 }
 
+const NON_FINAL_ASSISTANT_STOP_REASONS = new Set([
+  'tooluse',
+  'tool_use',
+  'tool_calls',
+  'function_call',
+  'tool-call',
+]);
+
+const FINAL_ASSISTANT_STOP_REASONS = new Set([
+  '',
+  'stop',
+  'end_turn',
+  'max_tokens',
+]);
+
+function normalizeStopReason(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function readMessageStopReason(message: unknown): string {
+  if (!message || typeof message !== 'object') return '';
+  const record = message as Record<string, unknown>;
+  return normalizeStopReason(record.stopReason ?? record.stop_reason);
+}
+
+function isFinalAssistantStopReason(stopReason: string): boolean {
+  if (NON_FINAL_ASSISTANT_STOP_REASONS.has(stopReason)) return false;
+  return FINAL_ASSISTANT_STOP_REASONS.has(stopReason);
+}
+
 export function parsePiJsonOutput(
   input: ParsePiJsonOutputInput,
 ): ParsePiJsonOutputResult {
@@ -296,7 +326,9 @@ export function parsePiJsonOutput(
         }
       }
 
-      const stopReason = evt?.message?.stopReason;
+      const stopReason = normalizeStopReason(
+        evt?.message?.stopReason ?? evt?.message?.stop_reason,
+      );
       const errorMessage = evt?.message?.errorMessage;
       if (
         stopReason === 'error' &&
@@ -310,14 +342,13 @@ export function parsePiJsonOutput(
       if (evt?.message?.role !== 'assistant') continue;
       sawAssistantMessageEnd = true;
 
-      const msgStopReason =
-        typeof evt?.message?.stopReason === 'string'
-          ? evt.message.stopReason
-          : '';
+      const msgStopReason = readMessageStopReason(evt?.message);
+      if (!isFinalAssistantStopReason(msgStopReason)) continue;
+
       const extracted = extractTextFromContent(evt?.message?.content).trim();
       if (extracted) {
         lastAssistant = extracted;
-      } else if (msgStopReason === 'end_turn' || msgStopReason === 'max_tokens') {
+      } else {
         // Final turn produced no text — preamble text from prior tool-use turns
         // is not a final response; clear it so empty-output retry logic fires.
         lastAssistant = '';
