@@ -1503,7 +1503,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             m.chatJid,
             [
               `Current Telegram delivery mode: ${current}`,
-              'Valid modes: off, partial, draft',
+              'Valid modes: off, partial, draft, append',
             ].join('\n'),
           );
         }
@@ -1520,7 +1520,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         await deps.sendMessage(
           m.chatJid,
-          'Unrecognized delivery mode. Valid: off, partial, draft',
+          'Unrecognized delivery mode. Valid: off, partial, draft, append',
         );
         return true;
       }

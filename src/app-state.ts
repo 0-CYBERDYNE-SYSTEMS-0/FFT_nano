@@ -42,7 +42,7 @@ export type ThinkLevel =
   | 'high'
   | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
-export type TelegramDeliveryMode = 'off' | 'partial' | 'draft';
+export type TelegramDeliveryMode = 'off' | 'partial' | 'draft' | 'append';
 export type QueueMode =
   | 'collect'
   | 'interrupt'

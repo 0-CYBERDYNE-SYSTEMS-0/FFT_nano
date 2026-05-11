@@ -370,6 +370,56 @@ scaffold_mount_allowlist() {
   fi
 }
 
+install_cli_launcher() {
+  local bin_dir="${FFT_NANO_USER_BIN_DIR:-${HOME}/.local/bin}"
+  local launcher="${bin_dir}/fft"
+  mkdir -p "$bin_dir"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'exec node %q --repo %q "$@"\n' "${ROOT_DIR}/bin/fft.js" "$ROOT_DIR"
+  } >"$launcher"
+  chmod +x "$launcher"
+  say "CLI launcher installed: $launcher"
+
+  case ":${PATH}:" in
+    *":${bin_dir}:"*) return ;;
+  esac
+
+  if ! is_truthy "${FFT_NANO_UPDATE_SHELL_PATH:-1}"; then
+    say "NOTE: add ${bin_dir} to PATH to run 'fft' from new shells."
+    return
+  fi
+
+  local profile="${FFT_NANO_SHELL_PROFILE:-}"
+  if [[ -z "$profile" ]]; then
+    case "${SHELL:-}" in
+      */zsh) profile="${HOME}/.zshrc" ;;
+      */bash) profile="${HOME}/.bashrc" ;;
+      *) profile="${HOME}/.profile" ;;
+    esac
+  fi
+
+  mkdir -p "$(dirname "$profile")"
+  touch "$profile"
+  if grep -Fq "# >>> FFT_nano CLI >>>" "$profile"; then
+    say "PATH profile already contains FFT_nano CLI block: $profile"
+    return
+  fi
+
+  local path_entry="$bin_dir"
+  if [[ "$bin_dir" == "${HOME}/.local/bin" ]]; then
+    path_entry="\$HOME/.local/bin"
+  fi
+
+  {
+    printf '\n'
+    printf '# >>> FFT_nano CLI >>>\n'
+    printf 'export PATH="%s:$PATH"\n' "$path_entry"
+    printf '# <<< FFT_nano CLI <<<\n'
+  } >>"$profile"
+  say "Added ${bin_dir} to PATH in $profile (open a new shell, or run: export PATH=\"${bin_dir}:\$PATH\")."
+}
+
 say "FFT_nano setup (root: $ROOT_DIR)"
 parse_args "$@"
 
@@ -429,14 +479,15 @@ else
 fi
 
 if is_truthy "${FFT_NANO_AUTO_LINK:-1}"; then
+  install_cli_launcher
   say "Linking FFT CLI globally (npm link)..."
   if npm link; then
     say "CLI linked: use 'fft ...' from this checkout."
   else
-    say "WARN: npm link failed. Continue with ./scripts/... commands or run npm link manually."
+    say "WARN: npm link failed. The pinned launcher at ${FFT_NANO_USER_BIN_DIR:-${HOME}/.local/bin}/fft is still available."
   fi
 else
-  say "Skipping CLI global link (FFT_NANO_AUTO_LINK disabled)."
+  say "Skipping CLI launcher/global link (FFT_NANO_AUTO_LINK disabled)."
 fi
 
 ensure_admin_secret

@@ -40,6 +40,99 @@ test('assistant text block is extracted', () => {
   assert.equal(parsed.result, 'HEARTBEAT_OK');
 });
 
+test('tool-use assistant preamble is not returned as final output', () => {
+  const finalAnswer =
+    "I've researched and thought about this, and the best answer is the post-tool response.";
+  const stdout = [
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'toolUse',
+        content: [
+          {
+            type: 'text',
+            text: "Alright, I've read context and I need to research this.",
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_start',
+      toolCallId: 'search-1',
+      toolName: 'web_search',
+      args: { query: 'latest context' },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_end',
+      toolCallId: 'search-1',
+      toolName: 'web_search',
+      output: 'search results',
+    }),
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: finalAnswer }],
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, finalAnswer);
+  assert.doesNotMatch(parsed.result, /^Alright, I've read context/);
+});
+
+test('tool-use preamble followed by empty final assistant turn returns empty', () => {
+  const stdout = [
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'toolUse',
+        content: [{ type: 'text', text: 'Let me check that first.' }],
+      },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_start',
+      toolCallId: 'read-1',
+      toolName: 'read',
+      args: { path: 'README.md' },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_end',
+      toolCallId: 'read-1',
+      toolName: 'read',
+      output: 'ok',
+    }),
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'end_turn',
+        content: [],
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, '');
+});
+
+test('legacy assistant text with missing stop reason is still final output', () => {
+  const stdout = JSON.stringify({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'legacy final answer' }],
+    },
+  });
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, 'legacy final answer');
+});
+
 test('provider stopReason error is surfaced', () => {
   const stdout = JSON.stringify({
     type: 'message_end',

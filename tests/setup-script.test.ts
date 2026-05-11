@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,7 @@ function setupSetupFixture(options: { envBody?: string } = {}): {
 
   mkdirSync(scriptsDir, { recursive: true });
   mkdirSync(fakeBinDir, { recursive: true });
+  mkdirSync(path.join(fixtureRoot, 'bin'), { recursive: true });
   mkdirSync(path.join(fixtureRoot, 'container'), { recursive: true });
   mkdirSync(path.join(fixtureRoot, 'web', 'control-center'), { recursive: true });
 
@@ -57,6 +59,11 @@ printf 'docker-build\\n' >> "${dockerLog}"
     writeFileSync(path.join(fixtureRoot, '.env'), options.envBody, 'utf8');
   }
 
+  writeFileSync(
+    path.join(fixtureRoot, 'bin', 'fft.js'),
+    '#!/usr/bin/env node\n',
+    'utf8',
+  );
   writeFileSync(path.join(fixtureRoot, 'package.json'), '{"name":"fft-setup-fixture","private":true}\n', 'utf8');
   writeFileSync(path.join(fixtureRoot, 'web', 'control-center', 'package.json'), '{"name":"control-center","private":true}\n', 'utf8');
 
@@ -198,6 +205,44 @@ test('setup.sh with no Docker and --runtime host persists host runtime and skips
     'run build',
     '--prefix web/control-center install',
     '--prefix web/control-center run build',
+  ]);
+});
+
+test('setup.sh installs pinned fft launcher and shell PATH block when auto-link is enabled', () => {
+  const { fixtureRoot, npmLog } = setupSetupFixture();
+  const homeDir = path.join(fixtureRoot, 'home');
+  const userBinDir = path.join(homeDir, '.local', 'bin');
+
+  const result = runSetupFixture(
+    fixtureRoot,
+    ['--runtime', 'host'],
+    {
+      FFT_NANO_AUTO_LINK: '1',
+      FFT_NANO_USER_BIN_DIR: userBinDir,
+      HOME: homeDir,
+      SHELL: '/bin/zsh',
+    },
+  );
+
+  assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  const launcher = readFileSync(path.join(userBinDir, 'fft'), 'utf8');
+  const realFixtureRoot = realpathSync(fixtureRoot);
+  assert.match(launcher, new RegExp(`${realFixtureRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/bin/fft\\.js`));
+  assert.match(launcher, new RegExp(`--repo ${realFixtureRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(launcher, /"\$@"/);
+
+  const zshrc = readFileSync(path.join(homeDir, '.zshrc'), 'utf8');
+  assert.match(zshrc, /# >>> FFT_nano CLI >>>/);
+  assert.match(zshrc, /export PATH="\$HOME\/\.local\/bin:\$PATH"/);
+
+  const npmCalls = readFileSync(npmLog, 'utf8').trim().split('\n');
+  assert.deepEqual(npmCalls, [
+    'install',
+    'run typecheck',
+    'run build',
+    '--prefix web/control-center install',
+    '--prefix web/control-center run build',
+    'link',
   ]);
 });
 

@@ -62,7 +62,8 @@ Installer environment overrides:
 - `FFT_NANO_REF=v1.7.2`: install a specific release tag
 - `FFT_NANO_REF=main`: install current public `main`
 - `FFT_NANO_FORCE=1`: replace a non-empty install directory
-- `FFT_NANO_AUTO_LINK=0`: skip global `npm link`
+- `FFT_NANO_AUTO_LINK=0`: skip the pinned `~/.local/bin/fft` launcher and global `npm link`
+- `FFT_NANO_USER_BIN_DIR=/path/to/bin`: install the pinned `fft` launcher somewhere other than `~/.local/bin`
 
 The public installer chooses Docker when it is already installed and healthy. If Docker is missing or unhealthy, it uses host runtime and writes the required host-runtime opt-in values before onboarding.
 
@@ -72,6 +73,10 @@ If hatch is `web`, use:
 fft web
 # or ./scripts/web.sh
 ```
+
+Setup installs a pinned `fft` launcher that targets the installed checkout, so `fft web`,
+`fft tui`, and `fft service status` work from any directory in new shells. If your shell
+cannot find `fft`, run `export PATH="$HOME/.local/bin:$PATH"` or open a new terminal.
 
 First-run browser wizard links:
 - OpenRouter signup: `https://openrouter.ai/`

@@ -62,7 +62,7 @@ The guided flow performs:
 - dependency install (`npm ci` when lockfile exists)
 - `npm run typecheck`
 - `npm run build`
-- global CLI link (`npm link`) so `fft ...` commands are available
+- pinned `~/.local/bin/fft` launcher plus global CLI link (`npm link`) so `fft ...` commands are available
 - runtime prep:
   - Docker runtime: build agent image
   - Host runtime: prepare host `pi` runner deps (no image build)
@@ -184,8 +184,13 @@ If you disabled auto-service during setup (`FFT_NANO_AUTO_SERVICE=0`), install/s
 
 ### 4. Attach the TUI
 
-`fft` CLI should already be linked globally by onboarding setup.
-If needed, relink manually:
+`fft` CLI should already be installed by setup as a pinned launcher:
+
+```bash
+~/.local/bin/fft tui
+```
+
+The setup script also adds `~/.local/bin` to your shell PATH, so new terminals can run `fft ...` from any directory. If needed, relink the npm CLI manually:
 
 ```bash
 npm link
@@ -199,7 +204,7 @@ fft tui
 ```
 
 Important: `fft tui` is an attach client. The host process must already be running.
-`fft` auto-detects the repo from your current directory; use `--repo` to target another checkout:
+The pinned launcher created by setup targets the installed checkout from any directory. Use `--repo` to target another checkout:
 
 ```bash
 fft --repo /absolute/path/to/FFT_nano tui
