@@ -323,13 +323,15 @@ ensure_runtime_ready() {
   fi
 
   local host_pi="$ROOT_DIR/node_modules/.bin/pi"
+  if [[ -x "$host_pi" ]]; then
+    return
+  fi
+
   if command -v pi >/dev/null 2>&1; then
     return
   fi
 
-  if [[ ! -x "$host_pi" ]]; then
-    fail "Host runtime requires pi on PATH or ${host_pi}. Re-run npm install, set PI_PATH, or install @mariozechner/pi-coding-agent globally."
-  fi
+  fail "Host runtime requires ${host_pi}, PI_PATH, or pi on PATH. Re-run npm install, set PI_PATH, or install @mariozechner/pi-coding-agent globally."
 }
 
 scaffold_env() {
@@ -471,10 +473,12 @@ if [[ "$runtime" == "docker" ]]; then
 else
   say "Host runtime selected: skipping container image build."
   say "Smoke test: host pi availability"
-  if command -v pi >/dev/null 2>&1; then
+  if [[ -x "$ROOT_DIR/node_modules/.bin/pi" ]]; then
+    "$ROOT_DIR/node_modules/.bin/pi" --version >/dev/null 2>&1 || true
+  elif command -v pi >/dev/null 2>&1; then
     pi --version >/dev/null 2>&1 || true
-  else
-    PATH="$ROOT_DIR/node_modules/.bin:${PATH}" pi --version >/dev/null 2>&1 || true
+  elif [[ -n "${PI_PATH:-}" ]]; then
+    "$PI_PATH" --version >/dev/null 2>&1 || true
   fi
 fi
 

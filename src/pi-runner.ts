@@ -1139,7 +1139,7 @@ export async function runContainerAgent(
       status: 'error',
       result: null,
       error:
-        'pi binary not found on PATH and no repo-local fallback exists. Set PI_PATH or install pi globally.',
+        'pi binary not found. Run npm install for the repo-local pi, set PI_PATH, or install pi globally.',
     };
   }
 

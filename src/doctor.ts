@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { spawnSync } from 'child_process';
 import { pathToFileURL } from 'url';
 
 import {
@@ -14,6 +15,10 @@ import {
 } from './config.js';
 import { closeDatabase, getAllTasks, initDatabaseAtPath } from './db.js';
 import { parseHeartbeatActiveHours } from './heartbeat-policy.js';
+import {
+  RECOMMENDED_PI_CODING_AGENT_VERSION,
+  resolvePiExecutable,
+} from './pi-executable.js';
 import type { SystemPromptReport } from './system-prompt.js';
 import { readWatchdogStatus } from './watchdog.js';
 import { readMainWorkspaceState } from './workspace-bootstrap.js';
@@ -431,10 +436,48 @@ function checkRuntimeProfile(): CheckResult {
   };
 }
 
+function checkPiRuntime(): CheckResult {
+  const piPath = resolvePiExecutable();
+  if (!piPath) {
+    return {
+      id: 'runtime.pi',
+      level: 'fail',
+      summary: 'Pi coding agent executable was not found',
+      detail:
+        'Run npm install, set PI_PATH, or install @mariozechner/pi-coding-agent globally.',
+    };
+  }
+
+  const result = spawnSync(piPath, ['--version'], {
+    encoding: 'utf-8',
+    timeout: 10_000,
+  });
+  if (result.error || result.status !== 0) {
+    return {
+      id: 'runtime.pi',
+      level: 'fail',
+      summary: 'Pi coding agent executable did not run',
+      detail: `path=${piPath} error=${result.error?.message || result.stderr.trim() || `exit=${result.status}`}`,
+    };
+  }
+
+  const version = result.stdout.trim().split(/\s+/)[0] || 'unknown';
+  const isRecommended = version === RECOMMENDED_PI_CODING_AGENT_VERSION;
+  return {
+    id: 'runtime.pi',
+    level: isRecommended ? 'pass' : 'warn',
+    summary: isRecommended
+      ? 'Pi coding agent version matches the tested runtime'
+      : 'Pi coding agent version differs from the tested runtime',
+    detail: `path=${piPath} version=${version} recommended=${RECOMMENDED_PI_CODING_AGENT_VERSION}`,
+  };
+}
+
 export function buildDoctorReport(): DoctorReport {
   const checks: CheckResult[] = [
     checkStateDirs(),
     checkRuntimeProfile(),
+    checkPiRuntime(),
     checkWorkspaceFiles(),
     checkLegacyWorkspaceFiles(),
     checkWorkspaceBootstrapCaps(),
