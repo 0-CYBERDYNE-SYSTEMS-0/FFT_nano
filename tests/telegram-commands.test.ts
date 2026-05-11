@@ -92,7 +92,8 @@ function createBaseDeps(): TelegramCommandDeps {
           native: 'draft',
           progress: 'partial',
           live: 'partial',
-          persistent: 'partial',
+          persistent: 'append',
+          append: 'append',
           final: 'off',
         }) as Record<string, string>
       )[value.trim().toLowerCase()] ?? null,
@@ -621,7 +622,8 @@ test('handleTelegramCommand normalizes delivery aliases to canonical persisted v
       native: 'draft',
       progress: 'partial',
       live: 'partial',
-      persistent: 'partial',
+      persistent: 'append',
+      append: 'append',
       final: 'off',
     })[value];
 
@@ -656,6 +658,27 @@ test('handleTelegramCommand accepts the native Telegram draft delivery mode', as
   assert.equal(handled, true);
   assert.deepEqual(updates, [{ telegramDeliveryMode: 'draft' }]);
   assert.match(deps.sent[0]?.text || '', /Delivery mode set to draft/i);
+});
+
+test('handleTelegramCommand accepts append delivery mode', async () => {
+  const updates: Array<Record<string, any>> = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.updateChatRunPreferences = (_chatJid, updater) => {
+    updates.push(updater({}));
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/delivery append',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(updates, [{ telegramDeliveryMode: 'append' }]);
+  assert.match(deps.sent[0]?.text || '', /Delivery mode set to append/i);
 });
 
 test('handleTelegramCommand reports canonical delivery modes in help text', async () => {

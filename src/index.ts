@@ -481,10 +481,7 @@ function loadState(): void {
         const normalizedDelivery = prefs.telegramDeliveryMode
           ? normalizeTelegramDeliveryMode(prefs.telegramDeliveryMode)
           : undefined;
-        if (
-          normalizedDelivery === 'partial' ||
-          normalizedDelivery === undefined
-        ) {
+        if (normalizedDelivery === undefined) {
           delete nextPrefs.telegramDeliveryMode;
         } else {
           nextPrefs.telegramDeliveryMode = normalizedDelivery;
@@ -2852,13 +2849,14 @@ function buildDeliveryPanel(chatJid: string): {
 } {
   const current =
     state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'draft';
-  const modes: TelegramDeliveryMode[] = ['draft', 'partial', 'off'];
+  const modes: TelegramDeliveryMode[] = ['draft', 'append', 'partial', 'off'];
   return {
     text: [
       'Select Telegram text delivery mode:',
       `Current: ${current}`,
       '',
       'draft: native streaming bubble in all chat types (default)',
+      'append: send progress and final as separate messages; never edit/delete',
       'partial: one in-flight message edited during the run',
       'off: no preview — final answer only',
     ].join('\n'),
@@ -5419,6 +5417,20 @@ async function prepareTelegramCompletionState(params: {
   previewState: TelegramMessagePreviewState | null;
 }> {
   const deliveryMode = getTelegramDeliveryMode(params.chatJid);
+  if (deliveryMode === 'append') {
+    consumeTelegramHostCompletedRun(params.chatJid, params.runId);
+    telegramPreviewRegistry.consumePreviewState(
+      getTelegramHostStreamKey(params.chatJid, params.runId),
+    );
+    telegramPreviewRegistry.consumeDraftState(
+      getTelegramHostStreamKey(params.chatJid, params.runId),
+    );
+    return {
+      externallyCompleted: false,
+      previewState: null,
+    };
+  }
+
   if (deliveryMode === 'draft' && canUseTelegramNativeDraft(params.chatJid)) {
     telegramPreviewRegistry.consumeDraftState(
       getTelegramHostStreamKey(params.chatJid, params.runId),
@@ -5455,6 +5467,16 @@ async function processHostEvent(event: HostEvent): Promise<void> {
         event.chatJid,
         event.requestId,
       );
+
+      if (deliveryMode === 'append') {
+        const toolTrailFooter =
+          telegramPreviewRegistry.getToolTrailFooter(streamKey);
+        const text = toolTrailFooter
+          ? `${event.text}\n\n${toolTrailFooter}`
+          : event.text;
+        await state.telegramBot.sendMessage(event.chatJid, text);
+        return;
+      }
 
       if (
         deliveryMode === 'draft' &&
@@ -5615,6 +5637,10 @@ async function processHostEvent(event: HostEvent): Promise<void> {
 
       const deliveryMode = getTelegramDeliveryMode(event.chatJid);
       if (deliveryMode === 'off') return;
+      if (deliveryMode === 'append') {
+        await state.telegramBot.sendMessage(event.chatJid, event.text);
+        return;
+      }
 
       const streamKey = getTelegramPreviewRunKey(event.chatJid, event.runId);
       const existingState = telegramPreviewRegistry.getStreamState(streamKey);
