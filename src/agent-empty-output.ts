@@ -81,7 +81,6 @@ export async function applyNonHeartbeatEmptyOutputPolicy(params: {
   }
   if (
     secondRun.ok &&
-    !secondRun.streamed &&
     !hasUserVisibleText(secondRun.result)
   ) {
     return {

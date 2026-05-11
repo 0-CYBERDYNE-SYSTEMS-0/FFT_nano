@@ -133,13 +133,13 @@ test('buildTelegramToolProgressMessage keeps a stable header', () => {
   );
 });
 
-test('shouldUseStandaloneTelegramToolProgress is disabled for draft and off delivery', () => {
+test('shouldUseStandaloneTelegramToolProgress is disabled for all delivery modes', () => {
   assert.equal(
     shouldUseStandaloneTelegramToolProgress({
       deliveryMode: 'partial',
       verboseMode: 'all',
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldUseStandaloneTelegramToolProgress({
@@ -157,20 +157,20 @@ test('shouldUseStandaloneTelegramToolProgress is disabled for draft and off deli
   );
 });
 
-test('shouldUseTelegramPreviewToolTrail is enabled for draft all and verbose', () => {
+test('shouldUseTelegramPreviewToolTrail is disabled for all delivery modes', () => {
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
       deliveryMode: 'draft',
       verboseMode: 'all',
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
       deliveryMode: 'draft',
       verboseMode: 'verbose',
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldUseTelegramPreviewToolTrail({

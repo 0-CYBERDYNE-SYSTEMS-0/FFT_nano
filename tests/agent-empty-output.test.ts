@@ -34,6 +34,19 @@ test('non-heartbeat empty first + second runs return explicit fallback message',
   assert.equal(outcome.finalRun.ok, true);
 });
 
+test('non-heartbeat empty first + streamed empty second run returns explicit fallback message', async () => {
+  const outcome = await applyNonHeartbeatEmptyOutputPolicy({
+    isHeartbeatRun: false,
+    firstRun: { result: '', streamed: true, ok: true },
+    retryRun: async () => ({ result: '', streamed: true, ok: true }),
+  });
+
+  assert.equal(outcome.retried, true);
+  assert.equal(outcome.finalRun.result, EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE);
+  assert.equal(outcome.finalRun.streamed, false);
+  assert.equal(outcome.finalRun.ok, true);
+});
+
 test('heartbeat runs stay silent and do not trigger empty-output retry policy', async () => {
   let retries = 0;
   const outcome = await applyNonHeartbeatEmptyOutputPolicy({

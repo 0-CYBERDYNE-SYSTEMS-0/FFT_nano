@@ -68,20 +68,20 @@ describe('shouldEvaluate', () => {
     assert.equal(result.evaluate, true);
   });
 
-  it('always evaluates heartbeat runs regardless of duration', () => {
+  it('skips short heartbeat runs below thresholds', () => {
     const result = shouldEvaluate(ctx({ runType: 'heartbeat', durationMs: 100, toolsInvoked: 0 }));
-    assert.equal(result.evaluate, true);
-    assert.match(result.reason, /heartbeat/);
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /trivially short/);
   });
 
-  it('always evaluates scheduled runs', () => {
+  it('skips short scheduled runs below thresholds', () => {
     const result = shouldEvaluate(ctx({ runType: 'scheduled', durationMs: 100, toolsInvoked: 0 }));
-    assert.equal(result.evaluate, true);
+    assert.equal(result.evaluate, false);
   });
 
-  it('always evaluates cron runs', () => {
+  it('skips short cron runs below thresholds', () => {
     const result = shouldEvaluate(ctx({ runType: 'cron', durationMs: 100, toolsInvoked: 0 }));
-    assert.equal(result.evaluate, true);
+    assert.equal(result.evaluate, false);
   });
 
   it('evaluates coding run with changed files', () => {
