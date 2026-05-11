@@ -4643,6 +4643,7 @@ async function runAgent(
 
     const executeRun = async (
       runPrefs: ChatRunPreferences,
+      attemptRequestId = requestId,
     ): Promise<{
       status: 'success' | 'error';
       result: string | null;
@@ -4662,17 +4663,18 @@ async function runAgent(
         group,
         {
           ...input,
+          requestId: attemptRequestId,
           verboseMode: runPrefs.verboseMode,
           noContinue: runPrefs.nextRunNoContinue === true,
         },
         abortSignal,
         (event) => {
-          if (event.kind !== 'tool' || !requestId) return;
+          if (event.kind !== 'tool' || !attemptRequestId) return;
           hadToolSideEffects = true;
           if (isTelegramJid(chatJid)) {
             queueTelegramToolProgressUpdate(
               chatJid,
-              requestId,
+              attemptRequestId,
               runPrefs.telegramDeliveryMode || 'draft',
               runPrefs.verboseMode,
               {
@@ -4685,7 +4687,7 @@ async function runAgent(
             );
           }
           emitTuiToolEvent({
-            runId: requestId,
+            runId: attemptRequestId,
             sessionKey,
             index: event.index,
             toolName: event.toolName,
@@ -4752,10 +4754,11 @@ async function runAgent(
         usage: output.usage,
       },
       retryRun: async () => {
+        const retryRequestId = requestId ? `${requestId}:retry` : requestId;
         const retryOutput = await executeRun({
           ...runtimePrefs,
           nextRunNoContinue: true,
-        });
+        }, retryRequestId);
         if (retryOutput.status === 'error') {
           if (
             requestId &&
@@ -5362,6 +5365,46 @@ function consumeTelegramHostStreamState(
   );
 }
 
+function getTelegramHostAttemptStreamKeys(
+  chatJid: string,
+  requestId: string,
+): string[] {
+  const baseKey = getTelegramHostStreamKey(chatJid, requestId);
+  return [baseKey, getTelegramHostStreamKey(chatJid, `${requestId}:retry`)];
+}
+
+function consumeTelegramHostAttemptDraftStates(
+  chatJid: string,
+  requestId: string,
+): void {
+  for (const streamKey of getTelegramHostAttemptStreamKeys(chatJid, requestId)) {
+    telegramPreviewRegistry.consumeDraftState(streamKey);
+  }
+}
+
+function consumeTelegramHostAttemptPreviewStates(
+  chatJid: string,
+  requestId: string,
+): TelegramMessagePreviewState | null {
+  let previewState: TelegramMessagePreviewState | null = null;
+  for (const streamKey of getTelegramHostAttemptStreamKeys(chatJid, requestId)) {
+    const consumed = telegramPreviewRegistry.consumePreviewState(streamKey);
+    previewState ||= consumed;
+  }
+  return previewState;
+}
+
+function consumeTelegramHostAttemptCompletions(
+  chatJid: string,
+  requestId: string,
+): boolean {
+  let completed = false;
+  for (const streamKey of getTelegramHostAttemptStreamKeys(chatJid, requestId)) {
+    completed = telegramPreviewRegistry.consumeCompleted(streamKey) || completed;
+  }
+  return completed;
+}
+
 function pruneTelegramHostStreamedRuns(): void {
   telegramPreviewRegistry.prune();
 }
@@ -5419,13 +5462,9 @@ async function prepareTelegramCompletionState(params: {
 }> {
   const deliveryMode = getTelegramDeliveryMode(params.chatJid);
   if (deliveryMode === 'append') {
-    consumeTelegramHostCompletedRun(params.chatJid, params.runId);
-    telegramPreviewRegistry.consumePreviewState(
-      getTelegramHostStreamKey(params.chatJid, params.runId),
-    );
-    telegramPreviewRegistry.consumeDraftState(
-      getTelegramHostStreamKey(params.chatJid, params.runId),
-    );
+    consumeTelegramHostAttemptCompletions(params.chatJid, params.runId);
+    consumeTelegramHostAttemptPreviewStates(params.chatJid, params.runId);
+    consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
     return {
       externallyCompleted: false,
       previewState: null,
@@ -5433,11 +5472,9 @@ async function prepareTelegramCompletionState(params: {
   }
 
   if (deliveryMode === 'draft' && canUseTelegramNativeDraft(params.chatJid)) {
-    telegramPreviewRegistry.consumeDraftState(
-      getTelegramHostStreamKey(params.chatJid, params.runId),
-    );
+    consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
     return {
-      externallyCompleted: consumeTelegramHostCompletedRun(
+      externallyCompleted: consumeTelegramHostAttemptCompletions(
         params.chatJid,
         params.runId,
       ),
@@ -5446,11 +5483,14 @@ async function prepareTelegramCompletionState(params: {
   }
 
   return {
-    externallyCompleted: consumeTelegramHostCompletedRun(
+    externallyCompleted: consumeTelegramHostAttemptCompletions(
       params.chatJid,
       params.runId,
     ),
-    previewState: consumeTelegramHostStreamState(params.chatJid, params.runId),
+    previewState: consumeTelegramHostAttemptPreviewStates(
+      params.chatJid,
+      params.runId,
+    ),
   };
 }
 

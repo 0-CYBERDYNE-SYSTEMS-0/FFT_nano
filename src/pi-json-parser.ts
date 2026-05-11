@@ -55,6 +55,80 @@ function extractTextFromContent(content: unknown): string {
   return parts.join('');
 }
 
+type TextDelta =
+  | { kind: 'append'; text: string }
+  | { kind: 'replace'; text: string };
+
+function extractAssistantTextDelta(event: unknown): TextDelta | null {
+  if (!event || typeof event !== 'object') return null;
+  const evt = event as Record<string, unknown>;
+
+  if (evt.type === 'text_delta' && typeof evt.delta === 'string') {
+    return { kind: 'append', text: evt.delta };
+  }
+
+  if (evt.delta && typeof evt.delta === 'object') {
+    const deltaText = (evt.delta as Record<string, unknown>).text;
+    if (typeof deltaText === 'string') {
+      return { kind: 'append', text: deltaText };
+    }
+  }
+
+  if (typeof evt.text === 'string') {
+    return { kind: 'append', text: evt.text };
+  }
+
+  if (evt.message && typeof evt.message === 'object') {
+    const message = evt.message as Record<string, unknown>;
+    if (message.role && message.role !== 'assistant') return null;
+    const text = extractTextFromContent(message.content);
+    if (text) return { kind: 'replace', text };
+  }
+
+  if (evt.content) {
+    const text = extractTextFromContent(evt.content);
+    if (text) return { kind: 'replace', text };
+  }
+
+  return null;
+}
+
+function extractAssistantTextDeltaFromPiEvent(event: unknown): TextDelta | null {
+  if (!event || typeof event !== 'object') return null;
+  const evt = event as Record<string, unknown>;
+  const type = typeof evt.type === 'string' ? evt.type : '';
+
+  if (type === 'message_update') {
+    return (
+      extractAssistantTextDelta(evt.assistantMessageEvent) ||
+      extractAssistantTextDelta(evt.assistant_message_event) ||
+      extractAssistantTextDelta(evt.message) ||
+      extractAssistantTextDelta(evt)
+    );
+  }
+
+  if (
+    type === 'text_delta' ||
+    type === 'assistant_message_event' ||
+    type === 'assistant_message_delta'
+  ) {
+    return extractAssistantTextDelta(evt);
+  }
+
+  if (type === 'message_end') {
+    const message = evt.message;
+    if (!message || typeof message !== 'object') return null;
+    if ((message as Record<string, unknown>).role !== 'assistant') return null;
+    const text = extractTextFromContent(
+      (message as Record<string, unknown>).content,
+    );
+    if (!text) return null;
+    return { kind: 'replace', text };
+  }
+
+  return null;
+}
+
 function toNumber(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
   return value >= 0 ? value : undefined;
@@ -222,6 +296,7 @@ export function parsePiJsonOutput(
   input: ParsePiJsonOutputInput,
 ): ParsePiJsonOutputResult {
   let lastAssistant = '';
+  let streamedAssistantCandidate = '';
   let lastError: string | null = null;
   let sawJsonEvent = false;
   let sawAssistantMessageEnd = false;
@@ -284,6 +359,13 @@ export function parsePiJsonOutput(
 
       const evtRecord = evt as Record<string, unknown>;
       const evtType = typeof evtRecord.type === 'string' ? evtRecord.type : '';
+      const textDelta = extractAssistantTextDeltaFromPiEvent(evt);
+      if (textDelta) {
+        streamedAssistantCandidate =
+          textDelta.kind === 'replace'
+            ? textDelta.text
+            : streamedAssistantCandidate + textDelta.text;
+      }
       if (evtType) {
         if (isToolStartEvent(evtType)) {
           const pending: PendingToolExecution = {
@@ -343,16 +425,21 @@ export function parsePiJsonOutput(
       sawAssistantMessageEnd = true;
 
       const msgStopReason = readMessageStopReason(evt?.message);
-      if (!isFinalAssistantStopReason(msgStopReason)) continue;
+      if (!isFinalAssistantStopReason(msgStopReason)) {
+        streamedAssistantCandidate = '';
+        continue;
+      }
 
       const extracted = extractTextFromContent(evt?.message?.content).trim();
       if (extracted) {
         lastAssistant = extracted;
       } else {
         // Final turn produced no text — preamble text from prior tool-use turns
-        // is not a final response; clear it so empty-output retry logic fires.
-        lastAssistant = '';
+        // is cleared on the tool-use turn. Remaining streamed text belongs to
+        // this final turn and is the best provider-trusted final candidate.
+        lastAssistant = streamedAssistantCandidate.trim();
       }
+      streamedAssistantCandidate = '';
     } catch {
       // Ignore non-JSON lines
     }

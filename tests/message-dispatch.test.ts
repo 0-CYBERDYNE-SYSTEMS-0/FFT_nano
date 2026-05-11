@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { TelegramMessagePreviewState } from '../src/telegram-streaming.js';
+import { EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE } from '../src/agent-empty-output.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
@@ -167,6 +168,39 @@ test('finalizeCompletedRun does not trust external completion for empty final ou
   assert.equal(sent.length, 1);
   assert.match(sent[0], /LLM produced no user-visible final response/);
   assert.match(sent[0], /external_delivery=yes/);
+});
+
+test('finalizeCompletedRun sends durable fallback after streamed empty retry output', async () => {
+  const emitter = createEmitter();
+  const persisted: string[] = [];
+  const sent: string[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-empty-streamed-retry',
+    sessionKey: 'telegram:1',
+    result: EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE,
+    streamed: false,
+    usage: undefined,
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: null,
+    updateChatUsage: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+    },
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(sent, [EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE]);
+  assert.deepEqual(persisted, [EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE]);
 });
 
 test('finalizeCompletedRun deletes preview on abort and emits aborted state', async () => {

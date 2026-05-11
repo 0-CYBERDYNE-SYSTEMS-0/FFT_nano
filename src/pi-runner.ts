@@ -589,6 +589,86 @@ function resolvePerRequestPromptManifestPath(
   return path.join(groupDir, 'logs', 'system-prompts', `${safeId}.json`);
 }
 
+function sanitizeRunLogId(requestId: string | undefined): string {
+  return (requestId || `run-${Date.now()}`).replace(/[^a-zA-Z0-9._-]+/g, '-');
+}
+
+const RAW_RUN_CAPTURE_MAX_CHARS = 80_000;
+
+function redactRunCaptureText(value: string): string {
+  return value
+    .replace(
+      /\b([A-Za-z0-9_-]*(?:api[_-]?key|token|secret|password|authorization)[A-Za-z0-9_-]*)\b\s*[:=]\s*["']?([^"'\s,}]+)/gi,
+      '$1=[REDACTED]',
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /\b(?:sk|zai|ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_=-]{12,}\b/g,
+      '[REDACTED]',
+    );
+}
+
+function truncateRunCaptureText(value: string): {
+  text: string;
+  truncated: boolean;
+} {
+  const redacted = redactRunCaptureText(value);
+  if (redacted.length <= RAW_RUN_CAPTURE_MAX_CHARS) {
+    return { text: redacted, truncated: false };
+  }
+  return {
+    text: redacted.slice(-RAW_RUN_CAPTURE_MAX_CHARS),
+    truncated: true,
+  };
+}
+
+function writeRawRunCapture(params: {
+  groupDir: string;
+  requestId?: string;
+  reason: 'error' | 'empty_final';
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  stdoutTruncated?: boolean;
+  provider?: string;
+  model?: string;
+}): void {
+  try {
+    const outDir = path.join(params.groupDir, 'logs', 'pi-runs');
+    fs.mkdirSync(outDir, { recursive: true });
+    const now = new Date().toISOString();
+    const stdout = truncateRunCaptureText(params.stdout);
+    const stderr = truncateRunCaptureText(params.stderr);
+    const fileName = `${now.replace(/[:.]/g, '-')}-${sanitizeRunLogId(
+      params.requestId,
+    )}-${params.reason}.json`;
+    const payload = {
+      capturedAt: now,
+      requestId: params.requestId || null,
+      reason: params.reason,
+      code: params.code,
+      provider: params.provider || null,
+      model: params.model || null,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      truncated: {
+        stdout: stdout.truncated || params.stdoutTruncated === true,
+        stderr: stderr.truncated,
+      },
+    };
+    fs.writeFileSync(
+      path.join(outDir, fileName),
+      `${JSON.stringify(payload, null, 2)}\n`,
+      'utf-8',
+    );
+  } catch (err) {
+    logger.warn(
+      { requestId: params.requestId, err },
+      'Failed to write raw Pi run capture',
+    );
+  }
+}
+
 function isOverflowStyleError(stderr: string): boolean {
   return /payload too large|context length exceeded|maximum context length|token limit/i.test(
     stderr,
@@ -1165,6 +1245,7 @@ export async function runContainerAgent(
       stdout: string;
       stderr: string;
       streamedDraft: boolean;
+      stdoutTruncated?: boolean;
       retryFresh?: boolean;
     }>((resolve) => {
       let localSettled = false;
@@ -1319,6 +1400,7 @@ export async function runContainerAgent(
         stdout: string;
         stderr: string;
         streamedDraft: boolean;
+        stdoutTruncated?: boolean;
         retryFresh?: boolean;
       }) => {
         if (localSettled) return;
@@ -1367,6 +1449,7 @@ export async function runContainerAgent(
                 ? 'FFT_NANO_STALE_RETRY_AFTER_PROGRESS'
                 : 'Pi run stalled before producing progress',
             streamedDraft,
+            stdoutTruncated,
             retryFresh,
           });
         }, delayMs);
@@ -1672,12 +1755,18 @@ export async function runContainerAgent(
         if (!staleKillInProgress) {
           if (lineBuffer.trim()) processStdoutLine(lineBuffer);
           maybeSendDraft(true);
-          settleLocal({ code, stdout, stderr, streamedDraft });
+          settleLocal({ code, stdout, stderr, streamedDraft, stdoutTruncated });
         }
       });
 
       child.on('error', (err) => {
-        settleLocal({ code: 1, stdout, stderr: String(err), streamedDraft });
+        settleLocal({
+          code: 1,
+          stdout,
+          stderr: String(err),
+          streamedDraft,
+          stdoutTruncated,
+        });
       });
     });
 
@@ -1865,6 +1954,17 @@ export async function runContainerAgent(
         const duration = Date.now() - startTime;
 
         if (lastRes && lastRes.code !== 0) {
+          writeRawRunCapture({
+            groupDir: wp.groupDir,
+            requestId: input.requestId,
+            reason: 'error',
+            code: lastRes.code,
+            stdout: lastRes.stdout,
+            stderr: lastRes.stderr,
+            stdoutTruncated: lastRes.stdoutTruncated,
+            provider: input.provider,
+            model: input.model,
+          });
           const failedState: PromptRuntimeState = {
             ...readPromptRuntimeState(promptStatePath),
             lastPreflightDecision: preflightDecision,
@@ -1896,14 +1996,43 @@ export async function runContainerAgent(
         }
 
         // Success path (lastRes.code === 0)
-        const parsed = parsePiJsonOutput({
-          stdout: lastRes!.stdout,
-          provider: input.provider,
-          model: input.model,
-        });
+        let parsed: ReturnType<typeof parsePiJsonOutput>;
+        try {
+          parsed = parsePiJsonOutput({
+            stdout: lastRes!.stdout,
+            provider: input.provider,
+            model: input.model,
+          });
+        } catch (err) {
+          writeRawRunCapture({
+            groupDir: wp.groupDir,
+            requestId: input.requestId,
+            reason: 'error',
+            code: lastRes!.code,
+            stdout: lastRes!.stdout,
+            stderr: lastRes!.stderr,
+            stdoutTruncated: lastRes!.stdoutTruncated,
+            provider: input.provider,
+            model: input.model,
+          });
+          throw err;
+        }
         const result = isTelegramChatJid(input.chatJid)
           ? parsed.result
           : appendToolVerboseSection(parsed.result, input.verboseMode, parsed.toolExecutions);
+        if (!parsed.result.trim()) {
+          writeRawRunCapture({
+            groupDir: wp.groupDir,
+            requestId: input.requestId,
+            reason: 'empty_final',
+            code: lastRes!.code,
+            stdout: lastRes!.stdout,
+            stderr: lastRes!.stderr,
+            stdoutTruncated: lastRes!.stdoutTruncated,
+            provider: input.provider,
+            model: input.model,
+          });
+        }
 
         let finalResult: string | null = result;
         let finalStreamed = lastRes!.streamedDraft;

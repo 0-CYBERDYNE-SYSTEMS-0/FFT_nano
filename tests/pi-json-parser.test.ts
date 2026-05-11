@@ -120,6 +120,97 @@ test('tool-use preamble followed by empty final assistant turn returns empty', (
   assert.equal(parsed.result, '');
 });
 
+test('assistant text deltas followed by empty final message_end return streamed answer', () => {
+  const stdout = [
+    JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'The answer is ' },
+    }),
+    JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: '42.' },
+    }),
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'end_turn',
+        content: [],
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, 'The answer is 42.');
+});
+
+test('snake_case assistant text deltas followed by empty final message_end return streamed answer', () => {
+  const stdout = [
+    JSON.stringify({
+      type: 'message_update',
+      assistant_message_event: { type: 'text_delta', delta: 'snake ' },
+    }),
+    JSON.stringify({
+      type: 'message_update',
+      assistant_message_event: { type: 'text_delta', delta: 'case' },
+    }),
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stop_reason: 'stop',
+        content: [],
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, 'snake case');
+});
+
+test('streamed tool-use preamble followed by empty final assistant turn returns empty', () => {
+  const stdout = [
+    JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'text_delta',
+        delta: 'Let me check that first.',
+      },
+    }),
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'toolUse',
+        content: [],
+      },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_start',
+      toolCallId: 'read-1',
+      toolName: 'read',
+      args: { path: 'README.md' },
+    }),
+    JSON.stringify({
+      type: 'tool_execution_end',
+      toolCallId: 'read-1',
+      toolName: 'read',
+      output: 'ok',
+    }),
+    JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'end_turn',
+        content: [],
+      },
+    }),
+  ].join('\n');
+
+  const parsed = parsePiJsonOutput({ stdout });
+  assert.equal(parsed.result, '');
+});
+
 test('legacy assistant text with missing stop reason is still final output', () => {
   const stdout = JSON.stringify({
     type: 'message_end',
