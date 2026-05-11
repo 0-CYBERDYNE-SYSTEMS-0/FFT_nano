@@ -1123,12 +1123,16 @@ export async function runContainerAgent(
   let activeChild: import('child_process').ChildProcess | null = null;
 
   const killActiveChild = () => {
-    if (!activeChild || activeChild.killed) return;
-    activeChild.kill('SIGTERM');
+    if (!activeChild) return;
     const ref = activeChild;
-    setTimeout(() => {
-      if (!ref.killed) ref.kill('SIGKILL');
+    if (ref.exitCode !== null || ref.signalCode !== null) return;
+    ref.kill('SIGTERM');
+    const forceKillTimer = setTimeout(() => {
+      if (ref.exitCode === null && ref.signalCode === null) {
+        ref.kill('SIGKILL');
+      }
     }, 5_000);
+    forceKillTimer.unref?.();
   };
 
   const STDERR_MAX_SIZE = 1_048_576; // 1 MB
@@ -1679,10 +1683,11 @@ export async function runContainerAgent(
 
   return new Promise((resolve) => {
     let settled = false;
+    let timeoutHandle: NodeJS.Timeout | null = null;
     const finish = (output: ContainerOutput) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       resolve(output);
     };
 
@@ -1692,7 +1697,7 @@ export async function runContainerAgent(
     }
 
     const timeoutMs = lifecyclePolicy.hardTimeoutMs;
-    let timeoutHandle = setTimeout(() => {
+    timeoutHandle = setTimeout(() => {
       killActiveChild();
       finish({
         status: 'error',
@@ -1702,7 +1707,7 @@ export async function runContainerAgent(
     }, timeoutMs);
 
     const onAbort = () => {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       killActiveChild();
       finish({ status: 'error', result: null, error: 'Aborted by user' });
     };
@@ -1748,7 +1753,7 @@ export async function runContainerAgent(
             });
             // Give the fresh attempt its own full budget — the stale attempt already
             // consumed most of the original ceiling and would starve this retry.
-            clearTimeout(timeoutHandle);
+            if (timeoutHandle) clearTimeout(timeoutHandle);
             timeoutHandle = setTimeout(() => {
               killActiveChild();
               finish({
@@ -1801,7 +1806,7 @@ export async function runContainerAgent(
         ) {
           // Stop the parent timer — each recursive fallback call gets its own
           // fresh timeout, preventing the parent clock from killing the fallback child.
-          clearTimeout(timeoutHandle);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
 
           const primaryProvider =
@@ -1842,7 +1847,7 @@ export async function runContainerAgent(
             );
 
             if (fallbackResult.status === 'success') {
-              clearTimeout(timeoutHandle);
+              if (timeoutHandle) clearTimeout(timeoutHandle);
               if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
               if (settled) return;
               finish(fallbackResult);
@@ -1853,7 +1858,7 @@ export async function runContainerAgent(
           }
         }
 
-        clearTimeout(timeoutHandle);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
         if (settled) return;
 
@@ -1978,7 +1983,7 @@ export async function runContainerAgent(
           },
         });
       } catch (err) {
-        clearTimeout(timeoutHandle);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
         const error = err instanceof Error ? err.message : String(err);
         logger.error({ group: group.name, error }, 'Pi runner error');
