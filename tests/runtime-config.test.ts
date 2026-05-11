@@ -25,7 +25,7 @@ test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, opencode-go, o
 
   const kimi = resolveRuntimeConfigSnapshot({
     PI_API: 'kimi-coding',
-    PI_MODEL: 'kimi-k2-thinking',
+    PI_MODEL: 'kimi-k2.6',
     KIMI_API_KEY: 'secret',
   });
   assert.equal(kimi.providerPreset, 'kimi-coding');
@@ -85,6 +85,14 @@ test('buildRuntimeProviderPresetUpdates applies local defaults for ollama and lm
   assert.equal(opencodeGoUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'opencode-go');
   assert.equal(opencodeGoUpdates.PI_API, 'opencode-go');
   assert.equal(opencodeGoUpdates.PI_MODEL, 'deepseek-v4-pro');
+
+  const kimiUpdates = buildRuntimeProviderPresetUpdates({
+    preset: 'kimi-coding',
+    source: {},
+  });
+  assert.equal(kimiUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'kimi-coding');
+  assert.equal(kimiUpdates.PI_API, 'kimi-coding');
+  assert.equal(kimiUpdates.PI_MODEL, 'kimi-k2.6');
 
   const ollamaUpdates = buildRuntimeProviderPresetUpdates({
     preset: 'ollama',

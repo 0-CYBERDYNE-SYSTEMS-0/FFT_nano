@@ -36,8 +36,11 @@ RUN pip3 install --break-system-packages ddgs
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and pi (pi-coding-agent) globally
-RUN npm install -g agent-browser @mariozechner/pi-coding-agent
+# Install agent-browser and pi (pi-coding-agent) globally.
+# Keep PI_CODING_AGENT_PACKAGE in sync with package.json/package-lock.json so
+# container runs use the same tested agent runtime as host runs.
+ARG PI_CODING_AGENT_PACKAGE=@mariozechner/pi-coding-agent@0.73.1
+RUN npm install -g agent-browser "${PI_CODING_AGENT_PACKAGE}"
 
 # Create app directory
 WORKDIR /app

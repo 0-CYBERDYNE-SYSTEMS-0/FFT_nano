@@ -30,6 +30,33 @@ test('resolvePiExecutable prefers repo-local fallback when global pi is absent',
   }
 });
 
+test('resolvePiExecutable prefers repo-local pi over global PATH pi', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-'));
+  const localPiDir = path.join(tmpDir, 'node_modules', '.bin');
+  const localPiBin = path.join(localPiDir, 'pi');
+  const globalPiDir = path.join(tmpDir, 'global-bin');
+  const globalPiBin = path.join(globalPiDir, 'pi');
+  fs.mkdirSync(localPiDir, { recursive: true });
+  fs.mkdirSync(globalPiDir, { recursive: true });
+  fs.writeFileSync(localPiBin, '#!/bin/sh\necho local pi', { mode: 0o755 });
+  fs.writeFileSync(globalPiBin, '#!/bin/sh\necho global pi', { mode: 0o755 });
+
+  const originalPath = process.env.PATH;
+  const originalPiPath = process.env.PI_PATH;
+  process.env.PATH = globalPiDir;
+  delete process.env.PI_PATH;
+
+  try {
+    const resolved = resolvePiExecutable(tmpDir);
+    assert.equal(resolved, localPiBin);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalPiPath === undefined) delete process.env.PI_PATH;
+    else process.env.PI_PATH = originalPiPath;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('resolvePiExecutable honors PI_PATH override first', () => {
   const originalPiPath = process.env.PI_PATH;
   process.env.PI_PATH = '/tmp/custom-pi';
