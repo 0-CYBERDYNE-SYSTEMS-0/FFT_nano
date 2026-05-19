@@ -20,7 +20,7 @@ Runs on Raspberry Pi, your own server, or local hardware. Chat via Telegram or W
 
 | Persistent Memory | Equipment Control | Multi-Provider AI |
 |-------------------|-------------------|-------------------|
-| Carries context across sessions. Learns your operation over time. | Discovers and controls equipment via Telegram. Writes automation code automatically. | OpenAI, Anthropic, Gemini, OpenRouter, Ollama, LM Studio. Local-first. |
+| Carries context across sessions. Learns your operation over time. | Discovers and controls equipment via Telegram. Writes automation code automatically. | OpenAI, OpenCode Go, Anthropic, Gemini, OpenRouter, Ollama, LM Studio. Local-first. |
 
 ## Farm-Proven
 
@@ -111,7 +111,7 @@ curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime ho
 | `--flow <flow>` | quickstart, advanced, or manual |
 | `--mode <mode>` | local or remote |
 | `--runtime <runtime>` | auto, docker, or host |
-| `--auth-choice <choice>` | openai, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, or skip |
+| `--auth-choice <choice>` | openai, opencode-go, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, or skip |
 | `--model <id>` | Model ID (e.g. gpt-4o-mini, claude-3-5-sonnet-20241022) |
 | `--api-key <token>` | Provider API key |
 | `--remote-url <url>` | Remote gateway URL (remote mode) |
@@ -271,7 +271,7 @@ The `fft` CLI is the primary interface after install. When CLI linking is unavai
 | `--flow <flow>` | quickstart, advanced, or manual |
 | `--mode <mode>` | local or remote |
 | `--runtime <runtime>` | auto, docker, or host |
-| `--auth-choice <choice>` | openai, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, skip |
+| `--auth-choice <choice>` | openai, opencode-go, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, skip |
 | `--model <id>` | Model ID |
 | `--api-key <token>` | Provider API key |
 | `--remote-url <url>` | Remote gateway URL (remote mode) |

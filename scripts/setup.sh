@@ -128,6 +128,7 @@ is_runtime_env_configured() {
   fi
   case "$provider" in
     openai) api_key="$(read_env_value OPENAI_API_KEY)" ;;
+    opencode-go) api_key="$(read_env_value OPENCODE_API_KEY)" ;;
     anthropic) api_key="$(read_env_value ANTHROPIC_API_KEY)" ;;
     gemini) api_key="$(read_env_value GEMINI_API_KEY)" ;;
     openrouter) api_key="$(read_env_value OPENROUTER_API_KEY)" ;;
