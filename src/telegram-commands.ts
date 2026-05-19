@@ -181,6 +181,15 @@ export interface TelegramCommandDeps {
   promoteChatToMain: (chatJid: string, chatName: string) => void;
   refreshTelegramCommandMenus: () => Promise<void>;
   hasMainGroup: () => boolean;
+  approveTelegramGroup: (
+    chatJid: string,
+  ) => Promise<{ ok: boolean; text: string }>;
+  ignoreTelegramGroup: (
+    chatJid: string,
+  ) => Promise<{ ok: boolean; text: string }>;
+  unignoreTelegramGroup: (
+    chatJid: string,
+  ) => Promise<{ ok: boolean; text: string }>;
   runGatewayServiceCommand: (action: 'status' | 'restart' | 'doctor') => {
     ok: boolean;
     text: string;
@@ -695,6 +704,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         case 'show-delivery':
         case 'show-verbose':
         case 'show-queue':
+        case 'show-groups':
         case 'show-subagents':
         case 'show-setup-home':
         case 'show-setup-providers':
@@ -708,6 +718,30 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             settingsAction,
           );
           return;
+        case 'approve-telegram-group':
+        case 'ignore-telegram-group':
+        case 'unignore-telegram-group': {
+          if (!deps.isMainChat(q.chatJid)) {
+            await deps.sendMessage(
+              q.chatJid,
+              `${deps.constants.assistantName}: group approval actions are only available in the main/admin chat.`,
+            );
+            return;
+          }
+          const result =
+            settingsAction.kind === 'approve-telegram-group'
+              ? await deps.approveTelegramGroup(settingsAction.chatJid)
+              : settingsAction.kind === 'ignore-telegram-group'
+                ? await deps.ignoreTelegramGroup(settingsAction.chatJid)
+                : await deps.unignoreTelegramGroup(settingsAction.chatJid);
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-groups',
+          });
+          if (!result.ok) {
+            await deps.sendMessage(q.chatJid, result.text);
+          }
+          return;
+        }
         case 'prompt-add-model-for-provider':
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
             kind: 'show-add-model-for-provider',
@@ -1024,7 +1058,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return;
       case 'panel:groups':
         deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
-        await deps.sendMessage(q.chatJid, deps.formatGroupsText());
+        await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+          kind: 'show-groups',
+        });
         return;
       case 'panel:health':
         deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
@@ -2130,8 +2166,16 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/groups') {
+      if (!deps.isMainChat(m.chatJid)) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
+        await deps.sendMessage(
+          m.chatJid,
+          `${deps.constants.assistantName}: group management is only available in the main/admin chat.`,
+        );
+        return true;
+      }
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      await deps.sendMessage(m.chatJid, deps.formatGroupsText());
+      await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-groups' });
       return true;
     }
 

@@ -112,6 +112,9 @@ function createBaseDeps(): TelegramCommandDeps {
     promoteChatToMain: () => {},
     refreshTelegramCommandMenus: async () => {},
     hasMainGroup: () => false,
+    approveTelegramGroup: async () => ({ ok: true, text: 'approved' }),
+    ignoreTelegramGroup: async () => ({ ok: true, text: 'ignored' }),
+    unignoreTelegramGroup: async () => ({ ok: true, text: 'unignored' }),
     runGatewayServiceCommand: () => ({ ok: true, text: 'ok' }),
     runUpdateCommand: () => ({ ok: true, text: 'updated' }),
     startUpdateCommand: () => ({
@@ -234,6 +237,73 @@ test('handleTelegramCallbackQuery routes admin panel actions for main chat', asy
     allowed: true,
     reason: 'ok',
   });
+});
+
+test('handleTelegramCallbackQuery approves pending Telegram groups from settings panel', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  const edited: Array<{ chatJid: string; messageId: number; panel: any }> = [];
+  const approved: string[] = [];
+  deps.isMainChat = () => true;
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'approve-telegram-group',
+    chatJid: 'telegram:-1001',
+  });
+  deps.approveTelegramGroup = async (chatJid) => {
+    approved.push(chatJid);
+    return { ok: true, text: 'approved' };
+  };
+  deps.editTelegramSettingsPanel = async (chatJid, messageId, panel) => {
+    edited.push({ chatJid, messageId, panel });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-approve',
+    chatJid: 'telegram:main',
+    messageId: 55,
+    data: 'settings:group',
+  });
+
+  assert.deepEqual(approved, ['telegram:-1001']);
+  assert.deepEqual(edited, [
+    { chatJid: 'telegram:main', messageId: 55, panel: { kind: 'show-groups' } },
+  ]);
+  assert.deepEqual(deps.sent, []);
+});
+
+test('handleTelegramCommand opens group management panel only in main chat', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    panels: Array<{ chatJid: string; panel: { kind: string } }>;
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = (chatJid) => chatJid === 'telegram:main';
+  const handlers = createTelegramCommandHandlers(deps);
+
+  await handlers.handleTelegramCommand({
+    id: 'm-1',
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    sender: 'user',
+    senderName: 'Owner',
+    timestamp: '2026-05-19T12:00:00.000Z',
+    content: '/groups',
+  });
+  await handlers.handleTelegramCommand({
+    id: 'm-2',
+    chatJid: 'telegram:-1001',
+    chatName: 'Field Team',
+    sender: 'user',
+    senderName: 'Worker',
+    timestamp: '2026-05-19T12:01:00.000Z',
+    content: '/groups',
+  });
+
+  assert.deepEqual(deps.panels, [
+    { chatJid: 'telegram:main', panel: { kind: 'show-groups' } },
+  ]);
+  assert.match(deps.sent[0]?.text || '', /main\/admin chat/);
 });
 
 test('handleTelegramCallbackQuery starts a coder plan from approval actions', async () => {
