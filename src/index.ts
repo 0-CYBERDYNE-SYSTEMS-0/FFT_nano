@@ -96,6 +96,7 @@ import {
 import {
   createTelegramBot,
   isTelegramJid,
+  isTelegramPrivateChatJid,
   parseTelegramChatId,
   splitTelegramText,
 } from './telegram.js';
@@ -346,6 +347,25 @@ const STATUS_STUCK_WARNING_SECONDS = 120;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
+const TELEGRAM_GROUP_APPROVALS_PATH = path.join(
+  DATA_DIR,
+  'telegram_group_approvals.json',
+);
+const TELEGRAM_GROUP_APPROVAL_NOTIFY_EVERY_MS = 10 * 60 * 1000;
+
+interface TelegramGroupApprovalRecord {
+  jid: string;
+  name: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastNotifiedAt?: string;
+}
+
+interface TelegramGroupApprovalState {
+  pending: Record<string, TelegramGroupApprovalRecord>;
+  ignored: Record<string, TelegramGroupApprovalRecord & { ignoredAt: string }>;
+}
+
 interface GitInfo {
   branch?: string;
   commit?: string;
@@ -790,6 +810,256 @@ function getAvailableGroups(): AvailableGroup[] {
     }));
 }
 
+function emptyTelegramGroupApprovalState(): TelegramGroupApprovalState {
+  return { pending: {}, ignored: {} };
+}
+
+function loadTelegramGroupApprovals(): TelegramGroupApprovalState {
+  const loaded = loadJson<Partial<TelegramGroupApprovalState>>(
+    TELEGRAM_GROUP_APPROVALS_PATH,
+    emptyTelegramGroupApprovalState(),
+  );
+  return {
+    pending: loaded.pending || {},
+    ignored: loaded.ignored || {},
+  };
+}
+
+function saveTelegramGroupApprovals(
+  approvals: TelegramGroupApprovalState,
+): void {
+  saveJson(TELEGRAM_GROUP_APPROVALS_PATH, approvals);
+}
+
+function isTelegramGroupChatJid(chatJid: string): boolean {
+  if (!isTelegramJid(chatJid) || isTelegramPrivateChatJid(chatJid)) {
+    return false;
+  }
+  const chatId = parseTelegramChatId(chatJid);
+  if (!chatId) return false;
+  return Number(chatId) < 0;
+}
+
+function buildTelegramGroupFolder(chatJid: string): string | null {
+  const chatId = parseTelegramChatId(chatJid);
+  if (!chatId) return null;
+  const folder = `telegram-${chatId}`;
+  return isValidGroupFolder(folder) ? folder : null;
+}
+
+function findAvailableGroup(chatJid: string): AvailableGroup | null {
+  return getAvailableGroups().find((group) => group.jid === chatJid) || null;
+}
+
+function clipTelegramButtonLabel(value: string, max = 26): string {
+  const trimmed = value.trim() || 'Unnamed group';
+  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max - 1)}...`;
+}
+
+function buildTelegramGroupApprovalRecord(params: {
+  chatJid: string;
+  chatName?: string;
+  nowIso: string;
+}): TelegramGroupApprovalRecord {
+  const existing = loadTelegramGroupApprovals().pending[params.chatJid];
+  return {
+    jid: params.chatJid,
+    name:
+      params.chatName?.trim() ||
+      existing?.name ||
+      findAvailableGroup(params.chatJid)?.name ||
+      params.chatJid,
+    firstSeenAt: existing?.firstSeenAt || params.nowIso,
+    lastSeenAt: params.nowIso,
+    lastNotifiedAt: existing?.lastNotifiedAt,
+  };
+}
+
+function buildTelegramGroupApprovalSnapshot(): {
+  approvals: TelegramGroupApprovalState;
+  pending: TelegramGroupApprovalRecord[];
+  ignored: Array<TelegramGroupApprovalRecord & { ignoredAt: string }>;
+} {
+  const approvals = loadTelegramGroupApprovals();
+  const knownGroups = getAvailableGroups().filter(
+    (group) =>
+      isTelegramGroupChatJid(group.jid) &&
+      !group.isRegistered &&
+      !approvals.ignored[group.jid],
+  );
+  for (const group of knownGroups) {
+    if (!approvals.pending[group.jid]) {
+      const nowIso = new Date().toISOString();
+      approvals.pending[group.jid] = {
+        jid: group.jid,
+        name: group.name || group.jid,
+        firstSeenAt: nowIso,
+        lastSeenAt: group.lastActivity || nowIso,
+      };
+    }
+  }
+
+  for (const jid of Object.keys(approvals.pending)) {
+    if (state.registeredGroups[jid]) delete approvals.pending[jid];
+  }
+  for (const jid of Object.keys(approvals.ignored)) {
+    if (state.registeredGroups[jid]) delete approvals.ignored[jid];
+  }
+  saveTelegramGroupApprovals(approvals);
+
+  const pending = Object.values(approvals.pending).sort((a, b) =>
+    b.lastSeenAt.localeCompare(a.lastSeenAt),
+  );
+  const ignored = Object.values(approvals.ignored).sort((a, b) =>
+    b.ignoredAt.localeCompare(a.ignoredAt),
+  );
+  return { approvals, pending, ignored };
+}
+
+async function handleTelegramUnknownGroup(event: {
+  chatJid: string;
+  chatName?: string;
+  content?: string;
+}): Promise<void> {
+  if (!isTelegramGroupChatJid(event.chatJid)) return;
+  if (state.registeredGroups[event.chatJid]) return;
+
+  const content = (event.content || '').trim();
+  if (!content) return;
+  TRIGGER_PATTERN.lastIndex = 0;
+  const addressedToBot =
+    TRIGGER_PATTERN.test(content) ||
+    /^\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)/.test(content);
+  if (!addressedToBot) return;
+
+  const approvals = loadTelegramGroupApprovals();
+  const ignored = approvals.ignored[event.chatJid];
+  if (ignored) {
+    await sendMessage(
+      event.chatJid,
+      `${ASSISTANT_NAME}: this group is not active. Ask the owner to open /groups in the main chat and approve it.`,
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const record = buildTelegramGroupApprovalRecord({
+    chatJid: event.chatJid,
+    chatName: event.chatName,
+    nowIso,
+  });
+  const previousNotifiedAt = record.lastNotifiedAt
+    ? Date.parse(record.lastNotifiedAt)
+    : 0;
+  const shouldNotifyMain =
+    !previousNotifiedAt ||
+    Number.isNaN(previousNotifiedAt) ||
+    now - previousNotifiedAt >= TELEGRAM_GROUP_APPROVAL_NOTIFY_EVERY_MS;
+  if (shouldNotifyMain) {
+    record.lastNotifiedAt = nowIso;
+  }
+  approvals.pending[event.chatJid] = record;
+  saveTelegramGroupApprovals(approvals);
+
+  const mainChatJid = findMainTelegramChatJid();
+  await sendMessage(
+    event.chatJid,
+    mainChatJid
+      ? `${ASSISTANT_NAME}: I see this group, but the owner has not approved me here yet. I sent an approval panel to the main chat.`
+      : `${ASSISTANT_NAME}: I see this group, but no Telegram main/admin chat is configured yet. DM me and run /main <secret> first.`,
+  );
+
+  if (!mainChatJid || !shouldNotifyMain || !state.telegramBot) return;
+  const panel = buildTelegramGroupsPanel(mainChatJid);
+  if (state.telegramBot.sendMessageWithKeyboard) {
+    await state.telegramBot.sendMessageWithKeyboard(
+      mainChatJid,
+      panel.text,
+      panel.keyboard,
+    );
+  } else {
+    await sendMessage(mainChatJid, panel.text);
+  }
+}
+
+async function approveTelegramGroup(
+  chatJid: string,
+): Promise<{ ok: boolean; text: string }> {
+  if (!isTelegramGroupChatJid(chatJid)) {
+    return { ok: false, text: `Cannot approve non-group chat: ${chatJid}` };
+  }
+  if (state.registeredGroups[chatJid]) {
+    return { ok: true, text: 'Group is already active.' };
+  }
+  const folder = buildTelegramGroupFolder(chatJid);
+  if (!folder) {
+    return { ok: false, text: `Cannot create a safe folder for ${chatJid}` };
+  }
+
+  const approvals = loadTelegramGroupApprovals();
+  const pending = approvals.pending[chatJid];
+  const available = findAvailableGroup(chatJid);
+  const name = pending?.name || available?.name || chatJid;
+  registerGroup(chatJid, {
+    name,
+    folder,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+  });
+  delete approvals.pending[chatJid];
+  delete approvals.ignored[chatJid];
+  saveTelegramGroupApprovals(approvals);
+  await refreshTelegramCommandMenus();
+  await sendMessage(
+    chatJid,
+    `${ASSISTANT_NAME}: this group is active now. Mention @${ASSISTANT_NAME} when you want me to help here.`,
+  );
+  return { ok: true, text: `Approved ${name}.` };
+}
+
+async function ignoreTelegramGroup(
+  chatJid: string,
+): Promise<{ ok: boolean; text: string }> {
+  if (!isTelegramGroupChatJid(chatJid)) {
+    return { ok: false, text: `Cannot ignore non-group chat: ${chatJid}` };
+  }
+  const approvals = loadTelegramGroupApprovals();
+  const pending = approvals.pending[chatJid];
+  const available = findAvailableGroup(chatJid);
+  const nowIso = new Date().toISOString();
+  approvals.ignored[chatJid] = {
+    jid: chatJid,
+    name: pending?.name || available?.name || chatJid,
+    firstSeenAt: pending?.firstSeenAt || nowIso,
+    lastSeenAt: pending?.lastSeenAt || nowIso,
+    lastNotifiedAt: pending?.lastNotifiedAt,
+    ignoredAt: nowIso,
+  };
+  delete approvals.pending[chatJid];
+  saveTelegramGroupApprovals(approvals);
+  return { ok: true, text: `Ignored ${approvals.ignored[chatJid].name}.` };
+}
+
+async function unignoreTelegramGroup(
+  chatJid: string,
+): Promise<{ ok: boolean; text: string }> {
+  const approvals = loadTelegramGroupApprovals();
+  const ignored = approvals.ignored[chatJid];
+  if (!ignored) return { ok: false, text: 'That group is not ignored.' };
+  const nowIso = new Date().toISOString();
+  approvals.pending[chatJid] = {
+    jid: chatJid,
+    name: ignored.name,
+    firstSeenAt: ignored.firstSeenAt || nowIso,
+    lastSeenAt: nowIso,
+    lastNotifiedAt: ignored.lastNotifiedAt,
+  };
+  delete approvals.ignored[chatJid];
+  saveTelegramGroupApprovals(approvals);
+  return { ok: true, text: `Moved ${ignored.name} back to pending.` };
+}
+
 function maybeRegisterTelegramChat(chatJid: string, chatName: string): boolean {
   if (!TELEGRAM_AUTO_REGISTER) return false;
   if (state.registeredGroups[chatJid]) return false;
@@ -798,6 +1068,7 @@ function maybeRegisterTelegramChat(chatJid: string, chatName: string): boolean {
   if (!chatId) return false;
 
   const isMain = TELEGRAM_MAIN_CHAT_ID && chatId === TELEGRAM_MAIN_CHAT_ID;
+  if (isTelegramGroupChatJid(chatJid) && !isMain) return false;
   const folder = isMain ? MAIN_GROUP_FOLDER : `telegram-${chatId}`;
 
   registerGroup(chatJid, {
@@ -3429,14 +3700,109 @@ function formatTasksText(mode: 'list' | 'due' = 'list'): string {
 
 function formatGroupsText(): string {
   const groups = Object.entries(state.registeredGroups);
-  if (groups.length === 0) {
-    return 'No groups are registered.';
+  const { pending, ignored } = buildTelegramGroupApprovalSnapshot();
+  const lines: string[] = [];
+
+  if (pending.length > 0) {
+    lines.push('Pending Telegram group approvals:');
+    for (const record of pending.slice(0, 12)) {
+      lines.push(`- ${record.name} -> ${record.jid}`);
+    }
+    if (pending.length > 12) lines.push(`- ... ${pending.length - 12} more`);
+    lines.push('');
   }
-  const lines = groups.map(([jid, group]) => {
-    const mainTag = group.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
-    return `- ${group.name}${mainTag} -> ${jid} [folder=${group.folder}]`;
-  });
-  return ['Registered groups:', ...lines].join('\n');
+
+  if (groups.length === 0) {
+    lines.push('No groups are registered.');
+  } else {
+    lines.push('Registered groups:');
+    for (const [jid, group] of groups) {
+      const mainTag = group.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
+      lines.push(
+        `- ${group.name}${mainTag} -> ${jid} [folder=${group.folder}]`,
+      );
+    }
+  }
+
+  if (ignored.length > 0) {
+    lines.push('');
+    lines.push('Ignored Telegram groups:');
+    for (const record of ignored.slice(0, 8)) {
+      lines.push(`- ${record.name} -> ${record.jid}`);
+    }
+    if (ignored.length > 8) lines.push(`- ... ${ignored.length - 8} more`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildTelegramGroupsPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const { pending, ignored } = buildTelegramGroupApprovalSnapshot();
+  const keyboard: TelegramInlineKeyboard = [];
+
+  for (const record of pending.slice(0, 8)) {
+    const label = clipTelegramButtonLabel(record.name, 24);
+    keyboard.push([
+      {
+        text: `Approve ${label}`,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'approve-telegram-group',
+          chatJid: record.jid,
+        }),
+        style: 'primary' as const,
+      },
+      {
+        text: 'Ignore',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'ignore-telegram-group',
+          chatJid: record.jid,
+        }),
+      },
+    ]);
+  }
+
+  for (const record of ignored.slice(0, 4)) {
+    keyboard.push([
+      {
+        text: `Unignore ${clipTelegramButtonLabel(record.name, 20)}`,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'unignore-telegram-group',
+          chatJid: record.jid,
+        }),
+      },
+      {
+        text: 'Approve',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'approve-telegram-group',
+          chatJid: record.jid,
+        }),
+        style: 'primary' as const,
+      },
+    ]);
+  }
+
+  keyboard.push([
+    {
+      text: 'Refresh',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-groups',
+      }),
+    },
+    {
+      text: 'Back',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-home',
+      }),
+    },
+  ]);
+
+  return {
+    text: formatGroupsText(),
+    keyboard,
+  };
 }
 
 function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
@@ -3477,6 +3843,8 @@ function resolveTelegramSettingsPanel(
       return buildVerbosePanel(chatJid);
     case 'show-queue':
       return buildQueuePanel(chatJid);
+    case 'show-groups':
+      return buildTelegramGroupsPanel(chatJid);
     case 'show-subagents':
       return buildSubagentsPanel(chatJid);
     case 'show-setup-home':
@@ -4011,6 +4379,9 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   promoteChatToMain,
   refreshTelegramCommandMenus,
   hasMainGroup,
+  approveTelegramGroup,
+  ignoreTelegramGroup,
+  unignoreTelegramGroup,
   runGatewayServiceCommand,
   runUpdateCommand,
   startUpdateCommand: (chatJid) =>
@@ -4383,6 +4754,7 @@ const appRuntime = createAppRuntime({
   handleTelegramCallbackQuery,
   handleTelegramSetupInput,
   handleTelegramCommand,
+  handleTelegramUnknownGroup,
   storeChatMetadata,
   maybeRegisterTelegramChat,
   isMainChat,
