@@ -33,6 +33,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'coding', description: 'Alias for /coder' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
+  { command: 'curator', description: 'Manage skill curator lifecycle' },
   { command: 'tasks', description: 'List scheduled tasks' },
   { command: 'knowledge', description: 'Manage knowledge wiki/librarian' },
   { command: 'task_pause', description: 'Pause a task: /task_pause <id>' },
@@ -70,6 +71,7 @@ export type TelegramCommandName =
   | '/queue'
   | '/compact'
   | '/subagents'
+  | '/curator'
   | '/main'
   | '/gateway'
   | '/restart'
@@ -112,6 +114,7 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/queue',
   '/compact',
   '/subagents',
+  '/curator',
   '/main',
   '/gateway',
   '/restart',
@@ -194,5 +197,6 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/coding <task> - alias for /coder',
     '/coder-plan <task> - explicit delegated planning run',
     '/subagents list|stop|spawn - manage delegated subagent runs',
+    '/curator status|dry-run|run|pause|resume|pin|unpin|archive|restore|backup - manage skill cleanup',
   ].join('\n');
 }

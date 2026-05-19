@@ -46,7 +46,8 @@ export type HostEvent =
       isMain: boolean;
       request:
         | import('../types.js').FarmActionRequest
-        | import('../types.js').MemoryActionRequest;
+        | import('../types.js').MemoryActionRequest
+        | import('../types.js').SkillActionRequest;
       resultPath: string;
     })
   | (HostEventBase & {
