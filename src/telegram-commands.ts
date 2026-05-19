@@ -148,6 +148,11 @@ export interface TelegramCommandDeps {
     input: string;
     chatJid: string;
   }) => Promise<string> | string;
+  handleCuratorCommand?: (params: {
+    action: string;
+    input: string;
+    chatJid: string;
+  }) => Promise<string> | string;
   runPiListModels: (searchText: string) => { text: string };
   validateProviderModelRef: (
     provider: string,
@@ -1956,6 +1961,35 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           ? `Gateway ${action}:\n${result.text}`
           : `Gateway ${action} failed:\n${result.text}`,
       );
+      return true;
+    }
+
+    if (cmd === '/curator') {
+      if (!isMainGroup) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
+        await deps.sendMessage(
+          m.chatJid,
+          `${deps.constants.assistantName}: curator controls are only available in the main/admin chat.`,
+        );
+        return true;
+      }
+      if (!deps.handleCuratorCommand) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'unavailable');
+        await deps.sendMessage(
+          m.chatJid,
+          'Curator controls are not available in this runtime.',
+        );
+        return true;
+      }
+      const action = (rest[0] || 'status').trim().toLowerCase();
+      const input = rest.slice(1).join(' ').trim();
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, action);
+      const text = await deps.handleCuratorCommand({
+        action,
+        input,
+        chatJid: m.chatJid,
+      });
+      await deps.sendMessage(m.chatJid, text);
       return true;
     }
 

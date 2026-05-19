@@ -81,6 +81,7 @@ import {
   MemoryActionRequest,
   NewMessage,
   RegisteredGroup,
+  SkillActionRequest,
 } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
@@ -169,6 +170,19 @@ import {
   stopFarmStateCollector,
 } from './farm-state-collector.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
+import {
+  applySkillCuratorTransitions,
+  executeSkillAction,
+  formatSkillCuratorStatus,
+  loadSkillCuratorState,
+  resolveGroupSkillsDir,
+  saveSkillCuratorState,
+  setSkillCuratorPaused,
+  shouldRunSkillCurator,
+  snapshotSkills,
+  writeSkillCuratorReport,
+  type SkillCuratorConfig,
+} from './skill-lifecycle.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
 import {
@@ -4335,6 +4349,95 @@ function logTelegramCommandAudit(
   logger.info({ chatJid, command, allowed, reason }, 'Telegram command audit');
 }
 
+async function handleCuratorCommand(params: {
+  action: string;
+  input: string;
+  chatJid: string;
+}): Promise<string> {
+  const groupFolder = MAIN_GROUP_FOLDER;
+  const skillsDir = resolveGroupSkillsDir(groupFolder);
+  const action = params.action || 'status';
+  if (action === 'status') {
+    return formatSkillCuratorStatus(groupFolder);
+  }
+  if (action === 'pause' || action === 'resume') {
+    setSkillCuratorPaused(groupFolder, action === 'pause');
+    return `curator: ${action === 'pause' ? 'paused' : 'resumed'}`;
+  }
+  if (action === 'run' || action === 'dry-run') {
+    const config = toSkillCuratorConfig();
+    const dryRun = action === 'dry-run';
+    if (!dryRun && config.backupEnabled) {
+      snapshotSkills({
+        skillsDir,
+        reason: 'telegram curator run',
+        keep: config.backupKeep,
+      });
+    }
+    const transitions = applySkillCuratorTransitions({
+      skillsDir,
+      config,
+      dryRun,
+    });
+    const summary = `${dryRun ? 'dry-run' : 'telegram'} curator run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
+    const reportPath = writeSkillCuratorReport({
+      groupFolder,
+      skillsDir,
+      dryRun,
+      summary,
+      transitions,
+    });
+    if (!dryRun) {
+      const curatorState = loadSkillCuratorState(skillsDir);
+      curatorState.lastRunAt = new Date().toISOString();
+      curatorState.lastRunSummary = summary;
+      curatorState.lastReportPath = reportPath;
+      curatorState.runCount += 1;
+      saveSkillCuratorState(skillsDir, curatorState);
+    }
+    return `${summary}\nreport: ${reportPath}`;
+  }
+  if (action === 'backup') {
+    const snap = snapshotSkills({
+      skillsDir,
+      reason: 'telegram backup',
+      keep: PARITY_CONFIG.skills.curator.backup.keep,
+    });
+    return snap
+      ? `curator: backup created at ${snap}`
+      : 'curator: no skills directory to back up';
+  }
+  const skillName = params.input.trim().split(/\s+/)[0];
+  if (!skillName) {
+    return 'Usage: /curator status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
+  }
+  const actionMap: Record<string, SkillActionRequest['action']> = {
+    pin: 'skill_pin',
+    unpin: 'skill_unpin',
+    archive: 'skill_archive',
+    restore: 'skill_restore',
+  };
+  const skillAction = actionMap[action];
+  if (!skillAction) {
+    return 'Usage: /curator status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
+  }
+  const result = await executeSkillAction(
+    {
+      type: 'skill_action',
+      action: skillAction,
+      requestId: `curator-telegram-${Date.now()}`,
+      params: { name: skillName, groupFolder },
+    },
+    {
+      sourceGroup: groupFolder,
+      isMain: true,
+      registeredGroups: state.registeredGroups,
+    },
+  );
+  if (result.status === 'error') return `curator: ${result.error}`;
+  return `curator: ${action} ${skillName}`;
+}
+
 const telegramCommandHandlers = createTelegramCommandHandlers({
   state,
   constants: {
@@ -4366,6 +4469,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   summarizeTask,
   formatTaskRunsText,
   handleKnowledgeCommand,
+  handleCuratorCommand,
   runPiListModels,
   validateProviderModelRef,
   normalizeThinkLevel,
@@ -4829,6 +4933,213 @@ async function runDirectSessionTurn(params: {
   return messageDispatcher.runDirectSessionTurn(params);
 }
 
+function toSkillCuratorConfig(): SkillCuratorConfig {
+  return {
+    enabled: PARITY_CONFIG.skills.curator.enabled,
+    intervalHours: PARITY_CONFIG.skills.curator.intervalHours,
+    minIdleHours: PARITY_CONFIG.skills.curator.minIdleHours,
+    staleAfterDays: PARITY_CONFIG.skills.curator.staleAfterDays,
+    archiveAfterDays: PARITY_CONFIG.skills.curator.archiveAfterDays,
+    backupEnabled: PARITY_CONFIG.skills.curator.backup.enabled,
+    backupKeep: PARITY_CONFIG.skills.curator.backup.keep,
+  };
+}
+
+function skillSelfImproveStatePath(groupFolder: string): string {
+  return path.join(
+    resolveGroupSkillsDir(groupFolder),
+    '.self_improve_state.json',
+  );
+}
+
+function readSkillSelfImproveState(groupFolder: string): {
+  turnsSinceReview: number;
+  toolsSinceReview: number;
+} {
+  try {
+    const filePath = skillSelfImproveStatePath(groupFolder);
+    if (!fs.existsSync(filePath)) {
+      return { turnsSinceReview: 0, toolsSinceReview: 0 };
+    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return {
+      turnsSinceReview: Number(parsed.turnsSinceReview) || 0,
+      toolsSinceReview: Number(parsed.toolsSinceReview) || 0,
+    };
+  } catch {
+    return { turnsSinceReview: 0, toolsSinceReview: 0 };
+  }
+}
+
+function writeSkillSelfImproveState(
+  groupFolder: string,
+  next: { turnsSinceReview: number; toolsSinceReview: number },
+): void {
+  const filePath = skillSelfImproveStatePath(groupFolder);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+function shouldTriggerSkillSelfImprove(params: {
+  groupFolder: string;
+  toolsInvoked: number;
+}): boolean {
+  if (!PARITY_CONFIG.skills.selfImprove.enabled) return false;
+  const current = readSkillSelfImproveState(params.groupFolder);
+  const next = {
+    turnsSinceReview: current.turnsSinceReview + 1,
+    toolsSinceReview: current.toolsSinceReview + params.toolsInvoked,
+  };
+  const due =
+    next.turnsSinceReview >= PARITY_CONFIG.skills.selfImprove.turnInterval ||
+    next.toolsSinceReview >= PARITY_CONFIG.skills.selfImprove.toolInterval;
+  writeSkillSelfImproveState(
+    params.groupFolder,
+    due ? { turnsSinceReview: 0, toolsSinceReview: 0 } : next,
+  );
+  return due;
+}
+
+function runQuietSkillAgent(params: {
+  group: RegisteredGroup;
+  chatJid: string;
+  prompt: string;
+  requestId: string;
+  runtimePrefs: ChatRunPreferences;
+}): void {
+  const isMain = params.group.folder === MAIN_GROUP_FOLDER;
+  const extraSystemPrompt = [
+    '## Quiet Background Skill Maintenance',
+    'This run is internal maintenance. Do not send chat messages unless explicitly asked.',
+    'Use skill_action IPC for all skill reads and writes.',
+    'Keep skills organized for non-technical farm operators: clear names, valid frontmatter, class-level reusable workflows, and lean active catalog.',
+    'You may only mutate host-allowed agent-created runtime skills. For source-owned skills, report issues instead of trying to modify them.',
+  ].join('\n');
+
+  void runContainerAgent(
+    params.group,
+    {
+      prompt: params.prompt,
+      groupFolder: params.group.folder,
+      chatJid: params.chatJid,
+      isMain,
+      assistantName: ASSISTANT_NAME,
+      codingHint: 'none',
+      requestId: params.requestId,
+      isScheduledTask: false,
+      isEvaluatorRun: true,
+      extraSystemPrompt,
+      provider: params.runtimePrefs.provider,
+      model: params.runtimePrefs.model,
+      thinkLevel: params.runtimePrefs.thinkLevel,
+      reasoningLevel: params.runtimePrefs.reasoningLevel,
+      noContinue: true,
+      suppressPreviewStreaming: true,
+      lifecyclePolicyOverride: {
+        hardTimeoutMs: 10 * 60 * 1000,
+        staleAfterMs: 3 * 60 * 1000,
+        toolActiveStaleMs: 2 * 60 * 1000,
+        waitStateStaleMs: 2 * 60 * 1000,
+        allowFreshSessionFallback: false,
+      },
+    },
+    undefined,
+  ).catch((err) => {
+    logger.warn(
+      { err, groupFolder: params.group.folder, requestId: params.requestId },
+      'Quiet skill maintenance run failed',
+    );
+  });
+}
+
+function maybeRunSkillSelfImprovement(params: {
+  group: RegisteredGroup;
+  chatJid: string;
+  originalTask: string;
+  agentOutput: string;
+  toolsInvoked: number;
+  runtimePrefs: ChatRunPreferences;
+  requestId?: string;
+}): void {
+  if (
+    !shouldTriggerSkillSelfImprove({
+      groupFolder: params.group.folder,
+      toolsInvoked: params.toolsInvoked,
+    })
+  ) {
+    return;
+  }
+
+  runQuietSkillAgent({
+    group: params.group,
+    chatJid: params.chatJid,
+    runtimePrefs: params.runtimePrefs,
+    requestId: `${params.requestId || 'run'}:skill-self-improve`,
+    prompt: [
+      'Review the completed conversation for reusable procedural knowledge.',
+      'Use skill_list first. Create or patch a skill only if this run taught a reusable workflow, pitfall, command pattern, farm operating procedure, or troubleshooting recipe.',
+      'Prefer broad class-level skills with labeled sections over many narrow one-off skills.',
+      'Do not duplicate existing skills. Keep frontmatter valid and descriptions practical.',
+      '',
+      'Original task:',
+      params.originalTask.slice(0, 3000),
+      '',
+      'Agent result:',
+      params.agentOutput.slice(0, 5000),
+    ].join('\n'),
+  });
+}
+
+function maybeRunSkillCurator(params: {
+  group: RegisteredGroup;
+  chatJid: string;
+  runtimePrefs: ChatRunPreferences;
+  requestId?: string;
+}): void {
+  const skillsDir = resolveGroupSkillsDir(params.group.folder);
+  const config = toSkillCuratorConfig();
+  if (!shouldRunSkillCurator(skillsDir, config)) return;
+
+  const started = Date.now();
+  if (config.backupEnabled) {
+    snapshotSkills({
+      skillsDir,
+      reason: 'automatic curator run',
+      keep: config.backupKeep,
+    });
+  }
+  const transitions = applySkillCuratorTransitions({ skillsDir, config });
+  const summary = `automatic curator run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
+  const reportPath = writeSkillCuratorReport({
+    groupFolder: params.group.folder,
+    skillsDir,
+    dryRun: false,
+    summary,
+    transitions,
+  });
+  const state = loadSkillCuratorState(skillsDir);
+  state.lastRunAt = new Date().toISOString();
+  state.lastRunDurationSeconds = Math.round((Date.now() - started) / 1000);
+  state.lastRunSummary = summary;
+  state.lastReportPath = reportPath;
+  state.runCount += 1;
+  saveSkillCuratorState(skillsDir, state);
+
+  runQuietSkillAgent({
+    group: params.group,
+    chatJid: params.chatJid,
+    runtimePrefs: params.runtimePrefs,
+    requestId: `${params.requestId || 'run'}:skill-curator`,
+    prompt: [
+      'Run a bounded skill curator review.',
+      'Use skill_status and skill_view to inspect the active library.',
+      'Goal: keep farm/operator skills lean, organized, and valid. Clean frontmatter issues for agent-created skills by patching them. Report source-owned frontmatter issues in your final summary.',
+      'Consolidate near-duplicate agent-created skills into class-level umbrella skills when useful. Archive only agent-created skills that are stale, duplicate, or fully absorbed.',
+      'Do not mutate source-owned project or personal skills.',
+    ].join('\n'),
+  });
+}
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
@@ -5236,6 +5547,29 @@ async function runAgent(
         .catch((err) => {
           logger.warn({ err, chatJid }, 'Evaluator pass threw in background');
         });
+    }
+
+    if (
+      finalResult.ok &&
+      finalResult.result &&
+      !options.isHeartbeatTask &&
+      abortSignal?.aborted !== true
+    ) {
+      maybeRunSkillSelfImprovement({
+        group,
+        chatJid,
+        originalTask: prompt,
+        agentOutput: finalResult.result,
+        toolsInvoked: runToolsInvoked,
+        runtimePrefs,
+        requestId,
+      });
+      maybeRunSkillCurator({
+        group,
+        chatJid,
+        runtimePrefs,
+        requestId,
+      });
     }
 
     return {
@@ -6080,11 +6414,17 @@ async function processHostEvent(event: HostEvent): Promise<void> {
                   'farm_action is disabled in core profile (set FFT_PROFILE=farm or FEATURE_FARM=1)',
                 executedAt: new Date().toISOString(),
               }
-          : await executeMemoryAction(event.request, {
-              sourceGroup: event.sourceGroup,
-              isMain: event.isMain,
-              registeredGroups: state.registeredGroups,
-            });
+          : event.request.type === 'skill_action'
+            ? await executeSkillAction(event.request, {
+                sourceGroup: event.sourceGroup,
+                isMain: event.isMain,
+                registeredGroups: state.registeredGroups,
+              })
+            : await executeMemoryAction(event.request, {
+                sourceGroup: event.sourceGroup,
+                isMain: event.isMain,
+                registeredGroups: state.registeredGroups,
+              });
       fs.writeFileSync(event.resultPath, JSON.stringify(result, null, 2));
       return;
     }
@@ -6419,7 +6759,8 @@ function startIpcWatcher(): void {
             try {
               const request = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as
                 | FarmActionRequest
-                | MemoryActionRequest;
+                | MemoryActionRequest
+                | SkillActionRequest;
 
               const resultDir = path.join(
                 ipcBaseDir,
@@ -6430,7 +6771,8 @@ function startIpcWatcher(): void {
 
               if (
                 request.type === 'farm_action' ||
-                request.type === 'memory_action'
+                request.type === 'memory_action' ||
+                request.type === 'skill_action'
               ) {
                 const resultPath = path.join(
                   resultDir,

@@ -2,6 +2,7 @@ import type {
   FarmActionRequest,
   MemoryActionRequest,
   RegisteredGroup,
+  SkillActionRequest,
 } from '../types.js';
 import type { HostEvent } from './host-events.js';
 
@@ -15,9 +16,10 @@ export interface BoundaryEnvelope<TPayload = unknown> {
 }
 
 export interface BoundaryActionEnvelope<
-  TPayload extends FarmActionRequest | MemoryActionRequest =
+  TPayload extends FarmActionRequest | MemoryActionRequest | SkillActionRequest =
     | FarmActionRequest
-    | MemoryActionRequest,
+    | MemoryActionRequest
+    | SkillActionRequest,
 > extends BoundaryEnvelope<TPayload> {
   kind: 'action';
   resultPath: string;
@@ -78,7 +80,7 @@ export function wrapLegacyTaskEnvelope(
 }
 
 export function wrapLegacyActionEnvelope(
-  payload: FarmActionRequest | MemoryActionRequest,
+  payload: FarmActionRequest | MemoryActionRequest | SkillActionRequest,
   sourceGroup: string,
   resultPath: string,
   createdAt = new Date().toISOString(),

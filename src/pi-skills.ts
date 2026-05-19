@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import YAML from 'yaml';
 
+import { loadSkillUsage } from './skill-lifecycle.js';
 import type { SkillCatalogEntry } from './system-prompt.js';
 
 export const PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES = [
@@ -517,9 +518,17 @@ export function buildSkillCatalogEntries(
   for (let rootIndex = 0; rootIndex < sourceDirs.length; rootIndex += 1) {
     const sourceDir = sourceDirs[rootIndex];
     if (!isDirectory(sourceDir)) continue;
-    const source: SkillCatalogEntry['source'] =
-      rootIndex === 0 ? 'project' : 'external';
+    const usage = loadSkillUsage(sourceDir);
+    const managedNames = new Set(readManagedSkillNames(path.join(sourceDir, '.fft_nano_managed_skills.json')));
     for (const skillName of listSkillDirectories(sourceDir)) {
+      const source: SkillCatalogEntry['source'] =
+        managedNames.has(skillName)
+          ? 'project'
+          : usage[skillName]?.created_by === 'agent'
+            ? 'agent'
+            : rootIndex === 0
+              ? 'project'
+              : 'external';
       const markdownPath = path.join(sourceDir, skillName, 'SKILL.md');
       const parsed = parseSkillMarkdown(markdownPath);
       if (!parsed) continue;
