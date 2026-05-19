@@ -324,6 +324,96 @@ test('buildSkillCatalogEntries returns compact summaries without full skill bodi
   }
 });
 
+test('buildSkillCatalogEntries marks agent-created runtime skills from usage sidecar', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-skill-catalog-'));
+
+  try {
+    const skillsRoot = path.join(tempRoot, 'skills');
+    const skillDir = path.join(skillsRoot, 'field-note-cleanup');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: field-note-cleanup\ndescription: Keep field notes organized.\n---\n\n# field note cleanup\n',
+    );
+    fs.writeFileSync(
+      path.join(skillsRoot, '.usage.json'),
+      JSON.stringify(
+        {
+          'field-note-cleanup': {
+            created_by: 'agent',
+            use_count: 1,
+            view_count: 0,
+            patch_count: 0,
+            created_at: '2026-05-19T00:00:00.000Z',
+            last_used_at: '2026-05-19T00:00:00.000Z',
+            last_viewed_at: null,
+            last_patched_at: null,
+            state: 'active',
+            pinned: false,
+            archived_at: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const catalog = buildSkillCatalogEntries([skillsRoot], { maxChars: 6000 });
+    assert.equal(catalog.length, 1);
+    assert.equal(catalog[0]?.name, 'field-note-cleanup');
+    assert.equal(catalog[0]?.source, 'agent');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildSkillCatalogEntries treats managed skills as project-owned despite stale agent usage', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-skill-catalog-'));
+
+  try {
+    const skillsRoot = path.join(tempRoot, 'skills');
+    const skillDir = path.join(skillsRoot, 'field-note-cleanup');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: field-note-cleanup\ndescription: Keep field notes organized.\n---\n\n# field note cleanup\n',
+    );
+    fs.writeFileSync(
+      path.join(skillsRoot, '.fft_nano_managed_skills.json'),
+      `${JSON.stringify({ managed: ['field-note-cleanup'] }, null, 2)}\n`,
+    );
+    fs.writeFileSync(
+      path.join(skillsRoot, '.usage.json'),
+      JSON.stringify(
+        {
+          'field-note-cleanup': {
+            created_by: 'agent',
+            use_count: 1,
+            view_count: 0,
+            patch_count: 0,
+            created_at: '2026-05-19T00:00:00.000Z',
+            last_used_at: '2026-05-19T00:00:00.000Z',
+            last_viewed_at: null,
+            last_patched_at: null,
+            state: 'active',
+            pinned: false,
+            archived_at: null,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const catalog = buildSkillCatalogEntries([skillsRoot], { maxChars: 6000 });
+    assert.equal(catalog.length, 1);
+    assert.equal(catalog[0]?.name, 'field-note-cleanup');
+    assert.equal(catalog[0]?.source, 'project');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('sync skips skill sources that contain symlinks', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
 

@@ -33,6 +33,7 @@ import {
   syncProjectPiSkillsToGroupPiHome,
   type SkillSyncResult,
 } from './pi-skills.js';
+import { noteSkillCatalogUse } from './skill-lifecycle.js';
 import { normalizeTelegramDraftText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
@@ -968,9 +969,14 @@ export async function runContainerAgent(
   const promptStatePath = resolvePromptRuntimeStatePath(wp.piHomeDir);
   let promptState = readPromptRuntimeState(promptStatePath);
 
-  const skillCatalog = buildSkillCatalogEntries(skillSync.sourceDirs, {
+  const mountedSkillsDir = path.join(wp.piHomeDir, 'skills');
+  const skillCatalog = buildSkillCatalogEntries([mountedSkillsDir], {
     maxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
   });
+  noteSkillCatalogUse(
+    mountedSkillsDir,
+    skillCatalog.map((entry) => entry.name),
+  );
 
   const baseInput = {
     groupFolder: input.groupFolder,

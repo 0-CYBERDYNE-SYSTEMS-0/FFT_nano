@@ -35,7 +35,7 @@ export interface SkillCatalogEntry {
   description: string;
   allowedTools: string[];
   whenToUse: string;
-  source: 'project' | 'external';
+  source: 'project' | 'external' | 'agent' | 'unmanaged';
 }
 
 export interface SystemPromptInput {
@@ -724,6 +724,36 @@ function renderBasePrompt(params: {
   lines.push(
     'For writes, wait for status=success before reporting completion to the user.',
   );
+  lines.push('');
+  lines.push('## Skill Action IPC');
+  lines.push(
+    `Write skill action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
+  );
+  lines.push(
+    '- Skills should stay organized without operator effort. Use skill_list/skill_view to inspect available procedural knowledge before repeating a workflow.',
+  );
+  lines.push(
+    '- Create or patch a skill only when a reusable workflow, pitfall, or farm operation pattern should be remembered procedurally.',
+  );
+  lines.push(
+    '- Mutations are host-gated to agent-created runtime skills; repo and personal source skills may be read and reported but not destructively curated.',
+  );
+  lines.push(
+    '- List: {"type":"skill_action","action":"skill_list","requestId":"<id>","params":{"includeArchived":false}}',
+  );
+  lines.push(
+    '- View: {"type":"skill_action","action":"skill_view","requestId":"<id>","params":{"name":"skill-name"}}',
+  );
+  lines.push(
+    '- Create: {"type":"skill_action","action":"skill_create","requestId":"<id>","params":{"name":"short-skill-name","description":"When to use...","content":"---\\nname: short-skill-name\\ndescription: ...\\n---\\n\\n# ..."}}',
+  );
+  lines.push(
+    '- Patch: {"type":"skill_action","action":"skill_patch","requestId":"<id>","params":{"name":"skill-name","content":"complete replacement SKILL.md"}}',
+  );
+  lines.push(
+    '- Support file: {"type":"skill_action","action":"skill_write_file","requestId":"<id>","params":{"name":"skill-name","filePath":"references/example.md","fileContent":"..."}}',
+  );
+  lines.push('Wait for status=success before relying on a skill mutation.');
   lines.push('');
   lines.push('## File Delivery IPC');
   lines.push(
