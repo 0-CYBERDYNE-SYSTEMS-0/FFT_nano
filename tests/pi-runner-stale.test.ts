@@ -33,12 +33,22 @@ test('getProviderFallbackCandidates preserves forward-only fallback progression'
   );
 });
 
-test('runContainerAgent handles an already aborted signal without throwing', async () => {
+test('runContainerAgent handles an already aborted signal without throwing', async (t) => {
   const abortController = new AbortController();
   abortController.abort(new Error('stop before start'));
+  const groupFolder = `testrun_aborted_${Date.now().toString(36)}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+  const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+  t.after(() => {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+    fs.rmSync(ipcDir, { recursive: true, force: true });
+    fs.rmSync(piDir, { recursive: true, force: true });
+  });
+
   const group: RegisteredGroup = {
     name: 'Test Group',
-    folder: `testrun_aborted_${Date.now().toString(36)}`,
+    folder: groupFolder,
     trigger: '@FarmFriend',
     added_at: '2026-03-31T00:00:00.000Z',
   };

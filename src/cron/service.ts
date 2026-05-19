@@ -6,6 +6,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
   PARITY_CONFIG,
   TIMEZONE,
 } from '../config.js';
@@ -393,9 +394,17 @@ export async function runScheduledTaskV2(
             toolsInvoked: output.toolExecutions?.length ?? 0,
             group,
             chatJid: task.chat_jid,
+            isMain,
+            workspaceDir: isMain
+              ? MAIN_WORKSPACE_DIR
+              : path.join(GROUPS_DIR, task.group_folder),
+            startedAtMs: startedAt,
             abortSignal: abortController.signal,
           }).catch((err) => {
-            logger.warn({ err, taskId: task.id }, 'Evaluator pass failed for cron task');
+            logger.warn(
+              { err, taskId: task.id },
+              'Evaluator pass failed for cron task',
+            );
             return null;
           });
           if (verdict && !verdict.skipped && !verdict.pass) {
