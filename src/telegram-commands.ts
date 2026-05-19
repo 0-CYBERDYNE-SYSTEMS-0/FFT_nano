@@ -189,6 +189,11 @@ export interface TelegramCommandDeps {
     ok: boolean;
     text: string;
   };
+  startUpdateCommand: (chatJid: string) => {
+    ok: boolean;
+    text: string;
+    reportId?: string;
+  };
   buildRuntimeProviderPresetUpdates: (
     params: any,
   ) => Record<string, string | undefined>;
@@ -2156,19 +2161,39 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/update') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'update started');
-      await deps.sendMessage(
-        m.chatJid,
-        'Starting update: stash local changes, pull, install, build, reapply changes, then restart.\nThis will take a moment...',
-      );
-      const result = deps.runUpdateCommand();
-      const label = result.ok ? 'Update complete' : 'Update failed';
+      const result = deps.startUpdateCommand(m.chatJid);
+      if (!result.ok) {
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'update start failed',
+        );
+        await deps.sendMessage(
+          m.chatJid,
+          `Update failed to start:\n${result.text}`,
+        );
+        return true;
+      }
       deps.logTelegramCommandAudit(
         m.chatJid,
         cmd,
-        result.ok,
-        result.ok ? 'update succeeded' : 'update failed',
+        true,
+        result.reportId
+          ? `update worker started ${result.reportId}`
+          : 'update worker started',
       );
-      await deps.sendMessage(m.chatJid, `${label}:\n${result.text}`);
+      await deps.sendMessage(
+        m.chatJid,
+        [
+          'Update started.',
+          'I am pulling, reinstalling dependencies, rebuilding, and restarting in the background.',
+          'I will send the final result after the service comes back up.',
+          result.reportId ? `Report id: ${result.reportId}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
       return true;
     }
 
