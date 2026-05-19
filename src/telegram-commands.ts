@@ -2158,7 +2158,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'update started');
       await deps.sendMessage(
         m.chatJid,
-        'Starting update: git pull, npm install, build, then restart.\nThis will take a moment...',
+        'Starting update: stash local changes, pull, install, build, reapply changes, then restart.\nThis will take a moment...',
       );
       const result = deps.runUpdateCommand();
       const label = result.ok ? 'Update complete' : 'Update failed';

@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- `/update` now preserves dirty local checkouts by stashing tracked and untracked
+  changes, pulling upstream, reapplying the stash, then rebuilding/restarting.
+
 ## [0.2.2] - 2026-05-11
 
 ### Added
