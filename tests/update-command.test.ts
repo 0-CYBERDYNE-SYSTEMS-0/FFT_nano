@@ -65,7 +65,11 @@ test('runUpdateCommand updates a clean checkout without stashing', () => {
       args: ['pull', '--ff-only', 'origin', 'main'],
       result: ok('Already up to date.\n'),
     },
-    { command: 'npm', args: ['ci'], result: ok('installed\n') },
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
     { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
     {
       command: 'bash',
@@ -141,7 +145,11 @@ test('runUpdateCommand stashes dirty changes and reapplies them after pull', () 
       args: ['stash', 'drop', 'stash@{0}'],
       result: ok('Dropped stash@{0}\n'),
     },
-    { command: 'npm', args: ['ci'], result: ok('installed\n') },
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
     { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
     {
       command: 'bash',

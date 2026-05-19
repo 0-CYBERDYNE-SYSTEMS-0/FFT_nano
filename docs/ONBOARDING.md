@@ -94,7 +94,7 @@ First-run browser wizard links:
 - `--flow <quickstart|advanced|manual>`
 - `--mode <local|remote>`
 - `--runtime <auto|docker|host>`: runtime preference passed into setup/onboarding
-- `--auth-choice <openai|anthropic|gemini|openrouter|zai|skip>`
+- `--auth-choice <openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip>`
 - `--model <provider-model>`
 - `--api-key <token>`
 - `--remote-url <url>`

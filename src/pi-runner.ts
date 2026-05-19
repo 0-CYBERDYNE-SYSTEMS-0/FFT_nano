@@ -455,6 +455,7 @@ export function collectRuntimeSecrets(
     'PI_API',
     'FFT_NANO_RUNTIME_PROVIDER_PRESET',
     'OPENAI_API_KEY',
+    'OPENCODE_API_KEY',
     'OPENAI_BASE_URL',
     'ANTHROPIC_API_KEY',
     'GEMINI_API_KEY',

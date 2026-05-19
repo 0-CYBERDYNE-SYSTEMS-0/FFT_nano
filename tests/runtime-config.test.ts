@@ -81,10 +81,13 @@ test('buildRuntimeProviderPresetUpdates applies local defaults for ollama and lm
   const opencodeGoUpdates = buildRuntimeProviderPresetUpdates({
     preset: 'opencode-go',
     source: {},
+    applyLocalDefaults: true,
   });
   assert.equal(opencodeGoUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'opencode-go');
   assert.equal(opencodeGoUpdates.PI_API, 'opencode-go');
   assert.equal(opencodeGoUpdates.PI_MODEL, 'deepseek-v4-pro');
+  assert.equal(opencodeGoUpdates.OPENAI_BASE_URL, undefined);
+  assert.equal(opencodeGoUpdates.PI_BASE_URL, undefined);
 
   const kimiUpdates = buildRuntimeProviderPresetUpdates({
     preset: 'kimi-coding',

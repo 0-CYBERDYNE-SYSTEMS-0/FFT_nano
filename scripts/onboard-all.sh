@@ -18,7 +18,7 @@ Options:
   --flow <flow>             quickstart|advanced|manual
   --mode <mode>             local|remote
   --runtime <runtime>       auto|docker|host
-  --auth-choice <choice>    openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip
+  --auth-choice <choice>    openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip
   --model <id>              Model id/provider model
   --api-key <token>         Provider API key for selected auth choice
   --remote-url <url>        Remote gateway URL (remote mode)
@@ -301,6 +301,7 @@ provider_env_key() {
   local provider="$1"
   case "$provider" in
     openai) printf '%s' "OPENAI_API_KEY" ;;
+    opencode-go) printf '%s' "OPENCODE_API_KEY" ;;
     anthropic) printf '%s' "ANTHROPIC_API_KEY" ;;
     gemini) printf '%s' "GEMINI_API_KEY" ;;
     openrouter) printf '%s' "OPENROUTER_API_KEY" ;;

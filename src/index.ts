@@ -1540,6 +1540,10 @@ function modelExistsInPiModels(
   );
 }
 
+function providerAllowsCustomModelId(provider: string): boolean {
+  return provider.trim().toLowerCase() === 'opencode-go';
+}
+
 function parseProviderFromModelLabel(label: string): string | null {
   const slash = label.indexOf('/');
   if (slash <= 0) return null;
@@ -1571,6 +1575,9 @@ function validateProviderModelRef(
       ok: false,
       text: `Unknown provider "${normalizedProvider}". Use /models or /model picker.`,
     };
+  }
+  if (providerAllowsCustomModelId(normalizedProvider)) {
+    return { ok: true };
   }
   if (
     !modelExistsInPiModels(loaded.entries, normalizedProvider, normalizedModel)
@@ -1612,7 +1619,8 @@ function sanitizeRunPreferencesModelOverride(
     effectiveProvider,
   );
   const modelKnown = rawModel
-    ? modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
+    ? providerAllowsCustomModelId(effectiveProvider) ||
+      modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
     : providerKnown;
   if (providerKnown && modelKnown) {
     return { runPreferences: nextPrefs };
