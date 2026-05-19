@@ -3,6 +3,7 @@ import fs from 'fs';
 import {
   ASSISTANT_NAME,
   MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
   SCHEDULER_MODE,
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
@@ -152,8 +153,14 @@ async function runLegacyTask(
           toolsInvoked: output.toolExecutions?.length ?? 0,
           group,
           chatJid: task.chat_jid,
+          isMain,
+          workspaceDir: isMain ? MAIN_WORKSPACE_DIR : groupDir,
+          startedAtMs: startTime,
         }).catch((err) => {
-          logger.warn({ err, taskId: task.id }, 'Evaluator pass failed for scheduled task');
+          logger.warn(
+            { err, taskId: task.id },
+            'Evaluator pass failed for scheduled task',
+          );
           return null;
         });
         if (verdict && !verdict.skipped && !verdict.pass) {

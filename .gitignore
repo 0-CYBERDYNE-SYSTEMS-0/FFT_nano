@@ -16,6 +16,9 @@ backups/
 # Runtime-generated group folders (keep template groups in repo)
 groups/telegram-*/
 groups/test-*/
+groups/testrun_*/
+groups/testrun_aborted_*/
+groups/**/coder-runs/
 groups/**/logs/
 groups/main/*
 !groups/main/.gitkeep
