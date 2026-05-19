@@ -11,7 +11,17 @@ import {
   type CodingWorkerRequest,
 } from '../src/coding-orchestrator.js';
 
-function makeRequest(overrides: Partial<CodingWorkerRequest> = {}): CodingWorkerRequest {
+const passingEvaluator = async () => ({
+  pass: true,
+  score: 9,
+  issues: [],
+  feedback: 'Contract satisfied.',
+  skipped: false,
+});
+
+function makeRequest(
+  overrides: Partial<CodingWorkerRequest> = {},
+): CodingWorkerRequest {
   return {
     requestId: 'coder-1',
     mode: 'execute',
@@ -80,6 +90,12 @@ test('plan mode uses read-only worker execution without a worktree', async () =>
   assert.equal(toolMode, 'read_only');
   assert.equal(result.workerResult?.status, 'success');
   assert.equal(result.workerResult?.worktreePath, undefined);
+  assert.ok(result.workerResult?.contractPath);
+  assert.ok(fs.existsSync(result.workerResult.contractPath));
+  assert.match(
+    fs.readFileSync(result.workerResult.contractPath, 'utf-8'),
+    /# Coder Plan Contract/,
+  );
 });
 
 test('execute mode returns structured worker result with changed files', async () => {
@@ -96,18 +112,103 @@ test('execute mode returns structured worker result with changed files', async (
       result: 'Implemented feature and ran npm test.',
       usage: { totalTokens: 12 },
       toolExecutions: [
-        { index: 1, toolName: 'bash', status: 'ok', args: '{"command":"npm test"}' },
+        {
+          index: 1,
+          toolName: 'bash',
+          status: 'ok',
+          args: '{"command":"npm test"}',
+        },
       ],
     }),
     publishEvent: () => {},
+    runEvaluatorPass: passingEvaluator,
   });
 
   const result = await orchestrator.runTask(makeRequest());
 
   assert.equal(result.ok, true);
-  assert.deepEqual(result.workerResult?.changedFiles, ['src/app.ts', 'tests/app.test.ts']);
+  assert.deepEqual(result.workerResult?.changedFiles, [
+    'src/app.ts',
+    'tests/app.test.ts',
+  ]);
   assert.deepEqual(result.workerResult?.testsRun, ['npm test']);
   assert.equal(result.workerResult?.diffSummary, '2 files changed');
+  assert.ok(result.workerResult?.contractPath);
+  assert.ok(result.workerResult?.qaReportPath);
+  assert.equal(result.workerResult?.qaVerdict?.pass, true);
+  assert.match(result.workerResult?.finalMessage || '', /Contract:/);
+  assert.match(result.workerResult?.finalMessage || '', /QA report:/);
+  assert.ok(fs.existsSync(result.workerResult.contractPath));
+  assert.ok(fs.existsSync(result.workerResult.qaReportPath));
+});
+
+test('execute mode refines against the execution contract and records QA verdict', async () => {
+  let runCalls = 0;
+  const evaluatorCalls: string[] = [];
+  const orchestrator = createCodingOrchestrator({
+    activeRuns: new Map(),
+    createEphemeralWorktree: async () => ({
+      worktreePath: '/tmp/coder-contract-refine',
+      cleanup: async () => {},
+      listChangedFiles: () => ['src/feature.ts'],
+      getDiffSummary: () => '1 file changed',
+    }),
+    runContainerAgent: async (_group, input) => {
+      runCalls += 1;
+      assert.match(input.prompt, /Host Execution Contract/);
+      return {
+        status: 'success',
+        result:
+          runCalls === 1
+            ? 'Partially implemented feature.'
+            : 'Implemented feature and verified it.',
+        usage: { totalTokens: 12 },
+        toolExecutions: [
+          {
+            index: runCalls,
+            toolName: 'bash',
+            status: 'ok',
+            args: '{"command":"npm test"}',
+          },
+        ],
+      };
+    },
+    publishEvent: () => {},
+    runEvaluatorPass: async (ctx) => {
+      evaluatorCalls.push(ctx.originalTask);
+      if (evaluatorCalls.length === 1) {
+        return {
+          pass: false,
+          score: 4,
+          issues: ['Acceptance criteria were only partially satisfied.'],
+          feedback: 'Finish the implementation.',
+          skipped: false,
+        };
+      }
+      return {
+        pass: true,
+        score: 9,
+        issues: [],
+        feedback: 'Contract satisfied.',
+        skipped: false,
+      };
+    },
+  });
+
+  const result = await orchestrator.runTask(
+    makeRequest({ requestId: 'contract-refine-test' }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(runCalls, 2);
+  assert.equal(result.workerResult?.qaVerdict?.pass, true);
+  assert.equal(result.workerResult?.qaVerdict?.refinements, 1);
+  assert.ok(evaluatorCalls[0]?.includes('# Coder Execution Contract'));
+  assert.ok(result.workerResult?.qaReportPath);
+  assert.match(
+    fs.readFileSync(result.workerResult.qaReportPath, 'utf-8'),
+    /refinements: 1/,
+  );
 });
 
 test('execute mode forwards run progress events into host events', async () => {
@@ -164,6 +265,7 @@ test('execute mode forwards run progress events into host events', async () => {
     publishEvent: (event) => {
       published.push(event as Record<string, unknown>);
     },
+    runEvaluatorPass: passingEvaluator,
   });
 
   const result = await orchestrator.runTask(
@@ -230,6 +332,7 @@ test('subagent routes mark worker runs as subagent executions', async () => {
       };
     },
     publishEvent: () => {},
+    runEvaluatorPass: passingEvaluator,
   });
 
   const result = await orchestrator.runTask(
@@ -263,6 +366,7 @@ test('execute mode cleans up the worktree when the worker fails', async () => {
       toolExecutions: [],
     }),
     publishEvent: () => {},
+    runEvaluatorPass: passingEvaluator,
   });
 
   const result = await orchestrator.runTask(makeRequest());
@@ -316,6 +420,7 @@ test('execute mode cleans up the worktree when aborted', async () => {
       toolExecutions: [],
     }),
     publishEvent: () => {},
+    runEvaluatorPass: passingEvaluator,
   });
 
   const result = await orchestrator.runTask(makeRequest());
@@ -344,6 +449,7 @@ test('execute mode retains the worktree after successful completion', async () =
       toolExecutions: [],
     }),
     publishEvent: () => {},
+    runEvaluatorPass: passingEvaluator,
   });
 
   const result = await orchestrator.runTask(makeRequest());
@@ -361,7 +467,8 @@ test('execute mode retains worktree and reports path after success', async () =>
       worktreePath: '/tmp/coder-retain-path-test',
       cleanup: async () => {},
       listChangedFiles: () => ['src/app.ts', 'tests/app.test.ts'],
-      getDiffSummary: () => '2 files changed, 50 insertions(+), 10 deletions(-)',
+      getDiffSummary: () =>
+        '2 files changed, 50 insertions(+), 10 deletions(-)',
     }),
     runContainerAgent: async () => ({
       status: 'success',
@@ -370,13 +477,21 @@ test('execute mode retains worktree and reports path after success', async () =>
       toolExecutions: [],
     }),
     publishEvent: () => {},
+    runEvaluatorPass: passingEvaluator,
   });
 
-  const result = await orchestrator.runTask(makeRequest({ requestId: 'retain-test' }));
+  const result = await orchestrator.runTask(
+    makeRequest({ requestId: 'retain-test' }),
+  );
 
   assert.equal(result.ok, true);
-  assert.equal(result.workerResult?.worktreePath, '/tmp/coder-retain-path-test');
-  assert.ok(result.workerResult?.finalMessage?.includes('/tmp/coder-retain-path-test'));
+  assert.equal(
+    result.workerResult?.worktreePath,
+    '/tmp/coder-retain-path-test',
+  );
+  assert.ok(
+    result.workerResult?.finalMessage?.includes('/tmp/coder-retain-path-test'),
+  );
   assert.ok(result.workerResult?.finalMessage?.includes('Changed files'));
   assert.ok(result.workerResult?.finalMessage?.includes('Diff'));
 });
@@ -397,8 +512,14 @@ test('pruneRetainedWorktrees removes worktrees older than retentionTtlMs', async
   // 3 hours ago > 1 hour TTL → pruned
   // 30 minutes ago < 1 hour TTL → NOT pruned
   const staleWorktree1 = path.join(worktreeBase, `coder-old-1-${twoHoursAgo}`);
-  const staleWorktree2 = path.join(worktreeBase, `coder-old-2-${threeHoursAgo}`);
-  const recentWorktree = path.join(worktreeBase, `coder-recent-${thirtyMinutesAgo}`);
+  const staleWorktree2 = path.join(
+    worktreeBase,
+    `coder-old-2-${threeHoursAgo}`,
+  );
+  const recentWorktree = path.join(
+    worktreeBase,
+    `coder-recent-${thirtyMinutesAgo}`,
+  );
 
   fs.mkdirSync(staleWorktree1);
   fs.mkdirSync(staleWorktree2);
@@ -467,7 +588,10 @@ test('pruneRetainedWorktrees keeps active worktrees out of retention pruning', a
   fs.mkdirSync(staleWorktree);
 
   // Create an "active" worktree that should be protected (4 hours old but protected)
-  const activeWorktree = path.join(worktreeBase, `coder-active-${now - 4 * 60 * 60 * 1000}`);
+  const activeWorktree = path.join(
+    worktreeBase,
+    `coder-active-${now - 4 * 60 * 60 * 1000}`,
+  );
   fs.mkdirSync(activeWorktree);
 
   // Prune with 1-hour TTL but protect activeWorktree
@@ -558,7 +682,9 @@ test('pruneRetainedWorktrees skips entries with invalid timestamp format', async
 // causing git init to reinitialize the parent repo instead of creating a fresh one
 test.skip('createDefaultEphemeralWorktree handles unborn repository (no commits)', async () => {
   // Create an unborn git repo (initialized but no commits)
-  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-unborn-source-'));
+  const sourceDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'fft-unborn-source-'),
+  );
   const { execSync: execSyncFn } = await import('child_process');
   const execSync = (cmd: string, opts: { cwd?: string; encoding: string }) => {
     try {
@@ -576,11 +702,17 @@ test.skip('createDefaultEphemeralWorktree handles unborn repository (no commits)
 
   // Create some source files including a gitignored one
   fs.writeFileSync(path.join(sourceDir, 'src/app.ts'), 'export const x = 1;');
-  fs.writeFileSync(path.join(sourceDir, 'src/index.ts'), 'export * from "./app";');
+  fs.writeFileSync(
+    path.join(sourceDir, 'src/index.ts'),
+    'export * from "./app";',
+  );
   fs.writeFileSync(path.join(sourceDir, '.gitignore'), 'node_modules\ndist\n');
   // Create gitignored files
   fs.writeFileSync(path.join(sourceDir, 'node_modules/package.json'), '{}');
-  fs.writeFileSync(path.join(sourceDir, 'dist/bundle.js'), 'console.log("hi");');
+  fs.writeFileSync(
+    path.join(sourceDir, 'dist/bundle.js'),
+    'console.log("hi");',
+  );
 
   // Create the worktree from the unborn repo
   const worktree = await createDefaultEphemeralWorktree({
@@ -594,20 +726,39 @@ test.skip('createDefaultEphemeralWorktree handles unborn repository (no commits)
 
     // Verify listChangedFiles returns untracked files/directories (git shows dirs when all contents untracked)
     const changedFiles = worktree.listChangedFiles();
-    assert.ok(changedFiles.length > 0, 'Should have changed files, got: ' + JSON.stringify(changedFiles));
+    assert.ok(
+      changedFiles.length > 0,
+      'Should have changed files, got: ' + JSON.stringify(changedFiles),
+    );
     // git status --short shows directories (like src/) rather than individual files when all contents are untracked
     // node_modules and dist should NOT be included (gitignored)
-    assert.ok(!changedFiles.some((f) => f.includes('node_modules')), 'Should not include node_modules, got: ' + JSON.stringify(changedFiles));
-    assert.ok(!changedFiles.some((f) => f.includes('dist')), 'Should not include dist, got: ' + JSON.stringify(changedFiles));
+    assert.ok(
+      !changedFiles.some((f) => f.includes('node_modules')),
+      'Should not include node_modules, got: ' + JSON.stringify(changedFiles),
+    );
+    assert.ok(
+      !changedFiles.some((f) => f.includes('dist')),
+      'Should not include dist, got: ' + JSON.stringify(changedFiles),
+    );
 
     // Verify getDiffSummary returns empty string (no HEAD to diff against)
     const diffSummary = worktree.getDiffSummary();
     console.log('DEBUG diffSummary:', JSON.stringify(diffSummary));
-    assert.equal(diffSummary, '', 'getDiffSummary should return empty string for unborn repo');
+    assert.equal(
+      diffSummary,
+      '',
+      'getDiffSummary should return empty string for unborn repo',
+    );
 
     // Verify the worktree is a valid git repo
-    const gitDirResult = execSync('git rev-parse --git-dir', { cwd: worktree.worktreePath, encoding: 'utf-8' });
-    assert.ok(gitDirResult && gitDirResult.trim(), 'Worktree should be a git repo, got: ' + gitDirResult);
+    const gitDirResult = execSync('git rev-parse --git-dir', {
+      cwd: worktree.worktreePath,
+      encoding: 'utf-8',
+    });
+    assert.ok(
+      gitDirResult && gitDirResult.trim(),
+      'Worktree should be a git repo, got: ' + gitDirResult,
+    );
   } finally {
     // Cleanup
     await worktree.cleanup();
