@@ -185,6 +185,25 @@ test('runOnboarding non-interactive local auth provider writes provider env', as
   assert.match(envBody, /^FFT_NANO_TUI_PORT=29999$/m);
 });
 
+test('runOnboarding OpenCode Go choice writes provider env', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    authChoice: 'opencode-go',
+    apiKey: 'go-key',
+    model: 'deepseek-v4-flash',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.match(envBody, /^FFT_NANO_RUNTIME_PROVIDER_PRESET=opencode-go$/m);
+  assert.match(envBody, /^PI_API=opencode-go$/m);
+  assert.match(envBody, /^PI_MODEL=deepseek-v4-flash$/m);
+  assert.match(envBody, /^OPENCODE_API_KEY=go-key$/m);
+});
+
 test('runOnboarding local LM Studio choice writes local endpoint defaults without requiring an API key', async () => {
   const workspace = makeTmpWorkspace();
   const envPath = path.join(workspace, '.env');

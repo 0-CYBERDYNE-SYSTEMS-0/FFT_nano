@@ -223,12 +223,15 @@ export function runUpdateCommand(
   }
 
   const installStep = existsSync(path.join(cwd, 'package-lock.json'))
-    ? runStep('npm ci', 'npm', ['ci'])
-    : runStep('npm install', 'npm', ['install']);
+    ? runStep('npm ci', 'npm', ['ci', '--include=dev'])
+    : runStep('npm install', 'npm', ['install', '--include=dev']);
 
   if (!installStep.ok && existsSync(path.join(cwd, 'package-lock.json'))) {
     outputLines.push('npm ci failed; falling back to npm install.');
-    const fallbackInstall = runStep('npm install', 'npm', ['install']);
+    const fallbackInstall = runStep('npm install', 'npm', [
+      'install',
+      '--include=dev',
+    ]);
     if (!fallbackInstall.ok) {
       return fail('Update aborted during dependency installation.');
     }
