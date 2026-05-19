@@ -125,6 +125,10 @@ export type TelegramSettingsPanelAction =
   | { kind: 'set-verbose'; value: VerboseMode }
   | { kind: 'show-queue' }
   | { kind: 'set-queue-mode'; value: QueueMode }
+  | { kind: 'show-groups' }
+  | { kind: 'approve-telegram-group'; chatJid: string }
+  | { kind: 'ignore-telegram-group'; chatJid: string }
+  | { kind: 'unignore-telegram-group'; chatJid: string }
   | { kind: 'show-subagents' }
   | { kind: 'stop-subagents'; target: 'current' | 'all' }
   | { kind: 'trigger-new' }
