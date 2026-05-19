@@ -86,7 +86,13 @@ import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
 import { getContainerRuntime } from './container-runtime.js';
 import { acquireSingletonLock } from './singleton-lock.js';
-import { runUpdateCommand } from './update-command.js';
+import {
+  getUpdateNotificationsDir,
+  readUpdateNotification,
+  runUpdateCommand,
+  startDetachedUpdateCommand,
+  writeUpdateNotification,
+} from './update-command.js';
 import {
   createTelegramBot,
   isTelegramJid,
@@ -4007,6 +4013,11 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   hasMainGroup,
   runGatewayServiceCommand,
   runUpdateCommand,
+  startUpdateCommand: (chatJid) =>
+    startDetachedUpdateCommand({
+      cwd: process.cwd(),
+      chatJid,
+    }),
   buildRuntimeProviderPresetUpdates,
   getRuntimeConfigEnv,
   persistRuntimeConfigUpdates,
@@ -5076,6 +5087,69 @@ async function sendMessage(jid: string, text: string): Promise<boolean> {
     logger.error({ jid, err }, 'Failed to send message');
     return false;
   }
+}
+
+const UPDATE_NOTIFICATION_POLL_MS = 5000;
+let updateNotificationTimer: ReturnType<typeof setInterval> | null = null;
+
+async function processPendingUpdateNotifications(): Promise<void> {
+  if (!state.telegramBot) return;
+  const reportDir = getUpdateNotificationsDir(process.cwd());
+  if (!fs.existsSync(reportDir)) return;
+
+  let entries: string[] = [];
+  try {
+    entries = fs
+      .readdirSync(reportDir)
+      .filter((entry) => entry.endsWith('.json'));
+  } catch (err) {
+    logger.debug({ err, reportDir }, 'Failed to read update notification dir');
+    return;
+  }
+
+  for (const entry of entries) {
+    const reportFile = path.join(reportDir, entry);
+    const record = readUpdateNotification(reportFile);
+    if (!record || record.status !== 'complete' || record.sentAt) continue;
+    if (!record.chatJid) {
+      logger.warn({ reportFile }, 'Update report missing chat id');
+      continue;
+    }
+
+    const label = record.ok ? 'Update complete' : 'Update failed';
+    const sent = await sendMessage(
+      record.chatJid,
+      `${label}:\n${record.text || ''}`,
+    );
+    if (!sent) continue;
+
+    const sentAt = new Date().toISOString();
+    writeUpdateNotification(reportFile, {
+      ...record,
+      sentAt,
+      updatedAt: sentAt,
+    });
+    logger.info(
+      { reportId: record.id, chatJid: record.chatJid, ok: record.ok },
+      'Update notification delivered',
+    );
+  }
+}
+
+function startUpdateNotificationLoop(): void {
+  if (updateNotificationTimer !== null) return;
+  void processPendingUpdateNotifications();
+  updateNotificationTimer = setInterval(() => {
+    if (state.shuttingDown) return;
+    void processPendingUpdateNotifications();
+  }, UPDATE_NOTIFICATION_POLL_MS);
+  updateNotificationTimer.unref?.();
+}
+
+function stopUpdateNotificationLoop(): void {
+  if (updateNotificationTimer === null) return;
+  clearInterval(updateNotificationTimer);
+  updateNotificationTimer = null;
 }
 
 function queueTelegramToolProgressReaction(
@@ -6550,6 +6624,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 function stopFarmServicesForShutdown(signal: string): void {
+  stopUpdateNotificationLoop();
   stopHeartbeatLoop();
   appRuntime.stopFarmServicesForShutdown(signal);
 }
@@ -6558,6 +6633,7 @@ async function shutdownAndExit(
   signal: string,
   exitCode: number,
 ): Promise<void> {
+  stopUpdateNotificationLoop();
   stopHeartbeatLoop();
   await appRuntime.shutdownAndExit(signal, exitCode);
 }
@@ -6568,6 +6644,7 @@ function registerShutdownHandlers(): void {
 
 async function main(): Promise<void> {
   await appRuntime.main();
+  startUpdateNotificationLoop();
 }
 
 main().catch(async (err) => {

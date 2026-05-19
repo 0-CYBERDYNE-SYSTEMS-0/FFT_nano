@@ -1,10 +1,29 @@
-import { spawnSync } from 'child_process';
+import { randomBytes } from 'crypto';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 export interface UpdateCommandResult {
   ok: boolean;
   text: string;
+}
+
+export interface UpdateCommandStartResult extends UpdateCommandResult {
+  reportId?: string;
+  reportFile?: string;
+}
+
+export interface UpdateNotificationRecord {
+  id: string;
+  chatJid: string;
+  cwd: string;
+  status: 'started' | 'complete';
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  sentAt?: string;
+  ok?: boolean;
+  text?: string;
 }
 
 export interface CommandRunResult {
@@ -32,6 +51,27 @@ export interface RunUpdateCommandOptions {
   run?: CommandRunner;
   existsSync?: (filePath: string) => boolean;
   now?: () => Date;
+}
+
+export interface StartDetachedUpdateCommandOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  chatJid: string;
+  now?: () => Date;
+  nodePath?: string;
+  scriptPath?: string;
+  reportDir?: string;
+  spawnProcess?: (
+    command: string,
+    args: string[],
+    options: {
+      cwd: string;
+      env: NodeJS.ProcessEnv;
+      detached: true;
+      stdio: 'ignore';
+    },
+  ) => Pick<ChildProcess, 'unref'>;
+  existsSync?: (filePath: string) => boolean;
 }
 
 interface StepResult {
@@ -70,6 +110,37 @@ function combinedOutput(result: CommandRunResult): string {
 
 function autostashMarker(now: Date): string {
   return `fft-nano-update-autostash-${now.toISOString()}`;
+}
+
+function createUpdateReportId(now: Date): string {
+  const stamp = now.toISOString().replace(/[^0-9A-Za-z]/g, '');
+  return `update-${stamp}-${randomBytes(4).toString('hex')}`;
+}
+
+export function getUpdateNotificationsDir(cwd = process.cwd()): string {
+  return path.join(cwd, 'data', 'update-notifications');
+}
+
+export function writeUpdateNotification(
+  reportFile: string,
+  record: UpdateNotificationRecord,
+): void {
+  fs.mkdirSync(path.dirname(reportFile), { recursive: true });
+  const tempFile = `${reportFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tempFile, `${JSON.stringify(record, null, 2)}\n`);
+  fs.renameSync(tempFile, reportFile);
+}
+
+export function readUpdateNotification(
+  reportFile: string,
+): UpdateNotificationRecord | null {
+  try {
+    return JSON.parse(
+      fs.readFileSync(reportFile, 'utf-8'),
+    ) as UpdateNotificationRecord;
+  } catch {
+    return null;
+  }
 }
 
 function findAutostashRef(stashList: string, marker: string): string | null {
@@ -283,4 +354,82 @@ export function runUpdateCommand(
 
   outputLines.push('Update complete. Service restarted.');
   return { ok: true, text: outputLines.join('\n') };
+}
+
+export function startDetachedUpdateCommand(
+  options: StartDetachedUpdateCommandOptions,
+): UpdateCommandStartResult {
+  const cwd = options.cwd || process.cwd();
+  const env = options.env || process.env;
+  const now = options.now || (() => new Date());
+  const existsSync = options.existsSync || fs.existsSync;
+  const nodePath = options.nodePath || process.execPath;
+  const scriptPath =
+    options.scriptPath || path.join(cwd, 'dist', 'update-worker.js');
+  const reportDir = options.reportDir || getUpdateNotificationsDir(cwd);
+  const spawnProcess = options.spawnProcess || spawn;
+
+  if (!options.chatJid.trim()) {
+    return { ok: false, text: 'Update not started: missing chat id.' };
+  }
+  if (!existsSync(scriptPath)) {
+    return {
+      ok: false,
+      text: `Update not started: worker script not found at ${scriptPath}. Rebuild first.`,
+    };
+  }
+
+  const startedAt = now();
+  const reportId = createUpdateReportId(startedAt);
+  const reportFile = path.join(reportDir, `${reportId}.json`);
+  const record: UpdateNotificationRecord = {
+    id: reportId,
+    chatJid: options.chatJid,
+    cwd,
+    status: 'started',
+    startedAt: startedAt.toISOString(),
+    updatedAt: startedAt.toISOString(),
+  };
+
+  try {
+    writeUpdateNotification(reportFile, record);
+    const child = spawnProcess(
+      nodePath,
+      [scriptPath, '--report-file', reportFile, '--cwd', cwd],
+      {
+        cwd,
+        detached: true,
+        stdio: 'ignore',
+        env: {
+          ...env,
+          FFT_NANO_UPDATE_REPORT_FILE: reportFile,
+          FFT_NANO_UPDATE_CWD: cwd,
+        },
+      },
+    );
+    child.unref?.();
+    return {
+      ok: true,
+      reportId,
+      reportFile,
+      text: `Update worker started (${reportId}).`,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const failedAt = now().toISOString();
+    writeUpdateNotification(reportFile, {
+      ...record,
+      status: 'complete',
+      ok: false,
+      text: `Update worker failed to start: ${message}`,
+      completedAt: failedAt,
+      updatedAt: failedAt,
+    });
+    return {
+      ok: false,
+      reportId,
+      reportFile,
+      text: `Update not started: ${message}`,
+    };
+  }
 }

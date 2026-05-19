@@ -113,6 +113,12 @@ function createBaseDeps(): TelegramCommandDeps {
     refreshTelegramCommandMenus: async () => {},
     hasMainGroup: () => false,
     runGatewayServiceCommand: () => ({ ok: true, text: 'ok' }),
+    runUpdateCommand: () => ({ ok: true, text: 'updated' }),
+    startUpdateCommand: () => ({
+      ok: true,
+      text: 'worker started',
+      reportId: 'update-1',
+    }),
     buildRuntimeProviderPresetUpdates: () => ({}),
     getRuntimeConfigEnv: () => ({}),
     persistRuntimeConfigUpdates: (updates) => {
@@ -383,6 +389,43 @@ test('handleTelegramCommand blocks /coder-create-project while onboarding is pen
     allowed: false,
     reason: 'blocked by onboarding gate',
   });
+});
+
+test('handleTelegramCommand starts /update in background and sends durable ack', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  const started: string[] = [];
+  deps.isMainChat = () => true;
+  deps.startUpdateCommand = (chatJid) => {
+    started.push(chatJid);
+    return { ok: true, text: 'worker started', reportId: 'update-abc' };
+  };
+  deps.runUpdateCommand = () => {
+    throw new Error('sync update should not run for Telegram /update');
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/update',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(started, ['telegram:main']);
+  assert.match(deps.sent[0]?.text || '', /Update started/);
+  assert.match(deps.sent[0]?.text || '', /Report id: update-abc/);
+  assert.deepEqual(
+    deps.audits.map((audit) => audit.reason),
+    ['update started', 'update worker started update-abc'],
+  );
 });
 
 test('handleTelegramCommand registers spawned subagent runs in both active maps', async () => {
