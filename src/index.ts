@@ -265,7 +265,13 @@ import {
   wrapLegacyTaskEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
-import { runEvaluatorPass, buildRefinementPrompt } from './evaluator.js';
+import {
+  runEvaluatorPass,
+  buildRefinementPrompt,
+  isActionfulChatTask,
+  canAutoRefineActionfulChatTask,
+  type EvaluatorVerdict,
+} from './evaluator.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
@@ -4473,7 +4479,12 @@ async function runAgent(
   };
 }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
+  const workspaceDir = isMain
+    ? MAIN_WORKSPACE_DIR
+    : resolveGroupFolderPath(group.folder);
   const runAgentStartedAt = Date.now();
+  const shouldBlockForChatEvaluation =
+    !options.isHeartbeatTask && isActionfulChatTask(prompt);
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -4558,7 +4569,9 @@ async function runAgent(
       reasoningLevel: runtimePrefs.reasoningLevel,
       verboseMode: runtimePrefs.verboseMode,
       noContinue: runtimePrefs.nextRunNoContinue === true,
-      suppressPreviewStreaming: runtimePrefs.telegramDeliveryMode === 'off',
+      suppressPreviewStreaming:
+        runtimePrefs.telegramDeliveryMode === 'off' ||
+        shouldBlockForChatEvaluation,
       showReasoning:
         runtimePrefs.showReasoning === true ||
         runtimePrefs.reasoningLevel === 'stream',
@@ -4571,6 +4584,7 @@ async function runAgent(
       runPrefs: ChatRunPreferences,
       attemptRequestId = requestId,
       suppressPreviewStreaming = false,
+      promptOverride?: string,
     ): Promise<{
       status: 'success' | 'error';
       result: string | null;
@@ -4590,6 +4604,7 @@ async function runAgent(
         group,
         {
           ...input,
+          prompt: promptOverride || input.prompt,
           requestId: attemptRequestId,
           verboseMode: runPrefs.verboseMode,
           noContinue: runPrefs.nextRunNoContinue === true,
@@ -4732,11 +4747,96 @@ async function runAgent(
       isAborted: () => abortSignal?.aborted === true,
     });
 
-    const finalResult = emptyOutputPolicy.finalRun;
+    let finalResult = emptyOutputPolicy.finalRun;
+
+    const formatEvaluatorFollowUp = (verdict: EvaluatorVerdict): string =>
+      `⚠️ Quality check flagged potential issues (score ${verdict.score}/10):\n` +
+      (verdict.issues.length > 0
+        ? verdict.issues.map((i) => `• ${i}`).join('\n') + '\n'
+        : '') +
+      (verdict.feedback ? verdict.feedback : '');
+
+    if (
+      shouldBlockForChatEvaluation &&
+      finalResult.ok &&
+      finalResult.result &&
+      abortSignal?.aborted !== true
+    ) {
+      const maxRefinements = 2;
+      let evalTaskText = prompt;
+      let lastFailedVerdict: EvaluatorVerdict | null = null;
+      const canAutoRefineEvaluation =
+        canAutoRefineActionfulChatTask(evalTaskText);
+
+      for (let attempt = 0; attempt <= maxRefinements; attempt += 1) {
+        const verdict = await runEvaluatorPass({
+          runType: 'chat',
+          originalTask: evalTaskText,
+          agentOutput: finalResult.result || '',
+          durationMs: Date.now() - runAgentStartedAt,
+          toolsInvoked: runToolsInvoked,
+          group,
+          chatJid,
+          isMain,
+          workspaceDir,
+          startedAtMs: runAgentStartedAt,
+          forceEvaluate: true,
+          abortSignal,
+        });
+
+        if (verdict.skipped || verdict.pass) {
+          lastFailedVerdict = null;
+          break;
+        }
+
+        lastFailedVerdict = verdict;
+        if (!canAutoRefineEvaluation || attempt >= maxRefinements) break;
+
+        const refinedPrompt = buildRefinementPrompt(evalTaskText, verdict);
+        const retryRequestId = requestId
+          ? `${requestId}:eval-${attempt + 1}`
+          : requestId;
+        const refinedOutput = await executeRun(
+          {
+            ...runtimePrefs,
+            nextRunNoContinue: true,
+          },
+          retryRequestId,
+          true,
+          refinedPrompt,
+        );
+
+        if (refinedOutput.status !== 'success' || !refinedOutput.result) {
+          break;
+        }
+
+        finalResult = {
+          result: refinedOutput.result,
+          streamed: !!refinedOutput.streamed,
+          ok: true,
+          hadToolSideEffects: refinedOutput.hadToolSideEffects,
+          usage: refinedOutput.usage,
+        };
+        evalTaskText = refinedPrompt;
+      }
+
+      if (lastFailedVerdict && finalResult.result) {
+        finalResult = {
+          ...finalResult,
+          streamed: false,
+          result: `${finalResult.result.trim()}\n\n${formatEvaluatorFollowUp(lastFailedVerdict)}`,
+        };
+      }
+    }
 
     // Evaluator pass — non-blocking for chat/heartbeat: deliver result first,
     // then evaluate and send a follow-up only if issues are found.
-    if (finalResult.ok && finalResult.result && abortSignal?.aborted !== true) {
+    if (
+      !shouldBlockForChatEvaluation &&
+      finalResult.ok &&
+      finalResult.result &&
+      abortSignal?.aborted !== true
+    ) {
       const runType = options.isHeartbeatTask ? 'heartbeat' : 'chat';
       void runEvaluatorPass({
         runType,
@@ -4746,16 +4846,19 @@ async function runAgent(
         toolsInvoked: runToolsInvoked,
         group,
         chatJid,
+        isMain,
+        workspaceDir,
+        startedAtMs: runAgentStartedAt,
         abortSignal,
       })
         .then((verdict) => {
           if (verdict.skipped || verdict.pass) return;
-          const followUp =
-            `⚠️ Quality check flagged potential issues (score ${verdict.score}/10):\n` +
-            (verdict.issues.length > 0
-              ? verdict.issues.map((i) => `• ${i}`).join('\n') + '\n'
-              : '') +
-            (verdict.feedback ? verdict.feedback : '');
+          const followUp = formatEvaluatorFollowUp(verdict);
+          persistAssistantHistory(
+            chatJid,
+            followUp,
+            requestId ? `${requestId}:evaluator` : undefined,
+          );
           void sendMessage(chatJid, followUp);
         })
         .catch((err) => {
