@@ -165,7 +165,7 @@ function helpText(): string {
     '/verbose [off|new|all|verbose]',
     '/deliver <on|off>',
     '/gateway <status|restart|doctor>',
-    '/update - pull, rebuild, and restart',
+    '/update - preserve local changes, pull, rebuild, and restart',
     '/new or /reset',
     '/abort',
     '/exit',
@@ -661,7 +661,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
 
       case 'update': {
         chatLog.addSystem(
-          'Starting update: git pull, npm install, build, then restart...',
+          'Starting update: stash local changes, pull, install, build, reapply changes, then restart...',
         );
         const result = await client.request<{ ok: boolean; text: string }>(
           'host.update',
