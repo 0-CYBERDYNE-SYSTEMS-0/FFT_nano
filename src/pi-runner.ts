@@ -91,6 +91,7 @@ export interface ContainerInput {
   noContinue?: boolean;
   toolMode?: 'default' | 'read_only' | 'full';
   workspaceDirOverride?: string;
+  sandboxAllowedPathsOverride?: string[];
   piExecutableOverride?: string;
   showReasoning?: boolean;
   skipPromptPreflight?: boolean;
@@ -1314,9 +1315,14 @@ export async function runContainerAgent(
         ...(input.isSubagent ? { FFT_NANO_SUBAGENT: '1' } : {}),
       };
 
+      const sandboxAllowedPaths =
+        input.sandboxAllowedPathsOverride &&
+        input.sandboxAllowedPathsOverride.length > 0
+          ? input.sandboxAllowedPathsOverride
+          : [wp.groupDir, wp.piHomeDir, wp.ipcDir];
       const sandboxed = wrapWithSandbox(piExecutable, piArgs, {
         cwd: wp.groupDir,
-        allowedPaths: [wp.groupDir, wp.piHomeDir, wp.ipcDir],
+        allowedPaths: sandboxAllowedPaths,
         env: env as Record<string, string>,
       });
 

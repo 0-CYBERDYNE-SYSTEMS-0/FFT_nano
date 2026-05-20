@@ -11,10 +11,10 @@ import { logger } from './logger.js';
 import type { RegisteredGroup, SkillActionRequest } from './types.js';
 
 export const SKILL_USAGE_FILE = '.usage.json';
-export const SKILL_CURATOR_STATE_FILE = '.curator_state.json';
+export const SKILL_MANAGER_STATE_FILE = '.skill_manager_state.json';
 export const SKILL_ARCHIVE_DIR = '.archive';
 export const SKILL_BACKUP_DIR = '.curator_backups';
-export const SKILL_REPORTS_DIR = 'curator';
+export const SKILL_REPORTS_DIR = 'skill-manager';
 
 export type SkillLifecycleState = 'active' | 'stale' | 'archived';
 
@@ -32,7 +32,7 @@ export interface SkillUsageRecord {
   archived_at: string | null;
 }
 
-export interface SkillCuratorConfig {
+export interface SkillManagerConfig {
   enabled: boolean;
   intervalHours: number;
   minIdleHours: number;
@@ -42,7 +42,7 @@ export interface SkillCuratorConfig {
   backupKeep: number;
 }
 
-export interface SkillCuratorState {
+export interface SkillManagerState {
   lastRunAt: string | null;
   lastRunDurationSeconds: number | null;
   lastRunSummary: string | null;
@@ -138,7 +138,7 @@ function defaultUsageRecord(): SkillUsageRecord {
   };
 }
 
-function defaultCuratorState(): SkillCuratorState {
+function defaultSkillManagerState(): SkillManagerState {
   return {
     lastRunAt: null,
     lastRunDurationSeconds: null,
@@ -169,8 +169,8 @@ function usagePath(skillsDir: string): string {
   return path.join(skillsDir, SKILL_USAGE_FILE);
 }
 
-function curatorStatePath(skillsDir: string): string {
-  return path.join(skillsDir, SKILL_CURATOR_STATE_FILE);
+function skillManagerStatePath(skillsDir: string): string {
+  return path.join(skillsDir, SKILL_MANAGER_STATE_FILE);
 }
 
 function archiveRoot(skillsDir: string): string {
@@ -663,34 +663,50 @@ function setPinned(skillsDir: string, name: string, pinned: boolean): SkillRepor
   return buildSkillReport(skillsDir, true).find((entry) => entry.name === parsedName)!;
 }
 
-export function loadSkillCuratorState(skillsDir: string): SkillCuratorState {
+export function loadSkillManagerState(skillsDir: string): SkillManagerState {
   try {
-    const filePath = curatorStatePath(skillsDir);
-    if (!fs.existsSync(filePath)) return defaultCuratorState();
+    const filePath = skillManagerStatePath(skillsDir);
+    if (!fs.existsSync(filePath)) {
+      // Migration: check for old curator state file
+      const oldFilePath = path.join(skillsDir, '.curator_state.json');
+      if (fs.existsSync(oldFilePath)) {
+        try {
+          const oldParsed = JSON.parse(fs.readFileSync(oldFilePath, 'utf-8'));
+          const migrated = { ...defaultSkillManagerState(), ...(oldParsed || {}) };
+          saveSkillManagerState(skillsDir, migrated);
+          // Rename old file to avoid re-migrating
+          fs.renameSync(oldFilePath, oldFilePath + '.migrated');
+          return migrated;
+        } catch {
+          // fall through to default
+        }
+      }
+      return defaultSkillManagerState();
+    }
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    return { ...defaultCuratorState(), ...(parsed || {}) };
+    return { ...defaultSkillManagerState(), ...(parsed || {}) };
   } catch {
-    return defaultCuratorState();
+    return defaultSkillManagerState();
   }
 }
 
-export function saveSkillCuratorState(skillsDir: string, state: SkillCuratorState): void {
-  writeJsonAtomic(curatorStatePath(skillsDir), state);
+export function saveSkillManagerState(skillsDir: string, state: SkillManagerState): void {
+  writeJsonAtomic(skillManagerStatePath(skillsDir), state);
 }
 
-export function shouldRunSkillCurator(
+export function shouldRunSkillManager(
   skillsDir: string,
-  config: SkillCuratorConfig,
+  config: SkillManagerConfig,
   now = new Date(),
 ): boolean {
   if (!config.enabled) return false;
-  const state = loadSkillCuratorState(skillsDir);
+  const state = loadSkillManagerState(skillsDir);
   if (state.paused) return false;
   if (!state.lastRunAt) {
     state.lastRunAt = now.toISOString();
     state.lastRunSummary =
-      'deferred first run; curator seeded and will run after one full interval';
-    saveSkillCuratorState(skillsDir, state);
+      'deferred first run; manager seeded and will run after one full interval';
+    saveSkillManagerState(skillsDir, state);
     return false;
   }
   const last = parseDate(state.lastRunAt);
@@ -698,9 +714,9 @@ export function shouldRunSkillCurator(
   return now.getTime() - last.getTime() >= config.intervalHours * 60 * 60 * 1000;
 }
 
-export function applySkillCuratorTransitions(params: {
+export function applySkillManagerTransitions(params: {
   skillsDir: string;
-  config: SkillCuratorConfig;
+  config: SkillManagerConfig;
   dryRun?: boolean;
   now?: Date;
 }): { checked: number; markedStale: number; archived: number; reactivated: number } {
@@ -785,12 +801,12 @@ export function snapshotSkills(params: {
   return dest;
 }
 
-export function writeSkillCuratorReport(params: {
+export function writeSkillManagerReport(params: {
   groupFolder: string;
   skillsDir: string;
   dryRun: boolean;
   summary: string;
-  transitions: ReturnType<typeof applySkillCuratorTransitions>;
+  transitions: ReturnType<typeof applySkillManagerTransitions>;
 }): string {
   const reportsRoot = path.join(resolveGroupLogsDir(params.groupFolder), SKILL_REPORTS_DIR);
   fs.mkdirSync(reportsRoot, { recursive: true });
@@ -807,7 +823,7 @@ export function writeSkillCuratorReport(params: {
   });
   const badFrontmatter = report.filter((entry) => !entry.frontmatterOk);
   const lines = [
-    `# Skill Curator Report ${id}`,
+    `# Skill Manager Report ${id}`,
     '',
     params.summary,
     '',
@@ -912,9 +928,9 @@ export async function executeSkillAction(
   }
 }
 
-export function formatSkillCuratorStatus(groupFolder = MAIN_GROUP_FOLDER): string {
+export function formatSkillManagerStatus(groupFolder = MAIN_GROUP_FOLDER): string {
   const skillsDir = resolveGroupSkillsDir(groupFolder);
-  const state = loadSkillCuratorState(skillsDir);
+  const state = loadSkillManagerState(skillsDir);
   const report = buildSkillReport(skillsDir, true);
   const active = report.filter((entry) => entry.usage.state === 'active').length;
   const stale = report.filter((entry) => entry.usage.state === 'stale').length;
@@ -926,7 +942,7 @@ export function formatSkillCuratorStatus(groupFolder = MAIN_GROUP_FOLDER): strin
     .sort((a, b) => (a.lastActivityAt || a.usage.created_at).localeCompare(b.lastActivityAt || b.usage.created_at))
     .slice(0, 5);
   return [
-    `curator: ${state.paused ? 'PAUSED' : 'ENABLED'}`,
+    `skill-manager: ${state.paused ? 'PAUSED' : 'ENABLED'}`,
     `runs: ${state.runCount}`,
     `last run: ${state.lastRunAt || 'never'}`,
     `last summary: ${state.lastRunSummary || '(none)'}`,
@@ -944,11 +960,11 @@ export function formatSkillCuratorStatus(groupFolder = MAIN_GROUP_FOLDER): strin
   ].join('\n');
 }
 
-export function setSkillCuratorPaused(groupFolder: string, paused: boolean): void {
+export function setSkillManagerPaused(groupFolder: string, paused: boolean): void {
   const skillsDir = resolveGroupSkillsDir(groupFolder);
-  const state = loadSkillCuratorState(skillsDir);
+  const state = loadSkillManagerState(skillsDir);
   state.paused = paused;
-  saveSkillCuratorState(skillsDir, state);
+  saveSkillManagerState(skillsDir, state);
 }
 
 export function getMainWorkspaceSkillsDir(): string {

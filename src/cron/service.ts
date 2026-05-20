@@ -31,6 +31,7 @@ export interface CronServiceDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   requestHeartbeatNow?: (reason?: string) => void;
   runContainerTask?: typeof runContainerAgent;
+  runEvaluatorPass?: typeof runEvaluatorPass;
   runSubagentTask?: (
     type: string,
     groupFolder: string,
@@ -386,7 +387,8 @@ export async function runScheduledTaskV2(
 
         // Evaluator pass for cron tasks — always runs
         if (outputResult) {
-          const verdict = await runEvaluatorPass({
+          const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
+          const verdict = await evaluateRun({
             runType: 'cron',
             originalTask: task.prompt,
             agentOutput: outputResult,
@@ -409,10 +411,14 @@ export async function runScheduledTaskV2(
           });
           if (verdict && !verdict.skipped && !verdict.pass) {
             logger.warn(
-              { taskId: task.id, score: verdict.score, issues: verdict.issues },
-              'Cron task evaluator flagged issues',
+              {
+                taskId: task.id,
+                score: verdict.score,
+                issues: verdict.issues,
+                feedback: verdict.feedback,
+              },
+              'Cron task evaluator flagged issues; suppressing user-visible evaluator details',
             );
-            outputResult = `${outputResult}\n\n[Evaluator: score ${verdict.score}/10 — ${verdict.feedback}${verdict.issues.length > 0 ? '\nIssues: ' + verdict.issues.join('; ') : ''}]`;
           }
         }
       }

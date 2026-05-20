@@ -53,6 +53,11 @@ const FRONTMATTER_OPTIONAL_FIELDS = [
   'compatibility',
   'metadata',
   'allowed-tools',
+  'version',
+  'author',
+  'dependencies',
+  'category',
+  'disable-model-invocation',
 ] as const;
 const FRONTMATTER_ALLOWED_FIELDS = new Set<string>([
   ...FRONTMATTER_REQUIRED_FIELDS,
@@ -104,7 +109,7 @@ function parseSkillMarkdown(
   try {
     parsed = YAML.parse(yamlFrontmatter);
   } catch {
-    return null;
+    parsed = parseLooseFrontmatter(yamlFrontmatter);
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
     return null;
@@ -113,6 +118,28 @@ function parseSkillMarkdown(
     content,
     body: content.slice(end + '\n---\n'.length),
   };
+}
+
+function parseLooseFrontmatter(raw: string): Record<string, unknown> | null {
+  const parsed: Record<string, unknown> = {};
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(trimmed);
+    if (!match) return null;
+    const key = match[1];
+    const value = match[2] ?? '';
+    if (value === 'true') {
+      parsed[key] = true;
+    } else if (value === 'false') {
+      parsed[key] = false;
+    } else if (value === '[]') {
+      parsed[key] = [];
+    } else {
+      parsed[key] = value.replace(/^['"]|['"]$/g, '');
+    }
+  }
+  return Object.keys(parsed).length > 0 ? parsed : null;
 }
 
 function toTrimmedString(value: unknown): string | null {
@@ -141,12 +168,7 @@ function validateMetadataMap(
       });
       continue;
     }
-    if (typeof item !== 'string') {
-      issues.push({
-        file: skillMarkdownPath,
-        message: `Frontmatter field "metadata.${key}" must be a string`,
-      });
-    }
+    if (item === undefined) continue;
   }
 }
 
@@ -421,6 +443,12 @@ function validateSkillPathSafety(skillPath: string): SkillValidationIssue[] {
     }
 
     for (const entry of entries) {
+      if (
+        entry.isDirectory() &&
+        ['.venv', 'node_modules', '.git', '__pycache__'].includes(entry.name)
+      ) {
+        continue;
+      }
       const entryPath = path.join(current, entry.name);
       let stats: fs.Stats;
       try {

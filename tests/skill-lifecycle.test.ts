@@ -5,17 +5,17 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  applySkillCuratorTransitions,
+  applySkillManagerTransitions,
   buildSkillReport,
   executeSkillAction,
   isAgentCreatedSkill,
   loadSkillUsage,
   resolveGroupSkillsDir,
   saveSkillUsage,
-  type SkillCuratorConfig,
+  type SkillManagerConfig,
 } from '../src/skill-lifecycle.js';
 
-const config: SkillCuratorConfig = {
+const config: SkillManagerConfig = {
   enabled: true,
   intervalHours: 168,
   minIdleHours: 2,
@@ -219,7 +219,7 @@ test('managed manifest overrides stale agent-created usage provenance', async ()
     assert.equal(patch.status, 'error');
     assert.match(patch.error || '', /only agent-created/);
 
-    const result = applySkillCuratorTransitions({
+    const result = applySkillManagerTransitions({
       skillsDir,
       config,
       now: new Date('2026-05-19T00:00:00.000Z'),
@@ -235,7 +235,7 @@ test('managed manifest overrides stale agent-created usage provenance', async ()
   }
 });
 
-test('curator transitions archive stale unpinned agent-created skills', () => {
+test('skill manager transitions archive stale unpinned agent-created skills', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-skill-life-'));
   try {
     const skillsDir = path.join(tempRoot, 'skills');
@@ -258,7 +258,7 @@ test('curator transitions archive stale unpinned agent-created skills', () => {
       },
     });
 
-    const result = applySkillCuratorTransitions({
+    const result = applySkillManagerTransitions({
       skillsDir,
       config,
       now: new Date('2026-05-19T00:00:00.000Z'),

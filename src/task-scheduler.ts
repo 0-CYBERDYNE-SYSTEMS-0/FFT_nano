@@ -30,6 +30,7 @@ export interface SchedulerDependencies {
   requestHeartbeatNow?: (reason?: string) => void;
   isChatRunActive?: (jid: string) => boolean;
   runTaskAgent?: typeof runContainerAgent;
+  runEvaluatorPass?: typeof runEvaluatorPass;
   scheduleNextTick?: (fn: () => void, delayMs: number) => unknown;
 }
 
@@ -145,7 +146,8 @@ async function runLegacyTask(
 
       // Evaluator pass for scheduled tasks — always runs
       if (result && group) {
-        const verdict = await runEvaluatorPass({
+        const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
+        const verdict = await evaluateRun({
           runType: 'scheduled',
           originalTask: task.prompt,
           agentOutput: result,
@@ -165,10 +167,14 @@ async function runLegacyTask(
         });
         if (verdict && !verdict.skipped && !verdict.pass) {
           logger.warn(
-            { taskId: task.id, score: verdict.score, issues: verdict.issues },
-            'Scheduled task evaluator flagged issues',
+            {
+              taskId: task.id,
+              score: verdict.score,
+              issues: verdict.issues,
+              feedback: verdict.feedback,
+            },
+            'Scheduled task evaluator flagged issues; suppressing user-visible evaluator details',
           );
-          result = `${result}\n\n[Evaluator: score ${verdict.score}/10 — ${verdict.feedback}${verdict.issues.length > 0 ? '\nIssues: ' + verdict.issues.join('; ') : ''}]`;
         }
       }
     }
