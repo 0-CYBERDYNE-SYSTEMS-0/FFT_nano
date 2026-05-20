@@ -474,6 +474,21 @@ function selectRecentConversationMessages(params: {
   return selected;
 }
 
+function isInternalAssistantHistoryMessage(message: NewMessage): boolean {
+  if (message.is_from_me !== 1) return false;
+  const text = message.content
+    .replace(/^[^:\n]{1,80}:\s*/, '')
+    .trim();
+  if (!text) return false;
+  return (
+    /^HEARTBEAT_OK$/i.test(text) ||
+    /^Quality check flagged/i.test(text) ||
+    /Quality check flagged potential issues/i.test(text) ||
+    /^LLM produced no user-visible final response/i.test(text) ||
+    /^Evaluator flagged issues/i.test(text)
+  );
+}
+
 function buildInteractivePrompt(params: {
   recentConversation: NewMessage[];
   newInboundMessages: NewMessage[];
@@ -568,7 +583,9 @@ function prepareInteractivePrompt(params: {
     maxChars: recentConversationChars,
     includeMessage: params.includeTuiMessagesInRecentConversation
       ? undefined
-      : (message) => message.sender !== '__fft_tui__',
+      : (message) =>
+          message.sender !== '__fft_tui__' &&
+          !isInternalAssistantHistoryMessage(message),
   });
 
   return {

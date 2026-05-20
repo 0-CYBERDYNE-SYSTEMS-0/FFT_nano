@@ -68,23 +68,23 @@ export interface SkillSelfImproveConfig {
   toolInterval: number;
 }
 
-export interface SkillCuratorBackupConfig {
+export interface SkillManagerBackupConfig {
   enabled: boolean;
   keep: number;
 }
 
-export interface SkillCuratorParityConfig {
+export interface SkillManagerParityConfig {
   enabled: boolean;
   intervalHours: number;
   minIdleHours: number;
   staleAfterDays: number;
   archiveAfterDays: number;
-  backup: SkillCuratorBackupConfig;
+  backup: SkillManagerBackupConfig;
 }
 
 export interface SkillsParityConfig {
   selfImprove: SkillSelfImproveConfig;
-  curator: SkillCuratorParityConfig;
+  curator: SkillManagerParityConfig;
 }
 
 export interface WorkspaceParityConfig {

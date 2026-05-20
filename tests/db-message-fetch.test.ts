@@ -14,8 +14,16 @@ import {
   storeHostMessage,
 } from '../src/db.js';
 
+function makeProjectTempDir(prefix: string): string {
+  const projectTmp = path.join(process.cwd(), 'data', 'test-db-temp');
+  fs.mkdirSync(projectTmp, { recursive: true });
+  const dir = path.join(projectTmp, `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 test('message fetchers exclude assistant-origin and tui-sender rows without dropping user text', () => {
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-db-fetch-'));
+  const tmpRoot = makeProjectTempDir('fft-db-fetch');
   const dbPath = path.join(tmpRoot, 'messages.db');
 
   try {
@@ -87,7 +95,7 @@ test('message fetchers exclude assistant-origin and tui-sender rows without drop
 });
 
 test('getPromptTranscriptMessages preserves chronological assistant and user context', () => {
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-db-transcript-'));
+  const tmpRoot = makeProjectTempDir('fft-db-transcript');
   const dbPath = path.join(tmpRoot, 'messages.db');
 
   try {
