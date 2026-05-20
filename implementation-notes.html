@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FFT_nano Agent Autopsy Implementation Notes</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      color: #15191f;
+      background: #f7f8fa;
+    }
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+    h1, h2 { line-height: 1.2; }
+    h2 {
+      margin-top: 32px;
+      padding-top: 18px;
+      border-top: 1px solid #d8dde6;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid #d8dde6;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 12px;
+      border-bottom: 1px solid #d8dde6;
+    }
+    th { background: #eef2f7; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Agent Autopsy Implementation Notes</h1>
+    <p>Running notes for implementing the fix set derived from <code>deepdive.html</code>. The user wrote <code>&lt;SPEC&gt;</code>; I am treating the issue-by-issue root cause ledger in <code>deepdive.html</code> as the operative spec because the current request explicitly references it.</p>
+
+    <section>
+      <h2>Worktree Boundary</h2>
+      <p>The worktree already contained unrelated modified and untracked files before this implementation pass. I will avoid reverting or normalizing those changes. Files intentionally added/edited by this pass are tracked in the entries below.</p>
+    </section>
+
+    <section>
+      <h2>Implementation Log</h2>
+      <table>
+        <thead><tr><th>Step</th><th>Decision / Change</th><th>Tradeoff</th><th>Verification</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>0. Setup</td>
+            <td>Created this implementation-notes file before code changes.</td>
+            <td>HTML keeps it easy to open alongside <code>deepdive.html</code>; markdown would be simpler but less aligned with the existing autopsy artifact.</td>
+            <td>File created.</td>
+          </tr>
+          <tr>
+            <td>1. Evaluator delivery boundary</td>
+            <td>Removed user-visible evaluator verdict formatting from chat/heartbeat/scheduled/cron paths. Failed verdicts now log score/issues/feedback as control-plane telemetry instead of appending or sending score text to operators.</td>
+            <td>I did not add a new admin debug channel in this slice; logs are the least invasive destination and preserve the information without changing chat behavior. I added dependency injection for scheduled/cron evaluator tests rather than mocking module imports.</td>
+            <td><code>node --import tsx --test tests/task-scheduler.test.ts</code> passed. <code>node --import tsx --test tests/cron-v2.test.ts</code> passed. <code>rg</code> confirms old user-facing evaluator strings are gone from <code>src</code>/<code>tests</code>.</td>
+          </tr>
+          <tr>
+            <td>2. Blocking evaluation escalation</td>
+            <td>Added a user-safe escalation message when blocking chat evaluation fails and auto-repair cannot proceed, exhausts retries, or repair fails. The message says the task could not be verified and asks for approval/follow-up without exposing evaluator score, issues, or feedback.</td>
+            <td>This is a conservative first step toward host-owned approval. It does not yet resume automatically from an approval button because the existing callback surface is specialized for coder and Telegram group approvals. I avoided inventing an unsafe generic callback until the run-state model is tightened.</td>
+            <td><code>node --import tsx --test tests/evaluator.test.ts</code> passed, including assertions that escalation text excludes evaluator internals.</td>
+          </tr>
+          <tr>
+            <td>3. Quiet skill maintenance isolation</td>
+            <td>Quiet skill maintenance now runs with a synthetic <code>maintenance:&lt;group&gt;</code> chat identity, no agent delegation tool, explicit "do not edit skill files directly" guidance, and a sandbox allowed-path override limited to the group IPC directory.</td>
+            <td>Because <code>FFT_NANO_SANDBOX</code> can be <code>none</code>, path enforcement is only hard when bwrap/docker sandboxing is enabled. I kept <code>toolMode: full</code> so the agent can still write IPC action JSON; <code>read_only</code> would also disable the intended skill-action workflow.</td>
+            <td><code>npm run typecheck</code> passed. Static check confirmed <code>sandboxAllowedPathsOverride</code>, synthetic maintenance chat identity, and removal of the default <code>agent</code> tool via <code>toolMode: full</code>.</td>
+          </tr>
+          <tr>
+            <td>4. Durable IPC action audit</td>
+            <td>Added <code>attachActionRequestAudit()</code> and wrapped action result writes so <code>action_results/&lt;requestId&gt;.json</code> now contains an <code>audit.ipcRequest</code> copy of the original request plus source group metadata.</td>
+            <td>This keeps the existing top-level result shape intact for agents that check <code>status</code>/<code>result</code>, while adding proof data for validators. I did not retain consumed files in <code>actions/</code> because that would risk reprocessing; the result file is the safer durable ledger.</td>
+            <td><code>node --import tsx --test tests/action-result-audit.test.ts</code> passed. <code>npm run typecheck</code> initially caught too-narrow helper types; after fixing those, typecheck passed.</td>
+          </tr>
+          <tr>
+            <td>5. Heartbeat private checklist</td>
+            <td>Added <code>heartbeat/checks/&lt;requestId&gt;.json</code> artifacts under the main workspace for each heartbeat run. The checklist records heartbeat file presence, task snapshot presence, runtime log presence, today's memory file presence, and the host-classified outcome.</td>
+            <td>This creates durable proof without making Telegram heartbeat output verbose. The evaluator is not yet fully rewired to grade only this artifact, so this is a proof foundation rather than the whole heartbeat scoring redesign.</td>
+            <td><code>node --import tsx --test tests/heartbeat-checklist.test.ts</code> passed. <code>npm run typecheck</code> passed.</td>
+          </tr>
+          <tr>
+            <td>6. Personal skill validation/sync</td>
+            <td>Added <code>npm run validate:personal-skills</code>, relaxed compatible frontmatter parsing for personal skills, accepted common skill metadata fields, allowed nested metadata, and ignored embedded dependency directories such as <code>.venv</code> during safety scanning.</td>
+            <td>I fixed this at the validator/sync layer rather than editing personal skill files. That avoids mutating user-owned skills and makes the runtime tolerant of common skill formats while still rejecting unsafe symlinks outside ignored implementation directories.</td>
+            <td><code>node --import tsx --test tests/pi-skills.test.ts</code> passed. <code>npm run typecheck</code> passed. <code>npm run validate:personal-skills</code> initially reproduced the six invalid skills, then passed after the parser/safety changes.</td>
+          </tr>
+          <tr>
+            <td>7. Recent conversation filtering</td>
+            <td>Added filtering for legacy internal assistant-history rows during prompt assembly. Old evaluator/quality-check text, heartbeat acknowledgements, and empty-output diagnostics are excluded from <code>[RECENT CONVERSATION]</code>.</td>
+            <td>This is pattern-based because the database rows do not yet carry source metadata. It fixes existing contaminated history without a migration, but a future schema-level source field would be cleaner.</td>
+            <td><code>node --import tsx --test tests/message-dispatch.test.ts</code> passed with a new regression for legacy evaluator rows. <code>npm run typecheck</code> passed.</td>
+          </tr>
+          <tr>
+            <td>8. Memory cleanup-claim verification</td>
+            <td>Added a postcondition verifier for memory entries that claim stale skill directories were removed. Heartbeat checklist artifacts now include <code>memoryClaims</code> with claimed directories and any paths that still exist.</td>
+            <td>This does not rewrite user memory automatically. It creates host-observed contradiction evidence first, which is safer than silently editing memory or deleting directories after a model-authored claim.</td>
+            <td><code>node --import tsx --test tests/memory-claim-verifier.test.ts tests/heartbeat-checklist.test.ts</code> passed. <code>npm run typecheck</code> passed.</td>
+          </tr>
+          <tr>
+            <td>9. Final verification</td>
+            <td>Ran release-adjacent validation over the implemented slices plus the full test suite.</td>
+            <td>The sandbox blocks some Node test servers from binding to <code>127.0.0.1</code>, so <code>npm test</code>, <code>npm run validate:skills</code>, and <code>npm run validate:personal-skills</code> were rerun with approved escalation after the sandbox-only <code>EPERM</code> failures.</td>
+            <td><code>npm run validate:skills</code> passed. <code>npm run validate:personal-skills</code> passed. <code>npm test</code> passed with 568 passing tests and 1 skipped test. <code>npm run build</code> passed. <code>git diff --check</code> passed.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Validator Boundary Rework - 2026-05-20</h2>
+      <table>
+        <thead><tr><th>Step</th><th>Decision / Change</th><th>Tradeoff</th><th>Verification</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>10. Baseline</td>
+            <td>Confirmed the repo still had <code>buildEvaluatorEscalationMessage()</code> and the blocking evaluator appended its output to <code>finalResult.result</code>.</td>
+            <td>The existing evaluator tests passed because they encoded the old behavior, so I added failing regression tests before changing runtime code.</td>
+            <td><code>node --import tsx --test tests/evaluator.test.ts tests/message-dispatch.test.ts</code> passed before edits; new suppression/history tests failed as expected.</td>
+          </tr>
+          <tr>
+            <td>11. Control-plane verdicts</td>
+            <td>Removed the evaluator escalation message builder and changed failed blocking chat evaluation to set <code>controlPlaneStatus: "verification_failed"</code> plus <code>suppressUserDelivery: true</code>.</td>
+            <td>I did not create an evaluator-inferred approval request. The evaluator does not have a concrete command/path/action, so the safer behavior is to log <code>verification_failed</code> and withhold the prior attempt.</td>
+            <td>Targeted evaluator and dispatch tests passed after the change.</td>
+          </tr>
+          <tr>
+            <td>12. Delivery suppression</td>
+            <td>Added a real suppression path in finalization so withheld verification output does not send Telegram/WhatsApp text, persist assistant history, emit a final assistant TUI chat event, or synthesize the empty-output diagnostic.</td>
+            <td>Usage and run watermark updates still happen so the same inbound message is not reprocessed forever.</td>
+            <td>Added direct finalizer and dispatcher regression tests for suppressed verification failures.</td>
+          </tr>
+          <tr>
+            <td>13. Legacy cleanup</td>
+            <td>Extended recent-history filtering to drop old <code>I could not verify...</code> / <code>Approve the exact cleanup/repair action...</code> rows from prompt assembly.</td>
+            <td>This remains pattern-based because historical message rows do not have source metadata. It prevents old leaked rows from being re-fed without requiring a DB migration.</td>
+            <td>Updated the recent-conversation regression to prove both old quality-check text and the newer escalation text are excluded.</td>
+          </tr>
+          <tr>
+            <td>14. Final validation</td>
+            <td>Ran typecheck, targeted evaluator/dispatcher/scheduler tests, full test suite, build, and whitespace diff check.</td>
+            <td>The first full-suite run failed only on sandbox-localhost <code>listen EPERM</code> for gateway/control-center tests. I reran <code>npm test</code> with escalation so those tests could bind <code>127.0.0.1</code>.</td>
+            <td><code>npm run typecheck</code> passed. <code>npm test</code> passed with 568 passing tests and 1 skipped test after escalation. <code>npm run build</code> passed. <code>git diff --check</code> passed.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

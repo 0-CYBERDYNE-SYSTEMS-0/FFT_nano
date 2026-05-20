@@ -684,34 +684,3 @@ export function buildRefinementPrompt(
     .filter((l) => l !== undefined)
     .join('\n');
 }
-
-export type EvaluatorEscalationReason =
-  | 'approval_required'
-  | 'max_refinements'
-  | 'repair_failed';
-
-export function buildEvaluatorEscalationMessage(
-  reason: EvaluatorEscalationReason,
-): string {
-  const base =
-    'I could not verify that this task is complete, so I am stopping before presenting it as done.';
-  if (reason === 'approval_required') {
-    return [
-      base,
-      'The remaining fix appears to require operator approval for a potentially destructive or sensitive action.',
-      'Approve the exact cleanup/repair action before I continue.',
-    ].join('\n');
-  }
-  if (reason === 'max_refinements') {
-    return [
-      base,
-      'I already retried the repair path and it still did not meet the completion gate.',
-      'The next step should be a focused follow-up run against the remaining gap.',
-    ].join('\n');
-  }
-  return [
-    base,
-    'The automatic repair attempt failed before producing a verifiable result.',
-    'The next step should be a focused follow-up run against the failed repair.',
-  ].join('\n');
-}
