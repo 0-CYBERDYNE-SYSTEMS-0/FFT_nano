@@ -148,7 +148,12 @@ export interface TelegramCommandDeps {
     input: string;
     chatJid: string;
   }) => Promise<string> | string;
-  handleCuratorCommand?: (params: {
+  handleSkillManagerCommand?: (params: {
+    action: string;
+    input: string;
+    chatJid: string;
+  }) => Promise<string> | string;
+  handleLibrarianCommand?: (params: {
     action: string;
     input: string;
     chatJid: string;
@@ -367,6 +372,198 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     const sent = await deps.sendAgentResultMessage(params.chatJid, message);
     if (!sent) {
       await deps.sendMessage(params.chatJid, message);
+    }
+  }
+
+  function buildLibrarianAgentPrompt(action: 'run' | 'dry-run', input: string): string {
+    const dryRun = action === 'dry-run';
+    return [
+      dryRun
+        ? 'Manual knowledge librarian dry-run. Inspect the knowledge wiki and explain exactly what you would change, but do not write files.'
+        : 'Manual knowledge librarian run. Perform the knowledge curation work now.',
+      '',
+      'Scope:',
+      '1. Read knowledge/schema/qualia-schema.md and knowledge/wiki/index.md.',
+      '2. Review new captures in knowledge/raw/.',
+      '3. Curate important facts, decisions, procedures, and open questions into knowledge/wiki/*.md.',
+      '4. Update knowledge/wiki/progress.md with a concise summary and next action.',
+      '5. Append one short entry to knowledge/wiki/log.md.',
+      dryRun
+        ? '6. Do not write a report file in dry-run mode; return the proposed report in chat.'
+        : '6. Write a manual run report at knowledge/reports/librarian-<timestamp>.md.',
+      '',
+      'Rules:',
+      '- Do not answer with usage text.',
+      '- Keep changes concise and schema-aligned.',
+      '- Preserve raw captures unless you have a clear reason to move or annotate them.',
+      '- Final answer must include files inspected, files changed, and report path when a report is written.',
+      input ? ['', 'Operator focus:', input] : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  function buildSkillManagerAgentPrompt(action: 'run' | 'dry-run', input: string): string {
+    const dryRun = action === 'dry-run';
+    return [
+      dryRun
+        ? 'Manual skill manager dry-run. Inspect the skill library and explain exactly what you would change, but do not mutate skills.'
+        : 'Manual skill manager run. Perform a bounded skill library review now.',
+      '',
+      'Scope:',
+      '1. Use skill_status first.',
+      '2. Use skill_view to inspect candidate skills before judging them.',
+      '3. Keep skills lean, valid, reusable, and organized for operators.',
+      '4. Clean frontmatter issues for agent-created skills when running live.',
+      '5. Consolidate near-duplicate agent-created skills only when clearly useful.',
+      '6. Archive only agent-created skills that are stale, duplicate, or fully absorbed.',
+      '',
+      'Rules:',
+      '- Do not answer with usage text.',
+      '- Do not mutate source-owned project skills or personal override skills; report issues instead.',
+      dryRun
+        ? '- Dry-run mode: do not call mutating skill actions such as skill_patch, skill_archive, skill_restore, skill_pin, or skill_unpin.'
+        : '- Live mode: use skill actions for any skill changes and summarize each mutation.',
+      '- Final answer must include skills inspected, changes made or proposed, and residual risks.',
+      input ? ['', 'Operator focus:', input] : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  async function startMaintenanceAgentRun(params: {
+    chatJid: string;
+    command: string;
+    label: 'librarian' | 'skill-manager';
+    action: 'run' | 'dry-run';
+    prompt: string;
+  }): Promise<void> {
+    const group = deps.state.registeredGroups[params.chatJid];
+    if (!group) {
+      await deps.sendMessage(params.chatJid, 'Chat is not registered.');
+      return;
+    }
+    const existingRun = deps.activeChatRuns.get(params.chatJid);
+    if (existingRun) {
+      deps.logTelegramCommandAudit(
+        params.chatJid,
+        params.command,
+        false,
+        `${params.label} blocked: active run`,
+      );
+      await deps.sendMessage(
+        params.chatJid,
+        `Cannot start ${params.label} while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
+      );
+      return;
+    }
+
+    const requestId = `${params.label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const abortController = new AbortController();
+    const activeRun = {
+      chatJid: params.chatJid,
+      startedAt: Date.now(),
+      requestId,
+      abortController,
+    };
+    deps.activeChatRuns.set(params.chatJid, activeRun);
+    deps.activeChatRunsById?.set(requestId, activeRun);
+    deps.emitTuiChatEvent({
+      runId: requestId,
+      sessionKey: deps.getSessionKeyForChat(params.chatJid),
+      state: 'message',
+      message: {
+        role: 'system',
+        content: `Starting ${params.label} ${params.action} (${requestId})...`,
+      },
+    });
+    deps.emitTuiAgentEvent({
+      runId: requestId,
+      sessionKey: deps.getSessionKeyForChat(params.chatJid),
+      phase: 'start',
+      detail: `${params.label} ${params.action}`,
+    });
+    await deps.sendMessage(
+      params.chatJid,
+      `Starting ${params.label} ${params.action} (${requestId})...`,
+    );
+    await deps.setTyping(params.chatJid, true);
+    try {
+      const run = await deps.runAgent(
+        group,
+        params.prompt,
+        params.chatJid,
+        'none',
+        requestId,
+        deps.state.chatRunPreferences[params.chatJid] || {},
+        {},
+        abortController.signal,
+      );
+      deps.updateChatUsage(params.chatJid, run.usage);
+      const runWasAborted = !run.result && abortController.signal.aborted;
+      if (!run.ok) {
+        deps.emitTuiChatEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'error',
+          errorMessage: `${params.label} run failed`,
+        });
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'error',
+          detail: `${params.label} run failed`,
+        });
+        await deps.sendAgentResultMessage(
+          params.chatJid,
+          `${params.label} ${params.action} failed (${requestId}).${run.result ? `\n\n${run.result}` : ''}`,
+        );
+      } else if (runWasAborted) {
+        deps.emitTuiChatEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'aborted',
+        });
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'aborted',
+        });
+        await deps.sendAgentResultMessage(
+          params.chatJid,
+          `${params.label} ${params.action} aborted (${requestId}).`,
+        );
+      } else if (run.result) {
+        deps.persistAssistantHistory(params.chatJid, run.result, requestId);
+        if (!run.streamed) {
+          await deps.sendAgentResultMessage(params.chatJid, run.result);
+        }
+        deps.emitTuiChatEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'final',
+          message: { role: 'assistant', content: run.result },
+          usage: run.usage,
+        });
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: run.streamed ? 'streamed' : 'complete',
+        });
+      } else {
+        await deps.sendAgentResultMessage(
+          params.chatJid,
+          `${params.label} ${params.action} completed (${requestId}) with no final text.`,
+        );
+      }
+    } finally {
+      if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
+        deps.activeChatRuns.delete(params.chatJid);
+      }
+      deps.activeChatRunsById?.delete(requestId);
+      await deps.setTyping(params.chatJid, false);
     }
   }
 
@@ -1964,27 +2161,69 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
-    if (cmd === '/curator') {
+    if (
+      cmd === '/skill-manager' ||
+      cmd === '/skill_manager' ||
+      cmd === '/librarian' ||
+      cmd === '/curator'
+    ) {
+      const isSkillManager = cmd === '/skill-manager' || cmd === '/skill_manager';
+      const isLibrarian = cmd === '/librarian';
+      const isDeprecatedCurator = cmd === '/curator';
+
       if (!isMainGroup) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
         await deps.sendMessage(
           m.chatJid,
-          `${deps.constants.assistantName}: curator controls are only available in the main/admin chat.`,
+          `${deps.constants.assistantName}: ${isLibrarian ? 'librarian' : 'skill-manager'} controls are only available in the main/admin chat.`,
         );
         return true;
       }
-      if (!deps.handleCuratorCommand) {
+
+      const action = (rest[0] || 'status').trim().toLowerCase();
+      const input = rest.slice(1).join(' ').trim();
+      const auditAction = isDeprecatedCurator ? `${action} (deprecated /curator)` : action;
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, auditAction);
+
+      if (isDeprecatedCurator) {
+        await deps.sendMessage(
+          m.chatJid,
+          '⚠️ /curator is deprecated. Please use /skill-manager instead.',
+        );
+      }
+
+      if (
+        (isSkillManager || isLibrarian) &&
+        (action === 'run' || action === 'dry-run')
+      ) {
+        await startMaintenanceAgentRun({
+          chatJid: m.chatJid,
+          command: cmd,
+          label: isLibrarian ? 'librarian' : 'skill-manager',
+          action,
+          prompt: isLibrarian
+            ? buildLibrarianAgentPrompt(action, input)
+            : buildSkillManagerAgentPrompt(action, input),
+        });
+        return true;
+      }
+
+      const handler = isSkillManager
+        ? deps.handleSkillManagerCommand
+        : isLibrarian
+          ? deps.handleLibrarianCommand
+          : deps.handleSkillManagerCommand; // curator routes to skill-manager
+
+      if (!handler) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'unavailable');
         await deps.sendMessage(
           m.chatJid,
-          'Curator controls are not available in this runtime.',
+          `${isLibrarian ? 'Librarian' : 'Skill Manager'} controls are not available in this runtime.`,
         );
         return true;
       }
-      const action = (rest[0] || 'status').trim().toLowerCase();
-      const input = rest.slice(1).join(' ').trim();
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, action);
-      const text = await deps.handleCuratorCommand({
+
+      const text = await handler({
         action,
         input,
         chatJid: m.chatJid,

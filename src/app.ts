@@ -203,7 +203,9 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     });
 
     deps.logger.info?.('Telegram polling started');
-    void deps.refreshTelegramCommandMenus();
+    // Await the initial menu refresh so failures surface as startup errors,
+    // not silently swallowed unhandled promise rejections.
+    await deps.refreshTelegramCommandMenus();
   }
 
   async function connectWhatsApp(): Promise<void> {

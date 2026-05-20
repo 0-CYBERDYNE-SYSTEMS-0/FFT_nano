@@ -230,6 +230,93 @@ test('non-required project custom skill without section headings syncs without w
   }
 });
 
+test('personal skill validation accepts common frontmatter fields and loose descriptions', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const projectSkillsRoot = path.join(projectRoot, 'skills', 'runtime');
+    const userSkillsRoot = path.join(tempRoot, 'user', 'skills');
+
+    fs.mkdirSync(projectSkillsRoot, { recursive: true });
+    fs.mkdirSync(userSkillsRoot, { recursive: true });
+
+    const looseSkillDir = path.join(userSkillsRoot, 'loose-skill');
+    fs.mkdirSync(looseSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(looseSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: loose-skill',
+        'description: Works with colons: this used to fail YAML parsing',
+        'version: 1.0.0',
+        'category: test',
+        'disable-model-invocation: true',
+        '---',
+        '',
+        '# Loose Skill',
+      ].join('\n'),
+    );
+
+    const metadataSkillDir = path.join(userSkillsRoot, 'metadata-skill');
+    fs.mkdirSync(metadataSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(metadataSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: metadata-skill',
+        'description: test',
+        'metadata:',
+        '  hermes:',
+        '    tags: [one, two]',
+        '---',
+        '',
+        '# Metadata Skill',
+      ].join('\n'),
+    );
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome, {
+      additionalSkillSourceDirs: [userSkillsRoot],
+    });
+
+    assert.equal(res.skippedInvalid.includes('loose-skill'), false);
+    assert.equal(res.skippedInvalid.includes('metadata-skill'), false);
+    assert.ok(res.copied.includes('loose-skill'));
+    assert.ok(res.copied.includes('metadata-skill'));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('skill path safety ignores embedded implementation dependency directories', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const userSkillsRoot = path.join(tempRoot, 'user', 'skills');
+    const skillDir = path.join(userSkillsRoot, 'browser-harness');
+    const venvBin = path.join(skillDir, '.venv', 'bin');
+
+    fs.mkdirSync(venvBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: browser-harness\ndescription: test\n---\n\n# Browser Harness\n',
+    );
+    fs.symlinkSync('/usr/bin/python3', path.join(venvBin, 'python3'));
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome, {
+      additionalSkillSourceDirs: [userSkillsRoot],
+    });
+
+    assert.equal(res.skippedInvalid.includes('browser-harness'), false);
+    assert.ok(res.copied.includes('browser-harness'));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('high-risk non-required skill without non-use guidance warns but still syncs', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
 

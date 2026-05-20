@@ -804,6 +804,120 @@ test('processMessage excludes hidden TUI rows from recent conversation', async (
   assert.doesNotMatch(capturedPrompt, /internal operator note/);
 });
 
+test('processMessage excludes legacy internal evaluator rows from recent conversation', async () => {
+  let capturedPrompt = '';
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        'telegram:internal-history': {
+          jid: 'telegram:internal-history',
+          name: 'Internal History',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => {},
+    setTyping: async () => {},
+    getMessagesSince: () => [
+      {
+        id: 'u-followup',
+        chat_jid: 'telegram:internal-history',
+        sender: 'telegram:internal-history',
+        sender_name: 'TD',
+        content: 'continue',
+        timestamp: '2026-03-29T18:05:12.000Z',
+        is_from_me: 0,
+      },
+    ],
+    getSessionKeyForChat: () => 'main',
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async (_group, prompt) => {
+      capturedPrompt = prompt;
+      return { ok: true, result: 'done', streamed: false };
+    },
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => {},
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => false,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+    getRecentConversation: () => [
+      {
+        id: 'a-good',
+        chat_jid: 'telegram:internal-history',
+        sender: 'FarmFriend',
+        sender_name: 'FarmFriend',
+        content: 'FarmFriend: public answer already shown',
+        timestamp: '2026-03-29T18:04:50.000Z',
+        is_from_me: 1,
+      },
+      {
+        id: 'a-evaluator',
+        chat_jid: 'telegram:internal-history',
+        sender: 'FarmFriend',
+        sender_name: 'FarmFriend',
+        content:
+          'FarmFriend: Quality check flagged potential issues (score 4/10): internal issue',
+        timestamp: '2026-03-29T18:04:54.000Z',
+        is_from_me: 1,
+      },
+      {
+        id: 'u-followup',
+        chat_jid: 'telegram:internal-history',
+        sender: 'telegram:internal-history',
+        sender_name: 'TD',
+        content: 'continue',
+        timestamp: '2026-03-29T18:05:12.000Z',
+        is_from_me: 0,
+      },
+    ],
+  } as any);
+
+  await dispatcher.processMessage({
+    id: 'u-followup',
+    chat_jid: 'telegram:internal-history',
+    sender: 'telegram:internal-history',
+    sender_name: 'TD',
+    content: 'continue',
+    timestamp: '2026-03-29T18:05:12.000Z',
+    is_from_me: 0,
+  });
+
+  assert.match(capturedPrompt, /public answer already shown/);
+  assert.doesNotMatch(capturedPrompt, /Quality check flagged/);
+  assert.doesNotMatch(capturedPrompt, /score 4\/10/);
+});
+
 test('processMessage keeps interrupt queue semantics only for new inbound messages', async () => {
   let capturedPrompt = '';
 

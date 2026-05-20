@@ -85,6 +85,7 @@ import {
 } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
+import { attachActionRequestAudit } from './action-result-audit.js';
 import { getContainerRuntime } from './container-runtime.js';
 import { acquireSingletonLock } from './singleton-lock.js';
 import {
@@ -171,19 +172,23 @@ import {
 } from './farm-state-collector.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
 import {
-  applySkillCuratorTransitions,
+  applySkillManagerTransitions,
   executeSkillAction,
-  formatSkillCuratorStatus,
-  loadSkillCuratorState,
+  formatSkillManagerStatus,
+  loadSkillManagerState,
   resolveGroupSkillsDir,
-  saveSkillCuratorState,
-  setSkillCuratorPaused,
-  shouldRunSkillCurator,
+  saveSkillManagerState,
+  setSkillManagerPaused,
+  shouldRunSkillManager,
   snapshotSkills,
-  writeSkillCuratorReport,
-  type SkillCuratorConfig,
+  writeSkillManagerReport,
+  type SkillManagerConfig,
 } from './skill-lifecycle.js';
-import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
+import {
+  isValidGroupFolder,
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+} from './group-folder.js';
 import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
 import {
   appendCompactionSummaryToMemory,
@@ -211,6 +216,7 @@ import {
   shouldSuppressDuplicateHeartbeat,
   stripHeartbeatToken,
 } from './heartbeat-policy.js';
+import { writeHeartbeatChecklist } from './heartbeat-checklist.js';
 import {
   completeMainWorkspaceOnboarding,
   computeBootFileHash,
@@ -282,6 +288,7 @@ import {
 import { createAppRuntime } from './app.js';
 import {
   runEvaluatorPass,
+  buildEvaluatorEscalationMessage,
   buildRefinementPrompt,
   isActionfulChatTask,
   canAutoRefineActionfulChatTask,
@@ -4349,7 +4356,7 @@ function logTelegramCommandAudit(
   logger.info({ chatJid, command, allowed, reason }, 'Telegram command audit');
 }
 
-async function handleCuratorCommand(params: {
+async function handleSkillManagerCommand(params: {
   action: string;
   input: string;
   chatJid: string;
@@ -4358,29 +4365,29 @@ async function handleCuratorCommand(params: {
   const skillsDir = resolveGroupSkillsDir(groupFolder);
   const action = params.action || 'status';
   if (action === 'status') {
-    return formatSkillCuratorStatus(groupFolder);
+    return formatSkillManagerStatus(groupFolder);
   }
   if (action === 'pause' || action === 'resume') {
-    setSkillCuratorPaused(groupFolder, action === 'pause');
-    return `curator: ${action === 'pause' ? 'paused' : 'resumed'}`;
+    setSkillManagerPaused(groupFolder, action === 'pause');
+    return `skill-manager: ${action === 'pause' ? 'paused' : 'resumed'}`;
   }
   if (action === 'run' || action === 'dry-run') {
-    const config = toSkillCuratorConfig();
+    const config = toSkillManagerConfig();
     const dryRun = action === 'dry-run';
     if (!dryRun && config.backupEnabled) {
       snapshotSkills({
         skillsDir,
-        reason: 'telegram curator run',
+        reason: 'telegram skill-manager run',
         keep: config.backupKeep,
       });
     }
-    const transitions = applySkillCuratorTransitions({
+    const transitions = applySkillManagerTransitions({
       skillsDir,
       config,
       dryRun,
     });
-    const summary = `${dryRun ? 'dry-run' : 'telegram'} curator run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
-    const reportPath = writeSkillCuratorReport({
+    const summary = `${dryRun ? 'dry-run' : 'telegram'} skill-manager run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
+    const reportPath = writeSkillManagerReport({
       groupFolder,
       skillsDir,
       dryRun,
@@ -4388,12 +4395,12 @@ async function handleCuratorCommand(params: {
       transitions,
     });
     if (!dryRun) {
-      const curatorState = loadSkillCuratorState(skillsDir);
-      curatorState.lastRunAt = new Date().toISOString();
-      curatorState.lastRunSummary = summary;
-      curatorState.lastReportPath = reportPath;
-      curatorState.runCount += 1;
-      saveSkillCuratorState(skillsDir, curatorState);
+      const skillManagerState = loadSkillManagerState(skillsDir);
+      skillManagerState.lastRunAt = new Date().toISOString();
+      skillManagerState.lastRunSummary = summary;
+      skillManagerState.lastReportPath = reportPath;
+      skillManagerState.runCount += 1;
+      saveSkillManagerState(skillsDir, skillManagerState);
     }
     return `${summary}\nreport: ${reportPath}`;
   }
@@ -4404,12 +4411,12 @@ async function handleCuratorCommand(params: {
       keep: PARITY_CONFIG.skills.curator.backup.keep,
     });
     return snap
-      ? `curator: backup created at ${snap}`
-      : 'curator: no skills directory to back up';
+      ? `skill-manager: backup created at ${snap}`
+      : 'skill-manager: no skills directory to back up';
   }
   const skillName = params.input.trim().split(/\s+/)[0];
   if (!skillName) {
-    return 'Usage: /curator status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
+    return 'Usage: /skill-manager status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
   }
   const actionMap: Record<string, SkillActionRequest['action']> = {
     pin: 'skill_pin',
@@ -4419,13 +4426,13 @@ async function handleCuratorCommand(params: {
   };
   const skillAction = actionMap[action];
   if (!skillAction) {
-    return 'Usage: /curator status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
+    return 'Usage: /skill-manager status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
   }
   const result = await executeSkillAction(
     {
       type: 'skill_action',
       action: skillAction,
-      requestId: `curator-telegram-${Date.now()}`,
+      requestId: `skill-manager-telegram-${Date.now()}`,
       params: { name: skillName, groupFolder },
     },
     {
@@ -4434,8 +4441,142 @@ async function handleCuratorCommand(params: {
       registeredGroups: state.registeredGroups,
     },
   );
-  if (result.status === 'error') return `curator: ${result.error}`;
-  return `curator: ${action} ${skillName}`;
+  if (result.status === 'error') return `skill-manager: ${result.error}`;
+  return `skill-manager: ${action} ${skillName}`;
+}
+
+function handleLibrarianCommand(params: {
+  action: string;
+  input: string;
+  chatJid: string;
+}): string {
+  const action = params.action.trim().toLowerCase();
+  if (!action || action === 'status') {
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    return formatKnowledgeWikiStatusText({
+      status: snapshot.status,
+      nightlyTaskStatus: snapshot.nightlyTaskStatus,
+      nightlyTaskNextRun: snapshot.nightlyTaskNextRun,
+    });
+  }
+
+  if (action === 'help') {
+    return [
+      'Usage: /librarian <status|init|task|lint|capture|run|dry-run|log|progress|help>',
+      '',
+      '- /librarian status       — show wiki status and nightly task info',
+      '- /librarian init         — create wiki scaffold',
+      '- /librarian task         — ensure nightly task is registered',
+      '- /librarian lint         — run wiki lint and show report',
+      '- /librarian capture <n>  — capture a raw note',
+      '- /librarian run          — trigger manual wiki refinement (librarian review)',
+      '- /librarian dry-run      — preview wiki refinement without changes',
+      '- /librarian log          — show recent wiki activity log',
+      '- /librarian progress     — show progress entries',
+    ].join('\n');
+  }
+
+  if (action === 'init') {
+    const setup = ensureKnowledgeRuntimeSetup(params.chatJid);
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    const lines = [
+      'Knowledge wiki initialized.',
+      `- created_paths: ${setup.createdPaths.length}`,
+      `- nightly_task: ${setup.nightlyTask.status}`,
+      `- nightly_next_run: ${setup.nightlyTask.nextRun || 'n/a'}`,
+    ];
+    if (setup.createdPaths.length > 0) {
+      lines.push('', 'Created paths:', ...setup.createdPaths.map((entry) => `- ${entry}`));
+    }
+    if (setup.nightlyTask.skippedReason) {
+      lines.push('', `Task setup skipped: ${setup.nightlyTask.skippedReason}`);
+    }
+    lines.push(
+      '',
+      formatKnowledgeWikiStatusText({
+        status: snapshot.status,
+        nightlyTaskStatus: snapshot.nightlyTaskStatus,
+        nightlyTaskNextRun: snapshot.nightlyTaskNextRun,
+      }),
+    );
+    return lines.join('\n');
+  }
+
+  if (action === 'task') {
+    const result = ensureKnowledgeNightlyTask({ mainChatJid: params.chatJid });
+    if (!result.ensured) {
+      return `Knowledge nightly task not created: ${result.skippedReason || 'unknown reason'}`;
+    }
+    return [
+      `Knowledge nightly task ${result.created ? 'created' : 'already present'}.`,
+      `- task_id: ${result.taskId}`,
+      `- status: ${result.status}`,
+      `- schedule: ${result.schedule}`,
+      `- next_run: ${result.nextRun || 'n/a'}`,
+    ].join('\n');
+  }
+
+  if (action === 'lint') {
+    const report = runKnowledgeWikiLint({ workspaceDir: MAIN_WORKSPACE_DIR });
+    return [
+      `Knowledge lint ${report.ok ? 'passed' : 'failed'}.`,
+      `- report: ${report.reportRelativePath}`,
+      `- errors: ${report.errors.length}`,
+      `- warnings: ${report.warnings.length}`,
+      '',
+      report.text,
+    ].join('\n');
+  }
+
+  if (action === 'ingest' || action === 'capture') {
+    if (!params.input.trim()) {
+      return 'Usage: /librarian capture <note text>';
+    }
+    const capture = captureKnowledgeRawNote({
+      workspaceDir: MAIN_WORKSPACE_DIR,
+      text: params.input,
+      source: params.chatJid,
+    });
+    return [
+      'Knowledge raw capture saved.',
+      `- path: ${capture.relativePath}`,
+      `- captured_at: ${capture.capturedAt}`,
+    ].join('\n');
+  }
+
+  if (action === 'log') {
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    const logPath = snapshot.status.paths.logPath;
+    if (!fs.existsSync(logPath)) return 'librarian: no log file found';
+    const content = fs.readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n').filter(Boolean).slice(-30);
+    return ['librarian: recent log entries:', ...lines.map((l) => `  ${l}`)].join('\n');
+  }
+
+  if (action === 'progress') {
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    const progPath = snapshot.status.paths.progressPath;
+    if (!fs.existsSync(progPath)) return 'librarian: no progress file found';
+    const content = fs.readFileSync(progPath, 'utf-8');
+    const lines = content.split('\n').filter(Boolean).slice(-15);
+    return ['librarian: recent progress entries:', ...lines.map((l) => `  ${l}`)].join('\n');
+  }
+
+  if (action === 'run' || action === 'dry-run') {
+    // Delegate to the existing knowledge command infrastructure
+    // The /knowledge command already has the full run/ingest logic
+    // Here we route 'run' and 'dry-run' to the knowledge command
+    const knowledgeResult = handleKnowledgeCommand({
+      action,
+      input: params.input,
+      chatJid: params.chatJid,
+    });
+    return typeof knowledgeResult === 'string'
+      ? knowledgeResult
+      : `librarian: ${action} completed`;
+  }
+
+  return handleLibrarianCommand({ ...params, action: 'help' });
 }
 
 const telegramCommandHandlers = createTelegramCommandHandlers({
@@ -4469,7 +4610,8 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   summarizeTask,
   formatTaskRunsText,
   handleKnowledgeCommand,
-  handleCuratorCommand,
+  handleSkillManagerCommand,
+  handleLibrarianCommand,
   runPiListModels,
   validateProviderModelRef,
   normalizeThinkLevel,
@@ -4933,7 +5075,7 @@ async function runDirectSessionTurn(params: {
   return messageDispatcher.runDirectSessionTurn(params);
 }
 
-function toSkillCuratorConfig(): SkillCuratorConfig {
+function toSkillManagerConfig(): SkillManagerConfig {
   return {
     enabled: PARITY_CONFIG.skills.curator.enabled,
     intervalHours: PARITY_CONFIG.skills.curator.intervalHours,
@@ -5012,16 +5154,19 @@ function runQuietSkillAgent(params: {
     '## Quiet Background Skill Maintenance',
     'This run is internal maintenance. Do not send chat messages unless explicitly asked.',
     'Use skill_action IPC for all skill reads and writes.',
+    'Do not inspect or edit skill files directly. Use action_results as the durable source of truth.',
     'Keep skills organized for non-technical farm operators: clear names, valid frontmatter, class-level reusable workflows, and lean active catalog.',
     'You may only mutate host-allowed agent-created runtime skills. For source-owned skills, report issues instead of trying to modify them.',
   ].join('\n');
+  const maintenanceChatJid = `maintenance:${params.group.folder}`;
+  const maintenanceIpcDir = resolveGroupIpcPath(params.group.folder);
 
   void runContainerAgent(
     params.group,
     {
       prompt: params.prompt,
       groupFolder: params.group.folder,
-      chatJid: params.chatJid,
+      chatJid: maintenanceChatJid,
       isMain,
       assistantName: ASSISTANT_NAME,
       codingHint: 'none',
@@ -5033,8 +5178,10 @@ function runQuietSkillAgent(params: {
       model: params.runtimePrefs.model,
       thinkLevel: params.runtimePrefs.thinkLevel,
       reasoningLevel: params.runtimePrefs.reasoningLevel,
+      toolMode: 'full',
       noContinue: true,
       suppressPreviewStreaming: true,
+      sandboxAllowedPathsOverride: [maintenanceIpcDir],
       lifecyclePolicyOverride: {
         hardTimeoutMs: 10 * 60 * 1000,
         staleAfterMs: 3 * 60 * 1000,
@@ -5090,48 +5237,48 @@ function maybeRunSkillSelfImprovement(params: {
   });
 }
 
-function maybeRunSkillCurator(params: {
+function maybeRunSkillManager(params: {
   group: RegisteredGroup;
   chatJid: string;
   runtimePrefs: ChatRunPreferences;
   requestId?: string;
 }): void {
   const skillsDir = resolveGroupSkillsDir(params.group.folder);
-  const config = toSkillCuratorConfig();
-  if (!shouldRunSkillCurator(skillsDir, config)) return;
+  const config = toSkillManagerConfig();
+  if (!shouldRunSkillManager(skillsDir, config)) return;
 
   const started = Date.now();
   if (config.backupEnabled) {
     snapshotSkills({
       skillsDir,
-      reason: 'automatic curator run',
+      reason: 'automatic skill-manager run',
       keep: config.backupKeep,
     });
   }
-  const transitions = applySkillCuratorTransitions({ skillsDir, config });
-  const summary = `automatic curator run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
-  const reportPath = writeSkillCuratorReport({
+  const transitions = applySkillManagerTransitions({ skillsDir, config });
+  const summary = `automatic skill-manager run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
+  const reportPath = writeSkillManagerReport({
     groupFolder: params.group.folder,
     skillsDir,
     dryRun: false,
     summary,
     transitions,
   });
-  const state = loadSkillCuratorState(skillsDir);
+  const state = loadSkillManagerState(skillsDir);
   state.lastRunAt = new Date().toISOString();
   state.lastRunDurationSeconds = Math.round((Date.now() - started) / 1000);
   state.lastRunSummary = summary;
   state.lastReportPath = reportPath;
   state.runCount += 1;
-  saveSkillCuratorState(skillsDir, state);
+  saveSkillManagerState(skillsDir, state);
 
   runQuietSkillAgent({
     group: params.group,
     chatJid: params.chatJid,
     runtimePrefs: params.runtimePrefs,
-    requestId: `${params.requestId || 'run'}:skill-curator`,
+    requestId: `${params.requestId || 'run'}:skill-manager`,
     prompt: [
-      'Run a bounded skill curator review.',
+      'Run a bounded skill manager review.',
       'Use skill_status and skill_view to inspect the active library.',
       'Goal: keep farm/operator skills lean, organized, and valid. Clean frontmatter issues for agent-created skills by patching them. Report source-owned frontmatter issues in your final summary.',
       'Consolidate near-duplicate agent-created skills into class-level umbrella skills when useful. Archive only agent-created skills that are stale, duplicate, or fully absorbed.',
@@ -5432,12 +5579,24 @@ async function runAgent(
 
     let finalResult = emptyOutputPolicy.finalRun;
 
-    const formatEvaluatorFollowUp = (verdict: EvaluatorVerdict): string =>
-      `⚠️ Quality check flagged potential issues (score ${verdict.score}/10):\n` +
-      (verdict.issues.length > 0
-        ? verdict.issues.map((i) => `• ${i}`).join('\n') + '\n'
-        : '') +
-      (verdict.feedback ? verdict.feedback : '');
+    const logSuppressedEvaluatorFailure = (
+      verdict: EvaluatorVerdict,
+      runType: 'chat' | 'heartbeat',
+      phase: 'blocking' | 'background',
+    ): void => {
+      logger.warn(
+        {
+          runType,
+          phase,
+          chatJid,
+          requestId,
+          score: verdict.score,
+          issues: verdict.issues,
+          feedback: verdict.feedback,
+        },
+        'Evaluator flagged issues; suppressing user-visible evaluator details',
+      );
+    };
 
     if (
       shouldBlockForChatEvaluation &&
@@ -5448,6 +5607,11 @@ async function runAgent(
       const maxRefinements = 2;
       let evalTaskText = prompt;
       let lastFailedVerdict: EvaluatorVerdict | null = null;
+      let escalationReason:
+        | 'approval_required'
+        | 'max_refinements'
+        | 'repair_failed'
+        | null = null;
       const canAutoRefineEvaluation =
         canAutoRefineActionfulChatTask(evalTaskText);
 
@@ -5473,7 +5637,14 @@ async function runAgent(
         }
 
         lastFailedVerdict = verdict;
-        if (!canAutoRefineEvaluation || attempt >= maxRefinements) break;
+        if (!canAutoRefineEvaluation) {
+          escalationReason = 'approval_required';
+          break;
+        }
+        if (attempt >= maxRefinements) {
+          escalationReason = 'max_refinements';
+          break;
+        }
 
         const refinedPrompt = buildRefinementPrompt(evalTaskText, verdict);
         const retryRequestId = requestId
@@ -5490,6 +5661,7 @@ async function runAgent(
         );
 
         if (refinedOutput.status !== 'success' || !refinedOutput.result) {
+          escalationReason = 'repair_failed';
           break;
         }
 
@@ -5503,17 +5675,22 @@ async function runAgent(
         evalTaskText = refinedPrompt;
       }
 
-      if (lastFailedVerdict && finalResult.result) {
-        finalResult = {
-          ...finalResult,
-          streamed: false,
-          result: `${finalResult.result.trim()}\n\n${formatEvaluatorFollowUp(lastFailedVerdict)}`,
-        };
+      if (lastFailedVerdict) {
+        logSuppressedEvaluatorFailure(lastFailedVerdict, 'chat', 'blocking');
+        if (finalResult.result) {
+          finalResult = {
+            ...finalResult,
+            streamed: false,
+            result: `${finalResult.result.trim()}\n\n${buildEvaluatorEscalationMessage(
+              escalationReason || 'repair_failed',
+            )}`,
+          };
+        }
       }
     }
 
-    // Evaluator pass — non-blocking for chat/heartbeat: deliver result first,
-    // then evaluate and send a follow-up only if issues are found.
+    // Evaluator pass — non-blocking for chat/heartbeat. Failed evaluator
+    // verdicts are control-plane telemetry and must not become chat output.
     if (
       !shouldBlockForChatEvaluation &&
       finalResult.ok &&
@@ -5536,13 +5713,7 @@ async function runAgent(
       })
         .then((verdict) => {
           if (verdict.skipped || verdict.pass) return;
-          const followUp = formatEvaluatorFollowUp(verdict);
-          persistAssistantHistory(
-            chatJid,
-            followUp,
-            requestId ? `${requestId}:evaluator` : undefined,
-          );
-          void sendMessage(chatJid, followUp);
+          logSuppressedEvaluatorFailure(verdict, runType, 'background');
         })
         .catch((err) => {
           logger.warn({ err, chatJid }, 'Evaluator pass threw in background');
@@ -5564,7 +5735,7 @@ async function runAgent(
         runtimePrefs,
         requestId,
       });
-      maybeRunSkillCurator({
+      maybeRunSkillManager({
         group,
         chatJid,
         runtimePrefs,
@@ -6425,7 +6596,19 @@ async function processHostEvent(event: HostEvent): Promise<void> {
                 isMain: event.isMain,
                 registeredGroups: state.registeredGroups,
               });
-      fs.writeFileSync(event.resultPath, JSON.stringify(result, null, 2));
+      fs.writeFileSync(
+        event.resultPath,
+        JSON.stringify(
+          attachActionRequestAudit({
+            result,
+            request: event.request,
+            sourceGroup: event.sourceGroup,
+            isMain: event.isMain,
+          }),
+          null,
+          2,
+        ),
+      );
       return;
     }
     case 'action_result_ready':
@@ -7292,12 +7475,35 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       'auto',
       requestId,
       state.chatRunPreferences[mainChatJid] || {},
-      { suppressErrorReply: true, isHeartbeatTask: true },
-      abortController.signal,
-    );
-    if (!run.ok) {
-      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
-      return;
+	      { suppressErrorReply: true, isHeartbeatTask: true },
+	      abortController.signal,
+	    );
+	    try {
+	      const checklistPath = writeHeartbeatChecklist({
+	        workspaceDir: MAIN_WORKSPACE_DIR,
+	        requestId,
+	        reason,
+	        result: run.result,
+	        ok: run.ok,
+	        currentTasksPath: path.join(
+	          resolveGroupIpcPath(MAIN_GROUP_FOLDER),
+	          'current_tasks.json',
+	        ),
+	        runtimeLogPath: path.join(process.cwd(), 'logs', 'fft_nano.log'),
+	      });
+	      logger.debug(
+	        { chatJid: mainChatJid, reason, checklistPath },
+	        'Heartbeat checklist written',
+	      );
+	    } catch (err) {
+	      logger.warn(
+	        { err, chatJid: mainChatJid, reason },
+	        'Failed to write heartbeat checklist',
+	      );
+	    }
+	    if (!run.ok) {
+	      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
+	      return;
     }
     updateChatUsage(mainChatJid, run.usage);
     if (run.streamed || !run.result) return;

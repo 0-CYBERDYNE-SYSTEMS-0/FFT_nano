@@ -1031,6 +1031,112 @@ test('handleTelegramCommand /knowledge routes to host knowledge handler in main 
   });
 });
 
+test('handleTelegramCommand routes menu-safe skill manager and librarian commands', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.handleSkillManagerCommand = ({ action, input, chatJid }) =>
+    `skill-manager:${action}:${input}:${chatJid}`;
+  deps.handleLibrarianCommand = ({ action, input, chatJid }) =>
+    `librarian:${action}:${input}:${chatJid}`;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const skillHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/skill_manager status',
+  });
+  const librarianHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/librarian capture check pump filter',
+  });
+
+  assert.equal(skillHandled, true);
+  assert.equal(librarianHandled, true);
+  assert.equal(deps.sent[0]?.text, 'skill-manager:status::telegram:main');
+  assert.equal(
+    deps.sent[1]?.text,
+    'librarian:capture:check pump filter:telegram:main',
+  );
+  assert.deepEqual(deps.audits.slice(0, 2), [
+    {
+      chatJid: 'telegram:main',
+      command: '/skill_manager',
+      allowed: true,
+      reason: 'status',
+    },
+    {
+      chatJid: 'telegram:main',
+      command: '/librarian',
+      allowed: true,
+      reason: 'capture',
+    },
+  ]);
+});
+
+test('handleTelegramCommand starts real agent runs for librarian and skill manager run actions', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    agentResults: Array<{
+      chatJid: string;
+      text: string;
+      opts?: { prefixWhatsApp?: boolean };
+    }>;
+  };
+  const runAgentCalls: Array<{
+    group: any;
+    prompt: string;
+    chatJid: string;
+    requestId?: string;
+  }> = [];
+  deps.isMainChat = () => true;
+  deps.state.registeredGroups['telegram:main'] = {
+    jid: 'telegram:main',
+    name: 'Main',
+    folder: 'main',
+  };
+  deps.runAgent = async (group, prompt, chatJid, _codingHint, requestId) => {
+    runAgentCalls.push({ group, prompt, chatJid, requestId });
+    return {
+      ok: true,
+      result: `agent completed: ${requestId}`,
+      streamed: false,
+    };
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const librarianHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/librarian run focus pumps',
+  });
+  const skillHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/skill_manager dry-run focus duplicates',
+  });
+
+  assert.equal(librarianHandled, true);
+  assert.equal(skillHandled, true);
+  assert.equal(runAgentCalls.length, 2);
+  assert.match(runAgentCalls[0]?.prompt || '', /Manual knowledge librarian run/);
+  assert.match(runAgentCalls[0]?.prompt || '', /focus pumps/);
+  assert.match(runAgentCalls[1]?.prompt || '', /Manual skill manager dry-run/);
+  assert.match(runAgentCalls[1]?.prompt || '', /focus duplicates/);
+  assert.equal(deps.agentResults.length, 2);
+  assert.match(deps.agentResults[0]?.text || '', /agent completed: librarian-/);
+  assert.match(deps.agentResults[1]?.text || '', /agent completed: skill-manager-/);
+  assert.equal(deps.activeChatRuns.size, 0);
+});
+
 test('handleTelegramCommand /new sets fresh-run flag and clears session title', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
