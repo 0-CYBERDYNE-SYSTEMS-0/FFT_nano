@@ -24,6 +24,7 @@ export interface FinalizeCompletedRunParams {
   externallyCompleted: boolean;
   telegramPreviewState: TelegramMessagePreviewState | null;
   timestampToPersist?: string;
+  suppressUserDelivery?: boolean;
   updateChatUsage: (
     chatJid: string,
     usage?: {
@@ -139,6 +140,8 @@ interface RunCompletion {
   result: string | null;
   streamed: boolean;
   usage?: RunUsage;
+  suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
 }
 
 export interface PromptInputLogEntry {
@@ -245,6 +248,8 @@ export interface MessageDispatcherDeps {
     streamed: boolean;
     ok: boolean;
     usage?: RunUsage;
+    suppressUserDelivery?: boolean;
+    controlPlaneStatus?: 'verification_failed';
   }>;
   runCodingTask?: (params: {
     requestId: string;
@@ -485,7 +490,9 @@ function isInternalAssistantHistoryMessage(message: NewMessage): boolean {
     /^Quality check flagged/i.test(text) ||
     /Quality check flagged potential issues/i.test(text) ||
     /^LLM produced no user-visible final response/i.test(text) ||
-    /^Evaluator flagged issues/i.test(text)
+    /^Evaluator flagged issues/i.test(text) ||
+    /^I could not verify that this task is complete/i.test(text) ||
+    /Approve the exact cleanup\/repair action before I continue/i.test(text)
   );
 }
 
@@ -685,6 +692,22 @@ export async function finalizeCompletedRun(
       sessionKey: params.sessionKey,
       phase: 'end',
       detail: 'aborted',
+    });
+    return;
+  }
+
+  if (params.suppressUserDelivery) {
+    if (params.telegramPreviewState) {
+      await params.deleteTelegramPreviewMessage(
+        params.chatJid,
+        params.telegramPreviewState.messageId,
+      );
+    }
+    params.emitTuiAgentEvent({
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      phase: 'end',
+      detail: 'complete',
     });
     return;
   }
@@ -913,6 +936,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     abortSignal: AbortSignal;
     timestampToPersist?: string;
     deliverToChat?: boolean;
+    suppressUserDelivery?: boolean;
   }): Promise<void> {
     const completionState =
       deps.isTelegramJid(params.chatJid) && deps.prepareTelegramCompletionState
@@ -949,6 +973,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       usage: params.usage,
       abortSignal: params.abortSignal,
       deliverToChat: params.deliverToChat,
+      suppressUserDelivery: params.suppressUserDelivery,
       timestampToPersist: params.timestampToPersist,
       externallyCompleted: completionState.externallyCompleted,
       telegramPreviewState: telegramCompletionState.messagePreviewState,
@@ -988,6 +1013,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     let streamed = false;
     let ok = false;
     let usage: RunUsage | undefined;
+    let suppressUserDelivery = false;
     const abortController = new AbortController();
     const activeRun = {
       chatJid: params.chatJid,
@@ -1090,6 +1116,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         streamed = run.streamed;
         ok = run.ok;
         usage = run.usage;
+        suppressUserDelivery = run.suppressUserDelivery === true;
 
         // Capture worker result for reflection (async MEMORY write after completion path)
         // Only for coding execute routes (exclude plan mode for coder-plan).
@@ -1188,6 +1215,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           abortSignal: abortController.signal,
           timestampToPersist: params.timestampToPersist,
           deliverToChat: params.deliverToChat,
+          suppressUserDelivery,
         });
 
         // Fire-and-forget reflection after success completion.

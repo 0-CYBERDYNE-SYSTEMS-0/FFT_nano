@@ -288,7 +288,6 @@ import {
 import { createAppRuntime } from './app.js';
 import {
   runEvaluatorPass,
-  buildEvaluatorEscalationMessage,
   buildRefinementPrompt,
   isActionfulChatTask,
   canAutoRefineActionfulChatTask,
@@ -5307,6 +5306,8 @@ async function runAgent(
     provider?: string;
     model?: string;
   };
+  suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
 }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const workspaceDir = isMain
@@ -5583,6 +5584,7 @@ async function runAgent(
       verdict: EvaluatorVerdict,
       runType: 'chat' | 'heartbeat',
       phase: 'blocking' | 'background',
+      verificationFailureReason?: string,
     ): void => {
       logger.warn(
         {
@@ -5590,11 +5592,16 @@ async function runAgent(
           phase,
           chatJid,
           requestId,
+          controlPlaneStatus:
+            phase === 'blocking' ? 'verification_failed' : undefined,
+          verificationFailureReason,
           score: verdict.score,
           issues: verdict.issues,
           feedback: verdict.feedback,
         },
-        'Evaluator flagged issues; suppressing user-visible evaluator details',
+        phase === 'blocking'
+          ? 'verification_failed'
+          : 'Evaluator flagged issues; suppressing user-visible evaluator details',
       );
     };
 
@@ -5607,8 +5614,8 @@ async function runAgent(
       const maxRefinements = 2;
       let evalTaskText = prompt;
       let lastFailedVerdict: EvaluatorVerdict | null = null;
-      let escalationReason:
-        | 'approval_required'
+      let verificationFailureReason:
+        | 'unsafe_repair_without_concrete_action'
         | 'max_refinements'
         | 'repair_failed'
         | null = null;
@@ -5638,11 +5645,11 @@ async function runAgent(
 
         lastFailedVerdict = verdict;
         if (!canAutoRefineEvaluation) {
-          escalationReason = 'approval_required';
+          verificationFailureReason = 'unsafe_repair_without_concrete_action';
           break;
         }
         if (attempt >= maxRefinements) {
-          escalationReason = 'max_refinements';
+          verificationFailureReason = 'max_refinements';
           break;
         }
 
@@ -5661,7 +5668,7 @@ async function runAgent(
         );
 
         if (refinedOutput.status !== 'success' || !refinedOutput.result) {
-          escalationReason = 'repair_failed';
+          verificationFailureReason = 'repair_failed';
           break;
         }
 
@@ -5676,16 +5683,26 @@ async function runAgent(
       }
 
       if (lastFailedVerdict) {
-        logSuppressedEvaluatorFailure(lastFailedVerdict, 'chat', 'blocking');
-        if (finalResult.result) {
-          finalResult = {
-            ...finalResult,
-            streamed: false,
-            result: `${finalResult.result.trim()}\n\n${buildEvaluatorEscalationMessage(
-              escalationReason || 'repair_failed',
-            )}`,
-          };
+        logSuppressedEvaluatorFailure(
+          lastFailedVerdict,
+          'chat',
+          'blocking',
+          verificationFailureReason || 'repair_failed',
+        );
+        if (requestId) {
+          statusTelemetry.noteRuntimeError({
+            runId: requestId,
+            chatJid,
+            errorMessage: `verification_failed: ${verificationFailureReason || 'repair_failed'}`,
+          });
         }
+        finalResult = {
+          ...finalResult,
+          result: null,
+          streamed: false,
+          suppressUserDelivery: true,
+          controlPlaneStatus: 'verification_failed',
+        };
       }
     }
 
@@ -5748,6 +5765,8 @@ async function runAgent(
       streamed: finalResult.streamed,
       ok: finalResult.ok,
       usage: finalResult.usage,
+      suppressUserDelivery: finalResult.suppressUserDelivery,
+      controlPlaneStatus: finalResult.controlPlaneStatus,
     };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');

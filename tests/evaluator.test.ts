@@ -6,7 +6,6 @@ import { describe, it } from 'node:test';
 
 import {
   shouldEvaluate,
-  buildEvaluatorEscalationMessage,
   buildRefinementPrompt,
   buildArtifactVerification,
   buildEvaluatorContainerInput,
@@ -299,20 +298,5 @@ describe('buildRefinementPrompt', () => {
     const noIssues: EvaluatorVerdict = { ...verdict, issues: [] };
     const prompt = buildRefinementPrompt('task', noIssues);
     assert.ok(!prompt.includes('Issues found:'));
-  });
-});
-
-describe('buildEvaluatorEscalationMessage', () => {
-  it('does not expose evaluator score, issues, or feedback details', () => {
-    const message = buildEvaluatorEscalationMessage('approval_required');
-    assert.match(message, /could not verify/i);
-    assert.match(message, /approval/i);
-    assert.doesNotMatch(message, /score|issues|feedback|Quality check|Evaluator/i);
-  });
-
-  it('distinguishes retry exhaustion without internal verdict text', () => {
-    const message = buildEvaluatorEscalationMessage('max_refinements');
-    assert.match(message, /retried/i);
-    assert.doesNotMatch(message, /score|issues|feedback|Quality check|Evaluator/i);
   });
 });

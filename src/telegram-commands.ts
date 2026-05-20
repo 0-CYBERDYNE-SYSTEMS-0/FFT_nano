@@ -29,6 +29,8 @@ type RunResult = {
   result: string | null;
   streamed: boolean;
   usage?: RunUsage;
+  suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
 };
 
 type CodingRunResult = RunResult & {
@@ -534,6 +536,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           params.chatJid,
           `${params.label} ${params.action} aborted (${requestId}).`,
         );
+      } else if (run.suppressUserDelivery) {
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'complete',
+        });
       } else if (run.result) {
         deps.persistAssistantHistory(params.chatJid, run.result, requestId);
         if (!run.streamed) {
@@ -694,6 +703,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           requestId: params.requestId,
           kind: 'coder',
           status: 'aborted',
+        });
+      } else if (run.suppressUserDelivery) {
+        deps.emitTuiAgentEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'complete',
         });
       } else if (run.result) {
         deps.persistAssistantHistory(
@@ -2696,6 +2712,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               requestId,
               kind: 'subagent',
               status: 'aborted',
+            });
+          } else if (run.suppressUserDelivery) {
+            deps.emitTuiAgentEvent({
+              runId: requestId,
+              sessionKey: deps.getSessionKeyForChat(m.chatJid),
+              phase: 'end',
+              detail: 'complete',
             });
           } else if (run.result) {
             deps.persistAssistantHistory(m.chatJid, run.result, requestId);
