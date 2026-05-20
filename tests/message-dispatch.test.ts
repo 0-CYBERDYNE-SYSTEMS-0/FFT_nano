@@ -139,6 +139,45 @@ test('finalizeCompletedRun sends diagnostic for empty final output', async () =>
   assert.equal(sent[0], persisted[0]);
 });
 
+test('finalizeCompletedRun suppresses withheld verification output without diagnostic', async () => {
+  const emitter = createEmitter();
+  const persisted: string[] = [];
+  const sent: string[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-verification-failed',
+    sessionKey: 'telegram:1',
+    result: null,
+    streamed: false,
+    usage: { totalTokens: 12, provider: 'zai', model: 'glm-4.7' },
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: null,
+    suppressUserDelivery: true,
+    updateChatUsage: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+    },
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(sent, []);
+  assert.deepEqual(persisted, []);
+  assert.equal(
+    emitter.events.some((event) => event.kind === 'chat'),
+    false,
+  );
+  assert.equal(emitter.events.at(-1)?.kind, 'agent');
+});
+
 test('finalizeCompletedRun does not trust external completion for empty final output', async () => {
   const emitter = createEmitter();
   const sent: string[] = [];
@@ -563,6 +602,100 @@ test('runDirectSessionTurn emits one user message and one start event', async ()
   assert.equal(startEvents.length, 1);
 });
 
+test('runDirectSessionTurn does not deliver a suppressed verification failure', async () => {
+  const emitter = createEmitter();
+  const sent: string[] = [];
+  const persisted: string[] = [];
+
+  const dispatcher = createMessageDispatcher({
+    state: {
+      registeredGroups: {
+        'telegram:1': {
+          jid: 'telegram:1',
+          name: 'Main',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => {},
+    setTyping: async () => {},
+    getMessagesSince: () => [],
+    getSessionKeyForChat: (chatJid) => chatJid,
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async () => ({
+      ok: true,
+      result: 'draft answer that failed verification',
+      streamed: false,
+      suppressUserDelivery: true,
+      controlPlaneStatus: 'verification_failed',
+    }),
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+    },
+    persistTuiUserHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+    isTelegramJid: () => true,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+  } as any);
+
+  const start = await dispatcher.runDirectSessionTurn({
+    chatJid: 'telegram:1',
+    text: 'make the fixes',
+    runId: 'run-suppressed',
+    deliver: true,
+  });
+
+  assert.deepEqual(start, { runId: 'run-suppressed', status: 'started' });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(sent, []);
+  assert.deepEqual(persisted, []);
+  assert.equal(
+    emitter.events.some(
+      (event) =>
+        event.kind === 'chat' &&
+        event.payload.state === 'final' &&
+        (event.payload.message as { role?: string } | undefined)?.role ===
+          'assistant',
+    ),
+    false,
+  );
+});
+
 test('processMessage injects recent assistant context alongside new inbound messages', async () => {
   let capturedPrompt = '';
 
@@ -892,6 +1025,16 @@ test('processMessage excludes legacy internal evaluator rows from recent convers
         is_from_me: 1,
       },
       {
+        id: 'a-validator-escalation',
+        chat_jid: 'telegram:internal-history',
+        sender: 'FarmFriend',
+        sender_name: 'FarmFriend',
+        content:
+          'FarmFriend: I could not verify that this task is complete, so I am stopping before presenting it as done.\nThe remaining fix appears to require operator approval for a potentially destructive or sensitive action.\nApprove the exact cleanup/repair action before I continue.',
+        timestamp: '2026-03-29T18:04:55.000Z',
+        is_from_me: 1,
+      },
+      {
         id: 'u-followup',
         chat_jid: 'telegram:internal-history',
         sender: 'telegram:internal-history',
@@ -916,6 +1059,8 @@ test('processMessage excludes legacy internal evaluator rows from recent convers
   assert.match(capturedPrompt, /public answer already shown/);
   assert.doesNotMatch(capturedPrompt, /Quality check flagged/);
   assert.doesNotMatch(capturedPrompt, /score 4\/10/);
+  assert.doesNotMatch(capturedPrompt, /I could not verify/);
+  assert.doesNotMatch(capturedPrompt, /Approve the exact cleanup\/repair action/);
 });
 
 test('processMessage keeps interrupt queue semantics only for new inbound messages', async () => {
