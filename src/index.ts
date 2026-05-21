@@ -255,6 +255,7 @@ import {
 } from './web/control-center-server.js';
 import {
   getTelegramPreviewRunKey,
+  isTelegramRunStatusPreviewText,
   resolveTelegramStreamCompletionState,
   type TelegramMessagePreviewState,
   updateTelegramDraftPreview,
@@ -4651,6 +4652,20 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   deleteTask,
   emitTuiChatEvent,
   emitTuiAgentEvent,
+  emitRunProgress: (payload) => {
+    hostEventBus.publish({
+      kind: 'run_progress',
+      id: createHostEventId('progress'),
+      createdAt: new Date().toISOString(),
+      source: 'telegram-command',
+      runId: payload.requestId,
+      sessionKey: getSessionKeyForChat(payload.chatJid),
+      chatJid: payload.chatJid,
+      phase: payload.phase,
+      text: payload.text,
+      ...(payload.detail ? { detail: payload.detail } : {}),
+    });
+  },
   getSessionKeyForChat,
   runAgent,
   runCodingTask,
@@ -6704,7 +6719,7 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       if (
         existingState &&
         existingState.lastText.trim() &&
-        !existingState.lastText.startsWith('Coder status:')
+        !isTelegramRunStatusPreviewText(existingState.lastText)
       ) {
         return;
       }
@@ -6872,6 +6887,7 @@ function startIpcWatcher(): void {
                   state.registeredGroups,
                   isMain,
                   processHostEventOrdered,
+                  getSessionKeyForChat,
                 );
                 if (outcome === 'delivered') {
                   logger.info(

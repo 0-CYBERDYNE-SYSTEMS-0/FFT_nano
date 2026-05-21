@@ -51,6 +51,14 @@ type CodingRunResult = RunResult & {
   };
 };
 
+type MaintenanceRunProgressPhase =
+  | 'spawn'
+  | 'thinking'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'aborted';
+
 type SetupState = {
   kind:
     | 'provider'
@@ -235,6 +243,13 @@ export interface TelegramCommandDeps {
   deleteTask: (taskId: string) => void;
   emitTuiChatEvent: (payload: any) => void;
   emitTuiAgentEvent: (payload: any) => void;
+  emitRunProgress: (payload: {
+    chatJid: string;
+    requestId: string;
+    phase: MaintenanceRunProgressPhase;
+    text: string;
+    detail?: string;
+  }) => void;
   getSessionKeyForChat: (chatJid: string) => string;
   runAgent: (
     group: any,
@@ -339,6 +354,31 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     return parseProviderFromModelLabel(deps.getEffectiveModelLabel(chatJid));
   }
 
+  function formatMaintenanceLabel(label: 'librarian' | 'skill-manager'): string {
+    return label === 'skill-manager' ? 'Skill manager' : 'Librarian';
+  }
+
+  function formatElapsedSeconds(startedAt: number): string {
+    return `${Math.max(0, Math.round((Date.now() - startedAt) / 1000))}s`;
+  }
+
+  function emitMaintenanceProgress(params: {
+    chatJid: string;
+    requestId: string;
+    label: 'librarian' | 'skill-manager';
+    phase: MaintenanceRunProgressPhase;
+    text: string;
+    detail?: string;
+  }): void {
+    deps.emitRunProgress({
+      chatJid: params.chatJid,
+      requestId: params.requestId,
+      phase: params.phase,
+      text: `${formatMaintenanceLabel(params.label)} status: ${params.text}`,
+      ...(params.detail ? { detail: params.detail } : {}),
+    });
+  }
+
   async function validateModelSelection(params: {
     chatJid: string;
     provider: string;
@@ -398,6 +438,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       '- Do not answer with usage text.',
       '- Keep changes concise and schema-aligned.',
       '- Preserve raw captures unless you have a clear reason to move or annotate them.',
+      '- Send concise run_progress IPC updates after major phases or after roughly 30 seconds of work: {"type":"run_progress","chatJid":"<current chat jid>","requestId":"<current request_id>","text":"Librarian status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
+      '- Progress phases to report: schema/index loaded; raw captures reviewed; wiki updates planned/applied; report/progress/log prepared.',
       '- Final answer must include files inspected, files changed, and report path when a report is written.',
       input ? ['', 'Operator focus:', input] : '',
     ]
@@ -423,6 +465,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       'Rules:',
       '- Do not answer with usage text.',
       '- Do not mutate source-owned project skills or personal override skills; report issues instead.',
+      '- Send concise run_progress IPC updates after major phases or after roughly 30 seconds of work: {"type":"run_progress","chatJid":"<current chat jid>","requestId":"<current request_id>","text":"Skill manager status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
+      '- Progress phases to report: skill list loaded; candidate skills inspected; mutations planned/applied; report/final summary prepared.',
       dryRun
         ? '- Dry-run mode: do not call mutating skill actions such as skill_patch, skill_archive, skill_restore, skill_pin, or skill_unpin.'
         : '- Live mode: use skill actions for any skill changes and summarize each mutation.',
@@ -485,12 +529,29 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       phase: 'start',
       detail: `${params.label} ${params.action}`,
     });
-    await deps.sendMessage(
-      params.chatJid,
-      `Starting ${params.label} ${params.action} (${requestId})...`,
-    );
+    emitMaintenanceProgress({
+      chatJid: params.chatJid,
+      requestId,
+      label: params.label,
+      phase: 'spawn',
+      text:
+        params.label === 'skill-manager'
+          ? 'Starting library review...'
+          : 'Starting wiki review...',
+      detail: `${params.action} ${requestId}`,
+    });
     await deps.setTyping(params.chatJid, true);
     try {
+      emitMaintenanceProgress({
+        chatJid: params.chatJid,
+        requestId,
+        label: params.label,
+        phase: 'thinking',
+        text:
+          params.label === 'skill-manager'
+            ? 'Agent is inspecting skills content...'
+            : 'Agent is inspecting wiki content...',
+      });
       const run = await deps.runAgent(
         group,
         params.prompt,
@@ -503,7 +564,15 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       );
       deps.updateChatUsage(params.chatJid, run.usage);
       const runWasAborted = !run.result && abortController.signal.aborted;
+      emitMaintenanceProgress({
+        chatJid: params.chatJid,
+        requestId,
+        label: params.label,
+        phase: 'finalizing',
+        text: 'Finalizing summary...',
+      });
       if (!run.ok) {
+        const elapsed = formatElapsedSeconds(activeRun.startedAt);
         deps.emitTuiChatEvent({
           runId: requestId,
           sessionKey: deps.getSessionKeyForChat(params.chatJid),
@@ -516,11 +585,20 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           phase: 'error',
           detail: `${params.label} run failed`,
         });
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'failed',
+          text: `${params.action} failed (${requestId}, ${elapsed}).`,
+          ...(run.result ? { detail: run.result } : {}),
+        });
         await deps.sendAgentResultMessage(
           params.chatJid,
-          `${params.label} ${params.action} failed (${requestId}).${run.result ? `\n\n${run.result}` : ''}`,
+          `${formatMaintenanceLabel(params.label)} ${params.action} failed (${requestId}, ${elapsed}).${run.result ? `\n\n${run.result}` : ''}`,
         );
       } else if (runWasAborted) {
+        const elapsed = formatElapsedSeconds(activeRun.startedAt);
         deps.emitTuiChatEvent({
           runId: requestId,
           sessionKey: deps.getSessionKeyForChat(params.chatJid),
@@ -532,11 +610,25 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           phase: 'end',
           detail: 'aborted',
         });
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'aborted',
+          text: `${params.action} aborted (${requestId}, ${elapsed}).`,
+        });
         await deps.sendAgentResultMessage(
           params.chatJid,
-          `${params.label} ${params.action} aborted (${requestId}).`,
+          `${formatMaintenanceLabel(params.label)} ${params.action} aborted (${requestId}, ${elapsed}).`,
         );
       } else if (run.suppressUserDelivery) {
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'completed',
+          text: `${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+        });
         deps.emitTuiAgentEvent({
           runId: requestId,
           sessionKey: deps.getSessionKeyForChat(params.chatJid),
@@ -546,8 +638,23 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       } else if (run.result) {
         deps.persistAssistantHistory(params.chatJid, run.result, requestId);
         if (!run.streamed) {
-          await deps.sendAgentResultMessage(params.chatJid, run.result);
+          await deps.sendAgentResultMessage(
+            params.chatJid,
+            `${formatMaintenanceLabel(params.label)} ${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).\n\n${run.result}`,
+          );
+        } else {
+          await deps.sendAgentResultMessage(
+            params.chatJid,
+            `${formatMaintenanceLabel(params.label)} ${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+          );
         }
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'completed',
+          text: `${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+        });
         deps.emitTuiChatEvent({
           runId: requestId,
           sessionKey: deps.getSessionKeyForChat(params.chatJid),
@@ -562,11 +669,45 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           detail: run.streamed ? 'streamed' : 'complete',
         });
       } else {
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'completed',
+          text: `${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+        });
         await deps.sendAgentResultMessage(
           params.chatJid,
-          `${params.label} ${params.action} completed (${requestId}) with no final text.`,
+          `${formatMaintenanceLabel(params.label)} ${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}) with no final text.`,
         );
       }
+    } catch (err) {
+      const elapsed = formatElapsedSeconds(activeRun.startedAt);
+      const diagnostic = err instanceof Error ? err.message : String(err);
+      emitMaintenanceProgress({
+        chatJid: params.chatJid,
+        requestId,
+        label: params.label,
+        phase: 'failed',
+        text: `${params.action} failed (${requestId}, ${elapsed}).`,
+        detail: diagnostic,
+      });
+      deps.emitTuiChatEvent({
+        runId: requestId,
+        sessionKey: deps.getSessionKeyForChat(params.chatJid),
+        state: 'error',
+        errorMessage: `${params.label} run failed`,
+      });
+      deps.emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey: deps.getSessionKeyForChat(params.chatJid),
+        phase: 'error',
+        detail: diagnostic,
+      });
+      await deps.sendAgentResultMessage(
+        params.chatJid,
+        `${formatMaintenanceLabel(params.label)} ${params.action} failed (${requestId}, ${elapsed}).\n\n${diagnostic}`,
+      );
     } finally {
       if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
         deps.activeChatRuns.delete(params.chatJid);

@@ -681,6 +681,9 @@ function renderBasePrompt(params: {
     `To proactively message current chat, write JSON into ${params.paths.ipcDir}/messages/*.json:`,
   );
   lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
+  lines.push(
+    'For run progress without adding a separate chat message, write: {"type":"run_progress","chatJid":"<jid>","requestId":"<current request_id>","text":"Run status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
+  );
   lines.push('Write atomically (temp file then rename).');
   lines.push('');
   lines.push('## Scheduler IPC');
@@ -913,7 +916,7 @@ function renderOverlayPrompt(params: {
     );
     if (params.input.reasoningLevel === 'stream') {
       lines.push(
-        `For long tasks, proactively send concise progress updates via ${params.paths.ipcDir}/messages.`,
+        `For long tasks, proactively send concise run_progress updates via ${params.paths.ipcDir}/messages.`,
       );
     }
     lines.push('');

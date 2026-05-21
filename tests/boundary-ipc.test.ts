@@ -93,6 +93,106 @@ test('translateLegacyMessageToHostEvent ignores legacy draft files', () => {
   assert.equal(event, null);
 });
 
+test('translateLegacyMessageToHostEvent returns run_progress event for authorized progress payloads', () => {
+  const envelope = wrapLegacyMessageEnvelope(
+    {
+      type: 'run_progress',
+      chatJid: 'telegram:1',
+      requestId: 'run-1',
+      text: 'Skill manager status: Inspecting skills.',
+      phase: 'tool_running',
+      detail: 'skill_view',
+    },
+    'group-a',
+    '2026-03-21T00:00:00.000Z',
+  );
+
+  const event = translateLegacyMessageToHostEvent(
+    envelope!,
+    {
+      'telegram:1': {
+        name: 'Group A',
+        folder: 'group-a',
+        trigger: '@FarmFriend',
+        added_at: '2026-03-21T00:00:00.000Z',
+      },
+    },
+    false,
+    (chatJid) => `session:${chatJid}`,
+  );
+
+  assert.ok(event);
+  assert.equal(event?.kind, 'run_progress');
+  if (!event || event.kind !== 'run_progress') return;
+  assert.equal(event.chatJid, 'telegram:1');
+  assert.equal(event.runId, 'run-1');
+  assert.equal(event.sessionKey, 'session:telegram:1');
+  assert.equal(event.phase, 'tool_running');
+  assert.equal(event.text, 'Skill manager status: Inspecting skills.');
+  assert.equal(event.detail, 'skill_view');
+});
+
+test('translateLegacyMessageToHostEvent rejects invalid run_progress payloads', () => {
+  const registeredGroups = {
+    'telegram:1': {
+      name: 'Group A',
+      folder: 'group-a',
+      trigger: '@FarmFriend',
+      added_at: '2026-03-21T00:00:00.000Z',
+    },
+  };
+
+  for (const payload of [
+    { type: 'run_progress', chatJid: 'telegram:1', text: 'missing id' },
+    { type: 'run_progress', chatJid: 'telegram:1', requestId: 'run-1' },
+    {
+      type: 'run_progress',
+      chatJid: 'telegram:1',
+      requestId: 'run-1',
+      text: 'bad phase',
+      phase: 'completed',
+    },
+  ]) {
+    const envelope = wrapLegacyMessageEnvelope(
+      payload,
+      'group-a',
+      '2026-03-21T00:00:00.000Z',
+    );
+    assert.equal(
+      translateLegacyMessageToHostEvent(envelope!, registeredGroups, false),
+      null,
+    );
+  }
+});
+
+test('translateLegacyMessageToHostEvent blocks non-main cross-group run_progress payloads', () => {
+  const envelope = wrapLegacyMessageEnvelope(
+    {
+      type: 'run_progress',
+      chatJid: 'telegram:1',
+      requestId: 'run-1',
+      text: 'Librarian status: Reviewing captures.',
+    },
+    'group-b',
+    '2026-03-21T00:00:00.000Z',
+  );
+
+  const event = translateLegacyMessageToHostEvent(
+    envelope!,
+    {
+      'telegram:1': {
+        name: 'Group A',
+        folder: 'group-a',
+        trigger: '@FarmFriend',
+        added_at: '2026-03-21T00:00:00.000Z',
+      },
+    },
+    false,
+  );
+
+  assert.equal(event, null);
+});
+
 test('dispatchLegacyMessageEnvelope awaits async delivery handlers', async () => {
   const envelope = wrapLegacyMessageEnvelope(
     {
