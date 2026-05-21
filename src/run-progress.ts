@@ -9,7 +9,11 @@ type RunProgressPhase =
   | 'retry_fresh'
   | 'retry_delay'
   | 'retry_provider_switch'
-  | 'stale';
+  | 'stale'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'aborted';
 
 type RunProgressEvent = Extract<HostEvent, { kind: 'run_progress' }>;
 

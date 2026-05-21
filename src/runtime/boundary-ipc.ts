@@ -100,9 +100,12 @@ export function translateLegacyMessageToHostEvent(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
   registeredGroups: Record<string, RegisteredGroup>,
   isMain: boolean,
+  getSessionKeyForChat?: (chatJid: string) => string,
 ): HostEvent | null {
   const payload = envelope.payload;
-  if (payload.type !== 'message') return null;
+  if (payload.type !== 'message' && payload.type !== 'run_progress') {
+    return null;
+  }
   if (typeof payload.chatJid !== 'string' || typeof payload.text !== 'string')
     return null;
   const targetGroup = registeredGroups[payload.chatJid];
@@ -111,6 +114,42 @@ export function translateLegacyMessageToHostEvent(
     (!targetGroup || targetGroup.folder !== envelope.sourceGroup)
   ) {
     return null;
+  }
+  if (payload.type === 'run_progress') {
+    if (
+      typeof payload.requestId !== 'string' ||
+      !payload.requestId.trim() ||
+      !payload.text.trim()
+    ) {
+      return null;
+    }
+    const rawPhase =
+      typeof payload.phase === 'string' && payload.phase.trim()
+        ? payload.phase.trim()
+        : 'thinking';
+    const phase =
+      rawPhase === 'thinking' ||
+      rawPhase === 'tool_running' ||
+      rawPhase === 'stale'
+        ? rawPhase
+        : null;
+    if (!phase) return null;
+    return {
+      kind: 'run_progress',
+      id: envelope.id,
+      createdAt: envelope.createdAt,
+      source: 'ipc-boundary',
+      runId: payload.requestId.trim(),
+      sessionKey: getSessionKeyForChat
+        ? getSessionKeyForChat(payload.chatJid)
+        : payload.chatJid,
+      chatJid: payload.chatJid,
+      phase,
+      text: payload.text,
+      ...(typeof payload.detail === 'string' && payload.detail.trim()
+        ? { detail: payload.detail.trim() }
+        : {}),
+    };
   }
   return {
     kind: 'chat_delivery_requested',
@@ -135,11 +174,13 @@ export async function dispatchLegacyMessageEnvelope(
   registeredGroups: Record<string, RegisteredGroup>,
   isMain: boolean,
   dispatch: (event: HostEvent) => Promise<void> | void,
+  getSessionKeyForChat?: (chatJid: string) => string,
 ): Promise<LegacyMessageDispatchResult> {
   const event = translateLegacyMessageToHostEvent(
     envelope,
     registeredGroups,
     isMain,
+    getSessionKeyForChat,
   );
   if (!event) {
     return 'ignored_invalid';
