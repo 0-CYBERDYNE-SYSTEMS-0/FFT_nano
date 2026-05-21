@@ -15,6 +15,7 @@ import {
   DATA_DIR,
   FEATURE_FARM,
   FARM_STATE_ENABLED,
+  FFT_NANO_CODER_GATE_MODE,
   FFT_NANO_ONBOARDING_MODE,
   FFT_NANO_TUI_AUTH_TOKEN,
   FFT_NANO_TUI_ENABLED,
@@ -157,6 +158,7 @@ import {
 import {
   isSubstantialCodingTask,
   parseDelegationTrigger,
+  shouldSuggestCodingEscalation,
   type CodingHint,
 } from './coding-delegation.js';
 import {
@@ -3601,6 +3603,7 @@ function formatStatusText(chatJid?: string): string {
     assistantName: ASSISTANT_NAME,
     version,
     runtime,
+    coderGateMode: FFT_NANO_CODER_GATE_MODE,
     serviceStartedAt: SERVICE_STARTED_AT,
     incidentWindowLabel: STATUS_INCIDENT_WINDOW_LABEL,
     stuckWarningSeconds: STATUS_STUCK_WARNING_SECONDS,
@@ -4933,6 +4936,7 @@ const messageDispatcher = createMessageDispatcher({
     triggerPattern: TRIGGER_PATTERN,
     tuiSenderName: TUI_SENDER_NAME,
     mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+    coderGateMode: FFT_NANO_CODER_GATE_MODE,
   },
   activeChatRuns,
   activeChatRunsById,
@@ -4967,6 +4971,7 @@ const messageDispatcher = createMessageDispatcher({
   sanitizeRunPreferences: sanitizeRunPreferencesModelOverride,
   parseDelegationTrigger,
   isSubstantialCodingTask,
+  shouldSuggestCodingEscalation,
   presentCoderSuggestion,
   prepareCoderTarget,
   createCoderProject,

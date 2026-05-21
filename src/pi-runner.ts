@@ -984,6 +984,7 @@ export async function runContainerAgent(
     chatJid: input.chatJid,
     isMain,
     isScheduledTask: input.isScheduledTask,
+    isEvaluatorRun: input.isEvaluatorRun,
     assistantName: input.assistantName,
     provider: input.provider,
     model: input.model,
@@ -1992,7 +1993,8 @@ export async function runContainerAgent(
 
             if (fallbackResult.status === 'success') {
               if (timeoutHandle) clearTimeout(timeoutHandle);
-              if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
+              if (abortSignal)
+                abortSignal.removeEventListener('abort', onAbort);
               if (settled) return;
               finish(fallbackResult);
               return;

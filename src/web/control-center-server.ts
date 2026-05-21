@@ -4,6 +4,7 @@ import path from 'path';
 
 import type { WebAccessMode } from '../config.js';
 import { logger } from '../logger.js';
+import { sanitizeUserFacingVerdictLeak } from '../runtime/boundary-ipc.js';
 
 interface RuntimeStatusPayload {
   runtime: string;
@@ -411,6 +412,41 @@ function tailFile(filePath: string, lineCount: number): string {
   return lines.slice(-lineCount).join('\n');
 }
 
+function redactUserFacingLogText(text: string): string {
+  if (!text.trim()) return text;
+  const lines = text.split('\n');
+  const redacted: string[] = [];
+  let inVerdictBlock = false;
+  for (const line of lines) {
+    const sanitizedLine = sanitizeUserFacingVerdictLeak(line);
+    if (sanitizedLine !== line) {
+      redacted.push(sanitizedLine);
+      inVerdictBlock = false;
+      continue;
+    }
+    if (/"pass"\s*:/i.test(line)) {
+      redacted.push('verification_failed');
+      inVerdictBlock = true;
+      continue;
+    }
+    if (inVerdictBlock) {
+      redacted.push('verification_failed');
+      if (/\}/.test(line)) inVerdictBlock = false;
+      continue;
+    }
+    const partialVerdictLike =
+      /pass\s*:\s*(true|false)/i.test(line) &&
+      /issues?/i.test(line) &&
+      /feedback/i.test(line);
+    if (partialVerdictLike) {
+      redacted.push('verification_failed');
+      continue;
+    }
+    redacted.push(line);
+  }
+  return redacted.join('\n');
+}
+
 function resolveGatewayWsUrl(
   req: http.IncomingMessage,
   gateway: GatewayStatusPayload,
@@ -606,7 +642,7 @@ export async function startWebControlCenterServer(
         const fileName =
           target === 'error' ? 'fft_nano.error.log' : 'fft_nano.log';
         const filePath = path.join(logsDir, fileName);
-        const text = tailFile(filePath, lines);
+        const text = redactUserFacingLogText(tailFile(filePath, lines));
         sendJson(res, 200, {
           ok: true,
           target,

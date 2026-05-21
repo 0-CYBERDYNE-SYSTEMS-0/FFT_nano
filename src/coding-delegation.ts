@@ -157,3 +157,35 @@ export function isSubstantialCodingTask(text: string): boolean {
   if (normalized.length >= 100 && actionScore + domainScore >= 2) return true;
   return actionScore + domainScore >= 3;
 }
+
+const NON_PROJECT_QUICK_TASK_PATTERNS = [
+  /\b(simple|quick|small|tiny|minor|just)\b/,
+  /\b(copy|clone|fetch|get|install|download|enable|disable|toggle)\b/,
+  /\b(skill|branding|theme|style|aesthetic|palette|font|typography)\b/,
+] as const;
+
+const PROJECT_INTENT_PATTERNS = [
+  /\b(project|repo|repository|worktree|branch|pr|pull request)\b/,
+  /\b(multi[- ]?file|architecture|module|service|api|database|schema|migration)\b/,
+  /\b(implement|build|create|refactor|rewrite|debug|fix).*\b(app|system|feature|backend|frontend|dashboard)\b/,
+] as const;
+
+// Second-pass objective check used only in autosuggest mode.
+// It intentionally requires concrete project/software intent to avoid false positives.
+export function shouldSuggestCodingEscalation(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  if (!isSubstantialCodingTask(normalized)) return false;
+
+  const quickTaskSignals = NON_PROJECT_QUICK_TASK_PATTERNS.reduce(
+    (count, pattern) => count + (pattern.test(normalized) ? 1 : 0),
+    0,
+  );
+  const projectSignals = PROJECT_INTENT_PATTERNS.reduce(
+    (count, pattern) => count + (pattern.test(normalized) ? 1 : 0),
+    0,
+  );
+
+  if (quickTaskSignals > 0 && projectSignals === 0) return false;
+  return projectSignals > 0;
+}

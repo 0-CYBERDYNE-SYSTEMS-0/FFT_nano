@@ -193,6 +193,87 @@ test('translateLegacyMessageToHostEvent blocks non-main cross-group run_progress
   assert.equal(event, null);
 });
 
+test('translateLegacyMessageToHostEvent rejects raw evaluator verdict JSON messages', () => {
+  const verdictJson = JSON.stringify({
+    pass: false,
+    score: 1,
+    issues: ['Agent served a URL that returned 404 File Not Found'],
+    feedback: 'Task failed verification.',
+  });
+  const envelope = wrapLegacyMessageEnvelope(
+    {
+      type: 'message',
+      chatJid: 'telegram:1',
+      text: verdictJson,
+      requestId: 'eval-run-1',
+    },
+    'group-a',
+    '2026-03-21T00:00:00.000Z',
+  );
+
+  const event = translateLegacyMessageToHostEvent(
+    envelope!,
+    {
+      'telegram:1': {
+        name: 'Group A',
+        folder: 'group-a',
+        trigger: '@FarmFriend',
+        added_at: '2026-03-21T00:00:00.000Z',
+      },
+    },
+    false,
+  );
+
+  assert.equal(event, null);
+});
+
+test('translateLegacyMessageToHostEvent rejects evaluator verdict variants', () => {
+  const variants = [
+    JSON.stringify({
+      pass: false,
+      score: '1',
+      issues: ['missing artifact'],
+      feedback: 'retry',
+    }),
+    '```json\n{"pass":false,"score":1,"issues":["missing artifact"],"feedback":"retry"}\n```',
+    JSON.stringify({
+      verdict: {
+        pass: false,
+        score: 1,
+        issues: ['missing artifact'],
+        feedback: 'retry',
+      },
+    }),
+    '{"pass":false}\n{"pass":false,"score":1,"issues":["missing artifact"],"feedback":"retry"}',
+    'pass:false score:1 issues:["missing artifact"] feedback:"retry"',
+  ];
+  for (const text of variants) {
+    const envelope = wrapLegacyMessageEnvelope(
+      {
+        type: 'message',
+        chatJid: 'telegram:1',
+        text,
+        requestId: 'eval-run-variant',
+      },
+      'group-a',
+      '2026-03-21T00:00:00.000Z',
+    );
+    const event = translateLegacyMessageToHostEvent(
+      envelope!,
+      {
+        'telegram:1': {
+          name: 'Group A',
+          folder: 'group-a',
+          trigger: '@FarmFriend',
+          added_at: '2026-03-21T00:00:00.000Z',
+        },
+      },
+      false,
+    );
+    assert.equal(event, null);
+  }
+});
+
 test('dispatchLegacyMessageEnvelope awaits async delivery handlers', async () => {
   const envelope = wrapLegacyMessageEnvelope(
     {

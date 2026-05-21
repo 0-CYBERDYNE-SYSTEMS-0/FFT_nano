@@ -9,6 +9,10 @@ import {
   getProviderFallbackCandidates,
   runContainerAgent,
 } from '../src/pi-runner.ts';
+import {
+  dispatchLegacyMessageEnvelope,
+  wrapLegacyMessageEnvelope,
+} from '../src/runtime/boundary-ipc.js';
 import type { RegisteredGroup } from '../src/types.ts';
 
 test('getProviderFallbackCandidates skips attempted providers and dedupes order', () => {
@@ -677,6 +681,204 @@ setTimeout(() => process.exit(0), 10);
     assert.equal(output.result, verdictJson);
     assert.equal(output.streamed, false);
     assert.deepEqual(deliveredTexts, []);
+  },
+);
+
+test(
+  'evaluator IPC message with raw verdict JSON is not delivered to chat',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-eval-ipc-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_eval_ipc_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+    const requestId = `req-eval-ipc-${Date.now().toString(36)}`;
+    const verdictJson = JSON.stringify({
+      pass: false,
+      score: 1,
+      issues: ['missing artifact'],
+      feedback: 'retry',
+    });
+    const fakePiPath = path.join(tempDir, 'fake-pi-eval-ipc.js');
+    fs.writeFileSync(
+      fakePiPath,
+      `#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+const messagesDir = ${JSON.stringify(path.join(ipcDir, 'messages'))};
+fs.mkdirSync(messagesDir, { recursive: true });
+fs.writeFileSync(
+  path.join(messagesDir, 'eval-leak.json'),
+  JSON.stringify({
+    type: 'message',
+    chatJid: 'telegram:test',
+    requestId: ${JSON.stringify(requestId)},
+    text: ${JSON.stringify(verdictJson)}
+  })
+);
+process.stdout.write(JSON.stringify({
+  type: 'message_end',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'text', text: ${JSON.stringify(verdictJson)} }],
+  },
+}) + '\\n');
+setTimeout(() => process.exit(0), 10);
+`,
+      'utf8',
+    );
+    fs.chmodSync(fakePiPath, 0o755);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'evaluate previous answer',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: true,
+      assistantName: 'FarmFriend',
+      requestId,
+      noContinue: true,
+      isEvaluatorRun: true,
+      suppressPreviewStreaming: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 2500,
+        hardTimeoutMs: 2500,
+      },
+    });
+
+    const leakedPayloadPath = path.join(ipcDir, 'messages', 'eval-leak.json');
+    const leakedPayload = JSON.parse(
+      fs.readFileSync(leakedPayloadPath, 'utf8'),
+    );
+    const envelope = wrapLegacyMessageEnvelope(
+      leakedPayload,
+      groupFolder,
+      '2026-03-31T00:00:00.000Z',
+    );
+    const deliveredTexts: string[] = [];
+    const dispatchResult = await dispatchLegacyMessageEnvelope(
+      envelope!,
+      {
+        'telegram:test': group,
+      },
+      true,
+      (event) => {
+        if (event.kind === 'chat_delivery_requested') {
+          deliveredTexts.push(event.text);
+        }
+      },
+    );
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, verdictJson);
+    assert.equal(dispatchResult, 'ignored_invalid');
+    assert.deepEqual(deliveredTexts, []);
+  },
+);
+
+test(
+  'evaluator assistant verdict output does not emit preview final chat or direct delivery events',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-eval-out-'));
+    const fakePiPath = path.join(tempDir, 'fake-pi-eval-out.js');
+    const verdictJson = JSON.stringify({
+      pass: false,
+      score: 1,
+      issues: ['missing artifact'],
+      feedback: 'retry',
+    });
+    fs.writeFileSync(
+      fakePiPath,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  type: 'message_end',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'text', text: ${JSON.stringify(verdictJson)} }],
+  },
+}) + '\\n');
+setTimeout(() => process.exit(0), 10);
+`,
+      'utf8',
+    );
+    fs.chmodSync(fakePiPath, 0o755);
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_eval_out_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+    const requestId = `req-eval-out-${Date.now().toString(36)}`;
+    const events: string[] = [];
+    const unsubscribe = hostEventBus.subscribe((event) => {
+      if (
+        event.kind === 'telegram_preview_requested' ||
+        event.kind === 'chat_delivery_requested'
+      ) {
+        events.push(event.kind);
+      }
+    });
+
+    t.after(() => {
+      unsubscribe();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'evaluate previous answer',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: true,
+      assistantName: 'FarmFriend',
+      requestId,
+      noContinue: true,
+      isEvaluatorRun: true,
+      suppressPreviewStreaming: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 2500,
+        hardTimeoutMs: 2500,
+      },
+    });
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, verdictJson);
+    assert.equal(output.streamed, false);
+    assert.deepEqual(events, []);
   },
 );
 
