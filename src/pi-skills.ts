@@ -93,6 +93,13 @@ interface SkillMarkdownValidation {
   warnings: SkillValidationIssue[];
 }
 
+type ManagedSkillSource = 'project' | 'external';
+
+interface ManagedSkillManifest {
+  managed: string[];
+  sources: Record<string, ManagedSkillSource>;
+}
+
 function parseSkillMarkdown(
   skillMarkdownPath: string,
 ): ParsedSkillMarkdown | null {
@@ -537,6 +544,16 @@ function extractSectionText(body: string, headingPattern: RegExp): string {
   return summarizeParagraph(section.replace(/^[\s*-]+/gm, ' ').trim());
 }
 
+function parseAllowedTools(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  const raw = toTrimmedString(value);
+  if (!raw) return [];
+  const parts = raw.includes(',') ? raw.split(',') : raw.split(/\s+/);
+  return parts.map((item) => item.trim()).filter(Boolean);
+}
+
 export function buildSkillCatalogEntries(
   sourceDirs: string[],
   options: { maxChars: number } = { maxChars: 6000 },
@@ -547,27 +564,27 @@ export function buildSkillCatalogEntries(
     const sourceDir = sourceDirs[rootIndex];
     if (!isDirectory(sourceDir)) continue;
     const usage = loadSkillUsage(sourceDir);
-    const managedNames = new Set(readManagedSkillNames(path.join(sourceDir, '.fft_nano_managed_skills.json')));
+    const managedManifest = readManagedSkillManifest(
+      path.join(sourceDir, '.fft_nano_managed_skills.json'),
+    );
+    const managedNames = new Set(managedManifest.managed);
     for (const skillName of listSkillDirectories(sourceDir)) {
-      const source: SkillCatalogEntry['source'] =
-        managedNames.has(skillName)
-          ? 'project'
-          : usage[skillName]?.created_by === 'agent'
-            ? 'agent'
-            : rootIndex === 0
-              ? 'project'
-              : 'external';
+      const managedSource = managedManifest.sources[skillName];
+      const source: SkillCatalogEntry['source'] = managedNames.has(skillName)
+        ? managedSource || 'project'
+        : usage[skillName]?.created_by === 'agent'
+          ? 'agent'
+          : rootIndex === 0
+            ? 'project'
+            : 'external';
       const markdownPath = path.join(sourceDir, skillName, 'SKILL.md');
       const parsed = parseSkillMarkdown(markdownPath);
       if (!parsed) continue;
       const description =
         toTrimmedString(parsed.frontmatter.description) || skillName;
-      const allowedToolsRaw = parsed.frontmatter['allowed-tools'];
-      const allowedTools = Array.isArray(allowedToolsRaw)
-        ? allowedToolsRaw.filter(
-            (value): value is string => typeof value === 'string',
-          )
-        : [];
+      const allowedTools = parseAllowedTools(
+        parsed.frontmatter['allowed-tools'],
+      );
       const whenToUse =
         extractSectionText(parsed.body, WHEN_TO_USE_SECTION_PATTERN) ||
         summarizeParagraph(parsed.body);
@@ -594,27 +611,53 @@ export function buildSkillCatalogEntries(
   return results;
 }
 
-function readManagedSkillNames(manifestPath: string): string[] {
-  if (!fs.existsSync(manifestPath)) return [];
+function readManagedSkillManifest(manifestPath: string): ManagedSkillManifest {
+  const empty: ManagedSkillManifest = { managed: [], sources: {} };
+  if (!fs.existsSync(manifestPath)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
       managed?: unknown;
+      sources?: unknown;
     };
-    if (!Array.isArray(parsed.managed)) return [];
-    return parsed.managed.filter(
+    if (!Array.isArray(parsed.managed)) return empty;
+    const managed = parsed.managed.filter(
       (entry): entry is string => typeof entry === 'string',
     );
+    const sources: Record<string, ManagedSkillSource> = {};
+    if (
+      parsed.sources &&
+      typeof parsed.sources === 'object' &&
+      !Array.isArray(parsed.sources)
+    ) {
+      for (const [name, source] of Object.entries(
+        parsed.sources as Record<string, unknown>,
+      )) {
+        if (source === 'project' || source === 'external') {
+          sources[name] = source;
+        }
+      }
+    }
+    return { managed, sources };
   } catch {
-    return [];
+    return empty;
   }
 }
 
-function writeManagedSkillNames(manifestPath: string, managed: string[]): void {
+function readManagedSkillNames(manifestPath: string): string[] {
+  return readManagedSkillManifest(manifestPath).managed;
+}
+
+function writeManagedSkillNames(
+  manifestPath: string,
+  managed: string[],
+  sources: Record<string, ManagedSkillSource> = {},
+): void {
   fs.writeFileSync(
     manifestPath,
     JSON.stringify(
       {
         managed: Array.from(new Set(managed)).sort(),
+        sources,
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -774,14 +817,20 @@ export function syncProjectPiSkillsToGroupPiHome(
     }
   }
 
-  const validatedSkills = new Map<string, string>();
+  const validatedSkills = new Map<
+    string,
+    { skillPath: string; source: ManagedSkillSource }
+  >();
   for (const [skillName, entries] of mergedSkills.entries()) {
     const invalidCandidates: SkillValidationIssue[] = [];
     const isRequiredSkill = REQUIRED_PROJECT_PI_SKILL_SET.has(skillName);
     const validationPolicy = isRequiredSkill
       ? requiredSkillValidationPolicy(skillName)
       : nonRequiredSkillValidationPolicy(skillName);
-    let selectedSkillPath: string | null = null;
+    let selectedSkill: {
+      skillPath: string;
+      source: ManagedSkillSource;
+    } | null = null;
 
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
@@ -803,16 +852,16 @@ export function syncProjectPiSkillsToGroupPiHome(
         result.warnings.push(...validation.warnings);
         result.warnedSkills.push(skillName);
       }
-      selectedSkillPath = entry.skillPath;
+      selectedSkill = entry;
       break;
     }
 
-    if (!selectedSkillPath) {
+    if (!selectedSkill) {
       result.invalid.push(...invalidCandidates);
       result.skippedInvalid.push(skillName);
       continue;
     }
-    validatedSkills.set(skillName, selectedSkillPath);
+    validatedSkills.set(skillName, selectedSkill);
   }
   result.skippedInvalid = Array.from(new Set(result.skippedInvalid)).sort();
   result.warnedSkills = Array.from(new Set(result.warnedSkills)).sort();
@@ -835,15 +884,24 @@ export function syncProjectPiSkillsToGroupPiHome(
   }
 
   for (const skillName of Array.from(nextManaged).sort()) {
-    const source = validatedSkills.get(skillName);
-    if (!source) continue;
+    const selected = validatedSkills.get(skillName);
+    if (!selected) continue;
     const dest = path.join(destRoot, skillName);
 
     fs.rmSync(dest, { recursive: true, force: true });
-    fs.cpSync(source, dest, { recursive: true });
+    fs.cpSync(selected.skillPath, dest, { recursive: true });
     result.copied.push(skillName);
   }
 
-  writeManagedSkillNames(manifestPath, result.managed);
+  writeManagedSkillNames(
+    manifestPath,
+    result.managed,
+    Object.fromEntries(
+      Array.from(validatedSkills.entries()).map(([skillName, selected]) => [
+        skillName,
+        selected.source,
+      ]),
+    ),
+  );
   return result;
 }

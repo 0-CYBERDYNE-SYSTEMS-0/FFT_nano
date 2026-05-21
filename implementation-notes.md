@@ -1,5 +1,12 @@
 # Implementation Notes
 
+## 2026-05-21 - Skill Manager Schema and Source Metadata
+
+- Decision: keep `allowed-tools` as a string in skill frontmatter. Claude Code documents it as a string such as `Read, Grep, Glob`, and this repo's existing skills already use string values like `bash` and `read_file ddgs_search`.
+- Change: catalog generation should parse `allowed-tools` strings into the existing `SkillCatalogEntry.allowedTools: string[]` shape instead of requiring skill authors to use YAML arrays.
+- Decision: preserve backward compatibility for `.fft_nano_managed_skills.json` by keeping the existing `managed` array and adding a per-skill source map. Older manifests without source metadata continue to classify managed skills as `project`.
+- Tradeoff: source metadata is tracked at sync time. A previously-synced external skill will show as `project` until the next sync rewrites the manifest with the new source map.
+
 ## 2026-05-19 — Telegram Group Approval
 
 - Decision: keep `TELEGRAM_AUTO_REGISTER` for known main/private bootstrap cases, but stop it from registering non-main Telegram groups. Unknown Telegram groups now always go through explicit approval so owners stay in control.
