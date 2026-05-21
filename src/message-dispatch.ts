@@ -1,5 +1,6 @@
 import { PARITY_CONFIG } from './config.js';
 import { logger } from './logger.js';
+import { sanitizeUserFacingVerdictLeak } from './runtime/boundary-ipc.js';
 import type { TelegramMessagePreviewState } from './telegram-streaming.js';
 import type { NewMessage } from './types.js';
 import type { CodingWorkerResult } from './coding-orchestrator.js';
@@ -25,6 +26,7 @@ export interface FinalizeCompletedRunParams {
   telegramPreviewState: TelegramMessagePreviewState | null;
   timestampToPersist?: string;
   suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
   updateChatUsage: (
     chatJid: string,
     usage?: {
@@ -712,12 +714,21 @@ export async function finalizeCompletedRun(
     return;
   }
 
+  const shouldSanitizeVerdictLeak =
+    params.controlPlaneStatus === 'verification_failed';
   const finalText =
-    typeof params.result === 'string' ? params.result.trim() : '';
+    typeof params.result === 'string'
+      ? shouldSanitizeVerdictLeak
+        ? sanitizeUserFacingVerdictLeak(params.result.trim())
+        : params.result.trim()
+      : '';
   const hasVisibleFinalText = finalText.length > 0;
 
   if (!hasVisibleFinalText) {
-    const streamedText = params.telegramPreviewState?.lastText?.trim() || '';
+    const rawStreamedText = params.telegramPreviewState?.lastText?.trim() || '';
+    const streamedText = shouldSanitizeVerdictLeak
+      ? sanitizeUserFacingVerdictLeak(rawStreamedText)
+      : rawStreamedText;
     if (streamedText) {
       const assistantTimestamp = params.persistAssistantHistory(
         params.chatJid,
@@ -771,7 +782,7 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  const effectiveResult = finalText;
+  const effectiveResult = sanitizeUserFacingVerdictLeak(finalText);
   if (effectiveResult) {
     const assistantTimestamp = params.persistAssistantHistory(
       params.chatJid,
@@ -937,6 +948,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     timestampToPersist?: string;
     deliverToChat?: boolean;
     suppressUserDelivery?: boolean;
+    controlPlaneStatus?: 'verification_failed';
   }): Promise<void> {
     const completionState =
       deps.isTelegramJid(params.chatJid) && deps.prepareTelegramCompletionState
@@ -974,6 +986,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       abortSignal: params.abortSignal,
       deliverToChat: params.deliverToChat,
       suppressUserDelivery: params.suppressUserDelivery,
+      controlPlaneStatus: params.controlPlaneStatus,
       timestampToPersist: params.timestampToPersist,
       externallyCompleted: completionState.externallyCompleted,
       telegramPreviewState: telegramCompletionState.messagePreviewState,
@@ -1014,6 +1027,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     let ok = false;
     let usage: RunUsage | undefined;
     let suppressUserDelivery = false;
+    let controlPlaneStatus: 'verification_failed' | undefined;
     const abortController = new AbortController();
     const activeRun = {
       chatJid: params.chatJid,
@@ -1117,6 +1131,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         ok = run.ok;
         usage = run.usage;
         suppressUserDelivery = run.suppressUserDelivery === true;
+        controlPlaneStatus = run.controlPlaneStatus;
 
         // Capture worker result for reflection (async MEMORY write after completion path)
         // Only for coding execute routes (exclude plan mode for coder-plan).
@@ -1216,6 +1231,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           timestampToPersist: params.timestampToPersist,
           deliverToChat: params.deliverToChat,
           suppressUserDelivery,
+          controlPlaneStatus,
         });
 
         // Fire-and-forget reflection after success completion.
