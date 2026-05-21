@@ -162,6 +162,7 @@ export function sanitizeUserFacingVerdictLeak(text: string): string {
   return isInternalEvaluatorVerdictText(text) ? 'verification_failed' : text;
 }
 
+
 export function translateLegacyMessageToHostEvent(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
   registeredGroups: Record<string, RegisteredGroup>,
