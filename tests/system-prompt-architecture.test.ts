@@ -507,3 +507,16 @@ test('buildSystemPrompt injects compact skills catalog only for interactive runs
 
   assert.doesNotMatch(scheduled.text, /## Skills Catalog/);
 });
+
+test('buildSystemPrompt documents run_progress messaging IPC shape', () => {
+  const { text } = buildSystemPrompt(
+    makeInput({ requestId: 'run-123', reasoningLevel: 'stream' }),
+    DEFAULT_PATHS,
+    { readFileIfExists: () => null },
+  );
+
+  assert.match(text, /"type":"run_progress"/);
+  assert.match(text, /"requestId":"<current request_id>"/);
+  assert.match(text, /"phase":"thinking\|tool_running\|stale"/);
+  assert.match(text, /concise run_progress updates/);
+});

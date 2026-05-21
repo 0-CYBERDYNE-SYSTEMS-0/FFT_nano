@@ -26,6 +26,13 @@ function createBaseDeps(): TelegramCommandDeps {
     allowed: boolean;
     reason: string;
   }> = [];
+  const runProgress: Array<{
+    chatJid: string;
+    requestId: string;
+    phase: string;
+    text: string;
+    detail?: string;
+  }> = [];
   const resumedChats: Array<{
     chatJid: string;
     text: string;
@@ -138,6 +145,9 @@ function createBaseDeps(): TelegramCommandDeps {
     deleteTask: () => {},
     emitTuiChatEvent: () => {},
     emitTuiAgentEvent: () => {},
+    emitRunProgress: (payload) => {
+      runProgress.push(payload);
+    },
     getSessionKeyForChat: (chatJid) => chatJid,
     runAgent: async () => ({ ok: true, result: 'done', streamed: false }),
     runCodingTask: async () => ({ ok: true, result: 'done', streamed: false }),
@@ -174,6 +184,7 @@ function createBaseDeps(): TelegramCommandDeps {
     panels,
     persisted,
     audits,
+    runProgress,
     keyboardMessages,
     resumedChats,
   });
@@ -1090,6 +1101,13 @@ test('handleTelegramCommand starts real agent runs for librarian and skill manag
       text: string;
       opts?: { prefixWhatsApp?: boolean };
     }>;
+    runProgress: Array<{
+      chatJid: string;
+      requestId: string;
+      phase: string;
+      text: string;
+      detail?: string;
+    }>;
   };
   const runAgentCalls: Array<{
     group: any;
@@ -1131,9 +1149,34 @@ test('handleTelegramCommand starts real agent runs for librarian and skill manag
   assert.match(runAgentCalls[0]?.prompt || '', /focus pumps/);
   assert.match(runAgentCalls[1]?.prompt || '', /Manual skill manager dry-run/);
   assert.match(runAgentCalls[1]?.prompt || '', /focus duplicates/);
+  assert.match(runAgentCalls[0]?.prompt || '', /run_progress/);
+  assert.match(runAgentCalls[1]?.prompt || '', /run_progress/);
   assert.equal(deps.agentResults.length, 2);
+  assert.match(
+    deps.agentResults[0]?.text || '',
+    /Librarian run complete \(librarian-/,
+  );
+  assert.match(
+    deps.agentResults[1]?.text || '',
+    /Skill manager dry-run complete \(skill-manager-/,
+  );
   assert.match(deps.agentResults[0]?.text || '', /agent completed: librarian-/);
   assert.match(deps.agentResults[1]?.text || '', /agent completed: skill-manager-/);
+  assert.deepEqual(
+    deps.runProgress.map((event) => event.phase),
+    [
+      'spawn',
+      'thinking',
+      'finalizing',
+      'completed',
+      'spawn',
+      'thinking',
+      'finalizing',
+      'completed',
+    ],
+  );
+  assert.match(deps.runProgress[0]?.text || '', /^Librarian status:/);
+  assert.match(deps.runProgress[4]?.text || '', /^Skill manager status:/);
   assert.equal(deps.activeChatRuns.size, 0);
 });
 

@@ -51,6 +51,20 @@ export function resolveTelegramStreamCompletionState(params: {
   return { effectiveStreamed: false, messagePreviewState: null };
 }
 
+const RUN_STATUS_PREVIEW_PREFIXES = [
+  'Coder status:',
+  'Skill manager status:',
+  'Librarian status:',
+  'Run status:',
+];
+
+export function isTelegramRunStatusPreviewText(text: string): boolean {
+  const trimmed = text.trim();
+  return RUN_STATUS_PREVIEW_PREFIXES.some((prefix) =>
+    trimmed.startsWith(prefix),
+  );
+}
+
 const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
 const MAX_FAILURES_BEFORE_DISABLE = 4;
 const DISABLE_TTL_MS = 120_000;
