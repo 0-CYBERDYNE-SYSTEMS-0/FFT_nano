@@ -5597,26 +5597,22 @@ async function runAgent(
 
     const logSuppressedEvaluatorFailure = (
       verdict: EvaluatorVerdict,
-      runType: 'chat' | 'heartbeat',
-      phase: 'blocking' | 'background',
+      runType: 'chat',
       verificationFailureReason?: string,
     ): void => {
       logger.warn(
         {
           runType,
-          phase,
+          phase: 'blocking',
           chatJid,
           requestId,
-          controlPlaneStatus:
-            phase === 'blocking' ? 'verification_failed' : undefined,
+          controlPlaneStatus: 'verification_failed',
           verificationFailureReason,
           score: verdict.score,
           issues: verdict.issues,
           feedback: verdict.feedback,
         },
-        phase === 'blocking'
-          ? 'verification_failed'
-          : 'Evaluator flagged issues; suppressing user-visible evaluator details',
+        'verification_failed',
       );
     };
 
@@ -5701,7 +5697,6 @@ async function runAgent(
         logSuppressedEvaluatorFailure(
           lastFailedVerdict,
           'chat',
-          'blocking',
           verificationFailureReason || 'repair_failed',
         );
         if (requestId) {
@@ -5719,37 +5714,6 @@ async function runAgent(
           controlPlaneStatus: 'verification_failed',
         };
       }
-    }
-
-    // Evaluator pass — non-blocking for chat/heartbeat. Failed evaluator
-    // verdicts are control-plane telemetry and must not become chat output.
-    if (
-      !shouldBlockForChatEvaluation &&
-      finalResult.ok &&
-      finalResult.result &&
-      abortSignal?.aborted !== true
-    ) {
-      const runType = options.isHeartbeatTask ? 'heartbeat' : 'chat';
-      void runEvaluatorPass({
-        runType,
-        originalTask: prompt,
-        agentOutput: finalResult.result,
-        durationMs: Date.now() - runAgentStartedAt,
-        toolsInvoked: runToolsInvoked,
-        group,
-        chatJid,
-        isMain,
-        workspaceDir,
-        startedAtMs: runAgentStartedAt,
-        abortSignal,
-      })
-        .then((verdict) => {
-          if (verdict.skipped || verdict.pass) return;
-          logSuppressedEvaluatorFailure(verdict, runType, 'background');
-        })
-        .catch((err) => {
-          logger.warn({ err, chatJid }, 'Evaluator pass threw in background');
-        });
     }
 
     if (
