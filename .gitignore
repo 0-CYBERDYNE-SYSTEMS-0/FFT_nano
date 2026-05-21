@@ -12,6 +12,7 @@ data/
 logs/
 tmp-ipc/
 backups/
+.vix/
 
 # Runtime-generated group folders (keep template groups in repo)
 groups/telegram-*/

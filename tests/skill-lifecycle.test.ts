@@ -31,7 +31,14 @@ function skillMarkdown(name: string, description = 'test skill'): string {
 
 test('skill actions create, view, patch, archive, and restore agent-created skills', async () => {
   const groupFolder = `skill-test-${Date.now()}`;
-  const skillsDir = path.join(process.cwd(), 'data', 'pi', groupFolder, '.pi', 'skills');
+  const skillsDir = path.join(
+    process.cwd(),
+    'data',
+    'pi',
+    groupFolder,
+    '.pi',
+    'skills',
+  );
   try {
     const created = await executeSkillAction(
       {
@@ -72,7 +79,10 @@ test('skill actions create, view, patch, archive, and restore agent-created skil
         params: {
           groupFolder,
           name: 'irrigation-check',
-          content: skillMarkdown('irrigation-check', 'Updated irrigation workflow.'),
+          content: skillMarkdown(
+            'irrigation-check',
+            'Updated irrigation workflow.',
+          ),
         },
       },
       { sourceGroup: groupFolder, isMain: true, registeredGroups: {} },
@@ -106,7 +116,10 @@ test('skill actions create, view, patch, archive, and restore agent-created skil
     assert.equal(restore.status, 'success');
 
     report = buildSkillReport(skillsDir);
-    assert.equal(report.find((entry) => entry.name === 'irrigation-check')?.usage.state, 'active');
+    assert.equal(
+      report.find((entry) => entry.name === 'irrigation-check')?.usage.state,
+      'active',
+    );
   } finally {
     fs.rmSync(path.join(process.cwd(), 'data', 'pi', groupFolder), {
       recursive: true,
@@ -118,7 +131,14 @@ test('skill actions create, view, patch, archive, and restore agent-created skil
 test('source-owned skills are visible but cannot be archived by skill actions', async () => {
   const groupFolder = `skill-test-${Date.now()}`;
   try {
-    const skillsDir = path.join(process.cwd(), 'data', 'pi', groupFolder, '.pi', 'skills');
+    const skillsDir = path.join(
+      process.cwd(),
+      'data',
+      'pi',
+      groupFolder,
+      '.pi',
+      'skills',
+    );
     const sourceSkillDir = path.join(skillsDir, 'source-owned-skill');
     fs.mkdirSync(sourceSkillDir, { recursive: true });
     fs.writeFileSync(
@@ -127,7 +147,10 @@ test('source-owned skills are visible but cannot be archived by skill actions', 
     );
 
     const report = buildSkillReport(skillsDir);
-    assert.equal(report.find((entry) => entry.name === 'source-owned-skill')?.source, 'unmanaged');
+    assert.equal(
+      report.find((entry) => entry.name === 'source-owned-skill')?.source,
+      'unmanaged',
+    );
 
     const archive = await executeSkillAction(
       {
@@ -175,10 +198,20 @@ test('group folder traversal is rejected before resolving skill paths', async ()
 test('managed manifest overrides stale agent-created usage provenance', async () => {
   const groupFolder = `skill-test-${Date.now()}`;
   try {
-    const skillsDir = path.join(process.cwd(), 'data', 'pi', groupFolder, '.pi', 'skills');
+    const skillsDir = path.join(
+      process.cwd(),
+      'data',
+      'pi',
+      groupFolder,
+      '.pi',
+      'skills',
+    );
     const skillDir = path.join(skillsDir, 'collision-skill');
     fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillMarkdown('collision-skill'));
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      skillMarkdown('collision-skill'),
+    );
     fs.writeFileSync(
       path.join(skillsDir, '.fft_nano_managed_skills.json'),
       `${JSON.stringify({ managed: ['collision-skill'] }, null, 2)}\n`,
@@ -201,7 +234,10 @@ test('managed manifest overrides stale agent-created usage provenance', async ()
 
     assert.equal(isAgentCreatedSkill(skillsDir, 'collision-skill'), false);
     const report = buildSkillReport(skillsDir);
-    assert.equal(report.find((entry) => entry.name === 'collision-skill')?.source, 'project');
+    assert.equal(
+      report.find((entry) => entry.name === 'collision-skill')?.source,
+      'project',
+    );
 
     const patch = await executeSkillAction(
       {
@@ -235,13 +271,48 @@ test('managed manifest overrides stale agent-created usage provenance', async ()
   }
 });
 
+test('managed manifest source metadata surfaces external skills in reports', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-skill-life-'));
+  try {
+    const skillsDir = path.join(tempRoot, 'skills');
+    const skillDir = path.join(skillsDir, 'personal-workflow');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      skillMarkdown('personal-workflow'),
+    );
+    fs.writeFileSync(
+      path.join(skillsDir, '.fft_nano_managed_skills.json'),
+      `${JSON.stringify(
+        {
+          managed: ['personal-workflow'],
+          sources: { 'personal-workflow': 'external' },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const report = buildSkillReport(skillsDir);
+    assert.equal(
+      report.find((entry) => entry.name === 'personal-workflow')?.source,
+      'external',
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('skill manager transitions archive stale unpinned agent-created skills', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-skill-life-'));
   try {
     const skillsDir = path.join(tempRoot, 'skills');
     const skillDir = path.join(skillsDir, 'old-skill');
     fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillMarkdown('old-skill'));
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      skillMarkdown('old-skill'),
+    );
     saveSkillUsage(skillsDir, {
       'old-skill': {
         created_by: 'agent',
@@ -264,7 +335,10 @@ test('skill manager transitions archive stale unpinned agent-created skills', ()
       now: new Date('2026-05-19T00:00:00.000Z'),
     });
     assert.equal(result.archived, 1);
-    assert.equal(fs.existsSync(path.join(skillsDir, '.archive', 'old-skill')), true);
+    assert.equal(
+      fs.existsSync(path.join(skillsDir, '.archive', 'old-skill')),
+      true,
+    );
     assert.equal(loadSkillUsage(skillsDir)['old-skill']?.state, 'archived');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
