@@ -2107,50 +2107,6 @@ export async function runContainerAgent(
         let finalResult: string | null = result;
         let finalStreamed = lastRes!.streamedDraft;
 
-        if (isForceDelegateHint(codingHint) && !input.isScheduledTask) {
-          const outDir = path.join(wp.groupDir, 'coder_runs');
-          fs.mkdirSync(outDir, { recursive: true });
-          const rid = input.requestId || `coder_${Date.now()}`;
-          const maxInline = isTelegramChatJid(input.chatJid) ? 8000 : 3000;
-          let sent = false;
-
-          if (result.length <= maxInline) {
-            hostEventBus.publish({
-              kind: 'chat_delivery_requested',
-              id: createHostEventId('deliver'),
-              createdAt: new Date().toISOString(),
-              source: 'pi-runner',
-              chatJid: input.chatJid,
-              text: result,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
-            });
-            sent = true;
-          } else {
-            const filePath = path.join(outDir, `${rid}.md`);
-            try {
-              fs.writeFileSync(filePath, result);
-            } catch {
-              /* ignore */
-            }
-            const preview = result.slice(0, Math.min(1200, result.length));
-            hostEventBus.publish({
-              kind: 'chat_delivery_requested',
-              id: createHostEventId('deliver'),
-              createdAt: new Date().toISOString(),
-              source: 'pi-runner',
-              chatJid: input.chatJid,
-              text: `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
-            });
-            sent = true;
-          }
-
-          if (sent) {
-            finalResult = null;
-            finalStreamed = true;
-          }
-        }
-
         logger.info(
           { group: group.name, duration, hasResult: !!finalResult },
           'Pi run completed',

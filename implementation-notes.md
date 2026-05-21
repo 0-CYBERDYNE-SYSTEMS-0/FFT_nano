@@ -7,6 +7,15 @@
 - Decision: preserve backward compatibility for `.fft_nano_managed_skills.json` by keeping the existing `managed` array and adding a per-skill source map. Older manifests without source metadata continue to classify managed skills as `project`.
 - Tradeoff: source metadata is tracked at sync time. A previously-synced external skill will show as `project` until the next sync rewrites the manifest with the new source map.
 
+## 2026-05-21 - Forced Delegation Direct Delivery
+
+- Decision: kept the fix to the direct leak path only. Removed `pi-runner`'s forced-delegation `chat_delivery_requested` publish instead of adding a validator JSON detector or changing evaluator policy.
+- Tradeoff: long forced-delegation output is no longer saved by `pi-runner` to `groups/<group>/coder_runs`. That path bypassed the orchestrator and was the source of raw client delivery; any artifact/report behavior should live in the caller/orchestrator.
+
+## 2026-05-21 - Background Chat Validation
+
+- Decision: removed the non-blocking chat/heartbeat evaluator pass from `runAgent`. Validation now either participates in the blocking retry/suppression path or does not run for that response.
+- Tradeoff: cheap/background quality telemetry is reduced, but behavior is simpler and avoids validator failures that cannot trigger repair.
 ## 2026-05-19 — Telegram Group Approval
 
 - Decision: keep `TELEGRAM_AUTO_REGISTER` for known main/private bootstrap cases, but stop it from registering non-main Telegram groups. Unknown Telegram groups now always go through explicit approval so owners stay in control.
