@@ -16,7 +16,10 @@ export interface BoundaryEnvelope<TPayload = unknown> {
 }
 
 export interface BoundaryActionEnvelope<
-  TPayload extends FarmActionRequest | MemoryActionRequest | SkillActionRequest =
+  TPayload extends
+    | FarmActionRequest
+    | MemoryActionRequest
+    | SkillActionRequest =
     | FarmActionRequest
     | MemoryActionRequest
     | SkillActionRequest,
@@ -96,6 +99,76 @@ export function wrapLegacyActionEnvelope(
   };
 }
 
+export function isInternalEvaluatorVerdictText(text: string): boolean {
+  const isVerdictObject = (value: unknown): boolean => {
+    if (!value || typeof value !== 'object') return false;
+    const parsed = value as Record<string, unknown>;
+    const rawScore = parsed.score;
+    const hasScore =
+      typeof rawScore === 'number' ||
+      (typeof rawScore === 'string' &&
+        rawScore.trim().length > 0 &&
+        Number.isFinite(Number(rawScore)));
+    return (
+      typeof parsed.pass === 'boolean' &&
+      hasScore &&
+      Array.isArray(parsed.issues) &&
+      typeof parsed.feedback === 'string'
+    );
+  };
+
+  const tryJsonCandidate = (candidate: string): boolean => {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (isVerdictObject(parsed)) return true;
+      if (isVerdictObject(parsed.verdict)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (tryJsonCandidate(trimmed)) return true;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/gi) || [];
+  for (const block of fenced) {
+    const content = block.replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '');
+    if (tryJsonCandidate(content.trim())) return true;
+  }
+
+  const passLike = /["']?pass["']?\s*:\s*(true|false)/i;
+  const scoreLike = /["']?score["']?\s*:\s*["']?\d+/i;
+  const issuesLike = /["']?issues["']?\s*:\s*\[/i;
+  const feedbackLike = /["']?feedback["']?\s*:\s*["']/i;
+  if (
+    passLike.test(trimmed) &&
+    scoreLike.test(trimmed) &&
+    issuesLike.test(trimmed) &&
+    feedbackLike.test(trimmed)
+  ) {
+    return true;
+  }
+
+  const braceCandidates = trimmed.match(/\{[\s\S]*?\}/g) || [];
+  for (const candidate of braceCandidates) {
+    if (tryJsonCandidate(candidate)) return true;
+  }
+  return false;
+}
+
+export function sanitizeUserFacingVerdictLeak(text: string): string {
+  return isInternalEvaluatorVerdictText(text) ? 'verification_failed' : text;
+}
+
+function isEvaluatorAttributedPayload(payload: Record<string, unknown>): boolean {
+  return (
+    payload.suppressUserDelivery === true ||
+    payload.controlPlaneStatus === 'verification_failed'
+  );
+}
+
 export function translateLegacyMessageToHostEvent(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
   registeredGroups: Record<string, RegisteredGroup>,
@@ -112,6 +185,13 @@ export function translateLegacyMessageToHostEvent(
   if (
     !isMain &&
     (!targetGroup || targetGroup.folder !== envelope.sourceGroup)
+  ) {
+    return null;
+  }
+  if (
+    payload.type === 'message' &&
+    isEvaluatorAttributedPayload(payload) &&
+    isInternalEvaluatorVerdictText(payload.text)
   ) {
     return null;
   }
@@ -165,9 +245,7 @@ export function translateLegacyMessageToHostEvent(
   };
 }
 
-export type LegacyMessageDispatchResult =
-  | 'delivered'
-  | 'ignored_invalid';
+export type LegacyMessageDispatchResult = 'delivered' | 'ignored_invalid';
 
 export async function dispatchLegacyMessageEnvelope(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
