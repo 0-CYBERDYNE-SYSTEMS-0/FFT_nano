@@ -3,8 +3,8 @@
     "backend": "lexical",
     "missingFileBehavior": "empty",
     "flushBeforeCompaction": {
-      "enabled": false,
-      "softThresholdTokens": 4000,
+      "enabled": true,
+      "softThresholdTokens": 90000,
       "systemPrompt": "Session nearing compaction. Store durable memories to markdown files before summary rollover.",
       "prompt": "Write durable updates to MEMORY.md and memory/YYYY-MM-DD.md if needed. Reply NO_REPLY when nothing should be stored."
     }
@@ -45,7 +45,11 @@
     "enabled": true
   },
   "prompt": {
-    "recentConversationMaxMessages": 8,
-    "recentConversationMaxChars": 4000
+    "recentConversationMaxMessages": 50,
+    "recentConversationMaxChars": 16000,
+    "softTokenThreshold": 120000,
+    "hardTokenThreshold": 160000,
+    "skillCatalogMaxChars": 20000,
+    "preflightRebaseEnabled": true
   }
 }
