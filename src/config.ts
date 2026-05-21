@@ -215,6 +215,13 @@ export const FFT_NANO_ONBOARDING_MODE = envFlag(
   false,
 );
 
+export type CoderGateMode = 'explicit' | 'autosuggest';
+export const FFT_NANO_CODER_GATE_MODE: CoderGateMode =
+  (process.env.FFT_NANO_CODER_GATE_MODE || 'explicit').trim().toLowerCase() ===
+  'autosuggest'
+    ? 'autosuggest'
+    : 'explicit';
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

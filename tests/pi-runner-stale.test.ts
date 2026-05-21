@@ -9,6 +9,10 @@ import {
   getProviderFallbackCandidates,
   runContainerAgent,
 } from '../src/pi-runner.ts';
+import {
+  dispatchLegacyMessageEnvelope,
+  wrapLegacyMessageEnvelope,
+} from '../src/runtime/boundary-ipc.js';
 import type { RegisteredGroup } from '../src/types.ts';
 
 test('getProviderFallbackCandidates skips attempted providers and dedupes order', () => {
@@ -679,6 +683,7 @@ setTimeout(() => process.exit(0), 10);
     assert.deepEqual(deliveredTexts, []);
   },
 );
+
 
 function writeLongQuietToolPiExecutable(dir: string): string {
   const executablePath = path.join(dir, 'fake-pi-long-tool.js');

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { logger } from '../logger.js';
+import type { UpdateCommandStartResult } from '../update-command.js';
 
 import type {
   AgentEventPayload,
@@ -81,7 +82,7 @@ export interface TuiGatewayAdapters {
   serviceGateway: (params: {
     action: 'status' | 'restart' | 'doctor';
   }) => Promise<{ ok: boolean; text: string }> | { ok: boolean; text: string };
-  hostUpdate: () => { ok: boolean; text: string };
+  hostUpdate: () => UpdateCommandStartResult;
 }
 
 const DEFAULT_PORT = Number(process.env.FFT_NANO_TUI_PORT || 28989);
