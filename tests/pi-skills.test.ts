@@ -18,7 +18,11 @@ function requiredSkillMarkdown(skillName: string, marker: string = ''): string {
 
 test('project Pi skills validate required frontmatter and guardrails', () => {
   const result = validateProjectPiSkills(process.cwd());
-  assert.equal(result.ok, true, result.issues.map((i) => `${i.file}: ${i.message}`).join('\n'));
+  assert.equal(
+    result.ok,
+    true,
+    result.issues.map((i) => `${i.file}: ${i.message}`).join('\n'),
+  );
   assert.equal(result.issues.length, 0);
 });
 
@@ -54,7 +58,10 @@ test('syncProjectPiSkillsToGroupPiHome mirrors runtime skills and prunes stale m
     for (const skillName of REQUIRED_PROJECT_PI_SKILLS) {
       const dir = path.join(srcSkillsRoot, skillName);
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, 'SKILL.md'), requiredSkillMarkdown(skillName));
+      fs.writeFileSync(
+        path.join(dir, 'SKILL.md'),
+        requiredSkillMarkdown(skillName),
+      );
     }
 
     // Additional runtime skills should be mirrored even without fft-* prefix.
@@ -71,11 +78,17 @@ test('syncProjectPiSkillsToGroupPiHome mirrors runtime skills and prunes stale m
     assert.ok(res.copied.includes('fft-setup'));
     assert.ok(res.copied.includes('custom-skill'));
     assert.equal(res.removed.length, 0);
-    assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'custom-skill', 'SKILL.md')), true);
+    assert.equal(
+      fs.existsSync(path.join(dstSkillsRoot, 'custom-skill', 'SKILL.md')),
+      true,
+    );
     assert.equal(fs.existsSync(unmanagedSkill), true);
 
     fs.rmSync(customSkillDir, { recursive: true, force: true });
-    const resSecond = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome);
+    const resSecond = syncProjectPiSkillsToGroupPiHome(
+      projectRoot,
+      groupPiHome,
+    );
     assert.ok(resSecond.removed.includes('custom-skill'));
     assert.equal(
       fs.existsSync(path.join(dstSkillsRoot, 'custom-skill')),
@@ -143,9 +156,12 @@ test('main workspace skill source can override project runtime skill', () => {
     assert.ok(res.copied.includes('fft-debug'));
     assert.ok(res.copied.includes('field-inspector'));
     assert.equal(
-      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
-        'user override version',
-      ),
+      fs
+        .readFileSync(
+          path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'),
+          'utf-8',
+        )
+        .includes('user override version'),
       true,
     );
   } finally {
@@ -189,9 +205,12 @@ test('invalid external override falls back to valid project required skill', () 
     assert.ok(res.copied.includes('fft-debug'));
     assert.equal(res.skippedInvalid.includes('fft-debug'), false);
     assert.equal(
-      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
-        'project version',
-      ),
+      fs
+        .readFileSync(
+          path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'),
+          'utf-8',
+        )
+        .includes('project version'),
       true,
     );
   } finally {
@@ -223,7 +242,10 @@ test('non-required project custom skill without section headings syncs without w
     assert.equal(res.sourceDirExists, true);
     assert.ok(res.copied.includes('custom-skill'));
     assert.equal(res.skippedInvalid.includes('custom-skill'), false);
-    assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'custom-skill', 'SKILL.md')), true);
+    assert.equal(
+      fs.existsSync(path.join(dstSkillsRoot, 'custom-skill', 'SKILL.md')),
+      true,
+    );
     assert.equal(res.warnings.length, 0);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -341,7 +363,10 @@ test('high-risk non-required skill without non-use guidance warns but still sync
     assert.equal(res.sourceDirExists, true);
     assert.ok(res.copied.includes('deploy-helper'));
     assert.equal(res.skippedInvalid.includes('deploy-helper'), false);
-    assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'deploy-helper', 'SKILL.md')), true);
+    assert.equal(
+      fs.existsSync(path.join(dstSkillsRoot, 'deploy-helper', 'SKILL.md')),
+      true,
+    );
     assert.equal(
       res.warnings.some(
         (warning) =>
@@ -397,7 +422,9 @@ test('buildSkillCatalogEntries returns compact summaries without full skill bodi
       path.join(skillDir, 'SKILL.md'),
       requiredSkillMarkdown(
         'fft-debug',
-        'Long body text that should never be emitted as a full skill body.\n'.repeat(10),
+        'Long body text that should never be emitted as a full skill body.\n'.repeat(
+          10,
+        ),
       ),
     );
 
@@ -406,6 +433,54 @@ test('buildSkillCatalogEntries returns compact summaries without full skill bodi
     assert.equal(catalog[0]?.name, 'fft-debug');
     assert.match(catalog[0]?.whenToUse || '', /test coverage/i);
     assert.doesNotMatch(catalog[0]?.whenToUse || '', /Long body text/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildSkillCatalogEntries parses string allowed-tools frontmatter', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-skill-catalog-'));
+
+  try {
+    const skillsRoot = path.join(tempRoot, 'skills');
+    const commaSkillDir = path.join(skillsRoot, 'comma-tools');
+    const spaceSkillDir = path.join(skillsRoot, 'space-tools');
+    fs.mkdirSync(commaSkillDir, { recursive: true });
+    fs.mkdirSync(spaceSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(commaSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: comma-tools',
+        'description: test',
+        'allowed-tools: Read, Grep, Glob',
+        '---',
+        '',
+        '# Comma Tools',
+      ].join('\n'),
+    );
+    fs.writeFileSync(
+      path.join(spaceSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: space-tools',
+        'description: test',
+        'allowed-tools: read_file ddgs_search',
+        '---',
+        '',
+        '# Space Tools',
+      ].join('\n'),
+    );
+
+    const catalog = buildSkillCatalogEntries([skillsRoot], { maxChars: 6000 });
+    assert.deepEqual(
+      catalog.find((entry) => entry.name === 'comma-tools')?.allowedTools,
+      ['Read', 'Grep', 'Glob'],
+    );
+    assert.deepEqual(
+      catalog.find((entry) => entry.name === 'space-tools')?.allowedTools,
+      ['read_file', 'ddgs_search'],
+    );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -449,6 +524,47 @@ test('buildSkillCatalogEntries marks agent-created runtime skills from usage sid
     assert.equal(catalog.length, 1);
     assert.equal(catalog[0]?.name, 'field-note-cleanup');
     assert.equal(catalog[0]?.source, 'agent');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('synced external skills retain external source metadata for catalog entries', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const groupPiHome = path.join(tempRoot, 'group-home', '.pi');
+    const userSkillsRoot = path.join(tempRoot, 'user', 'skills');
+    const dstSkillsRoot = path.join(groupPiHome, 'skills');
+    const externalSkillDir = path.join(userSkillsRoot, 'field-inspector');
+
+    fs.mkdirSync(externalSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(externalSkillDir, 'SKILL.md'),
+      '---\nname: field-inspector\ndescription: user skill\n---\n\n# Field Inspector\n',
+    );
+
+    const res = syncProjectPiSkillsToGroupPiHome(projectRoot, groupPiHome, {
+      additionalSkillSourceDirs: [userSkillsRoot],
+    });
+
+    assert.ok(res.copied.includes('field-inspector'));
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.join(dstSkillsRoot, '.fft_nano_managed_skills.json'),
+        'utf-8',
+      ),
+    );
+    assert.equal(manifest.sources['field-inspector'], 'external');
+
+    const catalog = buildSkillCatalogEntries([dstSkillsRoot], {
+      maxChars: 6000,
+    });
+    assert.equal(
+      catalog.find((entry) => entry.name === 'field-inspector')?.source,
+      'external',
+    );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -537,7 +653,10 @@ test('sync skips skill sources that contain symlinks', () => {
 
     assert.equal(res.copied.includes('custom-skill'), false);
     assert.ok(res.skippedInvalid.includes('custom-skill'));
-    assert.equal(fs.existsSync(path.join(dstSkillsRoot, 'custom-skill')), false);
+    assert.equal(
+      fs.existsSync(path.join(dstSkillsRoot, 'custom-skill')),
+      false,
+    );
     assert.equal(
       res.invalid.some(
         (issue) =>
@@ -598,9 +717,12 @@ test('invalid symlink override falls back to valid project required skill', () =
 
     assert.ok(res.copied.includes('fft-debug'));
     assert.equal(
-      fs.readFileSync(path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'), 'utf-8').includes(
-        'project version',
-      ),
+      fs
+        .readFileSync(
+          path.join(dstSkillsRoot, 'fft-debug', 'SKILL.md'),
+          'utf-8',
+        )
+        .includes('project version'),
       true,
     );
     assert.equal(res.skippedInvalid.includes('fft-debug'), false);

@@ -6,7 +6,10 @@ import { z } from 'zod';
 
 import { defaultBackupPath, writeTextFileAtomic } from './atomic-write.js';
 import { DATA_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
-import { assertValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
+import {
+  assertValidGroupFolder,
+  resolveGroupFolderPath,
+} from './group-folder.js';
 import { logger } from './logger.js';
 import type { RegisteredGroup, SkillActionRequest } from './types.js';
 
@@ -75,6 +78,11 @@ export interface SkillActionResult {
   result?: unknown;
   error?: string;
   executedAt: string;
+}
+
+interface ManagedSkillManifest {
+  managed: Set<string>;
+  sources: Map<string, 'project' | 'external'>;
 }
 
 const skillNameSchema = z
@@ -220,7 +228,9 @@ function normalizeUsageRecord(value: unknown): SkillUsageRecord {
   };
 }
 
-export function loadSkillUsage(skillsDir: string): Record<string, SkillUsageRecord> {
+export function loadSkillUsage(
+  skillsDir: string,
+): Record<string, SkillUsageRecord> {
   const raw = readJsonMap<unknown>(usagePath(skillsDir));
   const out: Record<string, SkillUsageRecord> = {};
   for (const [name, record] of Object.entries(raw)) {
@@ -275,9 +285,16 @@ function readSkillMarkdown(skillMarkdownPath: string): {
   const issues: string[] = [];
   let content = '';
   try {
-    content = fs.readFileSync(skillMarkdownPath, 'utf-8').replace(/\r\n/g, '\n');
+    content = fs
+      .readFileSync(skillMarkdownPath, 'utf-8')
+      .replace(/\r\n/g, '\n');
   } catch {
-    return { frontmatter: {}, body: '', content: '', issues: ['Missing SKILL.md'] };
+    return {
+      frontmatter: {},
+      body: '',
+      content: '',
+      issues: ['Missing SKILL.md'],
+    };
   }
 
   if (!content.startsWith('---\n')) {
@@ -312,19 +329,31 @@ function readSkillMarkdown(skillMarkdownPath: string): {
   return { frontmatter, body, content, issues };
 }
 
-function frontmatterIssues(name: string, parsed: ReturnType<typeof readSkillMarkdown>): string[] {
+function frontmatterIssues(
+  name: string,
+  parsed: ReturnType<typeof readSkillMarkdown>,
+): string[] {
   const issues = [...parsed.issues];
-  const rawName = typeof parsed.frontmatter.name === 'string' ? parsed.frontmatter.name.trim() : '';
+  const rawName =
+    typeof parsed.frontmatter.name === 'string'
+      ? parsed.frontmatter.name.trim()
+      : '';
   const description =
     typeof parsed.frontmatter.description === 'string'
       ? parsed.frontmatter.description.trim()
       : '';
   if (!rawName) issues.push('Frontmatter missing required field: name');
-  else if (rawName !== name) issues.push(`Frontmatter name (${rawName}) does not match folder (${name})`);
+  else if (rawName !== name)
+    issues.push(
+      `Frontmatter name (${rawName}) does not match folder (${name})`,
+    );
   const nameCheck = skillNameSchema.safeParse(rawName || name);
-  if (!nameCheck.success) issues.push(nameCheck.error.issues[0]?.message || 'Invalid skill name');
-  if (!description) issues.push('Frontmatter missing required field: description');
-  else if (description.length > 1024) issues.push('Frontmatter description is too long');
+  if (!nameCheck.success)
+    issues.push(nameCheck.error.issues[0]?.message || 'Invalid skill name');
+  if (!description)
+    issues.push('Frontmatter missing required field: description');
+  else if (description.length > 1024)
+    issues.push('Frontmatter description is too long');
   return Array.from(new Set(issues));
 }
 
@@ -361,22 +390,54 @@ function assertSafeRelativeFilePath(relPath: string): string {
 }
 
 function assertInside(candidatePath: string, rootPath: string): void {
-  const rel = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  const rel = path.relative(
+    path.resolve(rootPath),
+    path.resolve(candidatePath),
+  );
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new Error('Resolved path escapes skill directory');
   }
 }
 
-function readManagedSkillNames(skillsDir: string): Set<string> {
+function readManagedSkillManifest(skillsDir: string): ManagedSkillManifest {
   const manifest = path.join(skillsDir, '.fft_nano_managed_skills.json');
+  const empty: ManagedSkillManifest = {
+    managed: new Set(),
+    sources: new Map(),
+  };
   try {
-    if (!fs.existsSync(manifest)) return new Set();
+    if (!fs.existsSync(manifest)) return empty;
     const parsed = JSON.parse(fs.readFileSync(manifest, 'utf-8'));
-    if (!Array.isArray(parsed.managed)) return new Set();
-    return new Set(parsed.managed.filter((item: unknown): item is string => typeof item === 'string'));
+    if (!Array.isArray(parsed.managed)) return empty;
+    const sources = new Map<string, 'project' | 'external'>();
+    if (
+      parsed.sources &&
+      typeof parsed.sources === 'object' &&
+      !Array.isArray(parsed.sources)
+    ) {
+      for (const [name, source] of Object.entries(
+        parsed.sources as Record<string, unknown>,
+      )) {
+        if (source === 'project' || source === 'external') {
+          sources.set(name, source);
+        }
+      }
+    }
+    return {
+      managed: new Set(
+        parsed.managed.filter(
+          (item: unknown): item is string => typeof item === 'string',
+        ),
+      ),
+      sources,
+    };
   } catch {
-    return new Set();
+    return empty;
   }
+}
+
+function readManagedSkillNames(skillsDir: string): Set<string> {
+  return readManagedSkillManifest(skillsDir).managed;
 }
 
 function listSkillNames(skillsDir: string): string[] {
@@ -397,23 +458,30 @@ export function isAgentCreatedSkill(skillsDir: string, name: string): boolean {
 }
 
 function classifySource(
-  skillsDir: string,
   name: string,
   usage: Record<string, SkillUsageRecord>,
-  managedNames: Set<string>,
+  managedManifest: ManagedSkillManifest,
 ): SkillReportEntry['source'] {
-  if (managedNames.has(name)) return 'project';
+  if (managedManifest.managed.has(name)) {
+    return managedManifest.sources.get(name) || 'project';
+  }
   if (usage[name]?.created_by === 'agent') return 'agent';
   return 'unmanaged';
 }
 
-export function buildSkillReport(skillsDir: string, includeArchived = false): SkillReportEntry[] {
+export function buildSkillReport(
+  skillsDir: string,
+  includeArchived = false,
+): SkillReportEntry[] {
   const usage = loadSkillUsage(skillsDir);
-  const managedNames = readManagedSkillNames(skillsDir);
+  const managedManifest = readManagedSkillManifest(skillsDir);
   const names = listSkillNames(skillsDir);
   if (includeArchived && fs.existsSync(archiveRoot(skillsDir))) {
-    for (const entry of fs.readdirSync(archiveRoot(skillsDir), { withFileTypes: true })) {
-      if (entry.isDirectory() && !names.includes(entry.name)) names.push(entry.name);
+    for (const entry of fs.readdirSync(archiveRoot(skillsDir), {
+      withFileTypes: true,
+    })) {
+      if (entry.isDirectory() && !names.includes(entry.name))
+        names.push(entry.name);
     }
   }
 
@@ -438,7 +506,7 @@ export function buildSkillReport(skillsDir: string, includeArchived = false): Sk
     return {
       name,
       path: basePath,
-      source: classifySource(skillsDir, name, usage, managedNames),
+      source: classifySource(name, usage, managedManifest),
       usage: record,
       lastActivityAt: latestActivity(record),
       activityCount: activityCount(record),
@@ -482,7 +550,10 @@ function bumpUsage(
   return record;
 }
 
-export function noteSkillCatalogUse(skillsDir: string, skillNames: string[]): void {
+export function noteSkillCatalogUse(
+  skillsDir: string,
+  skillNames: string[],
+): void {
   if (skillNames.length === 0) return;
   try {
     const usage = loadSkillUsage(skillsDir);
@@ -520,7 +591,10 @@ function createSkill(params: {
 }): SkillReportEntry {
   const parsedName = skillNameSchema.parse(params.name);
   const dir = skillDir(params.skillsDir, parsedName);
-  if (fs.existsSync(dir) && !isAgentCreatedSkill(params.skillsDir, parsedName)) {
+  if (
+    fs.existsSync(dir) &&
+    !isAgentCreatedSkill(params.skillsDir, parsedName)
+  ) {
     throw new Error(`Refusing to replace source-owned skill "${parsedName}"`);
   }
   fs.mkdirSync(dir, { recursive: true });
@@ -546,7 +620,9 @@ function createSkill(params: {
     backupPath: defaultBackupPath(path.join(dir, 'SKILL.md')),
   });
   bumpUsage(params.skillsDir, parsedName, 'patch', true);
-  return buildSkillReport(params.skillsDir).find((entry) => entry.name === parsedName)!;
+  return buildSkillReport(params.skillsDir).find(
+    (entry) => entry.name === parsedName,
+  )!;
 }
 
 function readSkillMarkdownFromContent(content: string): {
@@ -554,7 +630,8 @@ function readSkillMarkdownFromContent(content: string): {
   body: string;
 } {
   const normalized = content.replace(/\r\n/g, '\n');
-  if (!normalized.startsWith('---\n')) return { frontmatter: {}, body: normalized };
+  if (!normalized.startsWith('---\n'))
+    return { frontmatter: {}, body: normalized };
   const end = normalized.indexOf('\n---\n', 4);
   if (end === -1) return { frontmatter: {}, body: normalized };
   let frontmatter: Record<string, unknown> = {};
@@ -592,9 +669,13 @@ function patchSkill(params: {
     body: parsed.body || params.content,
   });
   const target = path.join(dir, 'SKILL.md');
-  writeTextFileAtomic(target, normalized, { backupPath: defaultBackupPath(target) });
+  writeTextFileAtomic(target, normalized, {
+    backupPath: defaultBackupPath(target),
+  });
   bumpUsage(params.skillsDir, name, 'patch');
-  return buildSkillReport(params.skillsDir).find((entry) => entry.name === name)!;
+  return buildSkillReport(params.skillsDir).find(
+    (entry) => entry.name === name,
+  )!;
 }
 
 function writeSkillFile(params: {
@@ -614,7 +695,9 @@ function writeSkillFile(params: {
     backupPath: defaultBackupPath(target),
   });
   bumpUsage(params.skillsDir, name, 'patch');
-  return buildSkillReport(params.skillsDir).find((entry) => entry.name === name)!;
+  return buildSkillReport(params.skillsDir).find(
+    (entry) => entry.name === name,
+  )!;
 }
 
 function archiveSkill(skillsDir: string, name: string): SkillReportEntry {
@@ -624,7 +707,8 @@ function archiveSkill(skillsDir: string, name: string): SkillReportEntry {
   const record = normalizeUsageRecord(usage[parsedName]);
   if (record.pinned) throw new Error(`Skill "${parsedName}" is pinned`);
   const src = skillDir(skillsDir, parsedName);
-  if (!fs.existsSync(src)) throw new Error(`Skill "${parsedName}" is not active`);
+  if (!fs.existsSync(src))
+    throw new Error(`Skill "${parsedName}" is not active`);
   const dest = archivedSkillDir(skillsDir, parsedName);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.rmSync(dest, { recursive: true, force: true });
@@ -633,15 +717,19 @@ function archiveSkill(skillsDir: string, name: string): SkillReportEntry {
   record.archived_at = nowIso();
   usage[parsedName] = record;
   saveSkillUsage(skillsDir, usage);
-  return buildSkillReport(skillsDir, true).find((entry) => entry.name === parsedName)!;
+  return buildSkillReport(skillsDir, true).find(
+    (entry) => entry.name === parsedName,
+  )!;
 }
 
 function restoreSkill(skillsDir: string, name: string): SkillReportEntry {
   const parsedName = skillNameSchema.parse(name);
   const src = archivedSkillDir(skillsDir, parsedName);
   const dest = skillDir(skillsDir, parsedName);
-  if (!fs.existsSync(src)) throw new Error(`Archived skill "${parsedName}" not found`);
-  if (fs.existsSync(dest)) throw new Error(`Active skill "${parsedName}" already exists`);
+  if (!fs.existsSync(src))
+    throw new Error(`Archived skill "${parsedName}" not found`);
+  if (fs.existsSync(dest))
+    throw new Error(`Active skill "${parsedName}" already exists`);
   fs.renameSync(src, dest);
   const usage = loadSkillUsage(skillsDir);
   const record = normalizeUsageRecord(usage[parsedName]);
@@ -649,10 +737,16 @@ function restoreSkill(skillsDir: string, name: string): SkillReportEntry {
   record.archived_at = null;
   usage[parsedName] = record;
   saveSkillUsage(skillsDir, usage);
-  return buildSkillReport(skillsDir).find((entry) => entry.name === parsedName)!;
+  return buildSkillReport(skillsDir).find(
+    (entry) => entry.name === parsedName,
+  )!;
 }
 
-function setPinned(skillsDir: string, name: string, pinned: boolean): SkillReportEntry {
+function setPinned(
+  skillsDir: string,
+  name: string,
+  pinned: boolean,
+): SkillReportEntry {
   const parsedName = skillNameSchema.parse(name);
   assertMutableAgentSkill(skillsDir, parsedName);
   const usage = loadSkillUsage(skillsDir);
@@ -660,7 +754,9 @@ function setPinned(skillsDir: string, name: string, pinned: boolean): SkillRepor
   record.pinned = pinned;
   usage[parsedName] = record;
   saveSkillUsage(skillsDir, usage);
-  return buildSkillReport(skillsDir, true).find((entry) => entry.name === parsedName)!;
+  return buildSkillReport(skillsDir, true).find(
+    (entry) => entry.name === parsedName,
+  )!;
 }
 
 export function loadSkillManagerState(skillsDir: string): SkillManagerState {
@@ -672,7 +768,10 @@ export function loadSkillManagerState(skillsDir: string): SkillManagerState {
       if (fs.existsSync(oldFilePath)) {
         try {
           const oldParsed = JSON.parse(fs.readFileSync(oldFilePath, 'utf-8'));
-          const migrated = { ...defaultSkillManagerState(), ...(oldParsed || {}) };
+          const migrated = {
+            ...defaultSkillManagerState(),
+            ...(oldParsed || {}),
+          };
           saveSkillManagerState(skillsDir, migrated);
           // Rename old file to avoid re-migrating
           fs.renameSync(oldFilePath, oldFilePath + '.migrated');
@@ -690,7 +789,10 @@ export function loadSkillManagerState(skillsDir: string): SkillManagerState {
   }
 }
 
-export function saveSkillManagerState(skillsDir: string, state: SkillManagerState): void {
+export function saveSkillManagerState(
+  skillsDir: string,
+  state: SkillManagerState,
+): void {
   writeJsonAtomic(skillManagerStatePath(skillsDir), state);
 }
 
@@ -711,7 +813,9 @@ export function shouldRunSkillManager(
   }
   const last = parseDate(state.lastRunAt);
   if (!last) return true;
-  return now.getTime() - last.getTime() >= config.intervalHours * 60 * 60 * 1000;
+  return (
+    now.getTime() - last.getTime() >= config.intervalHours * 60 * 60 * 1000
+  );
 }
 
 export function applySkillManagerTransitions(params: {
@@ -719,9 +823,15 @@ export function applySkillManagerTransitions(params: {
   config: SkillManagerConfig;
   dryRun?: boolean;
   now?: Date;
-}): { checked: number; markedStale: number; archived: number; reactivated: number } {
+}): {
+  checked: number;
+  markedStale: number;
+  archived: number;
+  reactivated: number;
+} {
   const now = params.now ?? new Date();
-  const staleCutoff = now.getTime() - params.config.staleAfterDays * 24 * 60 * 60 * 1000;
+  const staleCutoff =
+    now.getTime() - params.config.staleAfterDays * 24 * 60 * 60 * 1000;
   const archiveCutoff =
     now.getTime() - params.config.archiveAfterDays * 24 * 60 * 60 * 1000;
   const usage = loadSkillUsage(params.skillsDir);
@@ -775,7 +885,9 @@ export function snapshotSkills(params: {
   fs.mkdirSync(dest, { recursive: true });
   const snapshotDir = path.join(dest, 'skills');
   fs.mkdirSync(snapshotDir, { recursive: true });
-  for (const entry of fs.readdirSync(params.skillsDir, { withFileTypes: true })) {
+  for (const entry of fs.readdirSync(params.skillsDir, {
+    withFileTypes: true,
+  })) {
     if (entry.name === SKILL_BACKUP_DIR) continue;
     const src = path.join(params.skillsDir, entry.name);
     const dst = path.join(snapshotDir, entry.name);
@@ -808,7 +920,10 @@ export function writeSkillManagerReport(params: {
   summary: string;
   transitions: ReturnType<typeof applySkillManagerTransitions>;
 }): string {
-  const reportsRoot = path.join(resolveGroupLogsDir(params.groupFolder), SKILL_REPORTS_DIR);
+  const reportsRoot = path.join(
+    resolveGroupLogsDir(params.groupFolder),
+    SKILL_REPORTS_DIR,
+  );
   fs.mkdirSync(reportsRoot, { recursive: true });
   const id = nowIso().replace(/[:.]/g, '-');
   const dir = path.join(reportsRoot, id);
@@ -868,15 +983,23 @@ export async function executeSkillAction(
       switch (parsed.action) {
         case 'skill_list':
         case 'skill_status':
-          return buildSkillReport(skillsDir, parsed.params.includeArchived === true);
+          return buildSkillReport(
+            skillsDir,
+            parsed.params.includeArchived === true,
+          );
         case 'skill_view': {
           if (!name) throw new Error('skill_view requires params.name');
-          const entry = buildSkillReport(skillsDir, true).find((item) => item.name === name);
+          const entry = buildSkillReport(skillsDir, true).find(
+            (item) => item.name === name,
+          );
           if (!entry) throw new Error(`Skill "${name}" not found`);
           bumpUsage(skillsDir, name, 'view');
           return {
             ...entry,
-            content: fs.readFileSync(path.join(entry.path, 'SKILL.md'), 'utf-8'),
+            content: fs.readFileSync(
+              path.join(entry.path, 'SKILL.md'),
+              'utf-8',
+            ),
           };
         }
         case 'skill_create':
@@ -889,11 +1012,17 @@ export async function executeSkillAction(
           });
         case 'skill_patch':
           if (!name) throw new Error('skill_patch requires params.name');
-          if (!parsed.params.content) throw new Error('skill_patch requires params.content');
-          return patchSkill({ skillsDir, name, content: parsed.params.content });
+          if (!parsed.params.content)
+            throw new Error('skill_patch requires params.content');
+          return patchSkill({
+            skillsDir,
+            name,
+            content: parsed.params.content,
+          });
         case 'skill_write_file':
           if (!name) throw new Error('skill_write_file requires params.name');
-          if (!parsed.params.filePath) throw new Error('skill_write_file requires params.filePath');
+          if (!parsed.params.filePath)
+            throw new Error('skill_write_file requires params.filePath');
           if (typeof parsed.params.fileContent !== 'string') {
             throw new Error('skill_write_file requires params.fileContent');
           }
@@ -917,7 +1046,12 @@ export async function executeSkillAction(
           return setPinned(skillsDir, name, false);
       }
     })();
-    return { requestId: parsed.requestId, status: 'success', result, executedAt };
+    return {
+      requestId: parsed.requestId,
+      status: 'success',
+      result,
+      executedAt,
+    };
   } catch (err) {
     return {
       requestId: request.requestId || 'unknown',
@@ -928,18 +1062,30 @@ export async function executeSkillAction(
   }
 }
 
-export function formatSkillManagerStatus(groupFolder = MAIN_GROUP_FOLDER): string {
+export function formatSkillManagerStatus(
+  groupFolder = MAIN_GROUP_FOLDER,
+): string {
   const skillsDir = resolveGroupSkillsDir(groupFolder);
   const state = loadSkillManagerState(skillsDir);
   const report = buildSkillReport(skillsDir, true);
-  const active = report.filter((entry) => entry.usage.state === 'active').length;
+  const active = report.filter(
+    (entry) => entry.usage.state === 'active',
+  ).length;
   const stale = report.filter((entry) => entry.usage.state === 'stale').length;
-  const archived = report.filter((entry) => entry.usage.state === 'archived').length;
+  const archived = report.filter(
+    (entry) => entry.usage.state === 'archived',
+  ).length;
   const agent = report.filter((entry) => entry.source === 'agent').length;
-  const frontmatterIssues = report.filter((entry) => !entry.frontmatterOk).length;
+  const frontmatterIssues = report.filter(
+    (entry) => !entry.frontmatterOk,
+  ).length;
   const leastActive = report
     .filter((entry) => entry.usage.state !== 'archived')
-    .sort((a, b) => (a.lastActivityAt || a.usage.created_at).localeCompare(b.lastActivityAt || b.usage.created_at))
+    .sort((a, b) =>
+      (a.lastActivityAt || a.usage.created_at).localeCompare(
+        b.lastActivityAt || b.usage.created_at,
+      ),
+    )
     .slice(0, 5);
   return [
     `skill-manager: ${state.paused ? 'PAUSED' : 'ENABLED'}`,
@@ -960,7 +1106,10 @@ export function formatSkillManagerStatus(groupFolder = MAIN_GROUP_FOLDER): strin
   ].join('\n');
 }
 
-export function setSkillManagerPaused(groupFolder: string, paused: boolean): void {
+export function setSkillManagerPaused(
+  groupFolder: string,
+  paused: boolean,
+): void {
   const skillsDir = resolveGroupSkillsDir(groupFolder);
   const state = loadSkillManagerState(skillsDir);
   state.paused = paused;
