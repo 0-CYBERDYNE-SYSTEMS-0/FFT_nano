@@ -6,104 +6,110 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-Single Node.js host process: receives chat messages (Telegram/WhatsApp), runs `pi` agent subprocess, returns responses. SQLite for persistence.
+Single Node.js host process: receives chat messages (Telegram/WhatsApp), runs `pi` (coding agent) as a subprocess, returns responses. SQLite for persistence.
+
+### Message Flow
+
+```
+Telegram/WhatsApp → message-dispatch.ts → pi-runner.ts (spawns pi subprocess)
+                                        ↓
+                              HostEventBus (host-events.ts)
+                                        ↓
+                      telegram-streaming.ts / file-delivery.ts
+```
+
+- **Host-local delivery** (preview/final): `pi-runner.ts` emits `HostEvent`s on `hostEventBus` — never writes files for this path.
+- **Cross-boundary IPC** (agent-authored actions): `pi` subprocess writes JSON to `messages/`, `tasks/`, `actions/`, `action_results/` directories; `startIpcWatcher()` in `index.ts` polls these.
+- **Evaluator loop**: After agent completes, `evaluator.ts` runs a second `pi` pass to score output quality; verdict JSON must never leak to users (see `boundary-ipc.ts:isInternalEvaluatorVerdictText`).
+- **Cron service** (`src/cron/service.ts`): Drives scheduled tasks via SQLite, calls `runContainerAgent` and `runEvaluatorPass` directly.
+- **Coding orchestrator** (`src/coding-orchestrator.ts`): Manages plan/execute worker routing for coding tasks; uses ephemeral worktrees and evaluator refinement loops.
+- **Permission gate** (`src/permission-gate-policy.ts`): Blocks destructive bash commands for subagents or headless runs; `bash-guard.ts` classifies commands.
+- **Memory subsystem**: Lexical search across transcript + document stores; `memory-backend.ts` is the unified facade; `memory-paths.ts` owns directory layout.
+- **TUI** (`src/tui/`): Separate gateway server/client pair bridging the terminal UI to the host event bus over WebSocket.
+
+### State Access Pattern
+
+```typescript
+import { state, activeChatRuns, hostEventBus } from './app-state.js';
+// Reassignable vars live on `state` object (ESM compatibility)
+// Maps: activeChatRuns.get(...), activeChatRuns.set(...)
+```
 
 ## Development Workflow (Authoritative)
 
 Use a two-checkout model:
 
-1. Do implementation in the dev checkout/worktree (for example `fft_nano-dev`).
+1. Implement in the dev checkout/worktree (e.g. `fft_nano-dev`).
 2. Merge via PR to `origin/main`.
-3. Fast-forward the local runtime/release checkout on `main`.
-4. Build/restart the installed service from that local `main` checkout.
+3. Fast-forward the runtime/release checkout on `main`.
+4. Build and restart the installed launchd service from that `main` checkout.
 
-This is intentional so runtime behavior matches what end users install from `main`.
-
-Interpretation rules:
 - Dev-checkout path and service-checkout path being different is expected.
-- A checkout mismatch is only a problem when the runtime checkout is not `main` or is behind merged `origin/main`.
-- Runtime debugging should begin from the active service checkout (`.env`, logs, launchd/systemd state), then fixes are implemented in the dev checkout and promoted through PR/merge.
+- Runtime debugging starts from the active service checkout (`.env`, logs, launchd state); fixes land in the dev checkout and are promoted via PR.
+
+## Build & Test
+
+```bash
+npm run build                                    # TypeScript → dist/
+npm run dev                                      # Run via tsx (no build step)
+npm test                                         # All tests via node --test
+npm run typecheck                                # Type-check without emitting
+
+# Run a single test file
+node --import tsx --test tests/<name>.test.ts
+
+npm run format                                   # Prettier write
+npm run format:check                             # Prettier check (CI)
+npm run validate:skills                          # Validate pi skill manifests
+npm run doctor                                   # Diagnose runtime env
+```
 
 ## CI/CD (Required Gates)
 
-Before release/tag promotion, run:
+Before release/tag promotion:
 
 ```bash
 npm run release-check
 npm run secret-scan
 ```
 
-GitHub Actions gates:
+GitHub Actions:
 - `.github/workflows/release-readiness.yml`: typecheck, tests, secret-scan, validate:skills, release-check
 - `.github/workflows/skills-only.yml`: validate:skills for skills-only changes
-
-### Active Refactoring
-
-A 4-phase decomposition of `index.ts` is in progress:
-
-**Phase 1: Extract modules from index.ts** — DONE
-- `src/app-state.ts` — All global mutable state (20+ Maps), type definitions, constants. Reassignable `let` vars wrapped in `state` object for ESM compatibility.
-- `src/chat-preferences.ts` — Normalizers, queue parsing, preference persistence, usage stats.
-- `src/telegram-streaming.ts` — Single-path visible preview registry and completion state.
-- `src/telegram-commands.ts` — `handleTelegramCommand`, settings panels, callback queries.
-- `src/message-dispatch.ts` — `processMessage`, `runDirectSessionTurn`, queue logic.
-- `src/app.ts` — `main()`, startup, shutdown, `connectWhatsApp`.
-
-**Phase 2: Replace file-based IPC with EventEmitter** — IN PROGRESS
-- Host-local preview/final delivery in `pi-runner.ts` now emits runtime events instead of writing `messages/*.json`
-- Cross-boundary sandbox IPC files remain for agent-authored `messages/`, `tasks/`, `actions/`, `action_results/`
-- `startIpcWatcher()` still owns filesystem IPC polling; host-local event handling runs beside it
-
-**Phase 3: Simplify draft streaming to one path** — IN PROGRESS
-- Native `sendMessageDraft()` no longer used for host-local preview delivery
-- Host preview streaming uses one visible send+edit path via `TelegramPreviewRegistry`
-- Legacy `telegram-draft-ipc.ts` compatibility remains in-tree pending cleanup
-
-**Phase 4: Collapse completion resolver** — IN PROGRESS
-- Completion resolves against preview/completed registry state instead of draft/message dual-mode state
-- Final consolidation into a shared message-dispatch helper still pending
-
-### State Access Pattern
-
-```typescript
-import { state, activeChatRuns, ... } from './app-state.js';
-// Reassignable vars: state.registeredGroups, state.telegramBot, etc.
-// Maps: activeChatRuns.get(...), activeChatRuns.set(...)
-```
 
 ## Key Files
 
 | File | Role |
 |---|---|
 | `src/index.ts` | Remaining orchestrator logic (~5700 lines, still being decomposed) |
-| `src/app-state.ts` | All global mutable state and types |
-| `src/app.ts` | Startup, shutdown, WhatsApp connection |
-| `src/message-dispatch.ts` | Message processing, session turns, queue logic |
+| `src/app-state.ts` | All global mutable state, type definitions, `hostEventBus` singleton |
+| `src/app.ts` | `main()`, startup, shutdown, `connectWhatsApp` |
+| `src/message-dispatch.ts` | `processMessage`, `runDirectSessionTurn`, queue logic |
 | `src/telegram-commands.ts` | Telegram command handling, settings panels, callback queries |
 | `src/pi-runner.ts` | Agent subprocess spawning, snapshots, runtime event emission |
 | `src/telegram-streaming.ts` | Visible Telegram preview registry and completion state |
 | `src/runtime/host-events.ts` | `HostEventBus` — typed EventEmitter hub for host-local delivery |
-| `src/config.ts` | All configuration constants |
+| `src/runtime/boundary-ipc.ts` | Cross-boundary envelope parsing, evaluator verdict leak guard |
+| `src/evaluator.ts` | Post-run quality scoring; `shouldEvaluate()` threshold guard |
+| `src/coding-orchestrator.ts` | Plan/execute worker routing for coding tasks |
+| `src/cron/service.ts` | Scheduled task execution engine |
+| `src/permission-gate-policy.ts` | Tool permission decisions for subagents/headless runs |
+| `src/memory-backend.ts` | Unified memory search/retrieval facade |
+| `src/config.ts` | All configuration constants and env var defaults |
 
-## Build & Test
+## Active Refactoring
 
-```bash
-npm run build          # TypeScript compilation
-npm run dev            # Run with tsx (no build step)
-npm test               # All tests via node --test
-npm run typecheck      # Type-check without emitting
+4-phase decomposition of `index.ts` is in progress:
 
-# Run a single test file
-node --import tsx --test tests/<name>.test.ts
-
-npm run format         # Prettier write
-npm run format:check   # Prettier check (CI)
-```
+- **Phase 1** (DONE): Extract `app-state`, `chat-preferences`, `telegram-streaming`, `telegram-commands`, `message-dispatch`, `app`.
+- **Phase 2** (IN PROGRESS): Replace file-based IPC with EventEmitter for host-local delivery. Cross-boundary sandbox IPC files remain.
+- **Phase 3** (IN PROGRESS): Consolidate draft streaming to one path via `TelegramPreviewRegistry`; `telegram-draft-ipc.ts` pending cleanup.
+- **Phase 4** (IN PROGRESS): Collapse completion resolver to use preview/completed registry state; shared message-dispatch helper pending.
 
 ## Conventions
 
-- ESM modules (`"type": "module"` in package.json)
-- Import paths use `.js` extensions (TypeScript ESM convention)
-- Tests in `tests/` directory, named `*.test.ts`
-- No unnecessary comments — code should be self-documenting
-- Run tests after every extraction step to catch regressions immediately
+- ESM modules (`"type": "module"`); import paths use `.js` extensions.
+- Tests in `tests/`, named `*.test.ts`. Run after every extraction step.
+- `src/skills/` and `skills/` contain pi skill manifests; validate with `npm run validate:skills`.
+- `config/runtime.parity.json` controls parity feature flags (`PARITY_CONFIG`).
+- Git hooks in `hooks/` (pre-commit, pre-push) — do not bypass with `--no-verify`.
