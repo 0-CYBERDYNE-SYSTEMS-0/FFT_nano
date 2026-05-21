@@ -16,7 +16,6 @@
 
 - Decision: removed the non-blocking chat/heartbeat evaluator pass from `runAgent`. Validation now either participates in the blocking retry/suppression path or does not run for that response.
 - Tradeoff: cheap/background quality telemetry is reduced, but behavior is simpler and avoids validator failures that cannot trigger repair.
-
 ## 2026-05-19 — Telegram Group Approval
 
 - Decision: keep `TELEGRAM_AUTO_REGISTER` for known main/private bootstrap cases, but stop it from registering non-main Telegram groups. Unknown Telegram groups now always go through explicit approval so owners stay in control.
