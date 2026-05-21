@@ -5,6 +5,7 @@ import path from 'path';
 import type { WebAccessMode } from '../config.js';
 import { logger } from '../logger.js';
 import { sanitizeUserFacingVerdictLeak } from '../runtime/boundary-ipc.js';
+import type { UpdateCommandStartResult } from '../update-command.js';
 
 interface RuntimeStatusPayload {
   runtime: string;
@@ -74,7 +75,7 @@ export interface WebControlCenterAdapters {
   applyOnboardingConfig?: (
     payload: OnboardingConfigPayload,
   ) => Promise<{ ok: boolean; requiresRestart: boolean; adminSecret?: string }>;
-  hostUpdate?: () => { ok: boolean; text: string };
+  hostUpdate?: () => UpdateCommandStartResult;
 }
 
 export interface WebControlCenterServerOptions {
@@ -884,6 +885,9 @@ export async function startWebControlCenterServer(
           sendJson(res, result.ok ? 200 : 500, {
             ok: result.ok,
             text: result.text,
+            ...(typeof result.reportId === 'string'
+              ? { reportId: result.reportId }
+              : {}),
           });
         } catch (err) {
           sendJson(res, 500, {

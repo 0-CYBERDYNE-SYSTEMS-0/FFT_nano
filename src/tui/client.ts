@@ -663,12 +663,24 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         chatLog.addSystem(
           'Starting update: stash local changes, pull, install, build, reapply changes, then restart...',
         );
-        const result = await client.request<{ ok: boolean; text: string }>(
+        const result = await client.request<{
+          ok: boolean;
+          text: string;
+          reportId?: string;
+        }>(
           'host.update',
           {},
         );
         if (result.ok) {
-          chatLog.addSystem(`update complete:\n${result.text}`);
+          chatLog.addSystem(
+            [
+              'update started in background',
+              result.reportId ? `report id: ${result.reportId}` : null,
+              result.text,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          );
         } else {
           chatLog.addSystem(`update failed:\n${result.text}`);
         }

@@ -5806,7 +5806,10 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
       return { aborted: true };
     },
     serviceGateway: async ({ action }) => runGatewayServiceCommand(action),
-    hostUpdate: () => runUpdateCommand(),
+    hostUpdate: () =>
+      startDetachedUpdateCommand({
+        cwd: process.cwd(),
+      }),
   };
 }
 
@@ -5834,7 +5837,10 @@ function createWebControlCenterAdapters(): WebControlCenterAdapters {
     }),
     getOnboardingStatus: () => buildOnboardingStatus(),
     applyOnboardingConfig: async (payload) => applyWebOnboardingConfig(payload),
-    hostUpdate: () => runUpdateCommand(),
+    hostUpdate: () =>
+      startDetachedUpdateCommand({
+        cwd: process.cwd(),
+      }),
   };
 }
 
@@ -6095,7 +6101,16 @@ async function processPendingUpdateNotifications(): Promise<void> {
     const record = readUpdateNotification(reportFile);
     if (!record || record.status !== 'complete' || record.sentAt) continue;
     if (!record.chatJid) {
-      logger.warn({ reportFile }, 'Update report missing chat id');
+      const sentAt = new Date().toISOString();
+      writeUpdateNotification(reportFile, {
+        ...record,
+        sentAt,
+        updatedAt: sentAt,
+      });
+      logger.info(
+        { reportFile, reportId: record.id },
+        'Update report completed without chat id; marked as consumed',
+      );
       continue;
     }
 
