@@ -162,6 +162,14 @@ export function sanitizeUserFacingVerdictLeak(text: string): string {
   return isInternalEvaluatorVerdictText(text) ? 'verification_failed' : text;
 }
 
+function isEvaluatorAttributedPayload(payload: Record<string, unknown>): boolean {
+  return (
+    payload.suppressUserDelivery === true ||
+    payload.controlPlaneStatus === 'verification_failed'
+  );
+}
+
+
 export function translateLegacyMessageToHostEvent(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
   registeredGroups: Record<string, RegisteredGroup>,
@@ -181,7 +189,11 @@ export function translateLegacyMessageToHostEvent(
   ) {
     return null;
   }
-  if (payload.type === 'message' && isInternalEvaluatorVerdictText(payload.text)) {
+  if (
+    payload.type === 'message' &&
+    isEvaluatorAttributedPayload(payload) &&
+    isInternalEvaluatorVerdictText(payload.text)
+  ) {
     return null;
   }
   if (payload.type === 'run_progress') {
