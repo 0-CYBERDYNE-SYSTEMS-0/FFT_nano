@@ -15,6 +15,7 @@ import {
   type EvaluatorContext,
   type EvaluatorVerdict,
 } from '../src/evaluator.js';
+import { buildSystemPrompt } from '../src/system-prompt.js';
 import type { RegisteredGroup } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
@@ -257,6 +258,35 @@ describe('artifact verification', () => {
     assert.equal(input.workspaceDirOverride, '/tmp/some-worktree');
     assert.equal(input.toolMode, 'read_only');
     assert.match(input.prompt, /Host Artifact Verification/);
+  });
+
+  it('does not expose user-facing Messaging IPC instructions to evaluator runs', () => {
+    const input = buildEvaluatorContainerInput(
+      ctx({
+        isMain: true,
+        workspaceDirOverride: '/tmp/some-worktree',
+        workspaceDir: '/tmp/some-worktree',
+        agentOutput: 'Captured `knowledge/raw/network.md`.',
+        forceEvaluate: true,
+      }),
+    );
+
+    const systemPrompt = buildSystemPrompt(
+      {
+        ...(input as any),
+        codingHint: input.codingHint || 'none',
+      },
+      {
+        groupDir: '/tmp/group',
+        globalDir: '/tmp/global',
+        ipcDir: '/tmp/ipc/main',
+      },
+    ).text;
+
+    assert.equal(input.isEvaluatorRun, true);
+    assert.doesNotMatch(systemPrompt, /## Messaging IPC/);
+    assert.doesNotMatch(systemPrompt, /messages\/\*\.json/);
+    assert.doesNotMatch(systemPrompt, /"type":"message"/);
   });
 });
 

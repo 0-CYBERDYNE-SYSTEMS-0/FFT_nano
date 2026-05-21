@@ -1,3 +1,5 @@
+import { isInternalEvaluatorVerdictText } from './runtime/boundary-ipc.js';
+
 export type StatusIncidentKind = 'stale' | 'timeout' | 'failed';
 
 export interface StatusIncident {
@@ -112,6 +114,7 @@ export interface FormatStatusReportParams {
     requestId: string;
     startedAt: number;
   } | null;
+  coderGateMode?: 'explicit' | 'autosuggest';
 }
 
 const TIMEOUT_PATTERN =
@@ -163,6 +166,19 @@ function formatAgeSeconds(nowMs: number, startedAt: number): string {
 
 function classifyFailureKind(message: string): StatusIncidentKind {
   return TIMEOUT_PATTERN.test(message) ? 'timeout' : 'failed';
+}
+
+function formatIncidentDetailForStatus(detail: string): string {
+  if (isInternalEvaluatorVerdictText(detail)) return 'verification_failed';
+  if (/verification_failed/i.test(detail)) return 'verification_failed';
+  if (
+    /\bscore\s+\d+\/10\b/i.test(detail) &&
+    /\bissues?\b/i.test(detail) &&
+    /\bfeedback\b/i.test(detail)
+  ) {
+    return 'verification_failed';
+  }
+  return detail;
 }
 
 function uniquePushIncidents(
@@ -309,6 +325,9 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
     `- uptime: ${formatDurationShort(uptimeMs)}`,
     `- version: ${params.version}`,
     `- runtime: ${params.runtime}`,
+    ...(params.coderGateMode
+      ? [`- coder_gate_mode: ${params.coderGateMode}`]
+      : []),
     `- agent_running: ${params.agentRunning ? 'working' : 'idle'}`,
     `- active_runs: agent=${params.activeChatRuns.length} coder=${coderRuns} subagent=${subagentRuns}`,
     `- channels: telegram=${params.telegramEnabled ? 'yes' : 'no'} whatsapp=${params.whatsappEnabled ? 'yes' : 'no'} connected=${params.whatsappConnected ? 'yes' : 'no'}`,
@@ -366,8 +385,11 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
   } else {
     for (const incident of incidents) {
       const age = formatDurationShort(nowMs - incident.createdAtMs);
+      const detail = incident.detail
+        ? formatIncidentDetailForStatus(incident.detail)
+        : '';
       lines.push(
-        `- ${age} ago kind=${incident.kind} run=${incident.runId}${incident.chatJid ? ` chat=${incident.chatJid}` : ''}${incident.detail ? ` detail=${incident.detail}` : ''}`,
+        `- ${age} ago kind=${incident.kind} run=${incident.runId}${incident.chatJid ? ` chat=${incident.chatJid}` : ''}${detail ? ` detail=${detail}` : ''}`,
       );
     }
   }

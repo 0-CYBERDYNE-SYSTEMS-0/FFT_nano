@@ -37,6 +37,7 @@ export interface CommandRunResult {
 export interface CommandRunOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
+  timeoutMs?: number;
 }
 
 export type CommandRunner = (
@@ -56,7 +57,7 @@ export interface RunUpdateCommandOptions {
 export interface StartDetachedUpdateCommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  chatJid: string;
+  chatJid?: string;
   now?: () => Date;
   nodePath?: string;
   scriptPath?: string;
@@ -79,8 +80,16 @@ interface StepResult {
   result: CommandRunResult;
 }
 
+interface UpdateLockRecord {
+  pid: number;
+  startedAt: string;
+  reportId?: string;
+}
+
 const OUTPUT_LIMIT = 4000;
 const MAX_BUFFER = 8 * 1024 * 1024;
+const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_LOCK_STALE_MS = 2 * 60 * 60 * 1000;
 
 function defaultRunner(
   command: string,
@@ -92,6 +101,7 @@ function defaultRunner(
     encoding: 'utf8',
     env: options.env,
     maxBuffer: MAX_BUFFER,
+    timeout: options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
   });
 }
 
@@ -119,6 +129,106 @@ function createUpdateReportId(now: Date): string {
 
 export function getUpdateNotificationsDir(cwd = process.cwd()): string {
   return path.join(cwd, 'data', 'update-notifications');
+}
+
+function getUpdateLockFile(cwd: string): string {
+  return path.join(cwd, 'data', 'update.lock.json');
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readUpdateLock(lockFile: string): UpdateLockRecord | null {
+  try {
+    return JSON.parse(fs.readFileSync(lockFile, 'utf-8')) as UpdateLockRecord;
+  } catch {
+    return null;
+  }
+}
+
+function getActiveUpdateLockReason(cwd: string): string | null {
+  const lockFile = getUpdateLockFile(cwd);
+  const staleMs = parsePositiveInt(
+    process.env.FFT_NANO_UPDATE_LOCK_STALE_MS,
+    DEFAULT_LOCK_STALE_MS,
+  );
+  const existing = readUpdateLock(lockFile);
+  if (!existing) return null;
+  const startedMs = Date.parse(existing.startedAt);
+  const staleByTime =
+    Number.isFinite(startedMs) && Date.now() - startedMs > staleMs;
+  const alive = isPidAlive(existing.pid);
+  if (!alive || staleByTime) return null;
+  return `another update is already running (pid ${existing.pid}, started ${existing.startedAt})`;
+}
+
+function writeUpdateLock(lockFile: string, record: UpdateLockRecord): void {
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  const tempFile = `${lockFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tempFile, `${JSON.stringify(record, null, 2)}\n`);
+  fs.renameSync(tempFile, lockFile);
+}
+
+function tryAcquireUpdateLock(cwd: string, reportId?: string): {
+  ok: boolean;
+  lockFile: string;
+  reason?: string;
+} {
+  const lockFile = getUpdateLockFile(cwd);
+  const staleMs = parsePositiveInt(
+    process.env.FFT_NANO_UPDATE_LOCK_STALE_MS,
+    DEFAULT_LOCK_STALE_MS,
+  );
+  const nowMs = Date.now();
+  const existing = readUpdateLock(lockFile);
+  if (existing) {
+    const startedMs = Date.parse(existing.startedAt);
+    const staleByTime = Number.isFinite(startedMs) && nowMs - startedMs > staleMs;
+    const alive = isPidAlive(existing.pid);
+    if (!alive || staleByTime) {
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {
+        // Best effort; next open will fail if lock still exists.
+      }
+    } else {
+      return {
+        ok: false,
+        lockFile,
+        reason: `another update is already running (pid ${existing.pid}, started ${existing.startedAt})`,
+      };
+    }
+  }
+
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  const handle = fs.openSync(lockFile, 'wx');
+  fs.closeSync(handle);
+  writeUpdateLock(lockFile, {
+    pid: process.pid,
+    startedAt: new Date(nowMs).toISOString(),
+    reportId,
+  });
+  return { ok: true, lockFile };
+}
+
+function releaseUpdateLock(lockFile: string): void {
+  try {
+    fs.unlinkSync(lockFile);
+  } catch {
+    // Best-effort cleanup.
+  }
 }
 
 export function writeUpdateNotification(
@@ -159,11 +269,16 @@ export function runUpdateCommand(
   const run = options.run || defaultRunner;
   const existsSync = options.existsSync || fs.existsSync;
   const now = options.now || (() => new Date());
+  const stepTimeoutMs = parsePositiveInt(
+    env.FFT_NANO_UPDATE_STEP_TIMEOUT_MS,
+    DEFAULT_STEP_TIMEOUT_MS,
+  );
   const outputLines: string[] = [];
   let stashRef: string | null = null;
+  let lockFile: string | null = null;
 
   const runRaw = (command: string, args: string[]): CommandRunResult =>
-    run(command, args, { cwd, env });
+    run(command, args, { cwd, env, timeoutMs: stepTimeoutMs });
 
   const runStep = (
     label: string,
@@ -215,145 +330,164 @@ export function runUpdateCommand(
     return true;
   };
 
-  const gitCheck = runRaw('git', ['rev-parse', '--is-inside-work-tree']);
-  if (gitCheck.error) {
-    return fail(`Failed checking git checkout: ${gitCheck.error.message}`);
+  const lock = tryAcquireUpdateLock(cwd);
+  if (!lock.ok) {
+    return fail(`Update not started: ${lock.reason}.`);
   }
-  if (gitCheck.status !== 0 || gitCheck.stdout?.trim() !== 'true') {
-    return fail('Update aborted: current directory is not a git checkout.');
-  }
+  lockFile = lock.lockFile;
 
-  const status = runStep('git status', 'git', ['status', '--porcelain']);
-  if (!status.ok) return fail('Update aborted before changing files.');
-
-  const dirty = Boolean(status.result.stdout?.trim());
-  if (dirty) {
-    const marker = autostashMarker(now());
-    outputLines.push('Local changes detected; stashing before update.');
-    const stash = runStep('git stash', 'git', [
-      'stash',
-      'push',
-      '--include-untracked',
-      '-m',
-      marker,
-    ]);
-    if (!stash.ok)
-      return fail('Update aborted: could not stash local changes.');
-
-    const stashList = runRaw('git', ['stash', 'list', '--format=%gd%x00%gs']);
-    if (stashList.error) {
-      return fail(
-        `Update aborted: could not identify stash (${stashList.error.message}).`,
-      );
+  try {
+    const gitCheck = runRaw('git', ['rev-parse', '--is-inside-work-tree']);
+    if (gitCheck.error) {
+      return fail(`Failed checking git checkout: ${gitCheck.error.message}`);
     }
-    stashRef = findAutostashRef(stashList.stdout || '', marker);
-    if (!stashRef) {
-      return fail(
-        `Update aborted: created autostash marker was not found. Marker: ${marker}`,
-      );
-    }
-    outputLines.push(`Saved local changes as ${stashRef}.`);
-  }
-
-  const fetch = runStep('git fetch', 'git', ['fetch', 'origin']);
-  if (!fetch.ok) {
-    restoreAutostashAfterAbort();
-    return fail('Update aborted during fetch.');
-  }
-
-  const branch = runRaw('git', ['symbolic-ref', '--short', 'HEAD']);
-  const currentBranch =
-    branch.status === 0 && branch.stdout?.trim() ? branch.stdout.trim() : null;
-  const pullArgs = currentBranch
-    ? ['pull', '--ff-only', 'origin', currentBranch]
-    : ['pull', '--ff-only'];
-  const pull = runStep('git pull', 'git', pullArgs);
-  if (!pull.ok) {
-    restoreAutostashAfterAbort();
-    return fail('Update aborted during pull.');
-  }
-
-  if (stashRef) {
-    const apply = runStep('git stash apply', 'git', [
-      'stash',
-      'apply',
-      stashRef,
-    ]);
-    if (!apply.ok) {
-      return fail(
-        `Update aborted: local changes could not be reapplied cleanly. Resolve conflicts, then recover with: git stash apply ${stashRef}`,
-      );
+    if (gitCheck.status !== 0 || gitCheck.stdout?.trim() !== 'true') {
+      return fail('Update aborted: current directory is not a git checkout.');
     }
 
-    const drop = runStep('git stash drop', 'git', ['stash', 'drop', stashRef]);
-    if (!drop.ok) {
-      outputLines.push(
-        `Warning: local changes were reapplied, but ${stashRef} could not be dropped. You may drop it manually after inspection.`,
-      );
+    const status = runStep('git status', 'git', ['status', '--porcelain']);
+    if (!status.ok) return fail('Update aborted before changing files.');
+
+    const dirty = Boolean(status.result.stdout?.trim());
+    if (dirty) {
+      const marker = autostashMarker(now());
+      outputLines.push('Local changes detected; stashing before update.');
+      const stash = runStep('git stash', 'git', [
+        'stash',
+        'push',
+        '--include-untracked',
+        '-m',
+        marker,
+      ]);
+      if (!stash.ok)
+        return fail('Update aborted: could not stash local changes.');
+
+      const stashList = runRaw('git', ['stash', 'list', '--format=%gd%x00%gs']);
+      if (stashList.error) {
+        return fail(
+          `Update aborted: could not identify stash (${stashList.error.message}).`,
+        );
+      }
+      stashRef = findAutostashRef(stashList.stdout || '', marker);
+      if (!stashRef) {
+        return fail(
+          `Update aborted: created autostash marker was not found. Marker: ${marker}`,
+        );
+      }
+      outputLines.push(`Saved local changes as ${stashRef}.`);
     }
-  }
 
-  const installStep = existsSync(path.join(cwd, 'package-lock.json'))
-    ? runStep('npm ci', 'npm', ['ci', '--include=dev'])
-    : runStep('npm install', 'npm', ['install', '--include=dev']);
+    const fetch = runStep('git fetch', 'git', ['fetch', 'origin']);
+    if (!fetch.ok) {
+      restoreAutostashAfterAbort();
+      return fail('Update aborted during fetch.');
+    }
 
-  if (!installStep.ok && existsSync(path.join(cwd, 'package-lock.json'))) {
-    outputLines.push('npm ci failed; falling back to npm install.');
-    const fallbackInstall = runStep('npm install', 'npm', [
-      'install',
-      '--include=dev',
-    ]);
-    if (!fallbackInstall.ok) {
+    const branch = runRaw('git', ['symbolic-ref', '--short', 'HEAD']);
+    const currentBranch =
+      branch.status === 0 && branch.stdout?.trim() ? branch.stdout.trim() : null;
+    const pullArgs = currentBranch
+      ? ['pull', '--ff-only', 'origin', currentBranch]
+      : ['pull', '--ff-only'];
+    const pull = runStep('git pull', 'git', pullArgs);
+    if (!pull.ok) {
+      restoreAutostashAfterAbort();
+      return fail('Update aborted during pull.');
+    }
+
+    if (stashRef) {
+      const apply = runStep('git stash apply', 'git', [
+        'stash',
+        'apply',
+        stashRef,
+      ]);
+      if (!apply.ok) {
+        return fail(
+          `Update aborted: local changes could not be reapplied cleanly. Resolve conflicts, then recover with: git stash apply ${stashRef}`,
+        );
+      }
+
+      const drop = runStep('git stash drop', 'git', ['stash', 'drop', stashRef]);
+      if (!drop.ok) {
+        outputLines.push(
+          `Warning: local changes were reapplied, but ${stashRef} could not be dropped. You may drop it manually after inspection.`,
+        );
+      }
+    }
+
+    const installStep = existsSync(path.join(cwd, 'package-lock.json'))
+      ? runStep('npm ci', 'npm', ['ci', '--include=dev'])
+      : runStep('npm install', 'npm', ['install', '--include=dev']);
+
+    if (!installStep.ok && existsSync(path.join(cwd, 'package-lock.json'))) {
+      outputLines.push('npm ci failed; falling back to npm install.');
+      const fallbackInstall = runStep('npm install', 'npm', [
+        'install',
+        '--include=dev',
+      ]);
+      if (!fallbackInstall.ok) {
+        return fail('Update aborted during dependency installation.');
+      }
+    } else if (!installStep.ok) {
       return fail('Update aborted during dependency installation.');
     }
-  } else if (!installStep.ok) {
-    return fail('Update aborted during dependency installation.');
-  }
 
-  const build = runStep('npm run build', 'npm', ['run', 'build']);
-  if (!build.ok) return fail('Update aborted during build.');
+    const build = runStep('npm run build', 'npm', ['run', 'build']);
+    if (!build.ok) return fail('Update aborted during build.');
 
-  outputLines.push('--- restart ---');
-  const scriptPath = path.join(cwd, 'scripts', 'service.sh');
-  if (!existsSync(scriptPath)) {
-    outputLines.push('Service script not found. Restart manually.');
-    return { ok: false, text: outputLines.join('\n') };
-  }
+    outputLines.push('--- restart ---');
+    const scriptPath = path.join(cwd, 'scripts', 'service.sh');
+    if (!existsSync(scriptPath)) {
+      outputLines.push('Service script not found. Restart manually.');
+      return { ok: false, text: outputLines.join('\n') };
+    }
 
-  const restartResult = run('bash', [scriptPath, 'restart'], {
-    cwd,
-    env: {
-      ...env,
-      FFT_NANO_GATEWAY_CALL: '1',
-      FFT_NANO_NONINTERACTIVE: '1',
-    },
-  });
+    const restartResult = run('bash', [scriptPath, 'restart'], {
+      cwd,
+      env: {
+        ...env,
+        FFT_NANO_GATEWAY_CALL: '1',
+        FFT_NANO_NONINTERACTIVE: '1',
+      },
+      timeoutMs: stepTimeoutMs,
+    });
 
-  const restartOutput = combinedOutput(restartResult);
-  if (restartOutput) outputLines.push(boundedOutput(restartOutput));
+    const restartOutput = combinedOutput(restartResult);
+    if (restartOutput) outputLines.push(boundedOutput(restartOutput));
 
-  if (
-    restartResult.status === null &&
-    (restartResult.signal === 'SIGTERM' || restartResult.signal === 'SIGKILL')
-  ) {
-    outputLines.push('Update complete. Service restarting.');
+    if (
+      restartResult.status === null &&
+      (restartResult.signal === 'SIGTERM' || restartResult.signal === 'SIGKILL')
+    ) {
+      outputLines.push('Update complete. Service restarting.');
+      return { ok: true, text: outputLines.join('\n') };
+    }
+
+    if (restartResult.error) {
+      outputLines.push(`Failed: ${restartResult.error.message}`);
+      return { ok: false, text: outputLines.join('\n') };
+    }
+
+    if (restartResult.status !== 0) {
+      outputLines.push(
+        `Service restart failed with exit code ${restartResult.status ?? 'unknown'}. Update applied but service may need manual restart.`,
+      );
+      return { ok: false, text: outputLines.join('\n') };
+    }
+
+    const statusCheck = runStep('service status check', 'bash', [
+      scriptPath,
+      'status',
+    ]);
+    if (!statusCheck.ok) {
+      return fail('Update applied, but service status verification failed.');
+    }
+
+    outputLines.push('Update complete. Service restarted.');
     return { ok: true, text: outputLines.join('\n') };
+  } finally {
+    if (lockFile) releaseUpdateLock(lockFile);
   }
-
-  if (restartResult.error) {
-    outputLines.push(`Failed: ${restartResult.error.message}`);
-    return { ok: false, text: outputLines.join('\n') };
-  }
-
-  if (restartResult.status !== 0) {
-    outputLines.push(
-      `Service restart failed with exit code ${restartResult.status ?? 'unknown'}. Update applied but service may need manual restart.`,
-    );
-    return { ok: false, text: outputLines.join('\n') };
-  }
-
-  outputLines.push('Update complete. Service restarted.');
-  return { ok: true, text: outputLines.join('\n') };
 }
 
 export function startDetachedUpdateCommand(
@@ -369,8 +503,10 @@ export function startDetachedUpdateCommand(
   const reportDir = options.reportDir || getUpdateNotificationsDir(cwd);
   const spawnProcess = options.spawnProcess || spawn;
 
-  if (!options.chatJid.trim()) {
-    return { ok: false, text: 'Update not started: missing chat id.' };
+  const chatJid = (options.chatJid || '').trim();
+  const activeLockReason = getActiveUpdateLockReason(cwd);
+  if (activeLockReason) {
+    return { ok: false, text: `Update not started: ${activeLockReason}.` };
   }
   if (!existsSync(scriptPath)) {
     return {
@@ -384,7 +520,7 @@ export function startDetachedUpdateCommand(
   const reportFile = path.join(reportDir, `${reportId}.json`);
   const record: UpdateNotificationRecord = {
     id: reportId,
-    chatJid: options.chatJid,
+    chatJid,
     cwd,
     status: 'started',
     startedAt: startedAt.toISOString(),

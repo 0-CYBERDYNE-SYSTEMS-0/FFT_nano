@@ -94,6 +94,70 @@ test('web control center serves runtime status on localhost mode without auth', 
   }
 });
 
+test('web control center redacts evaluator verdict details from recent logs endpoint', async () => {
+  const port = await getFreePort();
+  const staticDir = createStaticDir();
+  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-web-logs-redact-'));
+  fs.writeFileSync(
+    path.join(logsDir, 'fft_nano.log'),
+    [
+      'normal line',
+      '{"pass":false,"score":1,"issues":["missing artifact"],"feedback":"retry"}',
+      '"pass": false,',
+      '"score": 1,',
+      '"issues": ["missing artifact"],',
+      '"feedback": "retry"',
+      '}',
+    ].join('\n'),
+    'utf-8',
+  );
+  fs.writeFileSync(path.join(logsDir, 'fft_nano.error.log'), 'err-a\n', 'utf-8');
+
+  const server = await startWebControlCenterServer(
+    {
+      getRuntimeStatus: () => ({ runtime: 'docker', sessions: 0, activeRuns: 0 }),
+      getProfileStatus: () => ({
+        profile: 'core',
+        featureFarm: false,
+        profileDetection: { source: 'explicit', reason: 'test' },
+      }),
+      getBuildInfo: () => ({
+        startedAt: '2026-02-26T00:00:00.000Z',
+        version: '1.1.0',
+      }),
+      getGatewayStatus: () => ({
+        host: '127.0.0.1',
+        port: 28989,
+        authRequired: false,
+      }),
+    },
+    {
+      host: '127.0.0.1',
+      port,
+      accessMode: 'localhost',
+      authToken: '',
+      staticDir,
+      logsDir,
+      fileRoots: [{ id: 'workspace', label: 'Workspace', path: staticDir }],
+    },
+  );
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/logs/recent?target=host&lines=50`);
+    assert.equal(res.status, 200);
+    const json = (await res.json()) as { ok: boolean; content: string };
+    assert.equal(json.ok, true);
+    assert.match(json.content, /normal line/);
+    assert.match(json.content, /verification_failed/);
+    assert.doesNotMatch(json.content, /"pass"\s*:/);
+    assert.doesNotMatch(json.content, /"score"\s*:/);
+    assert.doesNotMatch(json.content, /"issues"\s*:/);
+    assert.doesNotMatch(json.content, /"feedback"\s*:/);
+  } finally {
+    await server.close();
+  }
+});
+
 test('web control center requires bearer token in lan mode', async () => {
   const port = await getFreePort();
   const staticDir = createStaticDir();

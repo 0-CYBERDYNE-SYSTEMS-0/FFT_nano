@@ -81,6 +81,11 @@ test('runUpdateCommand updates a clean checkout without stashing', () => {
       args: ['/tmp/fft_nano/scripts/service.sh', 'restart'],
       result: ok('restarted\n'),
     },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'status'],
+      result: ok('running\n'),
+    },
   ]);
 
   const result = runUpdateCommand({
@@ -104,6 +109,7 @@ test('runUpdateCommand updates a clean checkout without stashing', () => {
       ['git', 'pull'],
       ['npm', 'ci'],
       ['npm', 'run'],
+      ['bash', '/tmp/fft_nano/scripts/service.sh'],
       ['bash', '/tmp/fft_nano/scripts/service.sh'],
     ],
   );
@@ -375,4 +381,54 @@ test('startDetachedUpdateCommand writes report and launches worker detached', ()
   const report = readUpdateNotification(result.reportFile || '');
   assert.equal(report?.chatJid, 'telegram:123');
   assert.equal(report?.status, 'started');
+});
+
+test('startDetachedUpdateCommand allows chatless starts for non-Telegram surfaces', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-test-'));
+  const reportDir = path.join(tempDir, 'reports');
+  const scriptPath = path.join(tempDir, 'dist', 'update-worker.js');
+  const spawned: Array<{ command: string; args: string[] }> = [];
+
+  const result = startDetachedUpdateCommand({
+    cwd,
+    now: fixedNow,
+    nodePath: '/usr/local/bin/node',
+    scriptPath,
+    reportDir,
+    existsSync: (filePath) => filePath === scriptPath,
+    spawnProcess: (command, args) => {
+      spawned.push({ command, args });
+      return { unref: () => {} };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(spawned.length, 1);
+  const report = readUpdateNotification(result.reportFile || '');
+  assert.equal(report?.chatJid, '');
+  assert.equal(report?.status, 'started');
+});
+
+test('runUpdateCommand fails fast when another update lock is active', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-lock-'));
+  const lockDir = path.join(tempDir, 'data');
+  fs.mkdirSync(lockDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(lockDir, 'update.lock.json'),
+    JSON.stringify({
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      reportId: 'update-existing',
+    }),
+  );
+
+  const result = runUpdateCommand({
+    cwd: tempDir,
+    run: () => {
+      throw new Error('should not execute commands while locked');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.text, /already running/);
 });

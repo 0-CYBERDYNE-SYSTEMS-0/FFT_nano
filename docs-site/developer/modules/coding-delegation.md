@@ -11,6 +11,7 @@ export type DelegationTrigger =
 export function normalizeDelegationAlias(text: string): string {
 export function parseDelegationTrigger(text: string): DelegationParseResult {
 export function isSubstantialCodingTask(text: string): boolean {
+export function shouldSuggestCodingEscalation(text: string): boolean {
 ```
 
 ## Environment Variables Referenced

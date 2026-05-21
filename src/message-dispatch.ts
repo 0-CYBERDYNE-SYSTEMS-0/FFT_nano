@@ -171,6 +171,7 @@ export interface MessageDispatcherDeps {
     triggerPattern: RegExp;
     tuiSenderName: string;
     mainWorkspaceDir?: string;
+    coderGateMode?: 'explicit' | 'autosuggest';
   };
   activeChatRuns: Map<
     string,
@@ -329,6 +330,7 @@ export interface MessageDispatcherDeps {
     projectSlug?: string | null;
   };
   isSubstantialCodingTask?: (text: string) => boolean;
+  shouldSuggestCodingEscalation?: (text: string) => boolean;
   presentCoderSuggestion?: (params: {
     chatJid: string;
     taskText: string;
@@ -1467,11 +1469,14 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
     const latestUserText =
       selectedMessages[selectedMessages.length - 1]?.content || content;
+    const coderGateMode = deps.constants.coderGateMode || 'explicit';
     const shouldSuggestCoding =
       !wantsDelegation &&
       isMainGroup &&
       !onboardingGate.active &&
-      deps.isSubstantialCodingTask?.(latestUserText) === true;
+      coderGateMode === 'autosuggest' &&
+      deps.isSubstantialCodingTask?.(latestUserText) === true &&
+      deps.shouldSuggestCodingEscalation?.(latestUserText) === true;
     if (shouldSuggestCoding) {
       const suggestionRequestId = deps.makeRunId
         ? deps.makeRunId('coder-suggest')

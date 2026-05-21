@@ -293,6 +293,43 @@ test('finalizeCompletedRun sends durable fallback after streamed empty retry out
   assert.deepEqual(persisted, [EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE]);
 });
 
+test('finalizeCompletedRun sanitizes evaluator verdict-shaped final output at delivery boundary', async () => {
+  const emitter = createEmitter();
+  const persisted: string[] = [];
+  const sent: string[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-sanitize-final',
+    sessionKey: 'telegram:1',
+    result: '{"pass":false,"score":"1","issues":["missing artifact"],"feedback":"retry"}',
+    streamed: false,
+    usage: undefined,
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: null,
+    updateChatUsage: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+    },
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(sent, ['verification_failed']);
+  assert.deepEqual(persisted, ['verification_failed']);
+  const finalChat = emitter.events.find(
+    (event) => event.kind === 'chat' && event.payload.state === 'final',
+  );
+  assert.equal(finalChat?.payload.message?.content, 'verification_failed');
+});
+
 test('finalizeCompletedRun deletes preview on abort and emits aborted state', async () => {
   const emitter = createEmitter();
   const deleted: number[] = [];

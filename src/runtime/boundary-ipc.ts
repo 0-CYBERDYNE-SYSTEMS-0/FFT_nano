@@ -169,6 +169,7 @@ function isEvaluatorAttributedPayload(payload: Record<string, unknown>): boolean
   );
 }
 
+
 export function translateLegacyMessageToHostEvent(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
   registeredGroups: Record<string, RegisteredGroup>,

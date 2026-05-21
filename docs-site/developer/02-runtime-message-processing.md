@@ -48,7 +48,7 @@ Delegation parsing uses `parseDelegationTrigger` from `src/coding-delegation.ts`
 
 Safety gate:
 - Delegation is main-chat-only.
-- Main-chat natural-language substantial coding asks can also auto-route through `isSubstantialCodingTask(...)`.
+- Main-chat natural-language coding autosuggest is disabled by default. It can be re-enabled with `FFT_NANO_CODER_GATE_MODE=autosuggest`, which then uses `isSubstantialCodingTask(...)` plus a second-pass `shouldSuggestCodingEscalation(...)` check.
 
 ## Model Invocation
 
