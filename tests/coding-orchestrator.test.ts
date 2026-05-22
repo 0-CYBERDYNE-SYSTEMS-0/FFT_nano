@@ -25,11 +25,14 @@ function makeRequest(
   return {
     requestId: 'coder-1',
     mode: 'execute',
-    route: 'coder_execute',
+    config: {
+      toolMode: 'full',
+      isSubagent: false,
+      workspaceMode: 'ephemeral_worktree',
+    },
     originChatJid: 'telegram:test-group',
     originGroupFolder: 'test-group',
     taskText: 'Build the feature',
-    workspaceMode: 'ephemeral_worktree',
     timeoutSeconds: 300,
     allowFanout: false,
     sessionContext: '[2026-03-22T00:00:00.000Z] User: Build the feature',
@@ -83,7 +86,10 @@ test('plan mode uses read-only worker execution without a worktree', async () =>
   });
 
   const result = await orchestrator.runTask(
-    makeRequest({ mode: 'plan', route: 'coder_plan' }),
+    makeRequest({
+      mode: 'plan',
+      config: { toolMode: 'read_only', isSubagent: false, workspaceMode: 'read_only' },
+    }),
   );
 
   assert.equal(result.ok, true);
@@ -338,7 +344,7 @@ test('subagent routes mark worker runs as subagent executions', async () => {
   const result = await orchestrator.runTask(
     makeRequest({
       requestId: 'subagent-1',
-      route: 'subagent_execute',
+      config: { toolMode: 'full', isSubagent: true, workspaceMode: 'ephemeral_worktree' },
       originGroupFolder: 'test-group',
     }),
   );

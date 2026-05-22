@@ -286,16 +286,9 @@ import {
   dispatchLegacyMessageEnvelope,
   wrapLegacyActionEnvelope,
   wrapLegacyMessageEnvelope,
-  wrapLegacyTaskEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
-import {
-  runEvaluatorPass,
-  buildRefinementPrompt,
-  isActionfulChatTask,
-  canAutoRefineActionfulChatTask,
-  type EvaluatorVerdict,
-} from './evaluator.js';
+import { isActionfulChatTask } from './evaluator.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
@@ -3638,7 +3631,7 @@ function formatStatusText(chatJid?: string): string {
       startedAt: run.startedAt,
       parentRequestId: run.parentRequestId,
       backend: run.backend,
-      route: run.route,
+      config: run.config,
       state: run.state,
       worktreePath: run.worktreePath,
     })),
@@ -4489,7 +4482,11 @@ function handleLibrarianCommand(params: {
       `- nightly_next_run: ${setup.nightlyTask.nextRun || 'n/a'}`,
     ];
     if (setup.createdPaths.length > 0) {
-      lines.push('', 'Created paths:', ...setup.createdPaths.map((entry) => `- ${entry}`));
+      lines.push(
+        '',
+        'Created paths:',
+        ...setup.createdPaths.map((entry) => `- ${entry}`),
+      );
     }
     if (setup.nightlyTask.skippedReason) {
       lines.push('', `Task setup skipped: ${setup.nightlyTask.skippedReason}`);
@@ -4553,7 +4550,10 @@ function handleLibrarianCommand(params: {
     if (!fs.existsSync(logPath)) return 'librarian: no log file found';
     const content = fs.readFileSync(logPath, 'utf-8');
     const lines = content.split('\n').filter(Boolean).slice(-30);
-    return ['librarian: recent log entries:', ...lines.map((l) => `  ${l}`)].join('\n');
+    return [
+      'librarian: recent log entries:',
+      ...lines.map((l) => `  ${l}`),
+    ].join('\n');
   }
 
   if (action === 'progress') {
@@ -4562,7 +4562,10 @@ function handleLibrarianCommand(params: {
     if (!fs.existsSync(progPath)) return 'librarian: no progress file found';
     const content = fs.readFileSync(progPath, 'utf-8');
     const lines = content.split('\n').filter(Boolean).slice(-15);
-    return ['librarian: recent progress entries:', ...lines.map((l) => `  ${l}`)].join('\n');
+    return [
+      'librarian: recent progress entries:',
+      ...lines.map((l) => `  ${l}`),
+    ].join('\n');
   }
 
   if (action === 'run' || action === 'dry-run') {
@@ -5600,127 +5603,6 @@ async function runAgent(
 
     let finalResult = emptyOutputPolicy.finalRun;
 
-    const logSuppressedEvaluatorFailure = (
-      verdict: EvaluatorVerdict,
-      runType: 'chat',
-      verificationFailureReason?: string,
-    ): void => {
-      logger.warn(
-        {
-          runType,
-          phase: 'blocking',
-          chatJid,
-          requestId,
-          controlPlaneStatus: 'verification_failed',
-          verificationFailureReason,
-          score: verdict.score,
-          issues: verdict.issues,
-          feedback: verdict.feedback,
-        },
-        'verification_failed',
-      );
-    };
-
-    if (
-      shouldBlockForChatEvaluation &&
-      finalResult.ok &&
-      finalResult.result &&
-      abortSignal?.aborted !== true
-    ) {
-      const maxRefinements = 2;
-      let evalTaskText = prompt;
-      let lastFailedVerdict: EvaluatorVerdict | null = null;
-      let verificationFailureReason:
-        | 'unsafe_repair_without_concrete_action'
-        | 'max_refinements'
-        | 'repair_failed'
-        | null = null;
-      const canAutoRefineEvaluation =
-        canAutoRefineActionfulChatTask(evalTaskText);
-
-      for (let attempt = 0; attempt <= maxRefinements; attempt += 1) {
-        const verdict = await runEvaluatorPass({
-          runType: 'chat',
-          originalTask: evalTaskText,
-          agentOutput: finalResult.result || '',
-          durationMs: Date.now() - runAgentStartedAt,
-          toolsInvoked: runToolsInvoked,
-          group,
-          chatJid,
-          isMain,
-          workspaceDir,
-          startedAtMs: runAgentStartedAt,
-          forceEvaluate: true,
-          abortSignal,
-        });
-
-        if (verdict.skipped || verdict.pass) {
-          lastFailedVerdict = null;
-          break;
-        }
-
-        lastFailedVerdict = verdict;
-        if (!canAutoRefineEvaluation) {
-          verificationFailureReason = 'unsafe_repair_without_concrete_action';
-          break;
-        }
-        if (attempt >= maxRefinements) {
-          verificationFailureReason = 'max_refinements';
-          break;
-        }
-
-        const refinedPrompt = buildRefinementPrompt(evalTaskText, verdict);
-        const retryRequestId = requestId
-          ? `${requestId}:eval-${attempt + 1}`
-          : requestId;
-        const refinedOutput = await executeRun(
-          {
-            ...runtimePrefs,
-            nextRunNoContinue: true,
-          },
-          retryRequestId,
-          true,
-          refinedPrompt,
-        );
-
-        if (refinedOutput.status !== 'success' || !refinedOutput.result) {
-          verificationFailureReason = 'repair_failed';
-          break;
-        }
-
-        finalResult = {
-          result: refinedOutput.result,
-          streamed: !!refinedOutput.streamed,
-          ok: true,
-          hadToolSideEffects: refinedOutput.hadToolSideEffects,
-          usage: refinedOutput.usage,
-        };
-        evalTaskText = refinedPrompt;
-      }
-
-      if (lastFailedVerdict) {
-        logSuppressedEvaluatorFailure(
-          lastFailedVerdict,
-          'chat',
-          verificationFailureReason || 'repair_failed',
-        );
-        if (requestId) {
-          statusTelemetry.noteRuntimeError({
-            runId: requestId,
-            chatJid,
-            errorMessage: `verification_failed: ${verificationFailureReason || 'repair_failed'}`,
-          });
-        }
-        finalResult = {
-          ...finalResult,
-          result: null,
-          streamed: false,
-          suppressUserDelivery: true,
-          controlPlaneStatus: 'verification_failed',
-        };
-      }
-    }
-
     if (
       finalResult.ok &&
       finalResult.result &&
@@ -5858,6 +5740,7 @@ async function startTuiGatewayService(): Promise<void> {
         host: FFT_NANO_TUI_HOST,
         port: FFT_NANO_TUI_PORT,
         authToken: FFT_NANO_TUI_AUTH_TOKEN || undefined,
+        socketPath: '/tmp/fft_nano_tui.sock',
       },
     );
   } catch (err) {
@@ -6851,7 +6734,6 @@ function startIpcWatcher(): void {
     for (const sourceGroup of groupFolders) {
       const isMain = sourceGroup === MAIN_GROUP_FOLDER;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
-      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
       // Process messages from this group's IPC directory
       try {
@@ -6904,47 +6786,6 @@ function startIpcWatcher(): void {
           { err, sourceGroup },
           'Error reading IPC messages directory',
         );
-      }
-
-      // Process tasks from this group's IPC directory
-      try {
-        if (fs.existsSync(tasksDir)) {
-          const taskFiles = fs
-            .readdirSync(tasksDir)
-            .filter((f) => f.endsWith('.json'));
-          for (const file of taskFiles) {
-            const filePath = path.join(tasksDir, file);
-            try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              const envelope = wrapLegacyTaskEnvelope(data, sourceGroup);
-              if (envelope) {
-                await processHostEventOrdered({
-                  kind: 'task_requested',
-                  id: envelope.id,
-                  createdAt: envelope.createdAt,
-                  source: 'ipc-boundary',
-                  sourceGroup,
-                  isMain,
-                  request: envelope.payload,
-                });
-              }
-              fs.unlinkSync(filePath);
-            } catch (err) {
-              logger.error(
-                { file, sourceGroup, err },
-                'Error processing IPC task',
-              );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
-            }
-          }
-        }
-      } catch (err) {
-        logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
       }
 
       // Process farm actions from this group's IPC directory
@@ -7493,35 +7334,35 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       'auto',
       requestId,
       state.chatRunPreferences[mainChatJid] || {},
-	      { suppressErrorReply: true, isHeartbeatTask: true },
-	      abortController.signal,
-	    );
-	    try {
-	      const checklistPath = writeHeartbeatChecklist({
-	        workspaceDir: MAIN_WORKSPACE_DIR,
-	        requestId,
-	        reason,
-	        result: run.result,
-	        ok: run.ok,
-	        currentTasksPath: path.join(
-	          resolveGroupIpcPath(MAIN_GROUP_FOLDER),
-	          'current_tasks.json',
-	        ),
-	        runtimeLogPath: path.join(process.cwd(), 'logs', 'fft_nano.log'),
-	      });
-	      logger.debug(
-	        { chatJid: mainChatJid, reason, checklistPath },
-	        'Heartbeat checklist written',
-	      );
-	    } catch (err) {
-	      logger.warn(
-	        { err, chatJid: mainChatJid, reason },
-	        'Failed to write heartbeat checklist',
-	      );
-	    }
-	    if (!run.ok) {
-	      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
-	      return;
+      { suppressErrorReply: true, isHeartbeatTask: true },
+      abortController.signal,
+    );
+    try {
+      const checklistPath = writeHeartbeatChecklist({
+        workspaceDir: MAIN_WORKSPACE_DIR,
+        requestId,
+        reason,
+        result: run.result,
+        ok: run.ok,
+        currentTasksPath: path.join(
+          resolveGroupIpcPath(MAIN_GROUP_FOLDER),
+          'current_tasks.json',
+        ),
+        runtimeLogPath: path.join(process.cwd(), 'logs', 'fft_nano.log'),
+      });
+      logger.debug(
+        { chatJid: mainChatJid, reason, checklistPath },
+        'Heartbeat checklist written',
+      );
+    } catch (err) {
+      logger.warn(
+        { err, chatJid: mainChatJid, reason },
+        'Failed to write heartbeat checklist',
+      );
+    }
+    if (!run.ok) {
+      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
+      return;
     }
     updateChatUsage(mainChatJid, run.usage);
     if (run.streamed || !run.result) return;

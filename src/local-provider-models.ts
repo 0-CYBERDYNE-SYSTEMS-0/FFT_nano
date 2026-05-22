@@ -76,7 +76,8 @@ function discoverOllamaModels(env: NodeJS.ProcessEnv): {
     env.OLLAMA_BASE_URL || 'http://localhost:11434',
   );
   const body = fetchJsonSync(`${baseUrl}/api/tags`);
-  const models = isObject(body) && Array.isArray(body.models) ? body.models : [];
+  const models =
+    isObject(body) && Array.isArray(body.models) ? body.models : [];
   return {
     baseUrl: `${baseUrl}/v1`,
     models: uniqueSorted(
@@ -108,14 +109,12 @@ function discoverLmStudioModels(env: NodeJS.ProcessEnv): {
   };
 }
 
-function managedProvider(
-  params: {
-    baseUrl: string;
-    apiKey: string;
-    models: string[];
-    supportsReasoningEffort?: boolean;
-  },
-): JsonObject {
+function managedProvider(params: {
+  baseUrl: string;
+  apiKey: string;
+  models: string[];
+  supportsReasoningEffort?: boolean;
+}): JsonObject {
   return {
     xFftNanoManaged: LOCAL_PROVIDER_MARKER,
     baseUrl: params.baseUrl,
@@ -164,7 +163,11 @@ function upsertProvider(
   for (const model of nextProvider.models as JsonObject[]) {
     const existingIndex = byId.get(model.id);
     if (existingIndex === undefined) existingModels.push(model);
-    else existingModels[existingIndex] = { ...existingModels[existingIndex], ...model };
+    else
+      existingModels[existingIndex] = {
+        ...existingModels[existingIndex],
+        ...model,
+      };
   }
   existing.models = existingModels;
 }
@@ -212,7 +215,9 @@ export function ensureLocalProviderModels(
         );
       }
     } catch (err) {
-      errors.push(`ollama: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(
+        `ollama: ${err instanceof Error ? err.message : String(err)}`,
+      );
       if (isManagedLocalProvider(providers.ollama)) delete providers.ollama;
     }
 

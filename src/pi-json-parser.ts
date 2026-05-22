@@ -93,7 +93,9 @@ function extractAssistantTextDelta(event: unknown): TextDelta | null {
   return null;
 }
 
-function extractAssistantTextDeltaFromPiEvent(event: unknown): TextDelta | null {
+function extractAssistantTextDeltaFromPiEvent(
+  event: unknown,
+): TextDelta | null {
   if (!event || typeof event !== 'object') return null;
   const evt = event as Record<string, unknown>;
   const type = typeof evt.type === 'string' ? evt.type : '';

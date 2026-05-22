@@ -37,7 +37,10 @@ export const TELEGRAM_ADMIN_COMMANDS = [
     command: 'skill_manager',
     description: 'Manage skill lifecycle (stale detection, archiving, backups)',
   },
-  { command: 'librarian', description: 'Knowledge wiki controls (status, lint, capture, run)' },
+  {
+    command: 'librarian',
+    description: 'Knowledge wiki controls (status, lint, capture, run)',
+  },
   { command: 'tasks', description: 'List scheduled tasks' },
   { command: 'knowledge', description: 'Manage knowledge wiki/librarian' },
   { command: 'task_pause', description: 'Pause a task: /task_pause <id>' },

@@ -333,5 +333,10 @@ export interface FileDeliveryResult {
   executedAt: string;
 }
 
-
-export type RunType = 'chat' | 'coding' | 'scheduled' | 'cron' | 'heartbeat' | 'subagent';
+export type RunType =
+  | 'chat'
+  | 'coding'
+  | 'scheduled'
+  | 'cron'
+  | 'heartbeat'
+  | 'subagent';

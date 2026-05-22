@@ -64,11 +64,15 @@ const DEFAULT_TODOS_BODY = [
 ].join('\n');
 
 const DEFAULT_CANONICAL_BODIES: Record<string, string> = {
-  '_hot.md': '# _hot\n\nHigh-priority durable memory retrieved before all other canon.\n',
+  '_hot.md':
+    '# _hot\n\nHigh-priority durable memory retrieved before all other canon.\n',
   'identity.md': '# identity\n\nStable user preferences and profile facts.\n',
-  'constraints.md': '# constraints\n\nStanding hard constraints and prohibitions.\n',
-  'commitments.md': '# commitments\n\nActive long-lived commitments and obligations.\n',
-  'projects.md': '# projects\n\nLong-lived project context and architecture notes.\n',
+  'constraints.md':
+    '# constraints\n\nStanding hard constraints and prohibitions.\n',
+  'commitments.md':
+    '# commitments\n\nActive long-lived commitments and obligations.\n',
+  'projects.md':
+    '# projects\n\nLong-lived project context and architecture notes.\n',
 };
 
 export const DEFAULT_CANONICAL_FILE_NAMES = Object.freeze(

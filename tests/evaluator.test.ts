@@ -64,18 +64,20 @@ describe('shouldEvaluate', () => {
     assert.equal(result.evaluate, false);
   });
 
-  it('evaluates when duration exceeds threshold', () => {
-    const result = shouldEvaluate(ctx({ durationMs: 60_000 }));
+  // These threshold-based tests now use subagent runType since chat/cron/scheduled/heartbeat
+  // always skip evaluation
+  it('evaluates subagent when duration exceeds threshold', () => {
+    const result = shouldEvaluate(ctx({ runType: 'subagent', durationMs: 60_000 }));
     assert.equal(result.evaluate, true);
   });
 
-  it('evaluates when tool count exceeds threshold', () => {
-    const result = shouldEvaluate(ctx({ toolsInvoked: 5 }));
+  it('evaluates subagent when tool count exceeds threshold', () => {
+    const result = shouldEvaluate(ctx({ runType: 'subagent', toolsInvoked: 5 }));
     assert.equal(result.evaluate, true);
   });
 
-  it('evaluates when output length exceeds threshold', () => {
-    const result = shouldEvaluate(ctx({ agentOutput: 'x'.repeat(2000) }));
+  it('evaluates subagent when output length exceeds threshold', () => {
+    const result = shouldEvaluate(ctx({ runType: 'subagent', agentOutput: 'x'.repeat(2000) }));
     assert.equal(result.evaluate, true);
   });
 
@@ -84,7 +86,7 @@ describe('shouldEvaluate', () => {
       ctx({ runType: 'heartbeat', durationMs: 100, toolsInvoked: 0 }),
     );
     assert.equal(result.evaluate, false);
-    assert.match(result.reason, /trivially short/);
+    assert.match(result.reason, /not eligible/);
   });
 
   it('skips short scheduled runs below thresholds', () => {
@@ -101,6 +103,115 @@ describe('shouldEvaluate', () => {
     assert.equal(result.evaluate, false);
   });
 
+  // VAL-EVAL-001: Chat runs always skip evaluator regardless of thresholds or forceEvaluate
+  it('skips chat runs regardless of duration threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'chat', durationMs: 120_000, toolsInvoked: 0, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips chat runs regardless of tool count threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'chat', durationMs: 5_000, toolsInvoked: 10, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips chat runs regardless of output length', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'chat', durationMs: 5_000, toolsInvoked: 0, agentOutput: 'x'.repeat(5000) }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips chat runs even with forceEvaluate', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'chat', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  // VAL-EVAL-002: Scheduled runs always skip evaluator regardless of thresholds
+  it('skips scheduled runs regardless of duration threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'scheduled', durationMs: 120_000, toolsInvoked: 0, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips scheduled runs regardless of tool count threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'scheduled', durationMs: 5_000, toolsInvoked: 10, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips scheduled runs even with forceEvaluate', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'scheduled', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  // VAL-EVAL-003: Cron runs always skip evaluator regardless of thresholds
+  it('skips cron runs regardless of duration threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'cron', durationMs: 120_000, toolsInvoked: 0, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips cron runs regardless of tool count threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'cron', durationMs: 5_000, toolsInvoked: 10, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips cron runs even with forceEvaluate', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'cron', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  // VAL-EVAL-004: Heartbeat runs always skip evaluator regardless of thresholds
+  it('skips heartbeat runs regardless of duration threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'heartbeat', durationMs: 120_000, toolsInvoked: 0, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips heartbeat runs regardless of tool count threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'heartbeat', durationMs: 5_000, toolsInvoked: 10, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  it('skips heartbeat runs even with forceEvaluate', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'heartbeat', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /not eligible/);
+  });
+
+  // VAL-EVAL-005: Coding runs with changed files still trigger evaluation
   it('evaluates coding run with changed files', () => {
     const result = shouldEvaluate(
       ctx({
@@ -125,6 +236,73 @@ describe('shouldEvaluate', () => {
       }),
     );
     assert.equal(result.evaluate, false);
+  });
+
+  // VAL-EVAL-006: Subagent runs subject to threshold-based evaluation
+  it('evaluates subagent run when duration exceeds threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'subagent', durationMs: 60_000, toolsInvoked: 0, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /duration/);
+  });
+
+  it('evaluates subagent run when tool count exceeds threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'subagent', durationMs: 5_000, toolsInvoked: 5, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /tools/);
+  });
+
+  it('evaluates subagent run when output length exceeds threshold', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'subagent', durationMs: 5_000, toolsInvoked: 0, agentOutput: 'x'.repeat(2000) }),
+    );
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /output/);
+  });
+
+  it('skips subagent run below all thresholds', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'subagent', durationMs: 5_000, toolsInvoked: 0, agentOutput: 'short' }),
+    );
+    assert.equal(result.evaluate, false);
+    // Hits the "trivially short run" fast path (all of duration < 15s, tools < 2, output < 500)
+    assert.equal(result.reason, 'trivially short run');
+  });
+
+  it('evaluates subagent run with forceEvaluate', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'subagent', durationMs: 5_000, toolsInvoked: 0, agentOutput: 'short', forceEvaluate: true }),
+    );
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /forced/);
+  });
+
+  // VAL-EVAL-007: Empty output guard preserved for coding and subagent
+  it('skips empty output for coding run type', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'coding', changedFiles: ['src/foo.ts'], agentOutput: '' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /empty/);
+  });
+
+  it('skips whitespace-only output for coding run type', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'coding', changedFiles: ['src/foo.ts'], agentOutput: '   \n  ' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /empty/);
+  });
+
+  it('skips empty output for subagent run type', () => {
+    const result = shouldEvaluate(
+      ctx({ runType: 'subagent', durationMs: 60_000, toolsInvoked: 5, agentOutput: '' }),
+    );
+    assert.equal(result.evaluate, false);
+    assert.match(result.reason, /empty/);
   });
 
   it('includes reason in result', () => {

@@ -98,7 +98,12 @@ export function parseDelegationTrigger(text: string): DelegationParseResult {
     };
   }
 
-  return { hint: 'none', trigger: 'none', instruction: null, projectSlug: null };
+  return {
+    hint: 'none',
+    trigger: 'none',
+    instruction: null,
+    projectSlug: null,
+  };
 }
 
 const CODING_ACTION_PATTERNS = [

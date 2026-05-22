@@ -105,7 +105,10 @@ function normalizeRegisteredGroupFolderName(raw: unknown): string | null {
   return path.basename(trimmed) === trimmed ? trimmed : null;
 }
 
-function resolveRegisteredGroupDirs(dataDir: string, groupsDir: string): string[] {
+function resolveRegisteredGroupDirs(
+  dataDir: string,
+  groupsDir: string,
+): string[] {
   const registeredPath = path.join(dataDir, 'registered_groups.json');
   if (!fs.existsSync(registeredPath)) return [];
 
