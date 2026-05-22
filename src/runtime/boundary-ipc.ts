@@ -140,7 +140,6 @@ export function sanitizeUserFacingVerdictLeak(text: string): string {
   return isInternalEvaluatorVerdictText(text) ? 'verification_failed' : text;
 }
 
-
 export function translateLegacyMessageToHostEvent(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
   registeredGroups: Record<string, RegisteredGroup>,
@@ -160,7 +159,10 @@ export function translateLegacyMessageToHostEvent(
   ) {
     return null;
   }
-  if (payload.type === 'message' && isInternalEvaluatorVerdictText(payload.text)) {
+  if (
+    payload.type === 'message' &&
+    isInternalEvaluatorVerdictText(payload.text)
+  ) {
     return null;
   }
   if (payload.type === 'run_progress') {

@@ -4488,7 +4488,11 @@ function handleLibrarianCommand(params: {
       `- nightly_next_run: ${setup.nightlyTask.nextRun || 'n/a'}`,
     ];
     if (setup.createdPaths.length > 0) {
-      lines.push('', 'Created paths:', ...setup.createdPaths.map((entry) => `- ${entry}`));
+      lines.push(
+        '',
+        'Created paths:',
+        ...setup.createdPaths.map((entry) => `- ${entry}`),
+      );
     }
     if (setup.nightlyTask.skippedReason) {
       lines.push('', `Task setup skipped: ${setup.nightlyTask.skippedReason}`);
@@ -4552,7 +4556,10 @@ function handleLibrarianCommand(params: {
     if (!fs.existsSync(logPath)) return 'librarian: no log file found';
     const content = fs.readFileSync(logPath, 'utf-8');
     const lines = content.split('\n').filter(Boolean).slice(-30);
-    return ['librarian: recent log entries:', ...lines.map((l) => `  ${l}`)].join('\n');
+    return [
+      'librarian: recent log entries:',
+      ...lines.map((l) => `  ${l}`),
+    ].join('\n');
   }
 
   if (action === 'progress') {
@@ -4561,7 +4568,10 @@ function handleLibrarianCommand(params: {
     if (!fs.existsSync(progPath)) return 'librarian: no progress file found';
     const content = fs.readFileSync(progPath, 'utf-8');
     const lines = content.split('\n').filter(Boolean).slice(-15);
-    return ['librarian: recent progress entries:', ...lines.map((l) => `  ${l}`)].join('\n');
+    return [
+      'librarian: recent progress entries:',
+      ...lines.map((l) => `  ${l}`),
+    ].join('\n');
   }
 
   if (action === 'run' || action === 'dry-run') {
@@ -7450,35 +7460,35 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       'auto',
       requestId,
       state.chatRunPreferences[mainChatJid] || {},
-	      { suppressErrorReply: true, isHeartbeatTask: true },
-	      abortController.signal,
-	    );
-	    try {
-	      const checklistPath = writeHeartbeatChecklist({
-	        workspaceDir: MAIN_WORKSPACE_DIR,
-	        requestId,
-	        reason,
-	        result: run.result,
-	        ok: run.ok,
-	        currentTasksPath: path.join(
-	          resolveGroupIpcPath(MAIN_GROUP_FOLDER),
-	          'current_tasks.json',
-	        ),
-	        runtimeLogPath: path.join(process.cwd(), 'logs', 'fft_nano.log'),
-	      });
-	      logger.debug(
-	        { chatJid: mainChatJid, reason, checklistPath },
-	        'Heartbeat checklist written',
-	      );
-	    } catch (err) {
-	      logger.warn(
-	        { err, chatJid: mainChatJid, reason },
-	        'Failed to write heartbeat checklist',
-	      );
-	    }
-	    if (!run.ok) {
-	      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
-	      return;
+      { suppressErrorReply: true, isHeartbeatTask: true },
+      abortController.signal,
+    );
+    try {
+      const checklistPath = writeHeartbeatChecklist({
+        workspaceDir: MAIN_WORKSPACE_DIR,
+        requestId,
+        reason,
+        result: run.result,
+        ok: run.ok,
+        currentTasksPath: path.join(
+          resolveGroupIpcPath(MAIN_GROUP_FOLDER),
+          'current_tasks.json',
+        ),
+        runtimeLogPath: path.join(process.cwd(), 'logs', 'fft_nano.log'),
+      });
+      logger.debug(
+        { chatJid: mainChatJid, reason, checklistPath },
+        'Heartbeat checklist written',
+      );
+    } catch (err) {
+      logger.warn(
+        { err, chatJid: mainChatJid, reason },
+        'Failed to write heartbeat checklist',
+      );
+    }
+    if (!run.ok) {
+      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
+      return;
     }
     updateChatUsage(mainChatJid, run.usage);
     if (run.streamed || !run.result) return;

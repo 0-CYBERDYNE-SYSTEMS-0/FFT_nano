@@ -97,7 +97,9 @@ export function buildHeartbeatChecklist(
   };
 }
 
-export function writeHeartbeatChecklist(input: HeartbeatChecklistInput): string {
+export function writeHeartbeatChecklist(
+  input: HeartbeatChecklistInput,
+): string {
   const checklist = buildHeartbeatChecklist(input);
   const outDir = path.join(input.workspaceDir, 'heartbeat', 'checks');
   fs.mkdirSync(outDir, { recursive: true });

@@ -485,9 +485,7 @@ function selectRecentConversationMessages(params: {
 
 function isInternalAssistantHistoryMessage(message: NewMessage): boolean {
   if (message.is_from_me !== 1) return false;
-  const text = message.content
-    .replace(/^[^:\n]{1,80}:\s*/, '')
-    .trim();
+  const text = message.content.replace(/^[^:\n]{1,80}:\s*/, '').trim();
   if (!text) return false;
   return (
     /^HEARTBEAT_OK$/i.test(text) ||

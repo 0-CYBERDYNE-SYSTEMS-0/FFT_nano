@@ -354,7 +354,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     return parseProviderFromModelLabel(deps.getEffectiveModelLabel(chatJid));
   }
 
-  function formatMaintenanceLabel(label: 'librarian' | 'skill-manager'): string {
+  function formatMaintenanceLabel(
+    label: 'librarian' | 'skill-manager',
+  ): string {
     return label === 'skill-manager' ? 'Skill manager' : 'Librarian';
   }
 
@@ -417,7 +419,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
   }
 
-  function buildLibrarianAgentPrompt(action: 'run' | 'dry-run', input: string): string {
+  function buildLibrarianAgentPrompt(
+    action: 'run' | 'dry-run',
+    input: string,
+  ): string {
     const dryRun = action === 'dry-run';
     return [
       dryRun
@@ -447,7 +452,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       .join('\n');
   }
 
-  function buildSkillManagerAgentPrompt(action: 'run' | 'dry-run', input: string): string {
+  function buildSkillManagerAgentPrompt(
+    action: 'run' | 'dry-run',
+    input: string,
+  ): string {
     const dryRun = action === 'dry-run';
     return [
       dryRun
@@ -2324,7 +2332,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       cmd === '/librarian' ||
       cmd === '/curator'
     ) {
-      const isSkillManager = cmd === '/skill-manager' || cmd === '/skill_manager';
+      const isSkillManager =
+        cmd === '/skill-manager' || cmd === '/skill_manager';
       const isLibrarian = cmd === '/librarian';
       const isDeprecatedCurator = cmd === '/curator';
 
@@ -2339,7 +2348,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
       const action = (rest[0] || 'status').trim().toLowerCase();
       const input = rest.slice(1).join(' ').trim();
-      const auditAction = isDeprecatedCurator ? `${action} (deprecated /curator)` : action;
+      const auditAction = isDeprecatedCurator
+        ? `${action} (deprecated /curator)`
+        : action;
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, auditAction);
 
       if (isDeprecatedCurator) {

@@ -695,9 +695,7 @@ function renderBasePrompt(params: {
     lines.push(
       `Read the task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
     );
-    lines.push(
-      'Task management is handled internally by the host scheduler.',
-    );
+    lines.push('Task management is handled internally by the host scheduler.');
     lines.push('- {"type":"pause_task","taskId":"..."}');
     lines.push('- {"type":"resume_task","taskId":"..."}');
     lines.push('- {"type":"cancel_task","taskId":"..."}');

@@ -81,10 +81,7 @@ export async function applyNonHeartbeatEmptyOutputPolicy(params: {
   if (isAborted?.()) {
     return { finalRun: secondRun, retried: true };
   }
-  if (
-    secondRun.ok &&
-    !hasUserVisibleText(secondRun.result)
-  ) {
+  if (secondRun.ok && !hasUserVisibleText(secondRun.result)) {
     return {
       finalRun: {
         ...secondRun,

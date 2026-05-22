@@ -120,10 +120,7 @@ export function createRunProgressReporter(params: {
         clearHeartbeat();
         return;
       case 'thinking':
-        emitProgress(
-          'thinking',
-          'Coder status: Reasoning about the task.',
-        );
+        emitProgress('thinking', 'Coder status: Reasoning about the task.');
         startHeartbeat('thinking');
         return;
       case 'tool':

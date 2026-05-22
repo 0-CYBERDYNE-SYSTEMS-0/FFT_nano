@@ -276,7 +276,10 @@ export const FFT_NANO_JITTER_FACTOR = (() => {
 })();
 export const FFT_NANO_PROVIDER_FALLBACK_ORDER = (() => {
   const raw = process.env.FFT_NANO_PROVIDER_FALLBACK_ORDER || '';
-  return raw.split(',').map((p) => p.trim()).filter(Boolean);
+  return raw
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
 })();
 export const FFT_NANO_PROVIDER_FALLBACK_ENABLED = envFlag(
   process.env.FFT_NANO_PROVIDER_FALLBACK_ENABLED,

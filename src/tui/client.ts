@@ -667,10 +667,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           ok: boolean;
           text: string;
           reportId?: string;
-        }>(
-          'host.update',
-          {},
-        );
+        }>('host.update', {});
         if (result.ok) {
           chatLog.addSystem(
             [
