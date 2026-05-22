@@ -121,10 +121,7 @@ export interface ChatPipelineDeps {
     previewState: null;
   }>;
   consumeTelegramHostCompletedRun: (chatJid: string, runId: string) => boolean;
-  consumeTelegramHostStreamState: (
-    chatJid: string,
-    runId: string,
-  ) => null;
+  consumeTelegramHostStreamState: (chatJid: string, runId: string) => null;
   resolveTelegramStreamCompletionState: (params: {
     externallyCompleted: boolean;
     previewState: null;
@@ -153,9 +150,7 @@ export interface ChatPipelineDeps {
 export class ChatPipeline implements RunPipeline {
   constructor(private deps: ChatPipelineDeps) {}
 
-  async prepare(
-    request: PipelineDispatchRequest,
-  ): Promise<PreparedRun> {
+  async prepare(request: PipelineDispatchRequest): Promise<PreparedRun> {
     const group = this.deps.state.registeredGroups[request.groupFolder];
     const abortController = request.abortController || new AbortController();
 
@@ -217,9 +212,7 @@ export class ChatPipeline implements RunPipeline {
     );
   }
 
-  async runChatTurn(
-    request: PipelineDispatchRequest,
-  ): Promise<RunOutput> {
+  async runChatTurn(request: PipelineDispatchRequest): Promise<RunOutput> {
     const group = this.deps.state.registeredGroups[request.groupFolder];
     const abortController = request.abortController || new AbortController();
 

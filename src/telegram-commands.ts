@@ -1013,7 +1013,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               toolMode: settingsAction.mode === 'plan' ? 'read_only' : 'full',
               isSubagent: false,
               workspaceMode:
-                settingsAction.mode === 'plan' ? 'read_only' : 'ephemeral_worktree',
+                settingsAction.mode === 'plan'
+                  ? 'read_only'
+                  : 'ephemeral_worktree',
             },
             taskText: settingsAction.taskText,
             workspaceRoot: settingsAction.projectPath,

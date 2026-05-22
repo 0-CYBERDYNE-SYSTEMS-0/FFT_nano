@@ -218,12 +218,17 @@ export async function startTuiGatewayServer(
   logger.info({ host, port, authRequired }, 'TUI gateway server listening');
 
   // Helper to handle incoming message frames
-  function handleMessage(ws: WebSocket, frame: GatewayRequestFrame, isLocal = false): void {
+  function handleMessage(
+    ws: WebSocket,
+    frame: GatewayRequestFrame,
+    isLocal = false,
+  ): void {
     const params = (frame.params || {}) as Record<string, unknown>;
     const sessionKey = getSessionKey(params);
     const chatJid = adapters.resolveChatJid(sessionKey);
     // Local connections skip auth check; WebSocket connections check auth
-    const isAuthenticated = isLocal || !authRequired || authenticatedClients.has(ws);
+    const isAuthenticated =
+      isLocal || !authRequired || authenticatedClients.has(ws);
 
     if (frame.method !== 'connect' && !isAuthenticated) {
       sendFrame(

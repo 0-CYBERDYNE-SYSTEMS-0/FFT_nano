@@ -44,10 +44,13 @@ interface CliOptions {
 class LocalTuiConnection {
   private socket: Socket | null = null;
   private readonly socketPath: string;
-  private readonly pending = new Map<string, {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-  }>();
+  private readonly pending = new Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+    }
+  >();
   private readonly onEvent?: (event: GatewayEventFrame) => void;
   private readonly onClose?: (code: number, reason: string) => void;
   private connected = false;
@@ -131,7 +134,10 @@ class LocalTuiConnection {
     }
   }
 
-  async request<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+  async request<T>(
+    method: string,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
     if (!this.connected || !this.socket) {
       throw new Error('Not connected');
     }
@@ -144,7 +150,10 @@ class LocalTuiConnection {
     };
 
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+      this.pending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      });
       this.socket?.write(JSON.stringify(requestFrame) + '\n', (err) => {
         if (err) {
           this.pending.delete(id);
@@ -481,9 +490,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
       ? `local (${socketPath})`
       : opts.url || DEFAULT_GATEWAY_URL;
     header.setText(
-      theme.header(
-        `FFT_nano TUI · ${modeLabel} · session ${sessionKey}`,
-      ),
+      theme.header(`FFT_nano TUI · ${modeLabel} · session ${sessionKey}`),
     );
   };
 

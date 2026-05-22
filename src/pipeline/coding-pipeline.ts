@@ -43,7 +43,9 @@ export interface CodingPipelineDeps {
     publishEvent: (event: unknown) => void;
     createEphemeralWorktree?: unknown;
     runEvaluatorPass?: unknown;
-  }) => { runTask: (request: CodingWorkerRequest) => Promise<CodingTaskRunResult> };
+  }) => {
+    runTask: (request: CodingWorkerRequest) => Promise<CodingTaskRunResult>;
+  };
   emitTuiChatEvent: (payload: {
     runId: string;
     sessionKey: string;
@@ -93,9 +95,7 @@ export interface CodingPipelineDeps {
 export class CodingPipeline implements RunPipeline {
   constructor(private deps: CodingPipelineDeps) {}
 
-  async prepare(
-    request: PipelineDispatchRequest,
-  ): Promise<PreparedRun> {
+  async prepare(request: PipelineDispatchRequest): Promise<PreparedRun> {
     const abortController = request.abortController || new AbortController();
 
     const activeRunEntry = {
@@ -141,7 +141,9 @@ export class CodingPipeline implements RunPipeline {
 
   async runCodingTask(
     request: PipelineDispatchRequest,
-    orchestrator: { runTask: (request: CodingWorkerRequest) => Promise<CodingTaskRunResult> },
+    orchestrator: {
+      runTask: (request: CodingWorkerRequest) => Promise<CodingTaskRunResult>;
+    },
   ): Promise<RunOutput> {
     const group = this.deps.state.registeredGroups[request.groupFolder];
     const abortController = request.abortController || new AbortController();
@@ -175,7 +177,8 @@ export class CodingPipeline implements RunPipeline {
         sessionKey: request.sessionKey,
         group,
         workspaceRoot: request.workspaceRoot,
-        runtimePrefs: request.runtimePrefs as CodingWorkerRequest['runtimePrefs'],
+        runtimePrefs:
+          request.runtimePrefs as CodingWorkerRequest['runtimePrefs'],
         abortController,
       };
 
@@ -202,11 +205,9 @@ export class CodingPipeline implements RunPipeline {
 
   async deliver(output: RunOutput, prepared: PreparedRun): Promise<void> {
     if (output.result) {
-      await this.deps.sendAgentResultMessage(
-        prepared.chatJid,
-        output.result,
-        { prefixWhatsApp: true },
-      );
+      await this.deps.sendAgentResultMessage(prepared.chatJid, output.result, {
+        prefixWhatsApp: true,
+      });
     }
   }
 }

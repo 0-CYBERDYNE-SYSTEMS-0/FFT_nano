@@ -10,7 +10,10 @@ import { CronPipeline } from './cron-pipeline.js';
 import type { ChatPipelineDeps } from './chat-pipeline.js';
 import type { CodingPipelineDeps } from './coding-pipeline.js';
 import type { CronPipelineDeps } from './cron-pipeline.js';
-import type { CodingWorkerRequest, CodingTaskRunResult } from '../coding-orchestrator.js';
+import type {
+  CodingWorkerRequest,
+  CodingTaskRunResult,
+} from '../coding-orchestrator.js';
 import type { ScheduledTask } from '../types.js';
 
 /**

@@ -43,7 +43,9 @@ function deriveRouteLabel(config: CodingRunConfig): string {
  */
 function deriveEventDetail(config: CodingRunConfig): string {
   const mode = config.toolMode === 'read_only' ? 'plan' : 'execute';
-  return config.isSubagent ? `coding_worker:${mode}:subagent` : `coding_worker:${mode}`;
+  return config.isSubagent
+    ? `coding_worker:${mode}:subagent`
+    : `coding_worker:${mode}`;
 }
 
 export interface CodingWorkerRequest {

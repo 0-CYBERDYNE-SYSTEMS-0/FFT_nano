@@ -75,9 +75,7 @@ export interface CronPipelineDeps {
 export class CronPipeline implements RunPipeline {
   constructor(private deps: CronPipelineDeps) {}
 
-  async prepare(
-    request: PipelineDispatchRequest,
-  ): Promise<PreparedRun> {
+  async prepare(request: PipelineDispatchRequest): Promise<PreparedRun> {
     const abortController = request.abortController || new AbortController();
 
     return {
@@ -155,8 +153,6 @@ export class CronPipeline implements RunPipeline {
 
   async deliver(output: RunOutput, prepared: PreparedRun): Promise<void> {
     // Cron delivery is handled separately in the cron service
-    throw new Error(
-      'CronPipeline.deliver should not be called directly',
-    );
+    throw new Error('CronPipeline.deliver should not be called directly');
   }
 }
