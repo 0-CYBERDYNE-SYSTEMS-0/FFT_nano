@@ -289,11 +289,7 @@ import {
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
 import {
-  runEvaluatorPass,
-  buildRefinementPrompt,
   isActionfulChatTask,
-  canAutoRefineActionfulChatTask,
-  type EvaluatorVerdict,
 } from './evaluator.js';
 import {
   createMessageDispatcher,
@@ -5608,127 +5604,6 @@ async function runAgent(
     });
 
     let finalResult = emptyOutputPolicy.finalRun;
-
-    const logSuppressedEvaluatorFailure = (
-      verdict: EvaluatorVerdict,
-      runType: 'chat',
-      verificationFailureReason?: string,
-    ): void => {
-      logger.warn(
-        {
-          runType,
-          phase: 'blocking',
-          chatJid,
-          requestId,
-          controlPlaneStatus: 'verification_failed',
-          verificationFailureReason,
-          score: verdict.score,
-          issues: verdict.issues,
-          feedback: verdict.feedback,
-        },
-        'verification_failed',
-      );
-    };
-
-    if (
-      shouldBlockForChatEvaluation &&
-      finalResult.ok &&
-      finalResult.result &&
-      abortSignal?.aborted !== true
-    ) {
-      const maxRefinements = 2;
-      let evalTaskText = prompt;
-      let lastFailedVerdict: EvaluatorVerdict | null = null;
-      let verificationFailureReason:
-        | 'unsafe_repair_without_concrete_action'
-        | 'max_refinements'
-        | 'repair_failed'
-        | null = null;
-      const canAutoRefineEvaluation =
-        canAutoRefineActionfulChatTask(evalTaskText);
-
-      for (let attempt = 0; attempt <= maxRefinements; attempt += 1) {
-        const verdict = await runEvaluatorPass({
-          runType: 'chat',
-          originalTask: evalTaskText,
-          agentOutput: finalResult.result || '',
-          durationMs: Date.now() - runAgentStartedAt,
-          toolsInvoked: runToolsInvoked,
-          group,
-          chatJid,
-          isMain,
-          workspaceDir,
-          startedAtMs: runAgentStartedAt,
-          forceEvaluate: true,
-          abortSignal,
-        });
-
-        if (verdict.skipped || verdict.pass) {
-          lastFailedVerdict = null;
-          break;
-        }
-
-        lastFailedVerdict = verdict;
-        if (!canAutoRefineEvaluation) {
-          verificationFailureReason = 'unsafe_repair_without_concrete_action';
-          break;
-        }
-        if (attempt >= maxRefinements) {
-          verificationFailureReason = 'max_refinements';
-          break;
-        }
-
-        const refinedPrompt = buildRefinementPrompt(evalTaskText, verdict);
-        const retryRequestId = requestId
-          ? `${requestId}:eval-${attempt + 1}`
-          : requestId;
-        const refinedOutput = await executeRun(
-          {
-            ...runtimePrefs,
-            nextRunNoContinue: true,
-          },
-          retryRequestId,
-          true,
-          refinedPrompt,
-        );
-
-        if (refinedOutput.status !== 'success' || !refinedOutput.result) {
-          verificationFailureReason = 'repair_failed';
-          break;
-        }
-
-        finalResult = {
-          result: refinedOutput.result,
-          streamed: !!refinedOutput.streamed,
-          ok: true,
-          hadToolSideEffects: refinedOutput.hadToolSideEffects,
-          usage: refinedOutput.usage,
-        };
-        evalTaskText = refinedPrompt;
-      }
-
-      if (lastFailedVerdict) {
-        logSuppressedEvaluatorFailure(
-          lastFailedVerdict,
-          'chat',
-          verificationFailureReason || 'repair_failed',
-        );
-        if (requestId) {
-          statusTelemetry.noteRuntimeError({
-            runId: requestId,
-            chatJid,
-            errorMessage: `verification_failed: ${verificationFailureReason || 'repair_failed'}`,
-          });
-        }
-        finalResult = {
-          ...finalResult,
-          result: null,
-          streamed: false,
-          suppressUserDelivery: true,
-          controlPlaneStatus: 'verification_failed',
-        };
-      }
-    }
 
     if (
       finalResult.ok &&
