@@ -6222,7 +6222,6 @@ function queueTelegramToolProgressUpdate(
         trailEntry,
       );
     }
-    return;
   }
 
   if (

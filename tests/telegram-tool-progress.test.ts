@@ -133,18 +133,25 @@ test('buildTelegramToolProgressMessage keeps a stable header', () => {
   );
 });
 
-test('shouldUseStandaloneTelegramToolProgress is disabled for all delivery modes', () => {
+test('shouldUseStandaloneTelegramToolProgress enables all and verbose modes unless delivery is off', () => {
   assert.equal(
     shouldUseStandaloneTelegramToolProgress({
-      deliveryMode: 'partial',
+      deliveryMode: 'stream',
       verboseMode: 'all',
     }),
-    false,
+    true,
   );
   assert.equal(
     shouldUseStandaloneTelegramToolProgress({
       deliveryMode: 'draft',
-      verboseMode: 'all',
+      verboseMode: 'verbose',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseStandaloneTelegramToolProgress({
+      deliveryMode: 'partial',
+      verboseMode: 'new',
     }),
     false,
   );
@@ -157,24 +164,31 @@ test('shouldUseStandaloneTelegramToolProgress is disabled for all delivery modes
   );
 });
 
-test('shouldUseTelegramPreviewToolTrail is disabled for all delivery modes', () => {
+test('shouldUseTelegramPreviewToolTrail enables all and verbose modes unless delivery is off', () => {
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
       deliveryMode: 'draft',
       verboseMode: 'all',
     }),
-    false,
+    true,
   );
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
-      deliveryMode: 'draft',
+      deliveryMode: 'stream',
       verboseMode: 'verbose',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseTelegramPreviewToolTrail({
+      deliveryMode: 'partial',
+      verboseMode: 'new',
     }),
     false,
   );
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
-      deliveryMode: 'partial',
+      deliveryMode: 'off',
       verboseMode: 'verbose',
     }),
     false,
