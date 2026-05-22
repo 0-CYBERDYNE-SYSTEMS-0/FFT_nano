@@ -22,22 +22,38 @@ import { getCoderLearningsForContext } from './coder-learnings.js';
 import { createRunProgressReporter } from './run-progress.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 
-export type CodingWorkerRoute =
-  | 'coder_execute'
-  | 'coder_plan'
-  | 'auto_execute'
-  | 'subagent_execute'
-  | 'subagent_plan';
+export interface CodingRunConfig {
+  toolMode: 'read_only' | 'full';
+  isSubagent: boolean;
+  workspaceMode: 'ephemeral_worktree' | 'read_only';
+}
+
+/**
+ * Derives a legacy route label string from config for display/telemetry purposes.
+ * This is NOT used for control flow - use config fields directly instead.
+ */
+function deriveRouteLabel(config: CodingRunConfig): string {
+  const prefix = config.isSubagent ? 'subagent' : 'coder';
+  const suffix = config.toolMode === 'read_only' ? 'plan' : 'execute';
+  return `${prefix}_${suffix}`;
+}
+
+/**
+ * Derives a human-readable detail string for host events from config.
+ */
+function deriveEventDetail(config: CodingRunConfig): string {
+  const mode = config.toolMode === 'read_only' ? 'plan' : 'execute';
+  return config.isSubagent ? `coding_worker:${mode}:subagent` : `coding_worker:${mode}`;
+}
 
 export interface CodingWorkerRequest {
   requestId: string;
   parentRequestId?: string;
   mode: 'plan' | 'execute';
-  route: CodingWorkerRoute;
+  config: CodingRunConfig;
   originChatJid: string;
   originGroupFolder: string;
   taskText: string;
-  workspaceMode: 'ephemeral_worktree' | 'read_only';
   timeoutSeconds: number;
   allowFanout: boolean;
   sessionContext: string;
@@ -116,7 +132,7 @@ interface ActiveCodingRunState {
   startedAt: number;
   parentRequestId?: string;
   backend?: 'pi';
-  route?: CodingWorkerRoute;
+  config?: CodingRunConfig;
   state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
   worktreePath?: string;
   childRunIds?: string[];
@@ -200,12 +216,48 @@ interface CoderArtifactManifest {
   schema: 'fft_nano.coder_artifact.v1';
   requestId: string;
   mode: 'plan' | 'execute';
-  route: CodingWorkerRoute;
+  // config is optional for backward compatibility with old manifests that used route
+  config?: CodingRunConfig;
   createdAt: string;
   taskText: string;
   workspaceRoot?: string;
   contractPath?: string;
   qaReportPath?: string;
+}
+
+/**
+ * Legacy route string from old manifest files.
+ * Used only for backward compatibility when reading old manifests.
+ */
+type LegacyRoute =
+  | 'coder_execute'
+  | 'coder_plan'
+  | 'auto_execute'
+  | 'subagent_execute'
+  | 'subagent_plan';
+
+/**
+ * Checks if a manifest is a legacy format with route instead of config.
+ */
+function isLegacyManifest(
+  manifest: CoderArtifactManifest,
+): manifest is CoderArtifactManifest & { route: LegacyRoute } {
+  return (
+    'route' in manifest &&
+    typeof manifest.route === 'string' &&
+    !('config' in manifest)
+  );
+}
+
+/**
+ * Derives CodingRunConfig from a legacy route string for backward compatibility.
+ */
+function configFromLegacyRoute(route: LegacyRoute): CodingRunConfig {
+  return {
+    toolMode: route.endsWith('_plan') ? 'read_only' : 'full',
+    isSubagent: route.startsWith('subagent_'),
+    workspaceMode: route.endsWith('_plan') ? 'read_only' : 'ephemeral_worktree',
+  };
 }
 
 interface LatestPlanContract {
@@ -315,7 +367,7 @@ function buildPlanContractArtifact(params: {
     '',
     '## Metadata',
     `- request_id: ${params.request.requestId}`,
-    `- route: ${params.request.route}`,
+    `- route: ${deriveRouteLabel(params.request.config)}`,
     `- mode: ${params.request.mode}`,
     `- workspace_root: ${params.request.workspaceRoot || '(default)'}`,
     `- started_at: ${params.startedAt}`,
@@ -390,7 +442,7 @@ function formatQaReport(params: {
     '',
     '## Metadata',
     `- request_id: ${params.request.requestId}`,
-    `- route: ${params.request.route}`,
+    `- route: ${deriveRouteLabel(params.request.config)}`,
     `- started_at: ${params.startedAt}`,
     `- finished_at: ${params.finishedAt}`,
     `- refinements: ${params.refinements}`,
@@ -465,7 +517,7 @@ function buildWorkerPrompt(
     'This is a host-managed worker run. Do the engineering work directly; do not claim delegation.',
     '',
     '## Worker Contract',
-    `- route: ${request.route}`,
+    `- route: ${deriveRouteLabel(request.config)}`,
     `- mode: ${request.mode}`,
     `- allow_fanout: ${request.allowFanout ? 'true' : 'false'}`,
     `- parent_request_id: ${request.parentRequestId || 'none'}`,
@@ -519,10 +571,6 @@ function buildWorkerPrompt(
   }
 
   return lines.join('\n');
-}
-
-function isSubagentRoute(route: CodingWorkerRoute): boolean {
-  return route === 'subagent_execute' || route === 'subagent_plan';
 }
 
 function createWorkerErrorResult(
@@ -913,7 +961,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       startedAt: Date.now(),
       parentRequestId: request.parentRequestId,
       backend: 'pi',
-      route: request.route,
+      config: request.config,
       state: 'starting',
       childRunIds,
       abortController: request.abortController,
@@ -928,7 +976,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       runId: request.requestId,
       sessionKey: request.sessionKey,
       chatJid: request.originChatJid,
-      detail: `coding_worker:${request.route}`,
+      detail: deriveEventDetail(request.config),
     });
 
     const cleanupWorktree = async () => {
@@ -979,7 +1027,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         writeCoderManifest(request, {
           requestId: request.requestId,
           mode: request.mode,
-          route: request.route,
+          config: request.config,
           createdAt: startedAt,
           taskText: request.taskText,
           workspaceRoot: request.workspaceRoot,
@@ -1005,12 +1053,12 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           groupFolder: request.group.folder,
           chatJid: request.originChatJid,
           isMain: request.group.folder === request.originGroupFolder,
-          isSubagent: isSubagentRoute(request.route),
+          isSubagent: request.config.isSubagent,
           assistantName: request.assistantName,
           requestId: request.requestId,
           codingHint: 'none',
           noContinue: true,
-          toolMode: request.mode === 'plan' ? 'read_only' : 'full',
+          toolMode: request.config.toolMode,
           workspaceDirOverride,
           provider: request.runtimePrefs?.provider,
           model: request.runtimePrefs?.model,
@@ -1025,9 +1073,9 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
                 schema: 'fft_nano.coding_worker_request.v1',
                 requestId: request.requestId,
                 parentRequestId: request.parentRequestId || null,
-                route: request.route,
+                route: deriveRouteLabel(request.config),
                 mode: request.mode,
-                workspaceMode: request.workspaceMode,
+                workspaceMode: request.config.workspaceMode,
                 timeoutSeconds: request.timeoutSeconds,
                 allowFanout: request.allowFanout,
                 contractPath: contractPath || null,
@@ -1103,7 +1151,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         writeCoderManifest(request, {
           requestId: request.requestId,
           mode: request.mode,
-          route: request.route,
+          config: request.config,
           createdAt: startedAt,
           taskText: request.taskText,
           workspaceRoot: request.workspaceRoot,
@@ -1158,7 +1206,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           evalAttempt += 1
         ) {
           const verdict = await runEvaluatorPass({
-            runType: isSubagentRoute(request.route) ? 'subagent' : 'coding',
+            runType: request.config.isSubagent ? 'subagent' : 'coding',
             originalTask: evalTaskText,
             agentOutput: evalOutput.result ?? '',
             durationMs: Date.now() - new Date(startedAt).getTime(),
@@ -1191,7 +1239,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
               groupFolder: request.group.folder,
               chatJid: request.originChatJid,
               isMain: request.group.folder === request.originGroupFolder,
-              isSubagent: isSubagentRoute(request.route),
+              isSubagent: request.config.isSubagent,
               assistantName: request.assistantName,
               requestId: request.requestId,
               codingHint: 'none',
@@ -1250,7 +1298,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           writeCoderManifest(request, {
             requestId: request.requestId,
             mode: request.mode,
-            route: request.route,
+            config: request.config,
             createdAt: startedAt,
             taskText: request.taskText,
             workspaceRoot: request.workspaceRoot,
@@ -1291,7 +1339,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         runId: request.requestId,
         sessionKey: request.sessionKey,
         chatJid: request.originChatJid,
-        detail: `coding_worker:${request.route}`,
+        detail: deriveEventDetail(request.config),
       });
       return {
         ok: true,

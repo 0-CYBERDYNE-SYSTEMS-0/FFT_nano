@@ -3637,7 +3637,7 @@ function formatStatusText(chatJid?: string): string {
       startedAt: run.startedAt,
       parentRequestId: run.parentRequestId,
       backend: run.backend,
-      route: run.route,
+      config: run.config,
       state: run.state,
       worktreePath: run.worktreePath,
     })),
