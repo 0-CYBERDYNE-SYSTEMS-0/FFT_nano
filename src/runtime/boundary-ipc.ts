@@ -60,28 +60,6 @@ export function wrapLegacyMessageEnvelope(
   };
 }
 
-export function wrapLegacyTaskEnvelope(
-  payload: unknown,
-  sourceGroup: string,
-  createdAt = new Date().toISOString(),
-): BoundaryEnvelope<Record<string, unknown>> | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const raw = payload as Record<string, unknown>;
-  if (typeof raw.type !== 'string' || !raw.type.trim()) return null;
-  const requestId =
-    typeof raw.taskId === 'string' && raw.taskId.trim()
-      ? raw.taskId.trim()
-      : undefined;
-  return {
-    id: createEnvelopeId('task', sourceGroup, requestId, createdAt),
-    kind: 'task',
-    createdAt,
-    sourceGroup,
-    requestId,
-    payload: raw,
-  };
-}
-
 export function wrapLegacyActionEnvelope(
   payload: FarmActionRequest | MemoryActionRequest | SkillActionRequest,
   sourceGroup: string,
@@ -162,7 +140,6 @@ export function sanitizeUserFacingVerdictLeak(text: string): string {
   return isInternalEvaluatorVerdictText(text) ? 'verification_failed' : text;
 }
 
-
 export function translateLegacyMessageToHostEvent(
   envelope: BoundaryEnvelope<Record<string, unknown>>,
   registeredGroups: Record<string, RegisteredGroup>,
@@ -182,7 +159,10 @@ export function translateLegacyMessageToHostEvent(
   ) {
     return null;
   }
-  if (payload.type === 'message' && isInternalEvaluatorVerdictText(payload.text)) {
+  if (
+    payload.type === 'message' &&
+    isInternalEvaluatorVerdictText(payload.text)
+  ) {
     return null;
   }
   if (payload.type === 'run_progress') {

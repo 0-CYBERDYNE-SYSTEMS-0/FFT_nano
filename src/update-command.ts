@@ -181,7 +181,10 @@ function writeUpdateLock(lockFile: string, record: UpdateLockRecord): void {
   fs.renameSync(tempFile, lockFile);
 }
 
-function tryAcquireUpdateLock(cwd: string, reportId?: string): {
+function tryAcquireUpdateLock(
+  cwd: string,
+  reportId?: string,
+): {
   ok: boolean;
   lockFile: string;
   reason?: string;
@@ -195,7 +198,8 @@ function tryAcquireUpdateLock(cwd: string, reportId?: string): {
   const existing = readUpdateLock(lockFile);
   if (existing) {
     const startedMs = Date.parse(existing.startedAt);
-    const staleByTime = Number.isFinite(startedMs) && nowMs - startedMs > staleMs;
+    const staleByTime =
+      Number.isFinite(startedMs) && nowMs - startedMs > staleMs;
     const alive = isPidAlive(existing.pid);
     if (!alive || staleByTime) {
       try {
@@ -385,7 +389,9 @@ export function runUpdateCommand(
 
     const branch = runRaw('git', ['symbolic-ref', '--short', 'HEAD']);
     const currentBranch =
-      branch.status === 0 && branch.stdout?.trim() ? branch.stdout.trim() : null;
+      branch.status === 0 && branch.stdout?.trim()
+        ? branch.stdout.trim()
+        : null;
     const pullArgs = currentBranch
       ? ['pull', '--ff-only', 'origin', currentBranch]
       : ['pull', '--ff-only'];
@@ -407,7 +413,11 @@ export function runUpdateCommand(
         );
       }
 
-      const drop = runStep('git stash drop', 'git', ['stash', 'drop', stashRef]);
+      const drop = runStep('git stash drop', 'git', [
+        'stash',
+        'drop',
+        stashRef,
+      ]);
       if (!drop.ok) {
         outputLines.push(
           `Warning: local changes were reapplied, but ${stashRef} could not be dropped. You may drop it manually after inspection.`,

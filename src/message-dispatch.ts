@@ -258,16 +258,14 @@ export interface MessageDispatcherDeps {
     requestId: string;
     parentRequestId?: string;
     mode: 'plan' | 'execute';
-    route:
-      | 'coder_execute'
-      | 'coder_plan'
-      | 'auto_execute'
-      | 'subagent_execute'
-      | 'subagent_plan';
+    config: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     originChatJid: string;
     originGroupFolder: string;
     taskText: string;
-    workspaceMode: 'ephemeral_worktree' | 'read_only';
     timeoutSeconds: number;
     allowFanout: boolean;
     sessionContext: string;
@@ -485,9 +483,7 @@ function selectRecentConversationMessages(params: {
 
 function isInternalAssistantHistoryMessage(message: NewMessage): boolean {
   if (message.is_from_me !== 1) return false;
-  const text = message.content
-    .replace(/^[^:\n]{1,80}:\s*/, '')
-    .trim();
+  const text = message.content.replace(/^[^:\n]{1,80}:\s*/, '').trim();
   if (!text) return false;
   return (
     /^HEARTBEAT_OK$/i.test(text) ||
@@ -1079,22 +1075,20 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
     try {
       try {
+        const isPlan = params.codingHint === 'force_delegate_plan';
         const run: RunCompletion =
           params.route === 'coding_worker' && deps.runCodingTask
             ? await deps.runCodingTask({
                 requestId: params.requestId,
-                mode:
-                  params.codingHint === 'force_delegate_plan'
-                    ? 'plan'
-                    : 'execute',
-                route: params.codingRoute || 'auto_execute',
+                mode: isPlan ? 'plan' : 'execute',
+                config: {
+                  toolMode: isPlan ? 'read_only' : 'full',
+                  isSubagent: false,
+                  workspaceMode: isPlan ? 'read_only' : 'ephemeral_worktree',
+                },
                 originChatJid: params.chatJid,
                 originGroupFolder: params.group.folder,
                 taskText: params.delegationInstruction || params.latestUserText,
-                workspaceMode:
-                  params.codingHint === 'force_delegate_plan'
-                    ? 'read_only'
-                    : 'ephemeral_worktree',
                 timeoutSeconds: 1800,
                 allowFanout:
                   params.codingRoute === 'coder_execute' ||

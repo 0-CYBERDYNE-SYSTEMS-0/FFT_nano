@@ -22,12 +22,11 @@ export interface ActiveCoderRun {
   watchdogAbortAt?: number;
   parentRequestId?: string;
   backend?: 'pi';
-  route?:
-    | 'coder_execute'
-    | 'coder_plan'
-    | 'auto_execute'
-    | 'subagent_execute'
-    | 'subagent_plan';
+  config?: {
+    toolMode: 'read_only' | 'full';
+    isSubagent: boolean;
+    workspaceMode: 'ephemeral_worktree' | 'read_only';
+  };
   state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
   worktreePath?: string;
   childRunIds?: string[];

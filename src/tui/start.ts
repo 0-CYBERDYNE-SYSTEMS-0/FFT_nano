@@ -32,9 +32,14 @@ async function main(): Promise<void> {
     ? ['src/tui/client.ts', ...process.argv.slice(2)]
     : ['dist/tui/client.js', ...process.argv.slice(2)];
 
+  const clientEnv = {
+    ...process.env,
+    FFT_NANO_TUI_LOCAL: process.env.FFT_NANO_TUI_LOCAL || '0',
+  };
+
   const client = spawn(clientCmd, clientArgs, {
     cwd: projectDir,
-    env: process.env,
+    env: clientEnv,
     stdio: 'inherit',
   });
 

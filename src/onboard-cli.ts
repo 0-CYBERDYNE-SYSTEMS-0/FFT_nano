@@ -405,7 +405,10 @@ function renderSoul(operator: string, assistantName: string): string {
   ].join('\n');
 }
 
-function renderMissionControlTodo(operator: string, assistantName: string): string {
+function renderMissionControlTodo(
+  operator: string,
+  assistantName: string,
+): string {
   return [
     '# TODOS.md = MISSION CONTROL: Onboarding',
     '',
@@ -466,9 +469,7 @@ function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
   ) {
     return true;
   }
-  if (
-    /You are FarmFriend: an agricultural assistant\./i.test(existingBody)
-  ) {
+  if (/You are FarmFriend: an agricultural assistant\./i.test(existingBody)) {
     return true;
   }
   return false;
@@ -863,8 +864,7 @@ export async function runOnboarding(
           ? String(wizard.gatewayPort)
           : undefined,
       CONTAINER_RUNTIME: wizard.runtime,
-      FFT_NANO_ALLOW_HOST_RUNTIME:
-        wizard.runtime === 'host' ? '1' : undefined,
+      FFT_NANO_ALLOW_HOST_RUNTIME: wizard.runtime === 'host' ? '1' : undefined,
     };
     ensureAdminSecret(updates, envMap);
 

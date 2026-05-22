@@ -62,6 +62,15 @@ export function shouldEvaluate(ctx: EvaluatorContext): {
     return { evaluate: false, reason: 'empty output' };
   }
 
+  // Only coding and subagent runs are eligible for evaluation
+  // chat, cron, scheduled, and heartbeat always skip
+  if (ctx.runType !== 'coding' && ctx.runType !== 'subagent') {
+    return {
+      evaluate: false,
+      reason: `${ctx.runType} run type not eligible for evaluation`,
+    };
+  }
+
   if (ctx.runType === 'coding' && (ctx.changedFiles?.length ?? 0) > 0) {
     return { evaluate: true, reason: 'coding run with changed files' };
   }

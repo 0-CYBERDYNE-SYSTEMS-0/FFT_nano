@@ -19,6 +19,9 @@ import('./skill-manager-cli.js')
     process.argv = originalArgv;
   })
   .catch((err) => {
-    console.error('skill-curator-cli: failed to load skill-manager-cli:', err.message);
+    console.error(
+      'skill-curator-cli: failed to load skill-manager-cli:',
+      err.message,
+    );
     process.exit(1);
   });

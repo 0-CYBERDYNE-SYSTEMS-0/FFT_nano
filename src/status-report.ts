@@ -94,12 +94,11 @@ export interface FormatStatusReportParams {
     startedAt: number;
     parentRequestId?: string;
     backend?: 'pi';
-    route?:
-      | 'coder_execute'
-      | 'coder_plan'
-      | 'auto_execute'
-      | 'subagent_execute'
-      | 'subagent_plan';
+    config?: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
     worktreePath?: string;
   }>;
@@ -307,8 +306,8 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
   const incidents = params.telemetry.incidents;
   const runProgressByRunId = params.telemetry.progressByRunId;
 
-  const subagentRuns = params.activeCoderRuns.filter((run) =>
-    (run.route || '').startsWith('subagent_'),
+  const subagentRuns = params.activeCoderRuns.filter(
+    (run) => run.config?.isSubagent === true,
   ).length;
   const coderRuns = params.activeCoderRuns.length - subagentRuns;
 

@@ -142,7 +142,9 @@ export function resolveCompactionDateKey(timestampIso: string): string {
     : getLocalDateKey(timestamp, TIMEZONE);
 }
 
-export function resolveCompactionMemoryRelativePath(timestampIso: string): string {
+export function resolveCompactionMemoryRelativePath(
+  timestampIso: string,
+): string {
   const timestamp = new Date(timestampIso);
   return Number.isNaN(timestamp.getTime())
     ? `memory/${timestampIso.slice(0, 10)}.md`

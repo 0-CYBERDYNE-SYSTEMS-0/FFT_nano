@@ -265,16 +265,14 @@ export interface TelegramCommandDeps {
     requestId: string;
     parentRequestId?: string;
     mode: 'plan' | 'execute';
-    route:
-      | 'coder_execute'
-      | 'coder_plan'
-      | 'auto_execute'
-      | 'subagent_execute'
-      | 'subagent_plan';
+    config: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     originChatJid: string;
     originGroupFolder: string;
     taskText: string;
-    workspaceMode: 'ephemeral_worktree' | 'read_only';
     timeoutSeconds: number;
     allowFanout: boolean;
     sessionContext: string;
@@ -354,7 +352,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     return parseProviderFromModelLabel(deps.getEffectiveModelLabel(chatJid));
   }
 
-  function formatMaintenanceLabel(label: 'librarian' | 'skill-manager'): string {
+  function formatMaintenanceLabel(
+    label: 'librarian' | 'skill-manager',
+  ): string {
     return label === 'skill-manager' ? 'Skill manager' : 'Librarian';
   }
 
@@ -417,7 +417,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
   }
 
-  function buildLibrarianAgentPrompt(action: 'run' | 'dry-run', input: string): string {
+  function buildLibrarianAgentPrompt(
+    action: 'run' | 'dry-run',
+    input: string,
+  ): string {
     const dryRun = action === 'dry-run';
     return [
       dryRun
@@ -447,7 +450,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       .join('\n');
   }
 
-  function buildSkillManagerAgentPrompt(action: 'run' | 'dry-run', input: string): string {
+  function buildSkillManagerAgentPrompt(
+    action: 'run' | 'dry-run',
+    input: string,
+  ): string {
     const dryRun = action === 'dry-run';
     return [
       dryRun
@@ -721,7 +727,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     chatJid: string;
     requestId: string;
     mode: 'plan' | 'execute';
-    route: 'coder_execute' | 'coder_plan';
+    config: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     taskText: string;
     workspaceRoot: string;
     projectLabel: string;
@@ -777,12 +787,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         ? await deps.runCodingTask({
             requestId: params.requestId,
             mode: params.mode,
-            route: params.route,
+            config: params.config,
             originChatJid: params.chatJid,
             originGroupFolder: group.folder,
             taskText: params.taskText,
-            workspaceMode:
-              params.mode === 'plan' ? 'read_only' : 'ephemeral_worktree',
             timeoutSeconds: 1800,
             allowFanout: params.mode === 'execute',
             sessionContext: `[APPROVED CODER ${params.mode.toUpperCase()} REQUEST]\n${params.taskText}`,
@@ -940,10 +948,17 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             mode:
               settingsAction.kind === 'coder-approve-plan' ? 'plan' : 'execute',
-            route:
-              settingsAction.kind === 'coder-approve-plan'
-                ? 'coder_plan'
-                : 'coder_execute',
+            config: {
+              toolMode:
+                settingsAction.kind === 'coder-approve-plan'
+                  ? 'read_only'
+                  : 'full',
+              isSubagent: false,
+              workspaceMode:
+                settingsAction.kind === 'coder-approve-plan'
+                  ? 'read_only'
+                  : 'ephemeral_worktree',
+            },
             taskText: prepared.taskText,
             workspaceRoot: prepared.workspaceRoot,
             projectLabel: prepared.projectLabel,
@@ -994,8 +1009,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             chatJid: q.chatJid,
             requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             mode: settingsAction.mode,
-            route:
-              settingsAction.mode === 'plan' ? 'coder_plan' : 'coder_execute',
+            config: {
+              toolMode: settingsAction.mode === 'plan' ? 'read_only' : 'full',
+              isSubagent: false,
+              workspaceMode:
+                settingsAction.mode === 'plan'
+                  ? 'read_only'
+                  : 'ephemeral_worktree',
+            },
             taskText: settingsAction.taskText,
             workspaceRoot: settingsAction.projectPath,
             projectLabel: settingsAction.projectLabel,
@@ -1021,7 +1042,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               chatJid: q.chatJid,
               requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               mode: 'plan',
-              route: 'coder_plan',
+              config: {
+                toolMode: 'read_only',
+                isSubagent: false,
+                workspaceMode: 'read_only',
+              },
               taskText: settingsAction.taskText,
               workspaceRoot: created.workspaceRoot,
               projectLabel: created.projectLabel,
@@ -1032,7 +1057,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             chatJid: q.chatJid,
             requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             mode: 'plan',
-            route: 'coder_plan',
+            config: {
+              toolMode: 'read_only',
+              isSubagent: false,
+              workspaceMode: 'read_only',
+            },
             taskText: settingsAction.taskText,
             workspaceRoot: created.workspaceRoot,
             projectLabel: created.projectLabel,
@@ -2324,7 +2353,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       cmd === '/librarian' ||
       cmd === '/curator'
     ) {
-      const isSkillManager = cmd === '/skill-manager' || cmd === '/skill_manager';
+      const isSkillManager =
+        cmd === '/skill-manager' || cmd === '/skill_manager';
       const isLibrarian = cmd === '/librarian';
       const isDeprecatedCurator = cmd === '/curator';
 
@@ -2339,7 +2369,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
       const action = (rest[0] || 'status').trim().toLowerCase();
       const input = rest.slice(1).join(' ').trim();
-      const auditAction = isDeprecatedCurator ? `${action} (deprecated /curator)` : action;
+      const auditAction = isDeprecatedCurator
+        ? `${action} (deprecated /curator)`
+        : action;
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, auditAction);
 
       if (isDeprecatedCurator) {
@@ -2790,11 +2822,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             ? await deps.runCodingTask({
                 requestId,
                 mode: 'execute',
-                route: 'subagent_execute',
+                config: {
+                  toolMode: 'full',
+                  isSubagent: true,
+                  workspaceMode: 'ephemeral_worktree',
+                },
                 originChatJid: m.chatJid,
                 originGroupFolder: group.folder,
                 taskText: task,
-                workspaceMode: 'ephemeral_worktree',
                 timeoutSeconds: 1800,
                 allowFanout: false,
                 sessionContext: `[SUBAGENT EXECUTE REQUEST]\n${task}`,

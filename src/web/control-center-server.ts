@@ -603,7 +603,10 @@ export async function startWebControlCenterServer(
           return;
         }
         if (!adapters.applyOnboardingConfig) {
-          sendJson(res, 404, { ok: false, error: 'Onboarding config API unavailable' });
+          sendJson(res, 404, {
+            ok: false,
+            error: 'Onboarding config API unavailable',
+          });
           return;
         }
         try {

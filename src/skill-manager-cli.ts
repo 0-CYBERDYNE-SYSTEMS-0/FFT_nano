@@ -25,7 +25,11 @@ function usage(): string {
   ].join('\n');
 }
 
-function parseArgs(argv: string[]): { command: string; rest: string[]; group: string } {
+function parseArgs(argv: string[]): {
+  command: string;
+  rest: string[];
+  group: string;
+} {
   const rest: string[] = [];
   let group = MAIN_GROUP_FOLDER;
   for (let i = 0; i < argv.length; i += 1) {
@@ -125,7 +129,11 @@ function runBackup(group: string): void {
     reason: 'manual backup',
     keep: curatorConfig().backupKeep,
   });
-  console.log(snap ? `skill-manager: backup created at ${snap}` : 'skill-manager: no skills directory to back up');
+  console.log(
+    snap
+      ? `skill-manager: backup created at ${snap}`
+      : 'skill-manager: no skills directory to back up',
+  );
 }
 
 async function main(): Promise<void> {
@@ -180,8 +188,10 @@ async function main(): Promise<void> {
 
   if (command === 'pin') return runSkillAction(group, 'skill_pin', skill);
   if (command === 'unpin') return runSkillAction(group, 'skill_unpin', skill);
-  if (command === 'archive') return runSkillAction(group, 'skill_archive', skill);
-  if (command === 'restore') return runSkillAction(group, 'skill_restore', skill);
+  if (command === 'archive')
+    return runSkillAction(group, 'skill_archive', skill);
+  if (command === 'restore')
+    return runSkillAction(group, 'skill_restore', skill);
 
   console.error(`Unknown skill-manager command: ${command}`);
   console.error(usage());
@@ -190,21 +200,28 @@ async function main(): Promise<void> {
 
 // Legacy alias — print deprecation warning then run the new command
 async function legacyCuratorMain(): Promise<void> {
-  console.error('WARNING: "fft curator" is deprecated. Use "fft skill-manager" instead.');
-  console.error('The /curator Telegram command is also deprecated. Use /skill-manager.\n');
+  console.error(
+    'WARNING: "fft curator" is deprecated. Use "fft skill-manager" instead.',
+  );
+  console.error(
+    'The /curator Telegram command is also deprecated. Use /skill-manager.\n',
+  );
   await main();
 }
 
 const isLegacy = process.argv[1] === 'curator';
 if (isLegacy) {
-  void legacyCuratorMain()
-    .catch((err) => {
-      console.error(err instanceof Error ? err.stack || err.message : String(err));
-      process.exit(1);
-    });
+  void legacyCuratorMain().catch((err) => {
+    console.error(
+      err instanceof Error ? err.stack || err.message : String(err),
+    );
+    process.exit(1);
+  });
 } else {
   main().catch((err) => {
-    console.error(err instanceof Error ? err.stack || err.message : String(err));
+    console.error(
+      err instanceof Error ? err.stack || err.message : String(err),
+    );
     process.exit(1);
   });
 }
