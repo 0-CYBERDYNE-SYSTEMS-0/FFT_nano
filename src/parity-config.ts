@@ -194,11 +194,11 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
     persistLatestManifest: true,
     manifestPerRequestInDebugOnly: true,
     preflightRebaseEnabled: true,
-    softTokenThreshold: 48_000,
-    hardTokenThreshold: 64_000,
-    skillCatalogMaxChars: 6_000,
-    recentConversationMaxMessages: 8,
-    recentConversationMaxChars: 4_000,
+    softTokenThreshold: 120_000,
+    hardTokenThreshold: 160_000,
+    skillCatalogMaxChars: 20_000,
+    recentConversationMaxMessages: 50,
+    recentConversationMaxChars: 16_000,
   },
 };
 
@@ -405,15 +405,15 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
   );
   merged.prompt.softTokenThreshold = Math.max(
     1,
-    Number(merged.prompt.softTokenThreshold) || 48_000,
+    Number(merged.prompt.softTokenThreshold) || 120_000,
   );
   merged.prompt.hardTokenThreshold = Math.max(
     merged.prompt.softTokenThreshold,
-    Number(merged.prompt.hardTokenThreshold) || 64_000,
+    Number(merged.prompt.hardTokenThreshold) || 160_000,
   );
   merged.prompt.skillCatalogMaxChars = Math.max(
     500,
-    Number(merged.prompt.skillCatalogMaxChars) || 6_000,
+    Number(merged.prompt.skillCatalogMaxChars) || 20_000,
   );
   merged.prompt.recentConversationMaxMessages = Math.max(
     1,

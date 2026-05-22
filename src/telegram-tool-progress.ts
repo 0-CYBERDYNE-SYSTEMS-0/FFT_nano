@@ -142,14 +142,20 @@ export function shouldUseTelegramPreviewToolTrail(params: {
   deliveryMode: TelegramDeliveryMode;
   verboseMode: VerboseMode;
 }): boolean {
-  return false;
+  return (
+    params.deliveryMode !== 'off' &&
+    (params.verboseMode === 'all' || params.verboseMode === 'verbose')
+  );
 }
 
 export function shouldUseStandaloneTelegramToolProgress(params: {
   deliveryMode: TelegramDeliveryMode;
   verboseMode: VerboseMode;
 }): boolean {
-  return false;
+  return (
+    params.deliveryMode !== 'off' &&
+    (params.verboseMode === 'all' || params.verboseMode === 'verbose')
+  );
 }
 
 export function buildTelegramPreviewToolTrailEntry(
