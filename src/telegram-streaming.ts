@@ -219,6 +219,10 @@ class BaseTelegramStreamRegistry {
     this.completedRuns.set(runKey, now);
   }
 
+  isCompleted(runKey: string): boolean {
+    return this.completedRuns.has(runKey);
+  }
+
   consumeCompleted(runKey: string): boolean {
     const had = this.completedRuns.has(runKey);
     if (had) this.completedRuns.delete(runKey);
@@ -275,6 +279,9 @@ export async function updateTelegramPreview(params: {
 }> {
   const runKey = getTelegramPreviewRunKey(params.chatJid, params.requestId);
   params.registry.prune();
+  if (params.registry.isCompleted(runKey)) {
+    return { runKey, sent: false, disabled: true };
+  }
   if (params.registry.isDisabled(runKey)) {
     return { runKey, sent: false, disabled: true };
   }
@@ -369,6 +376,9 @@ export async function updateTelegramDraftPreview(params: {
 }> {
   const runKey = getTelegramPreviewRunKey(params.chatJid, params.requestId);
   params.registry.prune();
+  if (params.registry.isCompleted(runKey)) {
+    return { runKey, sent: false, disabled: true };
+  }
   if (params.registry.isDisabled(runKey)) {
     return { runKey, sent: false, disabled: true };
   }

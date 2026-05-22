@@ -6284,6 +6284,15 @@ function consumeTelegramHostAttemptCompletions(
   return completed;
 }
 
+function noteTelegramHostAttemptCompletions(
+  chatJid: string,
+  requestId: string,
+): void {
+  for (const streamKey of getTelegramHostAttemptStreamKeys(chatJid, requestId)) {
+    telegramPreviewRegistry.noteCompleted(streamKey);
+  }
+}
+
 function pruneTelegramHostStreamedRuns(): void {
   telegramPreviewRegistry.prune();
 }
@@ -6344,6 +6353,7 @@ async function prepareTelegramCompletionState(params: {
     consumeTelegramHostAttemptCompletions(params.chatJid, params.runId);
     consumeTelegramHostAttemptPreviewStates(params.chatJid, params.runId);
     consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
+    noteTelegramHostAttemptCompletions(params.chatJid, params.runId);
     return {
       externallyCompleted: false,
       previewState: null,
@@ -6352,24 +6362,29 @@ async function prepareTelegramCompletionState(params: {
 
   if (deliveryMode === 'draft' && canUseTelegramNativeDraft(params.chatJid)) {
     consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
+    const externallyCompleted = consumeTelegramHostAttemptCompletions(
+      params.chatJid,
+      params.runId,
+    );
+    noteTelegramHostAttemptCompletions(params.chatJid, params.runId);
     return {
-      externallyCompleted: consumeTelegramHostAttemptCompletions(
-        params.chatJid,
-        params.runId,
-      ),
+      externallyCompleted,
       previewState: null,
     };
   }
 
+  const externallyCompleted = consumeTelegramHostAttemptCompletions(
+    params.chatJid,
+    params.runId,
+  );
+  const previewState = consumeTelegramHostAttemptPreviewStates(
+    params.chatJid,
+    params.runId,
+  );
+  noteTelegramHostAttemptCompletions(params.chatJid, params.runId);
   return {
-    externallyCompleted: consumeTelegramHostAttemptCompletions(
-      params.chatJid,
-      params.runId,
-    ),
-    previewState: consumeTelegramHostAttemptPreviewStates(
-      params.chatJid,
-      params.runId,
-    ),
+    externallyCompleted,
+    previewState,
   };
 }
 
