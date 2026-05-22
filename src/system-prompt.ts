@@ -693,16 +693,10 @@ function renderBasePrompt(params: {
     lines.push('');
     lines.push('## Scheduler IPC');
     lines.push(
-      `To manage tasks, write JSON into ${params.paths.ipcDir}/tasks/*.json with one of:`,
+      `Read the task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
     );
     lines.push(
-      '- v2: {"type":"schedule_task","prompt":"...","schedule":{"kind":"cron|every|at",...},"session_target":"main|isolated","wake_mode":"next-heartbeat|now","delivery":{"mode":"none|announce|webhook","to":"<jid?>","webhookUrl":"https://..."},"timeout_seconds":120,"stagger_ms":2500,"delete_after_run":false,"context_mode":"group|isolated","groupFolder":"<folder>"}',
-    );
-    lines.push(
-      '- {"type":"schedule_task","prompt":"...","schedule_type":"cron|interval|once","schedule_value":"...","context_mode":"group|isolated","groupFolder":"<folder>"}',
-    );
-    lines.push(
-      '- legacy payloads remain supported for backward compatibility.',
+      'Task management is handled internally by the host scheduler.',
     );
     lines.push('- {"type":"pause_task","taskId":"..."}');
     lines.push('- {"type":"resume_task","taskId":"..."}');

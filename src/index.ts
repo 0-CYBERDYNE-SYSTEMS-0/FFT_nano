@@ -286,7 +286,6 @@ import {
   dispatchLegacyMessageEnvelope,
   wrapLegacyActionEnvelope,
   wrapLegacyMessageEnvelope,
-  wrapLegacyTaskEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
 import {
@@ -6851,7 +6850,6 @@ function startIpcWatcher(): void {
     for (const sourceGroup of groupFolders) {
       const isMain = sourceGroup === MAIN_GROUP_FOLDER;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
-      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
       // Process messages from this group's IPC directory
       try {
@@ -6904,47 +6902,6 @@ function startIpcWatcher(): void {
           { err, sourceGroup },
           'Error reading IPC messages directory',
         );
-      }
-
-      // Process tasks from this group's IPC directory
-      try {
-        if (fs.existsSync(tasksDir)) {
-          const taskFiles = fs
-            .readdirSync(tasksDir)
-            .filter((f) => f.endsWith('.json'));
-          for (const file of taskFiles) {
-            const filePath = path.join(tasksDir, file);
-            try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              const envelope = wrapLegacyTaskEnvelope(data, sourceGroup);
-              if (envelope) {
-                await processHostEventOrdered({
-                  kind: 'task_requested',
-                  id: envelope.id,
-                  createdAt: envelope.createdAt,
-                  source: 'ipc-boundary',
-                  sourceGroup,
-                  isMain,
-                  request: envelope.payload,
-                });
-              }
-              fs.unlinkSync(filePath);
-            } catch (err) {
-              logger.error(
-                { file, sourceGroup, err },
-                'Error processing IPC task',
-              );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
-            }
-          }
-        }
-      } catch (err) {
-        logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
       }
 
       // Process farm actions from this group's IPC directory
