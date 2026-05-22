@@ -198,6 +198,22 @@ button:disabled {
   color: #6b1f00;
 }
 
+.tabbar {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.tabbar button {
+  background: #fff;
+  color: var(--ink);
+}
+
+.tabbar button.active {
+  background: var(--accent-alt);
+  color: #fff;
+}
+
 .grid {
   display: grid;
   gap: 0.8rem;
@@ -444,6 +460,69 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(260px, 1fr));
 }
 
+.setup-grid,
+.system-grid,
+.knowledge-grid,
+.tasks-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.7fr);
+}
+
+.provider-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.55rem;
+}
+
+.provider-card,
+.task-row {
+  border: 2px solid var(--border);
+  background: #fff;
+  padding: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.inline-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.inline-links a {
+  color: var(--accent-alt);
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  text-decoration-thickness: 2px;
+}
+
+.system-preview {
+  margin-top: 0.6rem;
+  border: 2px solid var(--border);
+  background: #fff;
+  min-height: 520px;
+  max-height: 72vh;
+  overflow: auto;
+  padding: 0.55rem;
+}
+
+.markdown-lite {
+  border: 2px solid var(--border);
+  background: #fff;
+  padding: 0.55rem;
+  max-height: 360px;
+  overflow: auto;
+}
+
+textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 2px solid var(--border);
+  padding: 0.5rem;
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+}
+
 .files-grid {
   grid-template-columns: 380px 1fr;
 }
@@ -610,7 +689,11 @@ button:disabled {
   }
 
   .main-grid,
-  .files-grid {
+  .files-grid,
+  .setup-grid,
+  .system-grid,
+  .knowledge-grid,
+  .tasks-grid {
     grid-template-columns: 1fr;
   }
 
