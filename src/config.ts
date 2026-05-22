@@ -200,6 +200,10 @@ export const FFT_NANO_TUI_ENABLED = envFlag(
   process.env.FFT_NANO_TUI_ENABLED,
   true,
 );
+export const FFT_NANO_TUI_LOCAL = envFlag(
+  process.env.FFT_NANO_TUI_LOCAL,
+  false,
+);
 export const FFT_NANO_TUI_PORT = envInt(
   process.env.FFT_NANO_TUI_PORT,
   28989,

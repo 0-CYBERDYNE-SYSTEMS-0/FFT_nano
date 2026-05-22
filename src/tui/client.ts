@@ -7,11 +7,14 @@ import {
   TUI,
   type SlashCommand,
 } from '@mariozechner/pi-tui';
+import { Socket } from 'net';
 
 import type {
   AgentEventPayload,
   ChatEventPayload,
   GatewayEventFrame,
+  GatewayRequestFrame,
+  GatewayResponseFrame,
   TuiSessionSummary,
 } from './protocol.js';
 import { GatewayClient } from './gateway-client.js';
@@ -25,6 +28,7 @@ import {
   normalizeVerboseMode,
   type VerboseMode,
 } from '../verbose-mode.js';
+import { randomUUID } from 'crypto';
 
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
@@ -33,6 +37,128 @@ interface CliOptions {
   url?: string;
   sessionKey: string;
   deliver: boolean;
+  localMode: boolean;
+}
+
+// Local mode: Unix socket client that implements the same interface as GatewayClient
+class LocalTuiConnection {
+  private socket: Socket | null = null;
+  private readonly socketPath: string;
+  private readonly pending = new Map<string, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+  }>();
+  private readonly onEvent?: (event: GatewayEventFrame) => void;
+  private readonly onClose?: (code: number, reason: string) => void;
+  private connected = false;
+  private buffer = '';
+
+  constructor(
+    socketPath: string,
+    onEvent?: (event: GatewayEventFrame) => void,
+    onClose?: (code: number, reason: string) => void,
+  ) {
+    this.socketPath = socketPath;
+    this.onEvent = onEvent;
+    this.onClose = onClose;
+  }
+
+  async connect(): Promise<void> {
+    if (this.connected) return;
+
+    return new Promise<void>((resolve, reject) => {
+      this.socket = new Socket();
+
+      this.socket.connect(this.socketPath, () => {
+        this.connected = true;
+        resolve();
+      });
+
+      this.socket.on('data', (data: Buffer) => {
+        this.buffer += data.toString('utf8');
+        // Process complete messages (newline-delimited JSON)
+        const lines = this.buffer.split('\n');
+        this.buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const frame = JSON.parse(line);
+            this.handleFrame(frame);
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      });
+
+      this.socket.on('close', () => {
+        this.connected = false;
+        for (const [, pending] of this.pending) {
+          pending.reject(new Error('Connection closed'));
+        }
+        this.pending.clear();
+        this.onClose?.(0, 'connection closed');
+      });
+
+      this.socket.on('error', (err) => {
+        reject(err);
+      });
+    });
+  }
+
+  private handleFrame(frame: Record<string, unknown>): void {
+    // Check if it's a response frame (has id and ok)
+    if (typeof frame.id === 'string' && typeof frame.ok === 'boolean') {
+      const response = frame as unknown as GatewayResponseFrame;
+      const pending = this.pending.get(response.id);
+      if (!pending) return;
+      this.pending.delete(response.id);
+      if (response.ok) {
+        pending.resolve(response.result);
+      } else {
+        pending.reject(new Error(response.error || 'Unknown error'));
+      }
+      return;
+    }
+
+    // Check if it's an event frame (has event)
+    if (typeof frame.event === 'string') {
+      const eventFrame: GatewayEventFrame = {
+        event: frame.event,
+        payload: frame.payload,
+      };
+      this.onEvent?.(eventFrame);
+    }
+  }
+
+  async request<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+    if (!this.connected || !this.socket) {
+      throw new Error('Not connected');
+    }
+
+    const id = randomUUID();
+    const requestFrame: GatewayRequestFrame = {
+      id,
+      method,
+      params,
+    };
+
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+      this.socket?.write(JSON.stringify(requestFrame) + '\n', (err) => {
+        if (err) {
+          this.pending.delete(id);
+          reject(err);
+        }
+      });
+    });
+  }
+
+  close(): void {
+    this.connected = false;
+    this.socket?.destroy();
+    this.socket = null;
+  }
 }
 
 interface SessionPrefs {
@@ -76,6 +202,13 @@ function parseArgs(argv: string[]): CliOptions {
   let url: string | undefined;
   let sessionKey = 'main';
   let deliver = false;
+  let localMode = false;
+
+  // Check environment variable for local mode
+  const envLocal = process.env.FFT_NANO_TUI_LOCAL;
+  if (envLocal === '1' || envLocal === 'true' || envLocal === 'yes') {
+    localMode = true;
+  }
 
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -94,9 +227,13 @@ function parseArgs(argv: string[]): CliOptions {
       deliver = true;
       continue;
     }
+    if (token === '--local') {
+      localMode = true;
+      continue;
+    }
   }
 
-  return { url, sessionKey, deliver };
+  return { url, sessionKey, deliver, localMode };
 }
 
 function asString(value: unknown): string {
@@ -184,112 +321,117 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   let statusLoader: Loader | null = null;
   let statusText: Text | null = null;
 
-  const client = new GatewayClient({
-    url: opts.url,
-    onEvent: (frame: GatewayEventFrame) => {
-      if (frame.event === 'chat_event') {
-        const evt = frame.payload as ChatEventPayload;
-        if (!evt || evt.sessionKey !== sessionKey) return;
+  // Event handler for both local and remote modes
+  const onEvent = (frame: GatewayEventFrame) => {
+    if (frame.event === 'chat_event') {
+      const evt = frame.payload as ChatEventPayload;
+      if (!evt || evt.sessionKey !== sessionKey) return;
 
-        if (evt.state === 'message') {
-          const message = parseChatMessage(evt.message);
-          if (!message) return;
-          if (message.role === 'user') {
-            activeRunId = evt.runId;
-            setActivityStatus('running');
-            chatLog.addUser(message.text);
-          } else if (message.role === 'assistant')
-            chatLog.finalizeAssistant(message.text, evt.runId);
-          else chatLog.addSystem(message.text);
-          tui.requestRender();
-          return;
-        }
-
-        if (evt.state === 'final') {
-          if (activeRunId === evt.runId) activeRunId = null;
-          const message = parseChatMessage(evt.message);
-          chatLog.finalizeAssistant(message?.text || '(no output)', evt.runId);
-          const usage = evt.usage;
-          const usageLine = usage
-            ? [
-                `tokens in=${asNumber(usage.inputTokens) ?? 0}`,
-                `out=${asNumber(usage.outputTokens) ?? 0}`,
-                `total=${asNumber(usage.totalTokens) ?? 0}`,
-              ].join(' ')
-            : null;
-          if (usageLine) chatLog.addSystem(usageLine);
-          setActivityStatus('idle');
-          updateFooter();
-          tui.requestRender();
-          return;
-        }
-
-        if (evt.state === 'aborted') {
-          if (activeRunId === evt.runId) activeRunId = null;
-          chatLog.addSystem('run aborted');
-          chatLog.dropAssistant(evt.runId);
-          setActivityStatus('idle');
-          tui.requestRender();
-          return;
-        }
-
-        if (evt.state === 'error') {
-          if (activeRunId === evt.runId) activeRunId = null;
-          chatLog.addSystem(`error: ${evt.errorMessage || 'unknown error'}`);
-          chatLog.dropAssistant(evt.runId);
-          setActivityStatus('error');
-          tui.requestRender();
-        }
+      if (evt.state === 'message') {
+        const message = parseChatMessage(evt.message);
+        if (!message) return;
+        if (message.role === 'user') {
+          activeRunId = evt.runId;
+          setActivityStatus('running');
+          chatLog.addUser(message.text);
+        } else if (message.role === 'assistant')
+          chatLog.finalizeAssistant(message.text, evt.runId);
+        else chatLog.addSystem(message.text);
+        tui.requestRender();
         return;
       }
 
-      if (frame.event === 'agent_event') {
-        const evt = frame.payload as AgentEventPayload & {
-          sessionKey?: string;
-        };
-        if (!evt) return;
-        if (evt.sessionKey && evt.sessionKey !== sessionKey) return;
-        if (activeRunId && evt.runId !== activeRunId) return;
-
-        if (evt.stream === 'tool') {
-          if ((sessionPrefs.verboseMode || 'all') === 'off') return;
-          chatLog.upsertToolEvent(
-            evt.runId,
-            evt.data,
-            sessionPrefs.verboseMode || 'all',
-          );
-          tui.requestRender();
-          return;
-        }
-
-        if (evt.stream !== 'lifecycle') return;
-
-        if (evt.data?.phase === 'start') {
-          setActivityStatus('running');
-          tui.requestRender();
-          return;
-        }
-
-        if (evt.data?.phase === 'end') {
-          if (activeRunId === evt.runId) {
-            activeRunId = null;
-          }
-          setActivityStatus('idle');
-          tui.requestRender();
-        }
+      if (evt.state === 'final') {
+        if (activeRunId === evt.runId) activeRunId = null;
+        const message = parseChatMessage(evt.message);
+        chatLog.finalizeAssistant(message?.text || '(no output)', evt.runId);
+        const usage = evt.usage;
+        const usageLine = usage
+          ? [
+              `tokens in=${asNumber(usage.inputTokens) ?? 0}`,
+              `out=${asNumber(usage.outputTokens) ?? 0}`,
+              `total=${asNumber(usage.totalTokens) ?? 0}`,
+            ].join(' ')
+          : null;
+        if (usageLine) chatLog.addSystem(usageLine);
+        setActivityStatus('idle');
+        updateFooter();
+        tui.requestRender();
+        return;
       }
-    },
-    onClose: (code, reason) => {
-      connectionStatus = `disconnected (${code})${reason ? `: ${reason}` : ''}`;
-      setActivityStatus('idle');
-      updateFooter();
-      tui.requestRender();
-      setTimeout(() => {
-        tui.stop();
-        process.exit(1);
-      }, 50);
-    },
-  });
+
+      if (evt.state === 'aborted') {
+        if (activeRunId === evt.runId) activeRunId = null;
+        chatLog.addSystem('run aborted');
+        chatLog.dropAssistant(evt.runId);
+        setActivityStatus('idle');
+        tui.requestRender();
+        return;
+      }
+
+      if (evt.state === 'error') {
+        if (activeRunId === evt.runId) activeRunId = null;
+        chatLog.addSystem(`error: ${evt.errorMessage || 'unknown error'}`);
+        chatLog.dropAssistant(evt.runId);
+        setActivityStatus('error');
+        tui.requestRender();
+      }
+      return;
+    }
+
+    if (frame.event === 'agent_event') {
+      const evt = frame.payload as AgentEventPayload & {
+        sessionKey?: string;
+      };
+      if (!evt) return;
+      if (evt.sessionKey && evt.sessionKey !== sessionKey) return;
+      if (activeRunId && evt.runId !== activeRunId) return;
+
+      if (evt.stream === 'tool') {
+        if ((sessionPrefs.verboseMode || 'all') === 'off') return;
+        chatLog.upsertToolEvent(
+          evt.runId,
+          evt.data,
+          sessionPrefs.verboseMode || 'all',
+        );
+        tui.requestRender();
+        return;
+      }
+
+      if (evt.stream !== 'lifecycle') return;
+
+      if (evt.data?.phase === 'start') {
+        setActivityStatus('running');
+        tui.requestRender();
+        return;
+      }
+
+      if (evt.data?.phase === 'end') {
+        if (activeRunId === evt.runId) {
+          activeRunId = null;
+        }
+        setActivityStatus('idle');
+        tui.requestRender();
+      }
+    }
+  };
+
+  const onClose = (code: number, reason: string) => {
+    connectionStatus = `disconnected (${code})${reason ? `: ${reason}` : ''}`;
+    setActivityStatus('idle');
+    updateFooter();
+    tui.requestRender();
+    setTimeout(() => {
+      tui.stop();
+      process.exit(1);
+    }, 50);
+  };
+
+  // Create the appropriate client based on mode
+  const socketPath = '/tmp/fft_nano_tui.sock';
+  const client = opts.localMode
+    ? new LocalTuiConnection(socketPath, onEvent, onClose)
+    : new GatewayClient({ url: opts.url, onEvent, onClose });
 
   const tui = new TUI(new ProcessTerminal());
   const header = new Text('', 1, 0);
@@ -335,9 +477,12 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   };
 
   const updateHeader = () => {
+    const modeLabel = opts.localMode
+      ? `local (${socketPath})`
+      : opts.url || DEFAULT_GATEWAY_URL;
     header.setText(
       theme.header(
-        `FFT_nano TUI · ${opts.url || DEFAULT_GATEWAY_URL} · session ${sessionKey}`,
+        `FFT_nano TUI · ${modeLabel} · session ${sessionKey}`,
       ),
     );
   };
