@@ -288,9 +288,7 @@ import {
   wrapLegacyMessageEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
-import {
-  isActionfulChatTask,
-} from './evaluator.js';
+import { isActionfulChatTask } from './evaluator.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
@@ -5742,6 +5740,7 @@ async function startTuiGatewayService(): Promise<void> {
         host: FFT_NANO_TUI_HOST,
         port: FFT_NANO_TUI_PORT,
         authToken: FFT_NANO_TUI_AUTH_TOKEN || undefined,
+        socketPath: '/tmp/fft_nano_tui.sock',
       },
     );
   } catch (err) {
