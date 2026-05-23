@@ -62,6 +62,31 @@ export interface CronParityConfig {
   deterministicTopOfHourStagger: CronDeterministicStaggerConfig;
 }
 
+export interface SkillSelfImproveConfig {
+  enabled: boolean;
+  turnInterval: number;
+  toolInterval: number;
+}
+
+export interface SkillManagerBackupConfig {
+  enabled: boolean;
+  keep: number;
+}
+
+export interface SkillManagerParityConfig {
+  enabled: boolean;
+  intervalHours: number;
+  minIdleHours: number;
+  staleAfterDays: number;
+  archiveAfterDays: number;
+  backup: SkillManagerBackupConfig;
+}
+
+export interface SkillsParityConfig {
+  selfImprove: SkillSelfImproveConfig;
+  curator: SkillManagerParityConfig;
+}
+
 export interface WorkspaceParityConfig {
   skipBootstrap: boolean;
   enforceBootstrapGate: boolean;
@@ -91,6 +116,7 @@ export interface ParityConfig {
   memory: MemoryParityConfig;
   heartbeat: HeartbeatParityConfig;
   cron: CronParityConfig;
+  skills: SkillsParityConfig;
   workspace: WorkspaceParityConfig;
   doctor: DoctorParityConfig;
   prompt: PromptParityConfig;
@@ -134,6 +160,24 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
       maxMs: 5 * 60_000,
     },
   },
+  skills: {
+    selfImprove: {
+      enabled: true,
+      turnInterval: 10,
+      toolInterval: 10,
+    },
+    curator: {
+      enabled: true,
+      intervalHours: 168,
+      minIdleHours: 2,
+      staleAfterDays: 30,
+      archiveAfterDays: 90,
+      backup: {
+        enabled: true,
+        keep: 5,
+      },
+    },
+  },
   workspace: {
     skipBootstrap: false,
     enforceBootstrapGate: true,
@@ -150,11 +194,11 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
     persistLatestManifest: true,
     manifestPerRequestInDebugOnly: true,
     preflightRebaseEnabled: true,
-    softTokenThreshold: 48_000,
-    hardTokenThreshold: 64_000,
-    skillCatalogMaxChars: 6_000,
-    recentConversationMaxMessages: 8,
-    recentConversationMaxChars: 4_000,
+    softTokenThreshold: 120_000,
+    hardTokenThreshold: 160_000,
+    skillCatalogMaxChars: 20_000,
+    recentConversationMaxMessages: 50,
+    recentConversationMaxChars: 16_000,
   },
 };
 
@@ -272,6 +316,22 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
         ...(fileConfig.cron?.deterministicTopOfHourStagger || {}),
       },
     },
+    skills: {
+      ...DEFAULT_PARITY_CONFIG.skills,
+      ...(fileConfig.skills || {}),
+      selfImprove: {
+        ...DEFAULT_PARITY_CONFIG.skills.selfImprove,
+        ...(fileConfig.skills?.selfImprove || {}),
+      },
+      curator: {
+        ...DEFAULT_PARITY_CONFIG.skills.curator,
+        ...(fileConfig.skills?.curator || {}),
+        backup: {
+          ...DEFAULT_PARITY_CONFIG.skills.curator.backup,
+          ...(fileConfig.skills?.curator?.backup || {}),
+        },
+      },
+    },
     workspace: {
       ...DEFAULT_PARITY_CONFIG.workspace,
       ...(fileConfig.workspace || {}),
@@ -307,6 +367,34 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
     0,
     Number(merged.cron.deterministicTopOfHourStagger.maxMs) || 300000,
   );
+  merged.skills.selfImprove.turnInterval = Math.max(
+    1,
+    Number(merged.skills.selfImprove.turnInterval) || 10,
+  );
+  merged.skills.selfImprove.toolInterval = Math.max(
+    1,
+    Number(merged.skills.selfImprove.toolInterval) || 10,
+  );
+  merged.skills.curator.intervalHours = Math.max(
+    1,
+    Number(merged.skills.curator.intervalHours) || 168,
+  );
+  merged.skills.curator.minIdleHours = Math.max(
+    0,
+    Number(merged.skills.curator.minIdleHours) || 2,
+  );
+  merged.skills.curator.staleAfterDays = Math.max(
+    1,
+    Number(merged.skills.curator.staleAfterDays) || 30,
+  );
+  merged.skills.curator.archiveAfterDays = Math.max(
+    merged.skills.curator.staleAfterDays,
+    Number(merged.skills.curator.archiveAfterDays) || 90,
+  );
+  merged.skills.curator.backup.keep = Math.max(
+    1,
+    Number(merged.skills.curator.backup.keep) || 5,
+  );
   merged.workspace.bootstrapMaxChars = Math.max(
     1000,
     Number(merged.workspace.bootstrapMaxChars) || 20000,
@@ -317,15 +405,15 @@ function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
   );
   merged.prompt.softTokenThreshold = Math.max(
     1,
-    Number(merged.prompt.softTokenThreshold) || 48_000,
+    Number(merged.prompt.softTokenThreshold) || 120_000,
   );
   merged.prompt.hardTokenThreshold = Math.max(
     merged.prompt.softTokenThreshold,
-    Number(merged.prompt.hardTokenThreshold) || 64_000,
+    Number(merged.prompt.hardTokenThreshold) || 160_000,
   );
   merged.prompt.skillCatalogMaxChars = Math.max(
     500,
-    Number(merged.prompt.skillCatalogMaxChars) || 6_000,
+    Number(merged.prompt.skillCatalogMaxChars) || 20_000,
   );
   merged.prompt.recentConversationMaxMessages = Math.max(
     1,
@@ -440,6 +528,61 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     next.cron.deterministicTopOfHourStagger.maxMs,
     0,
     3_600_000,
+  );
+
+  next.skills.selfImprove.enabled = envBool(
+    process.env.FFT_NANO_SKILL_SELF_IMPROVE_ENABLED,
+    next.skills.selfImprove.enabled,
+  );
+  next.skills.selfImprove.turnInterval = envInt(
+    process.env.FFT_NANO_SKILL_SELF_IMPROVE_TURN_INTERVAL,
+    next.skills.selfImprove.turnInterval,
+    1,
+    10_000,
+  );
+  next.skills.selfImprove.toolInterval = envInt(
+    process.env.FFT_NANO_SKILL_SELF_IMPROVE_TOOL_INTERVAL,
+    next.skills.selfImprove.toolInterval,
+    1,
+    10_000,
+  );
+  next.skills.curator.enabled = envBool(
+    process.env.FFT_NANO_SKILL_CURATOR_ENABLED,
+    next.skills.curator.enabled,
+  );
+  next.skills.curator.intervalHours = envInt(
+    process.env.FFT_NANO_SKILL_CURATOR_INTERVAL_HOURS,
+    next.skills.curator.intervalHours,
+    1,
+    100_000,
+  );
+  next.skills.curator.minIdleHours = envInt(
+    process.env.FFT_NANO_SKILL_CURATOR_MIN_IDLE_HOURS,
+    next.skills.curator.minIdleHours,
+    0,
+    100_000,
+  );
+  next.skills.curator.staleAfterDays = envInt(
+    process.env.FFT_NANO_SKILL_CURATOR_STALE_AFTER_DAYS,
+    next.skills.curator.staleAfterDays,
+    1,
+    100_000,
+  );
+  next.skills.curator.archiveAfterDays = envInt(
+    process.env.FFT_NANO_SKILL_CURATOR_ARCHIVE_AFTER_DAYS,
+    next.skills.curator.archiveAfterDays,
+    next.skills.curator.staleAfterDays,
+    100_000,
+  );
+  next.skills.curator.backup.enabled = envBool(
+    process.env.FFT_NANO_SKILL_CURATOR_BACKUP_ENABLED,
+    next.skills.curator.backup.enabled,
+  );
+  next.skills.curator.backup.keep = envInt(
+    process.env.FFT_NANO_SKILL_CURATOR_BACKUP_KEEP,
+    next.skills.curator.backup.keep,
+    1,
+    1000,
   );
 
   next.workspace.skipBootstrap = envBool(

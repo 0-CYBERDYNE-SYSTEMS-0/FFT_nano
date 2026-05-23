@@ -1,20 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+type TabId =
+  | 'overview'
+  | 'chat'
+  | 'sessions'
+  | 'setup'
+  | 'system'
+  | 'skills'
+  | 'tasks'
+  | 'pipelines'
+  | 'memory'
+  | 'knowledge'
+  | 'logs';
+
 interface RuntimeResponse {
   ok: boolean;
   serverTime: string;
-  runtime: {
-    runtime: string;
-    sessions: number;
-    activeRuns: number;
-  };
+  runtime: { runtime: string; sessions: number; activeRuns: number };
   profile: {
     profile: string;
     featureFarm: boolean;
-    profileDetection: {
-      source: string;
-      reason: string;
-    };
+    profileDetection: { source: string; reason: string };
   };
   build: {
     startedAt: string;
@@ -28,26 +34,35 @@ interface RuntimeResponse {
     port: number;
     authRequired: boolean;
   };
-  gateway: {
-    host: string;
-    port: number;
-    authRequired: boolean;
-    wsUrl: string;
-  };
+  gateway: { host: string; port: number; authRequired: boolean; wsUrl: string };
 }
 
-interface OnboardingResponse {
-  ok: boolean;
-  onboarding: {
-    active: boolean;
-    providerPreset: string;
-    model: string;
-    apiKeyConfigured: boolean;
-    telegramBotConfigured: boolean;
-    telegramAdminSecretConfigured: boolean;
-    whatsappEnabled: boolean;
-    configComplete: boolean;
-  };
+interface ProviderSetup {
+  id: string;
+  label: string;
+  piApi: string;
+  defaultModel: string;
+  apiKeyEnv: string;
+  apiKeyRequired: boolean;
+  endpointEnv?: string;
+  signupUrl?: string;
+  docsUrl?: string;
+  localSetupUrl?: string;
+  note?: string;
+}
+
+interface RuntimeSettings {
+  providerPreset: string;
+  provider: string;
+  model: string;
+  apiKeyEnv: string;
+  apiKeyConfigured: boolean;
+  endpointEnv?: string;
+  endpointValue?: string;
+  telegramBotConfigured: boolean;
+  whatsappEnabled: boolean;
+  heartbeatEnabled: boolean;
+  heartbeatEvery: string;
 }
 
 interface SessionSummary {
@@ -65,45 +80,9 @@ interface SessionHistoryMessage {
   runId?: string;
 }
 
-interface WsEventFrame {
-  event: string;
-  payload?: unknown;
-}
-
-interface WsResponseFrame {
-  id: string;
-  ok: boolean;
-  result?: unknown;
-  error?: string;
-}
-
-interface ChatEventPayload {
-  runId: string;
-  sessionKey: string;
-  state: 'message' | 'delta' | 'final' | 'aborted' | 'error';
-  message?: {
-    role?: string;
-    content?: string;
-  };
-  errorMessage?: string;
-}
-
-interface LogResponse {
-  ok: boolean;
-  content: string;
-}
-
 interface FileRootSummary {
   id: string;
   label: string;
-}
-
-interface FileEntry {
-  name: string;
-  relPath: string;
-  kind: 'file' | 'dir';
-  size: number;
-  modifiedAt: string;
 }
 
 interface SkillCatalogEntry {
@@ -120,256 +99,87 @@ interface SkillCatalogGroup {
   skills: SkillCatalogEntry[];
 }
 
-type MessageBlock =
-  | { kind: 'text'; text: string }
-  | { kind: 'code'; language: string; code: string };
-
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
 
 const TOKEN_KEY = 'fft_control_center.token';
-const THINK_OPTIONS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-const REASONING_OPTIONS = ['off', 'on', 'stream'];
-const OPENROUTER_SIGNUP_URL = 'https://openrouter.ai/';
-const BOTFATHER_URL = 'https://t.me/BotFather';
-const ONBOARDING_PROVIDER_OPTIONS = [
-  { id: 'openrouter', label: 'OpenRouter' },
-  { id: 'openai', label: 'OpenAI' },
-  { id: 'anthropic', label: 'Anthropic' },
-  { id: 'gemini', label: 'Gemini' },
-  { id: 'zai', label: 'ZAI' },
-  { id: 'minimax', label: 'MiniMax' },
-  { id: 'kimi-coding', label: 'Kimi Coding' },
-  { id: 'ollama', label: 'Ollama (local)' },
-  { id: 'lm-studio', label: 'LM Studio (local)' },
-] as const;
-const OPTIONAL_API_KEY_PROVIDERS = new Set(['ollama', 'lm-studio']);
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'chat', label: 'Chat' },
+  { id: 'sessions', label: 'Sessions' },
+  { id: 'setup', label: 'Setup' },
+  { id: 'system', label: 'System' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'pipelines', label: 'Pipelines' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'logs', label: 'Logs' },
+];
 
-function lineText(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value && typeof value === 'object') return JSON.stringify(value);
-  return String(value);
-}
-
-function shortTime(input: string | undefined): string {
+function shortTime(input: string | number | undefined): string {
   if (!input) return '-';
   const dt = new Date(input);
-  if (Number.isNaN(dt.getTime())) return input;
-  return dt.toLocaleTimeString();
+  if (Number.isNaN(dt.getTime())) return String(input);
+  return dt.toLocaleString();
 }
 
-function parentDir(relPath: string): string {
-  const normalized = relPath.replace(/\\/g, '/').replace(/^\/+/, '').trim();
-  if (!normalized || normalized === '.') return '.';
-  const parts = normalized.split('/').filter(Boolean);
-  parts.pop();
-  return parts.length > 0 ? parts.join('/') : '.';
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
 }
 
-function normalizeRelPath(input: string): string {
-  const normalized = input.replace(/\\/g, '/').replace(/^\/+/, '').trim();
-  return normalized || '.';
-}
-
-function parseMessageBlocks(input: string): MessageBlock[] {
-  const blocks: MessageBlock[] = [];
-  const fencePattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while (true) {
-    match = fencePattern.exec(input);
-    if (!match) break;
-
-    if (match.index > lastIndex) {
-      blocks.push({
-        kind: 'text',
-        text: input.slice(lastIndex, match.index),
-      });
-    }
-
-    blocks.push({
-      kind: 'code',
-      language: (match[1] || '').trim(),
-      code: (match[2] || '').replace(/\n$/, ''),
-    });
-    lastIndex = fencePattern.lastIndex;
-  }
-
-  if (lastIndex < input.length) {
-    blocks.push({
-      kind: 'text',
-      text: input.slice(lastIndex),
-    });
-  }
-
-  if (blocks.length === 0) {
-    return [{ kind: 'text', text: input }];
-  }
-  return blocks;
-}
-
-function normalizeLink(raw: string): string {
-  if (!raw) return '';
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^www\./i.test(raw)) return `https://${raw}`;
-  return '';
-}
-
-function renderInlineText(input: string, keyPrefix: string): Array<JSX.Element | string> {
-  const items: Array<JSX.Element | string> = [];
-  const tokenPattern = /(`[^`]+`|https?:\/\/[^\s<]+|www\.[^\s<]+)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let index = 0;
-
-  while (true) {
-    match = tokenPattern.exec(input);
-    if (!match) break;
-    if (match.index > lastIndex) {
-      items.push(input.slice(lastIndex, match.index));
-    }
-    const token = match[0];
-    if (token.startsWith('`') && token.endsWith('`')) {
-      items.push(
-        <code key={`${keyPrefix}-inline-${index}`} className="message-inline-code">
-          {token.slice(1, -1)}
-        </code>,
-      );
-    } else {
-      const href = normalizeLink(token);
-      if (href) {
-        items.push(
-          <a
-            key={`${keyPrefix}-link-${index}`}
-            href={href}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="message-link"
-          >
-            {token}
-          </a>,
-        );
-      } else {
-        items.push(token);
-      }
-    }
-    lastIndex = tokenPattern.lastIndex;
-    index += 1;
-  }
-
-  if (lastIndex < input.length) {
-    items.push(input.slice(lastIndex));
-  }
-  return items;
-}
-
-function renderTextBlock(input: string, keyPrefix: string): JSX.Element[] {
-  const normalized = input.replace(/\r/g, '').trim();
-  if (!normalized) return [];
-  const paragraphs = normalized.split(/\n{2,}/);
-
-  return paragraphs.map((paragraph, paragraphIndex) => {
-    const lines = paragraph.split('\n');
-    return (
-      <p key={`${keyPrefix}-p-${paragraphIndex}`} className="message-paragraph">
-        {lines.map((line, lineIndex) => (
-          <span key={`${keyPrefix}-l-${paragraphIndex}-${lineIndex}`}>
-            {lineIndex > 0 ? <br /> : null}
-            {renderInlineText(line, `${keyPrefix}-${paragraphIndex}-${lineIndex}`)}
-          </span>
-        ))}
-      </p>
-    );
-  });
-}
-
-function renderRichMessage(input: string, keyPrefix: string): JSX.Element[] {
-  const blocks = parseMessageBlocks(input || '');
-  const nodes: JSX.Element[] = [];
-  let index = 0;
-
-  for (const block of blocks) {
-    if (block.kind === 'code') {
-      nodes.push(
-        <section key={`${keyPrefix}-code-${index}`} className="message-code-wrap">
-          {block.language ? <p className="message-code-lang">{block.language}</p> : null}
-          <pre className="message-code-block">
-            <code>{block.code}</code>
-          </pre>
-        </section>,
-      );
-      index += 1;
-      continue;
-    }
-
-    const textNodes = renderTextBlock(block.text, `${keyPrefix}-text-${index}`);
-    if (textNodes.length > 0) {
-      nodes.push(...textNodes);
-    }
-    index += 1;
-  }
-
-  if (nodes.length === 0) {
-    return [<p key={`${keyPrefix}-empty`} className="message-paragraph">(empty)</p>];
-  }
-  return nodes;
+function renderMarkdownLite(input: string): JSX.Element {
+  return <pre className="markdown-lite">{input || '(empty)'}</pre>;
 }
 
 export function App(): JSX.Element {
-  const [tokenInput, setTokenInput] = useState<string>(() => localStorage.getItem(TOKEN_KEY) || '');
-  const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) || '');
+  const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const [tokenInput, setTokenInput] = useState(
+    () => localStorage.getItem(TOKEN_KEY) || '',
+  );
+  const [token, setToken] = useState(
+    () => localStorage.getItem(TOKEN_KEY) || '',
+  );
   const [runtime, setRuntime] = useState<RuntimeResponse | null>(null);
-  const [runtimeError, setRuntimeError] = useState<string>('');
-  const [onboarding, setOnboarding] = useState<OnboardingResponse['onboarding'] | null>(null);
-  const [onboardingProvider, setOnboardingProvider] = useState<string>('openrouter');
-  const [onboardingModel, setOnboardingModel] = useState<string>('anthropic/claude-3.5-sonnet');
-  const [onboardingApiKey, setOnboardingApiKey] = useState<string>('');
-  const [onboardingTelegramToken, setOnboardingTelegramToken] = useState<string>('');
-  const [onboardingBusy, setOnboardingBusy] = useState<boolean>(false);
-  const [onboardingStatus, setOnboardingStatus] = useState<string>('');
+  const [runtimeError, setRuntimeError] = useState('');
+  const [providers, setProviders] = useState<ProviderSetup[]>([]);
+  const [settings, setSettings] = useState<RuntimeSettings | null>(null);
+  const [models, setModels] = useState<
+    Array<{ provider: string; model: string }>
+  >([]);
+  const [setupProvider, setSetupProvider] = useState('');
+  const [setupModel, setSetupModel] = useState('');
+  const [setupKey, setSetupKey] = useState('');
+  const [setupEndpoint, setSetupEndpoint] = useState('');
+  const [setupTelegramToken, setSetupTelegramToken] = useState('');
+  const [setupStatus, setSetupStatus] = useState('');
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [activeSession, setActiveSession] = useState<string>('main');
+  const [activeSession, setActiveSession] = useState('main');
   const [history, setHistory] = useState<SessionHistoryMessage[]>([]);
-  const [stream, setStream] = useState<string[]>([]);
-  const [chatInput, setChatInput] = useState<string>('');
-  const [activeRunId, setActiveRunId] = useState<string>('');
-
-  const [serviceOutput, setServiceOutput] = useState<string>('');
-  const [hostLogs, setHostLogs] = useState<string>('');
-  const [errorLogs, setErrorLogs] = useState<string>('');
-  const [gatewayConnected, setGatewayConnected] = useState<boolean>(false);
-
-  const [sessionProvider, setSessionProvider] = useState<string>('');
-  const [sessionModel, setSessionModel] = useState<string>('');
-  const [sessionThinkLevel, setSessionThinkLevel] = useState<string>('');
-  const [sessionReasoningLevel, setSessionReasoningLevel] = useState<string>('');
-  const [sessionStatus, setSessionStatus] = useState<string>('');
-
-  const [fileRoots, setFileRoots] = useState<FileRootSummary[]>([]);
-  const [selectedRoot, setSelectedRoot] = useState<string>('');
-  const [selectedDir, setSelectedDir] = useState<string>('.');
-  const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
-  const [fileFilter, setFileFilter] = useState<string>('');
-  const [selectedFile, setSelectedFile] = useState<string>('');
-  const [fileContent, setFileContent] = useState<string>('');
-  const [newFilePath, setNewFilePath] = useState<string>('');
-  const [fileStatus, setFileStatus] = useState<string>('');
-
+  const [chatInput, setChatInput] = useState('');
+  const [activeRunId, setActiveRunId] = useState('');
+  const [gatewayConnected, setGatewayConnected] = useState(false);
+  const [events, setEvents] = useState<string[]>([]);
+  const [systemPreview, setSystemPreview] = useState<unknown>(null);
+  const [tasks, setTasks] = useState<unknown>(null);
+  const [pipelines, setPipelines] = useState<unknown>(null);
+  const [memory, setMemory] = useState<unknown>(null);
+  const [knowledge, setKnowledge] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  const [knowledgeNote, setKnowledgeNote] = useState('');
+  const [hostLogs, setHostLogs] = useState('');
+  const [errorLogs, setErrorLogs] = useState('');
   const [skillGroups, setSkillGroups] = useState<SkillCatalogGroup[]>([]);
-  const [skillFilter, setSkillFilter] = useState<string>('');
-  const [skillsStatus, setSkillsStatus] = useState<string>('');
+  const [skillStatus, setSkillStatus] = useState('');
 
   const wsRef = useRef<WebSocket | null>(null);
-  const requestSeqRef = useRef(0);
-  const fileTreeRequestSeqRef = useRef(0);
   const pendingRef = useRef<Map<string, PendingRequest>>(new Map());
-  const activeSessionRef = useRef<string>(activeSession);
-  const suppressAutoRootTreeLoadRef = useRef<string | null>(null);
-  const historyViewportRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
+  const requestSeqRef = useRef(0);
+  const activeSessionRef = useRef(activeSession);
 
   useEffect(() => {
     activeSessionRef.current = activeSession;
@@ -380,48 +190,28 @@ export function App(): JSX.Element {
     return { Authorization: `Bearer ${token}` };
   }, [token]);
 
-  const appendStream = (text: string) => {
-    setStream((prev) => [...prev.slice(-149), text]);
+  const fetchJson = async <T,>(
+    url: string,
+    init: RequestInit = {},
+  ): Promise<T> => {
+    const res = await fetch(url, {
+      ...init,
+      headers: { ...(init.headers || {}), ...authHeaders },
+    });
+    if (!res.ok) throw new Error(`${url} failed: HTTP ${res.status}`);
+    return (await res.json()) as T;
   };
 
-  const filteredFileEntries = useMemo(() => {
-    const query = fileFilter.trim().toLowerCase();
-    if (!query) return fileEntries;
-    return fileEntries.filter((entry) => {
-      const haystack = `${entry.name} ${entry.relPath}`.toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [fileEntries, fileFilter]);
+  const appendEvent = (line: string) => {
+    setEvents((prev) => [
+      ...prev.slice(-199),
+      `${new Date().toLocaleTimeString()} ${line}`,
+    ]);
+  };
 
-  const filteredSkillGroups = useMemo(() => {
-    const query = skillFilter.trim().toLowerCase();
-    if (!query) return skillGroups;
-    return skillGroups
-      .map((group) => ({
-        ...group,
-        skills: group.skills.filter((skill) => {
-          const haystack = `${skill.name} ${skill.path} ${skill.description}`.toLowerCase();
-          return haystack.includes(query);
-        }),
-      }))
-      .filter((group) => group.skills.length > 0);
-  }, [skillGroups, skillFilter]);
-
-  const activeSessionDetails = useMemo(
-    () => sessions.find((session) => session.sessionKey === activeSession) || null,
-    [sessions, activeSession],
-  );
-
-  const fetchRuntime = async () => {
+  const refreshRuntime = async () => {
     try {
-      const res = await fetch('/api/runtime/status', { headers: authHeaders });
-      if (!res.ok) {
-        if (res.status === 401) {
-          throw new Error('Unauthorized. Enter a valid token for this access mode.');
-        }
-        throw new Error(`Runtime status failed: HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as RuntimeResponse;
+      const data = await fetchJson<RuntimeResponse>('/api/runtime/status');
       setRuntime(data);
       setRuntimeError('');
     } catch (err) {
@@ -429,202 +219,82 @@ export function App(): JSX.Element {
     }
   };
 
-  const fetchOnboardingStatus = async () => {
-    try {
-      const res = await fetch('/api/onboarding/status', { headers: authHeaders });
-      if (!res.ok) {
-        throw new Error(`Onboarding status failed: HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as OnboardingResponse;
-      setOnboarding(data.onboarding);
-    } catch (err) {
-      setOnboardingStatus(err instanceof Error ? err.message : String(err));
-    }
+  const refreshSetup = async () => {
+    const providerPayload = await fetchJson<{
+      ok: boolean;
+      providers: ProviderSetup[];
+    }>('/api/settings/providers');
+    const settingsPayload = await fetchJson<{
+      ok: boolean;
+      settings: RuntimeSettings;
+    }>('/api/settings/runtime');
+    setProviders(providerPayload.providers || []);
+    setSettings(settingsPayload.settings);
+    setSetupProvider(settingsPayload.settings.providerPreset);
+    setSetupModel(settingsPayload.settings.model);
+    setSetupEndpoint(settingsPayload.settings.endpointValue || '');
+    const modelPayload = await fetchJson<{
+      ok: boolean;
+      models: Array<{ provider: string; model: string }>;
+    }>('/api/settings/models').catch(() => ({ ok: false, models: [] }));
+    setModels(modelPayload.models || []);
   };
 
-  const fetchLogs = async (target: 'host' | 'error') => {
-    const res = await fetch(`/api/logs/recent?target=${target}&lines=120`, {
-      headers: authHeaders,
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as LogResponse;
-    if (target === 'host') setHostLogs(data.content || '');
-    else setErrorLogs(data.content || '');
+  const refreshLogs = async () => {
+    const host = await fetchJson<{ ok: boolean; content: string }>(
+      '/api/logs/recent?target=host&lines=160',
+    ).catch(() => ({ ok: false, content: '' }));
+    const error = await fetchJson<{ ok: boolean; content: string }>(
+      '/api/logs/recent?target=error&lines=160',
+    ).catch(() => ({ ok: false, content: '' }));
+    setHostLogs(host.content || '');
+    setErrorLogs(error.content || '');
   };
 
-  const fetchFileRoots = async () => {
-    const res = await fetch('/api/files/roots', { headers: authHeaders });
-    if (!res.ok) return;
-    const payload = (await res.json()) as { ok: boolean; roots?: FileRootSummary[] };
-    const roots = Array.isArray(payload.roots) ? payload.roots : [];
-    setFileRoots(roots);
-    setSelectedRoot((prev) => prev || roots[0]?.id || '');
-  };
-
-  const fetchSkillsCatalog = async () => {
-    const res = await fetch('/api/skills/catalog', { headers: authHeaders });
-    if (!res.ok) {
-      setSkillsStatus(`skills catalog failed: HTTP ${res.status}`);
-      return;
-    }
-    const payload = (await res.json()) as {
+  const refreshSkills = async () => {
+    const payload = await fetchJson<{
       ok: boolean;
       groups?: SkillCatalogGroup[];
-    };
-    const groups = Array.isArray(payload.groups) ? payload.groups : [];
-    setSkillGroups(groups);
-    setSkillsStatus(`loaded ${groups.reduce((sum, group) => sum + group.skills.length, 0)} skills`);
+    }>('/api/skills/catalog');
+    setSkillGroups(payload.groups || []);
   };
 
-  const loadFileTree = async (rootId: string, dirPath: string) => {
-    if (!rootId) return;
-    const requestSeq = ++fileTreeRequestSeqRef.current;
-    const params = new URLSearchParams({
-      root: rootId,
-      path: dirPath || '.',
-    });
-    const res = await fetch(`/api/files/tree?${params.toString()}`, {
-      headers: authHeaders,
-    });
-    if (!res.ok) {
-      if (requestSeq !== fileTreeRequestSeqRef.current) return;
-      setFileStatus(`tree failed: HTTP ${res.status}`);
-      return;
-    }
-    const payload = (await res.json()) as {
-      ok: boolean;
-      entries?: FileEntry[];
-      path?: string;
-      error?: string;
-    };
-    if (!payload.ok) {
-      if (requestSeq !== fileTreeRequestSeqRef.current) return;
-      setFileStatus(payload.error || 'tree failed');
-      return;
-    }
-    if (requestSeq !== fileTreeRequestSeqRef.current) return;
-    const entries = Array.isArray(payload.entries) ? payload.entries : [];
-    setFileEntries(entries);
-    setSelectedDir(payload.path || dirPath || '.');
+  const refreshAll = async () => {
+    await Promise.all([
+      refreshRuntime(),
+      refreshSetup().catch((err) => setSetupStatus(String(err))),
+      refreshLogs(),
+      refreshSkills().catch((err) => setSkillStatus(String(err))),
+      fetchJson<{ ok: boolean }>('/api/tasks')
+        .then(setTasks)
+        .catch(() => null),
+      fetchJson<{ ok: boolean }>('/api/pipelines')
+        .then(setPipelines)
+        .catch(() => null),
+      fetchJson<{ ok: boolean }>('/api/memory')
+        .then(setMemory)
+        .catch(() => null),
+      fetchJson<Record<string, unknown>>('/api/knowledge')
+        .then(setKnowledge)
+        .catch(() => null),
+    ]);
   };
 
-  const loadFile = async (rootId: string, filePath: string) => {
-    const params = new URLSearchParams({
-      root: rootId,
-      path: filePath,
-    });
-    const res = await fetch(`/api/files/read?${params.toString()}`, {
-      headers: authHeaders,
-    });
-    if (!res.ok) {
-      setFileStatus(`read failed: HTTP ${res.status}`);
-      return;
-    }
-    const payload = (await res.json()) as {
-      ok: boolean;
-      content?: string;
-      modifiedAt?: string;
-      size?: number;
-      error?: string;
-    };
-    if (!payload.ok) {
-      setFileStatus(payload.error || 'read failed');
-      return;
-    }
-    setSelectedFile(filePath);
-    setFileContent(payload.content || '');
-    setFileStatus(`loaded ${filePath} (${payload.size ?? 0} bytes)`);
-  };
-
-  const saveFile = async () => {
-    if (!selectedRoot || !selectedFile) return;
-    const res = await fetch('/api/files/write', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders,
-      },
-      body: JSON.stringify({
-        root: selectedRoot,
-        path: selectedFile,
-        content: fileContent,
-      }),
-    });
-    if (!res.ok) {
-      setFileStatus(`save failed: HTTP ${res.status}`);
-      return;
-    }
-    const payload = (await res.json()) as { ok: boolean; modifiedAt?: string; error?: string };
-    if (!payload.ok) {
-      setFileStatus(payload.error || 'save failed');
-      return;
-    }
-    setFileStatus(`saved ${selectedFile} at ${shortTime(payload.modifiedAt)}`);
-    void loadFileTree(selectedRoot, selectedDir);
-  };
-
-  const createFile = async () => {
-    if (!selectedRoot) return;
-    const relPath = normalizeRelPath(newFilePath);
-    if (!relPath || relPath === '.') {
-      setFileStatus('enter a file path, example: notes/new-skill.md');
-      return;
-    }
-    const res = await fetch('/api/files/write', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders,
-      },
-      body: JSON.stringify({
-        root: selectedRoot,
-        path: relPath,
-        content: '',
-      }),
-    });
-    if (!res.ok) {
-      setFileStatus(`create failed: HTTP ${res.status}`);
-      return;
-    }
-    const payload = (await res.json()) as { ok: boolean; error?: string };
-    if (!payload.ok) {
-      setFileStatus(payload.error || 'create failed');
-      return;
-    }
-    setNewFilePath('');
-    const targetDir = parentDir(relPath);
-    await loadFileTree(selectedRoot, targetDir);
-    await loadFile(selectedRoot, relPath);
-    setFileStatus(`created ${relPath}`);
-  };
-
-  const openSkillInEditor = async (skill: SkillCatalogEntry) => {
-    if (selectedRoot !== skill.rootId) {
-      suppressAutoRootTreeLoadRef.current = skill.rootId;
-    }
-    setSelectedRoot(skill.rootId);
-    const dirPath = skill.dir || parentDir(skill.path);
-    await loadFileTree(skill.rootId, dirPath || '.');
-    await loadFile(skill.rootId, skill.path);
-    setSkillsStatus(`opened ${skill.path} from ${skill.rootLabel}`);
-  };
-
-  const wsRequest = <T,>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
+  const wsRequest = <T,>(
+    method: string,
+    params: Record<string, unknown> = {},
+  ): Promise<T> => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!ws || ws.readyState !== WebSocket.OPEN)
       return Promise.reject(new Error('Gateway is not connected'));
-    }
-
     requestSeqRef.current += 1;
     const id = `req-${Date.now()}-${requestSeqRef.current}`;
-    const frame = { id, method, params };
-
+    ws.send(JSON.stringify({ id, method, params }));
     return new Promise<T>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         pendingRef.current.delete(id);
         reject(new Error(`Gateway request timed out: ${method}`));
       }, 8000);
-
       pendingRef.current.set(id, {
         resolve: (value) => {
           window.clearTimeout(timeout);
@@ -635,368 +305,238 @@ export function App(): JSX.Element {
           reject(error);
         },
       });
-
-      ws.send(JSON.stringify(frame));
     });
   };
 
   const loadSessions = async () => {
-    const result = await wsRequest<{ sessions: SessionSummary[] }>('sessions.list');
-    const nextSessions = Array.isArray(result.sessions) ? result.sessions : [];
-    setSessions(nextSessions);
-    if (!nextSessions.some((session) => session.sessionKey === activeSession) && nextSessions.length > 0) {
-      setActiveSession(nextSessions[0].sessionKey);
+    const result = await wsRequest<{ sessions: SessionSummary[] }>(
+      'sessions.list',
+    );
+    setSessions(result.sessions || []);
+    if (
+      !result.sessions?.some(
+        (session) => session.sessionKey === activeSession,
+      ) &&
+      result.sessions?.[0]
+    ) {
+      setActiveSession(result.sessions[0].sessionKey);
     }
   };
 
   const loadHistory = async (sessionKey: string) => {
-    const result = await wsRequest<{ messages: SessionHistoryMessage[] }>('chat.history', {
-      sessionKey,
-      limit: 120,
-    });
-    setHistory(Array.isArray(result.messages) ? result.messages : []);
-  };
-
-  const onHistoryScroll = () => {
-    const viewport = historyViewportRef.current;
-    if (!viewport) return;
-    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    shouldStickToBottomRef.current = distanceFromBottom <= 48;
+    const result = await wsRequest<{ messages: SessionHistoryMessage[] }>(
+      'chat.history',
+      { sessionKey, limit: 160 },
+    );
+    setHistory(result.messages || []);
   };
 
   useEffect(() => {
-    void fetchRuntime();
-    void fetchOnboardingStatus();
-    void fetchLogs('host');
-    void fetchLogs('error');
-    void fetchFileRoots();
-    void fetchSkillsCatalog();
-
+    void refreshAll();
     const timer = window.setInterval(() => {
-      void fetchRuntime();
-      void fetchOnboardingStatus();
-      void fetchLogs('host');
-      void fetchLogs('error');
+      void refreshRuntime();
+      void refreshLogs();
     }, 10000);
-
     return () => window.clearInterval(timer);
   }, [token]);
 
   useEffect(() => {
-    if (!onboarding) return;
-    setOnboardingProvider((prev) =>
-      prev ? prev : onboarding.providerPreset || 'openrouter',
-    );
-    setOnboardingModel((prev) => {
-      if (prev && prev !== '(unset)') return prev;
-      return onboarding.model && onboarding.model !== '(unset)'
-        ? onboarding.model
-        : 'anthropic/claude-3.5-sonnet';
-    });
-  }, [onboarding]);
-
-  useEffect(() => {
-    if (!selectedRoot) return;
-    if (suppressAutoRootTreeLoadRef.current === selectedRoot) {
-      suppressAutoRootTreeLoadRef.current = null;
-      return;
-    }
-    void loadFileTree(selectedRoot, '.');
-  }, [selectedRoot]);
-
-  useEffect(() => {
     if (!runtime) return;
-
     const ws = new WebSocket(runtime.gateway.wsUrl);
     wsRef.current = ws;
-
-    const rejectAllPending = (message: string) => {
-      for (const [, pending] of pendingRef.current) {
+    const rejectAll = (message: string) => {
+      for (const pending of pendingRef.current.values())
         pending.reject(new Error(message));
-      }
       pendingRef.current.clear();
     };
-
     ws.onopen = async () => {
       try {
-        await wsRequest<{ ok: boolean }>('connect', {
+        await wsRequest('connect', {
           client: 'fft_control_center',
           token: token || undefined,
         });
         setGatewayConnected(true);
-        appendStream('gateway connected');
+        appendEvent('gateway connected');
         await loadSessions();
       } catch (err) {
-        setGatewayConnected(false);
-        appendStream(`gateway connect failed: ${lineText(err)}`);
+        appendEvent(`gateway connect failed: ${asText(err)}`);
       }
     };
-
     ws.onclose = (event) => {
       setGatewayConnected(false);
-      rejectAllPending(`Gateway closed (${event.code})`);
-      appendStream(`gateway disconnected (${event.code})`);
+      rejectAll(`Gateway closed (${event.code})`);
+      appendEvent(`gateway disconnected (${event.code})`);
     };
-
-    ws.onerror = () => {
-      appendStream('gateway websocket error');
-    };
-
+    ws.onerror = () => appendEvent('gateway websocket error');
     ws.onmessage = (event) => {
-      let parsed: unknown;
+      let parsed: Record<string, unknown>;
       try {
-        parsed = JSON.parse(String(event.data));
+        parsed = JSON.parse(String(event.data)) as Record<string, unknown>;
       } catch {
         return;
       }
-      if (!parsed || typeof parsed !== 'object') return;
-      const obj = parsed as Record<string, unknown>;
-
-      if (typeof obj.id === 'string' && typeof obj.ok === 'boolean') {
-        const frame = obj as unknown as WsResponseFrame;
-        const pending = pendingRef.current.get(frame.id);
+      if (typeof parsed.id === 'string' && typeof parsed.ok === 'boolean') {
+        const pending = pendingRef.current.get(parsed.id);
         if (!pending) return;
-        pendingRef.current.delete(frame.id);
-        if (frame.ok) pending.resolve(frame.result);
-        else pending.reject(new Error(frame.error || 'Unknown gateway error'));
+        pendingRef.current.delete(parsed.id);
+        if (parsed.ok) pending.resolve(parsed.result);
+        else
+          pending.reject(
+            new Error(String(parsed.error || 'Unknown gateway error')),
+          );
         return;
       }
-
-      if (typeof obj.event === 'string') {
-        const frame = obj as unknown as WsEventFrame;
-        if (frame.event !== 'chat_event') return;
-        const payload = (frame.payload || {}) as ChatEventPayload;
-        if (!payload || payload.sessionKey !== activeSessionRef.current) return;
-
+      if (parsed.event === 'chat_event') {
+        const payload = (parsed.payload || {}) as {
+          runId?: string;
+          sessionKey?: string;
+          state?: string;
+          message?: { role?: string; content?: string };
+          errorMessage?: string;
+        };
+        appendEvent(
+          `chat ${payload.sessionKey || '-'} ${payload.state || '-'}`,
+        );
+        if (payload.sessionKey !== activeSessionRef.current) return;
         if (payload.state === 'message' && payload.message) {
-          const role = payload.message.role || 'assistant';
-          const content = payload.message.content || '';
           setHistory((prev) => [
             ...prev,
             {
-              role: role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'system',
-              text: content,
+              role:
+                payload.message?.role === 'user'
+                  ? 'user'
+                  : payload.message?.role === 'system'
+                    ? 'system'
+                    : 'assistant',
+              text: payload.message?.content || '',
               timestamp: new Date().toISOString(),
               runId: payload.runId,
             },
           ]);
-          if (role === 'user') setActiveRunId(payload.runId || '');
-        } else if (payload.state === 'final') {
-          setActiveRunId('');
-          appendStream(`run ${payload.runId} final`);
-        } else if (payload.state === 'aborted') {
-          setActiveRunId('');
-          appendStream(`run ${payload.runId} aborted`);
-        } else if (payload.state === 'error') {
-          setActiveRunId('');
-          appendStream(`run ${payload.runId} error: ${payload.errorMessage || 'unknown error'}`);
         }
+        if (['final', 'aborted', 'error'].includes(payload.state || ''))
+          setActiveRunId('');
+        return;
+      }
+      if (parsed.event === 'agent_event') {
+        appendEvent(`agent ${asText(parsed.payload).slice(0, 300)}`);
       }
     };
-
     return () => {
       ws.close();
       wsRef.current = null;
-      rejectAllPending('Gateway connection reset');
-      setGatewayConnected(false);
+      rejectAll('Gateway connection reset');
     };
   }, [runtime?.gateway.wsUrl, token]);
 
   useEffect(() => {
-    if (!gatewayConnected) return;
-    shouldStickToBottomRef.current = true;
-    void loadHistory(activeSession);
+    if (gatewayConnected) void loadHistory(activeSession);
   }, [activeSession, gatewayConnected]);
 
-  useEffect(() => {
-    const viewport = historyViewportRef.current;
-    if (!viewport) return;
-    if (!shouldStickToBottomRef.current) return;
-    viewport.scrollTop = viewport.scrollHeight;
-  }, [history, activeSession]);
-
-  const onApplyToken = () => {
+  const applyToken = () => {
     const next = tokenInput.trim();
     if (next) localStorage.setItem(TOKEN_KEY, next);
     else localStorage.removeItem(TOKEN_KEY);
     setToken(next);
   };
 
-  const onSendChat = async () => {
-    const text = chatInput.trim();
-    if (!text) return;
-    try {
-      const result = await wsRequest<{ runId: string; status: string }>('chat.send', {
+  const sendChat = async () => {
+    const message = chatInput.trim();
+    if (!message) return;
+    const result = await wsRequest<{ runId: string; status: string }>(
+      'chat.send',
+      {
         sessionKey: activeSession,
-        message: text,
+        message,
         deliver: false,
-      });
-      appendStream(`chat.send -> ${result.status} (${result.runId})`);
-      setActiveRunId(result.runId || '');
-      setChatInput('');
-    } catch (err) {
-      appendStream(`chat.send failed: ${lineText(err)}`);
-    }
+      },
+    );
+    setActiveRunId(result.runId);
+    setChatInput('');
+    appendEvent(`chat.send ${result.status} ${result.runId}`);
   };
 
-  const onAbortRun = async () => {
-    if (!activeRunId) return;
-    try {
-      const result = await wsRequest<{ aborted: boolean }>('chat.abort', {
-        sessionKey: activeSession,
-        runId: activeRunId,
-      });
-      appendStream(`chat.abort -> ${result.aborted ? 'aborted' : 'not-active'}`);
-      if (result.aborted) setActiveRunId('');
-    } catch (err) {
-      appendStream(`chat.abort failed: ${lineText(err)}`);
-    }
+  const saveSetup = async () => {
+    setSetupStatus('Saving settings...');
+    const payload = {
+      providerPreset: setupProvider,
+      model: setupModel,
+      apiKey: setupKey,
+      endpoint: setupEndpoint,
+      clearEndpoint:
+        setupEndpoint.trim() === '' &&
+        !['ollama', 'lm-studio'].includes(setupProvider),
+      telegramBotToken: setupTelegramToken,
+    };
+    const result = await fetchJson<{
+      ok: boolean;
+      requiresRestart: boolean;
+      adminSecret?: string;
+    }>('/api/settings/runtime', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setSetupKey('');
+    setSetupTelegramToken('');
+    setSetupStatus(
+      result.adminSecret
+        ? `Saved. Restart the host for service/env changes.\n\nAdmin secret: ${result.adminSecret}\nIn Telegram DM: /main ${result.adminSecret}`
+        : result.requiresRestart
+          ? 'Saved. Restart the host for service/env changes.'
+          : 'Saved.',
+    );
+    await refreshSetup();
   };
 
-  const onPatchSession = async () => {
-    const provider = sessionProvider.trim();
-    const model = sessionModel.trim();
-    const thinkLevel = sessionThinkLevel.trim();
-    const reasoningLevel = sessionReasoningLevel.trim();
-
-    if (!provider && !model && !thinkLevel && !reasoningLevel) {
-      setSessionStatus('enter at least one override before applying');
-      return;
-    }
-
-    try {
-      const result = await wsRequest<{
-        ok: boolean;
-        key: string;
-        provider?: string;
-        model?: string;
-        thinkLevel?: string;
-        reasoningLevel?: string;
-      }>('sessions.patch', {
-        sessionKey: activeSession,
-        ...(provider ? { provider } : {}),
-        ...(model ? { model } : {}),
-        ...(thinkLevel ? { thinkLevel } : {}),
-        ...(reasoningLevel ? { reasoningLevel } : {}),
-      });
-      setSessionStatus(
-        `updated ${result.key}: ${result.provider || '-'} / ${result.model || '-'} / ${result.thinkLevel || '-'} / ${result.reasoningLevel || '-'}`,
-      );
-      appendStream(`sessions.patch -> ${result.key}`);
-      await loadSessions();
-    } catch (err) {
-      setSessionStatus(`sessions.patch failed: ${lineText(err)}`);
-    }
+  const loadSystemPreview = async () => {
+    const payload = await fetchJson<{ ok: boolean; preview: unknown }>(
+      `/api/system-prompt?sessionKey=${encodeURIComponent(activeSession)}&mode=normal`,
+    );
+    setSystemPreview(payload.preview);
   };
 
-  const onResetSession = async () => {
-    try {
-      const result = await wsRequest<{ ok: boolean; key: string; reason: string }>('sessions.reset', {
-        sessionKey: activeSession,
-        reason: 'control-center-reset',
-      });
-      setSessionStatus(`reset ${result.key} (${result.reason})`);
-      appendStream(`sessions.reset -> ${result.key}`);
-      await loadHistory(activeSession);
-    } catch (err) {
-      setSessionStatus(`sessions.reset failed: ${lineText(err)}`);
-    }
+  const runTaskAction = async (id: string, action: string) => {
+    await fetchJson('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action }),
+    });
+    const next = await fetchJson<{ ok: boolean }>('/api/tasks');
+    setTasks(next);
   };
 
-  const onGatewayService = async (action: 'status' | 'restart' | 'doctor') => {
-    try {
-      const result = await wsRequest<{ ok: boolean; text: string }>('gateway.service', { action });
-      setServiceOutput(result.text || '(no output)');
-      appendStream(`gateway.${action} ok`);
-      void fetchRuntime();
-      void fetchLogs('host');
-      void fetchLogs('error');
-    } catch (err) {
-      setServiceOutput(`Failed: ${lineText(err)}`);
-      appendStream(`gateway.${action} failed`);
-    }
+  const captureKnowledge = async () => {
+    await fetchJson('/api/knowledge/capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: knowledgeNote, source: 'control-center' }),
+    });
+    setKnowledgeNote('');
+    setKnowledge(await fetchJson<Record<string, unknown>>('/api/knowledge'));
   };
 
-  const onSubmitOnboarding = async () => {
-    const providerPreset = onboardingProvider.trim();
-    const model = onboardingModel.trim();
-    const apiKey = onboardingApiKey.trim();
-    const telegramBotToken = onboardingTelegramToken.trim();
-
-    if (!providerPreset) {
-      setOnboardingStatus('Choose a provider first.');
-      return;
-    }
-    if (!model) {
-      setOnboardingStatus('Enter a model id.');
-      return;
-    }
-    if (!telegramBotToken) {
-      setOnboardingStatus('Enter your Telegram bot token from BotFather.');
-      return;
-    }
-    if (
-      !OPTIONAL_API_KEY_PROVIDERS.has(providerPreset) &&
-      !apiKey &&
-      !onboarding?.apiKeyConfigured
-    ) {
-      setOnboardingStatus('Enter the provider API key.');
-      return;
-    }
-
-    setOnboardingBusy(true);
-    setOnboardingStatus('Saving onboarding config...');
-    try {
-      const res = await fetch('/api/onboarding/configure', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders,
-        },
-        body: JSON.stringify({
-          providerPreset,
-          model,
-          apiKey,
-          telegramBotToken,
-          whatsappEnabled: false,
-        }),
-      });
-      const payload = (await res.json()) as {
-        ok: boolean;
-        error?: string;
-        adminSecret?: string;
-      };
-      if (!res.ok || !payload.ok) {
-        throw new Error(payload.error || `Onboarding configure failed: HTTP ${res.status}`);
+  const activeProvider = providers.find(
+    (provider) => provider.id === setupProvider,
+  );
+  const providerModels = models.filter(
+    (entry) => entry.provider === activeProvider?.piApi,
+  );
+  const taskList =
+    (tasks as { tasks?: Array<Record<string, unknown>> } | null)?.tasks || [];
+  const knowledgeRecord = knowledge || {};
+  const knowledgeStatus = knowledgeRecord.status as
+    | {
+        ready?: boolean;
+        rawCaptureCount?: number;
+        wikiDocCount?: number;
+        lastRawCaptureAt?: string;
+        lastProgressUpdateAt?: string;
       }
-      if (payload.adminSecret) {
-        setOnboardingStatus(
-          `Config saved. Restarting host...\n\nAdmin secret (save this): ${payload.adminSecret}\nIn Telegram DM: /main ${payload.adminSecret}`,
-        );
-      } else {
-        setOnboardingStatus(
-          'Config saved. Restarting host to bring Telegram online...',
-        );
-      }
-      await onGatewayService('restart');
-      window.setTimeout(() => {
-        void fetchRuntime();
-        void fetchOnboardingStatus();
-      }, 1800);
-    } catch (err) {
-      setOnboardingStatus(err instanceof Error ? err.message : String(err));
-    } finally {
-      setOnboardingBusy(false);
-    }
-  };
-
-  const openDir = (dirPath: string) => {
-    void loadFileTree(selectedRoot, dirPath);
-  };
-
-  const dirSegments = selectedDir === '.'
-    ? []
-    : selectedDir.split('/').filter(Boolean);
+    | undefined;
+  const knowledgeWiki = knowledgeRecord.wiki as
+    | { index?: string; progress?: string; log?: string }
+    | undefined;
 
   return (
     <div className="app">
@@ -1004,7 +544,8 @@ export function App(): JSX.Element {
         <div>
           <h1>FFT CONTROL CENTER</h1>
           <p>
-            service-integrated ops surface · {gatewayConnected ? 'gateway online' : 'gateway offline'}
+            {gatewayConnected ? 'gateway online' : 'gateway offline'} ·{' '}
+            {runtime?.runtime.runtime || 'runtime unknown'}
           </p>
         </div>
         <div className="token-control">
@@ -1014,408 +555,484 @@ export function App(): JSX.Element {
             type="password"
             value={tokenInput}
             onChange={(event) => setTokenInput(event.target.value)}
-            placeholder="Bearer token for lan/remote"
+            placeholder="Bearer token"
           />
-          <button type="button" onClick={onApplyToken}>Apply</button>
+          <button type="button" onClick={applyToken}>
+            Apply
+          </button>
+          <button type="button" onClick={() => void refreshAll()}>
+            Refresh
+          </button>
         </div>
       </header>
 
-      {onboarding?.active ? (
-        <section className="panel onboarding-panel">
-          <div className="onboarding-head">
-            <div>
-              <h2>First-Run Wizard</h2>
-              <p>
-                Finish local setup here, then Telegram takes over.
-              </p>
-            </div>
-            <div className="onboarding-links">
-              <a href={OPENROUTER_SIGNUP_URL} target="_blank" rel="noreferrer noopener">
-                OpenRouter Signup
-              </a>
-              <a href={BOTFATHER_URL} target="_blank" rel="noreferrer noopener">
-                BotFather
-              </a>
-            </div>
-          </div>
+      {runtimeError ? <div className="error panel">{runtimeError}</div> : null}
 
-          <div className="onboarding-grid">
+      <nav className="tabbar panel">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={activeTab === tab.id ? 'active' : ''}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === 'overview' ? (
+        <section className="grid status-grid">
+          <article className="panel stat">
+            <h2>Runtime</h2>
+            <div className="stat-value">{runtime?.runtime.runtime || '-'}</div>
+            <p>sessions {runtime?.runtime.sessions ?? 0}</p>
+            <p>active runs {runtime?.runtime.activeRuns ?? 0}</p>
+          </article>
+          <article className="panel stat">
+            <h2>Profile</h2>
+            <div className="stat-value">{runtime?.profile.profile || '-'}</div>
+            <p>farm {runtime?.profile.featureFarm ? 'on' : 'off'}</p>
+            <p>{runtime?.profile.profileDetection.source || '-'}</p>
+          </article>
+          <article className="panel stat">
+            <h2>Provider</h2>
+            <div className="stat-value">{settings?.providerPreset || '-'}</div>
+            <p>{settings?.model || '-'}</p>
+            <p>
+              {settings?.apiKeyEnv}:{' '}
+              {settings?.apiKeyConfigured ? 'set' : 'missing'}
+            </p>
+          </article>
+          <article className="panel stat">
+            <h2>Knowledge</h2>
+            <div className="stat-value">
+              {knowledgeStatus?.ready ? 'ready' : 'check'}
+            </div>
+            <p>raw {knowledgeStatus?.rawCaptureCount ?? 0}</p>
+            <p>wiki docs {knowledgeStatus?.wikiDocCount ?? 0}</p>
+          </article>
+        </section>
+      ) : null}
+
+      {activeTab === 'chat' || activeTab === 'sessions' ? (
+        <section className="grid main-grid">
+          <article className="panel sessions-panel">
+            <h2>Sessions</h2>
+            <div className="scroll-block">
+              {sessions.map((session) => (
+                <button
+                  key={session.sessionKey}
+                  type="button"
+                  className={`session-item ${activeSession === session.sessionKey ? 'active' : ''}`}
+                  onClick={() => setActiveSession(session.sessionKey)}
+                >
+                  <strong>{session.sessionKey}</strong>
+                  <span>{session.name}</span>
+                  <span>{shortTime(session.lastActivity)}</span>
+                </button>
+              ))}
+            </div>
+          </article>
+          <article className="panel chat-panel">
+            <h2>Live Chat · {activeSession}</h2>
+            <div className="scroll-block history">
+              {history.map((msg, index) => (
+                <div
+                  key={`${msg.timestamp}-${index}`}
+                  className={`message ${msg.role}`}
+                >
+                  <div className="message-meta-row">
+                    <span className="meta">{msg.role}</span>
+                    <span className="meta-time">
+                      {shortTime(msg.timestamp)}
+                    </span>
+                  </div>
+                  <pre className="message-content">{msg.text}</pre>
+                </div>
+              ))}
+            </div>
+            <div className="composer">
+              <textarea
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder="Type a run prompt..."
+              />
+              <div className="composer-actions">
+                <button type="button" onClick={() => void sendChat()}>
+                  Send
+                </button>
+                <button
+                  type="button"
+                  disabled={!activeRunId}
+                  onClick={() =>
+                    void wsRequest('chat.abort', {
+                      sessionKey: activeSession,
+                      runId: activeRunId,
+                    })
+                  }
+                >
+                  Abort
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadHistory(activeSession)}
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+          </article>
+          <article className="panel service-panel">
+            <h2>Events</h2>
+            <pre className="service-output">
+              {events.join('\n') || 'No events yet.'}
+            </pre>
+          </article>
+        </section>
+      ) : null}
+
+      {activeTab === 'setup' ? (
+        <section className="grid setup-grid">
+          <article className="panel">
+            <h2>Provider + Model</h2>
             <label className="field">
               <span>Provider</span>
               <select
-                value={onboardingProvider}
-                onChange={(event) => setOnboardingProvider(event.target.value)}
+                value={setupProvider}
+                onChange={(event) => setSetupProvider(event.target.value)}
               >
-                {ONBOARDING_PROVIDER_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.label}
                   </option>
                 ))}
               </select>
             </label>
-
             <label className="field">
               <span>Model</span>
               <input
-                value={onboardingModel}
-                onChange={(event) => setOnboardingModel(event.target.value)}
-                placeholder="anthropic/claude-3.5-sonnet"
+                list="model-options"
+                value={setupModel}
+                onChange={(event) => setSetupModel(event.target.value)}
+                placeholder={activeProvider?.defaultModel || 'model id'}
               />
             </label>
-
+            <datalist id="model-options">
+              {providerModels.map((entry) => (
+                <option
+                  key={`${entry.provider}:${entry.model}`}
+                  value={entry.model}
+                />
+              ))}
+            </datalist>
             <label className="field">
               <span>
-                API Key {OPTIONAL_API_KEY_PROVIDERS.has(onboardingProvider) ? '(optional)' : ''}
+                API Key (
+                {activeProvider?.apiKeyEnv ||
+                  settings?.apiKeyEnv ||
+                  'PI_API_KEY'}
+                )
               </span>
               <input
                 type="password"
-                value={onboardingApiKey}
-                onChange={(event) => setOnboardingApiKey(event.target.value)}
+                value={setupKey}
+                onChange={(event) => setSetupKey(event.target.value)}
                 placeholder={
-                  OPTIONAL_API_KEY_PROVIDERS.has(onboardingProvider)
-                    ? 'uses local default'
-                    : 'provider API key'
+                  settings?.apiKeyConfigured
+                    ? 'already set; enter a new key to replace'
+                    : 'paste API key'
                 }
               />
             </label>
-
+            <label className="field">
+              <span>Endpoint</span>
+              <input
+                value={setupEndpoint}
+                onChange={(event) => setSetupEndpoint(event.target.value)}
+                placeholder="provider default or local endpoint"
+              />
+            </label>
             <label className="field">
               <span>Telegram Bot Token</span>
               <input
                 type="password"
-                value={onboardingTelegramToken}
-                onChange={(event) => setOnboardingTelegramToken(event.target.value)}
-                placeholder="123456:ABCDEF..."
+                value={setupTelegramToken}
+                onChange={(event) => setSetupTelegramToken(event.target.value)}
+                placeholder={
+                  settings?.telegramBotConfigured
+                    ? 'already set; enter a new token to replace'
+                    : 'paste token from BotFather'
+                }
               />
             </label>
-          </div>
+            <div className="composer-actions">
+              <button type="button" onClick={() => void saveSetup()}>
+                Save Settings
+              </button>
+              <button type="button" onClick={() => void refreshSetup()}>
+                Reload
+              </button>
+            </div>
+            <pre className="service-output">
+              {setupStatus ||
+                `Provider key: ${settings?.apiKeyConfigured ? 'set' : 'missing'}\nTelegram token: ${settings?.telegramBotConfigured ? 'set' : 'missing'}`}
+            </pre>
+          </article>
+          <article className="panel">
+            <h2>Get API Keys</h2>
+            <div className="provider-list">
+              {providers.map((provider) => (
+                <div key={provider.id} className="provider-card">
+                  <strong>{provider.label}</strong>
+                  <span>
+                    {provider.apiKeyRequired
+                      ? provider.apiKeyEnv
+                      : 'local/no hosted key required'}
+                  </span>
+                  <span>{provider.note || provider.defaultModel}</span>
+                  <div className="inline-links">
+                    {provider.signupUrl ? (
+                      <a
+                        href={provider.signupUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                      >
+                        API keys
+                      </a>
+                    ) : null}
+                    {provider.localSetupUrl ? (
+                      <a
+                        href={provider.localSetupUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                      >
+                        Install
+                      </a>
+                    ) : null}
+                    {provider.docsUrl ? (
+                      <a
+                        href={provider.docsUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                      >
+                        Docs
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+      ) : null}
 
-          <div className="onboarding-checks">
-            <span>Provider key: {onboarding.apiKeyConfigured ? 'already set' : 'needed'}</span>
-            <span>Telegram token: {onboarding.telegramBotConfigured ? 'already set' : 'needed'}</span>
-            <span>Admin secret: {onboarding.telegramAdminSecretConfigured ? 'ready' : 'will be generated'}</span>
-          </div>
-
-          <div className="composer-actions">
-            <button type="button" onClick={() => void onSubmitOnboarding()} disabled={onboardingBusy}>
-              {onboardingBusy ? 'Saving…' : 'Save + Restart Host'}
+      {activeTab === 'system' ? (
+        <section className="grid system-grid">
+          <article className="panel">
+            <h2>Composed System Prompt</h2>
+            <p className="files-path">
+              Preview only. It does not store or send another system message.
+            </p>
+            <button type="button" onClick={() => void loadSystemPreview()}>
+              Load Preview
             </button>
-            <button type="button" onClick={() => void fetchOnboardingStatus()} disabled={onboardingBusy}>
-              Refresh Wizard
-            </button>
-          </div>
+            <pre className="system-preview">
+              {(systemPreview as { text?: string } | null)?.text ||
+                'No preview loaded.'}
+            </pre>
+          </article>
+          <article className="panel">
+            <h2>Report</h2>
+            <pre className="service-output">
+              {JSON.stringify(
+                (systemPreview as { report?: unknown } | null)?.report || {},
+                null,
+                2,
+              )}
+            </pre>
+          </article>
+        </section>
+      ) : null}
 
+      {activeTab === 'skills' ? (
+        <section className="grid skills-grid">
+          <article className="panel">
+            <div className="skills-head">
+              <h2>Skills Catalog</h2>
+              <button type="button" onClick={() => void refreshSkills()}>
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void fetchJson('/api/skills/validate', {
+                    method: 'POST',
+                  }).then((r) => setSkillStatus(JSON.stringify(r, null, 2)))
+                }
+              >
+                Validate
+              </button>
+            </div>
+            <div className="scroll-block skills-scroll">
+              {skillGroups.map((group) => (
+                <details key={group.root.id} open>
+                  <summary>
+                    <strong>{group.root.label}</strong>{' '}
+                    <span>{group.skills.length}</span>
+                  </summary>
+                  {group.skills.map((skill) => (
+                    <div
+                      className="skill-item"
+                      key={`${group.root.id}:${skill.path}`}
+                    >
+                      <div>
+                        <p className="skill-title">{skill.name}</p>
+                        <p className="files-path">{skill.path}</p>
+                        <p>{skill.description || 'No description.'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </details>
+              ))}
+            </div>
+            <pre className="service-output">
+              {skillStatus ||
+                'Use Workspace + Skills file roots through the file APIs for editing.'}
+            </pre>
+          </article>
+        </section>
+      ) : null}
+
+      {activeTab === 'tasks' ? (
+        <section className="grid tasks-grid">
+          <article className="panel">
+            <h2>Scheduled Tasks</h2>
+            <div className="scroll-block">
+              {taskList.map((task) => (
+                <div className="task-row" key={String(task.id)}>
+                  <strong>{String(task.id)}</strong>
+                  <span>
+                    {String(task.status)} · next{' '}
+                    {shortTime(String(task.next_run || ''))}
+                  </span>
+                  <span>
+                    {String(task.schedule_type)} {String(task.schedule_value)}
+                  </span>
+                  <div className="composer-actions">
+                    <button
+                      onClick={() =>
+                        void runTaskAction(String(task.id), 'trigger')
+                      }
+                    >
+                      Trigger
+                    </button>
+                    <button
+                      onClick={() =>
+                        void runTaskAction(String(task.id), 'pause')
+                      }
+                    >
+                      Pause
+                    </button>
+                    <button
+                      onClick={() =>
+                        void runTaskAction(String(task.id), 'resume')
+                      }
+                    >
+                      Resume
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+          <article className="panel">
+            <h2>Task JSON</h2>
+            <pre className="service-output">
+              {JSON.stringify(tasks, null, 2)}
+            </pre>
+          </article>
+        </section>
+      ) : null}
+
+      {activeTab === 'pipelines' ? (
+        <section className="panel">
+          <h2>Pipelines</h2>
           <pre className="service-output">
-            {onboardingStatus ||
-              'Use OpenRouter if you need a quick hosted API key. Use BotFather to create the Telegram bot, paste the token here, then restart.'}
+            {JSON.stringify(pipelines, null, 2)}
+          </pre>
+        </section>
+      ) : null}
+      {activeTab === 'memory' ? (
+        <section className="panel">
+          <h2>Memory + Canonical Files</h2>
+          <pre className="service-output">
+            {JSON.stringify(memory, null, 2)}
           </pre>
         </section>
       ) : null}
 
-      {runtimeError ? <div className="error panel">{runtimeError}</div> : null}
-
-      <section className="grid status-grid">
-        <article className="panel stat">
-          <h2>Runtime</h2>
-          <div className="stat-value">{runtime?.runtime.runtime || '-'}</div>
-          <p>sessions {runtime?.runtime.sessions ?? 0}</p>
-          <p>active runs {runtime?.runtime.activeRuns ?? 0}</p>
-        </article>
-        <article className="panel stat">
-          <h2>Profile</h2>
-          <div className="stat-value">{runtime?.profile.profile || '-'}</div>
-          <p>feature_farm {runtime?.profile.featureFarm ? 'on' : 'off'}</p>
-          <p>{runtime?.profile.profileDetection.source || '-'}</p>
-        </article>
-        <article className="panel stat">
-          <h2>Build</h2>
-          <div className="stat-value">{runtime?.build.version || '-'}</div>
-          <p>{runtime?.build.branch || '-'}</p>
-          <p>{runtime?.build.commit || '-'}</p>
-        </article>
-        <article className="panel stat">
-          <h2>Gateway</h2>
-          <div className="stat-value">{runtime?.gateway.port ?? '-'}</div>
-          <p>{runtime?.gateway.wsUrl || '-'}</p>
-          <p>auth {runtime?.gateway.authRequired ? 'required' : 'none'}</p>
-        </article>
-      </section>
-
-      <section className="grid main-grid">
-        <article className="panel sessions-panel">
-          <h2>Sessions</h2>
-          <div className="scroll-block">
-            {sessions.map((session) => (
-              <button
-                type="button"
-                key={session.sessionKey}
-                className={`session-item ${activeSession === session.sessionKey ? 'active' : ''}`}
-                onClick={() => setActiveSession(session.sessionKey)}
-              >
-                <strong>{session.sessionKey}</strong>
-                <span>{session.name}</span>
-                <span>{shortTime(session.lastActivity)}</span>
-              </button>
-            ))}
-            {sessions.length === 0 ? <p>No sessions loaded.</p> : null}
-          </div>
-        </article>
-
-        <article className="panel chat-panel">
-          <h2>Live Chat · {activeSession}</h2>
-          <div
-            ref={historyViewportRef}
-            className="scroll-block history"
-            onScroll={onHistoryScroll}
-          >
-            {history.map((msg, index) => (
-              <div key={`${msg.timestamp}-${index}`} className={`message ${msg.role}`}>
-                <div className="message-meta-row">
-                  <span className="meta">{msg.role}</span>
-                  <span className="meta-time">{shortTime(msg.timestamp)}</span>
-                </div>
-                <div className="message-content">
-                  {renderRichMessage(msg.text, `${msg.timestamp}-${index}`)}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="composer">
-            <textarea
-              value={chatInput}
-              onChange={(event) => setChatInput(event.target.value)}
-              placeholder="Type a run prompt..."
-            />
-            <div className="composer-actions">
-              <button type="button" onClick={onSendChat}>Send</button>
-              <button type="button" onClick={onAbortRun} disabled={!activeRunId}>Abort</button>
-              <button type="button" onClick={() => void loadHistory(activeSession)}>Refresh</button>
-            </div>
-          </div>
-        </article>
-
-        <article className="panel service-panel">
-          <h2>Service + Session Controls</h2>
-
-          <div className="session-controls">
-            <p className="files-path">
-              {activeSessionDetails?.chatJid || 'no active chat jid'}
+      {activeTab === 'knowledge' ? (
+        <section className="grid knowledge-grid">
+          <article className="panel">
+            <h2>Knowledge Wiki</h2>
+            <p>
+              ready {knowledgeStatus?.ready ? 'yes' : 'no'} · raw{' '}
+              {knowledgeStatus?.rawCaptureCount ?? 0} · wiki docs{' '}
+              {knowledgeStatus?.wikiDocCount ?? 0}
             </p>
-            <div className="session-fields-grid">
-              <label className="field">
-                <span>Provider</span>
-                <input
-                  value={sessionProvider}
-                  onChange={(event) => setSessionProvider(event.target.value)}
-                  placeholder="zai / openai / anthropic"
-                />
-              </label>
-              <label className="field">
-                <span>Model</span>
-                <input
-                  value={sessionModel}
-                  onChange={(event) => setSessionModel(event.target.value)}
-                  placeholder="glm-4.7"
-                />
-              </label>
-              <label className="field">
-                <span>Think</span>
-                <select
-                  value={sessionThinkLevel}
-                  onChange={(event) => setSessionThinkLevel(event.target.value)}
-                >
-                  <option value="">unchanged</option>
-                  {THINK_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Reasoning</span>
-                <select
-                  value={sessionReasoningLevel}
-                  onChange={(event) => setSessionReasoningLevel(event.target.value)}
-                >
-                  <option value="">unchanged</option>
-                  {REASONING_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <textarea
+              value={knowledgeNote}
+              onChange={(event) => setKnowledgeNote(event.target.value)}
+              placeholder="Capture a raw knowledge note for later curation..."
+            />
             <div className="composer-actions">
-              <button type="button" onClick={() => void onPatchSession()}>Apply Prefs</button>
-              <button type="button" onClick={() => void onResetSession()}>Reset Session</button>
-            </div>
-            <pre className="service-output">{sessionStatus || 'No session updates yet.'}</pre>
-          </div>
-
-          <div className="service-actions">
-            <button type="button" onClick={() => void onGatewayService('status')}>Status</button>
-            <button type="button" onClick={() => void onGatewayService('doctor')}>Doctor</button>
-            <button type="button" onClick={() => void onGatewayService('restart')}>Restart</button>
-          </div>
-          <pre className="service-output">{serviceOutput || 'No service output yet.'}</pre>
-
-          <h3>Event Stream</h3>
-          <pre className="service-output">{stream.join('\n') || 'No events yet.'}</pre>
-        </article>
-      </section>
-
-      <section className="grid files-grid">
-        <article className="panel files-browser">
-          <h2>Workspace + Skills Files</h2>
-          <div className="files-toolbar">
-            <select
-              value={selectedRoot}
-              onChange={(event) => {
-                setSelectedRoot(event.target.value);
-                setSelectedFile('');
-                setFileContent('');
-                setFileStatus('');
-                setSelectedDir('.');
-                setFileFilter('');
-              }}
-            >
-              {fileRoots.map((root) => (
-                <option key={root.id} value={root.id}>{root.label}</option>
-              ))}
-            </select>
-            <button type="button" onClick={() => openDir('.')}>Root</button>
-            <button
-              type="button"
-              onClick={() => {
-                const next = parentDir(selectedDir);
-                openDir(next);
-              }}
-            >
-              Up
-            </button>
-          </div>
-
-          <div className="breadcrumb-row">
-            <button type="button" onClick={() => openDir('.')}>.</button>
-            {dirSegments.map((segment, index) => {
-              const rel = dirSegments.slice(0, index + 1).join('/');
-              return (
-                <button key={rel} type="button" onClick={() => openDir(rel)}>{segment}</button>
-              );
-            })}
-          </div>
-
-          <label className="field">
-            <span>Filter</span>
-            <input
-              value={fileFilter}
-              onChange={(event) => setFileFilter(event.target.value)}
-              placeholder="search current folder"
-            />
-          </label>
-
-          <label className="field">
-            <span>New File</span>
-            <div className="inline-action">
-              <input
-                value={newFilePath}
-                onChange={(event) => setNewFilePath(event.target.value)}
-                placeholder="relative path, e.g. skills/new/SKILL.md"
-              />
-              <button type="button" onClick={() => void createFile()}>Create</button>
-            </div>
-          </label>
-
-          <p className="files-path">{selectedDir}</p>
-          <div className="scroll-block">
-            {filteredFileEntries.map((entry) => (
               <button
-                key={entry.relPath}
                 type="button"
-                className={`file-item ${entry.kind === 'dir' ? 'dir' : 'file'} ${selectedFile === entry.relPath ? 'active' : ''}`}
-                onClick={() => {
-                  if (entry.kind === 'dir') openDir(entry.relPath);
-                  else void loadFile(selectedRoot, entry.relPath);
-                }}
+                onClick={() => void captureKnowledge()}
+                disabled={!knowledgeNote.trim()}
               >
-                <strong>{entry.kind === 'dir' ? '[DIR]' : '[FILE]'}</strong>
-                <span>{entry.relPath}</span>
-                <span className="file-meta">{entry.size} bytes · {shortTime(entry.modifiedAt)}</span>
+                Capture Note
               </button>
-            ))}
-            {filteredFileEntries.length === 0 ? <p>No entries.</p> : null}
-          </div>
-        </article>
+              <button
+                type="button"
+                onClick={() =>
+                  void fetchJson('/api/knowledge/lint', { method: 'POST' })
+                    .then(() =>
+                      fetchJson<Record<string, unknown>>('/api/knowledge'),
+                    )
+                    .then(setKnowledge)
+                }
+              >
+                Run Lint
+              </button>
+            </div>
+            <h3>Index</h3>
+            {renderMarkdownLite(knowledgeWiki?.index || '')}
+            <h3>Progress</h3>
+            {renderMarkdownLite(knowledgeWiki?.progress || '')}
+          </article>
+          <aside className="panel logs-panel">
+            <h2>Curator Log</h2>
+            {renderMarkdownLite(knowledgeWiki?.log || '')}
+            <h3>Recent Reports</h3>
+            <pre>{JSON.stringify(knowledgeRecord.reports || [], null, 2)}</pre>
+          </aside>
+        </section>
+      ) : null}
 
-        <article className="panel file-editor">
-          <h2>Editor</h2>
-          <p className="files-path">{selectedFile || 'Select a file to edit'}</p>
-          <textarea
-            className="editor-area"
-            value={fileContent}
-            onChange={(event) => setFileContent(event.target.value)}
-            disabled={!selectedFile}
-          />
-          <div className="composer-actions">
-            <button type="button" onClick={() => void loadFile(selectedRoot, selectedFile)} disabled={!selectedFile}>Reload</button>
-            <button type="button" onClick={() => void saveFile()} disabled={!selectedFile}>Save</button>
-          </div>
-          <pre className="service-output">{fileStatus || 'Ready.'}</pre>
-        </article>
-      </section>
-
-      <section className="grid skills-grid">
-        <article className="panel skills-panel">
-          <div className="skills-head">
-            <h2>Skills Catalog</h2>
-            <button type="button" onClick={() => void fetchSkillsCatalog()}>Refresh</button>
-          </div>
-
-          <label className="field">
-            <span>Filter Skills</span>
-            <input
-              value={skillFilter}
-              onChange={(event) => setSkillFilter(event.target.value)}
-              placeholder="search by name, path, description"
-            />
-          </label>
-
-          <div className="scroll-block skills-scroll">
-            {filteredSkillGroups.map((group) => (
-              <details key={group.root.id} className="skill-group" open>
-                <summary>
-                  <strong>{group.root.label}</strong>
-                  <span>{group.skills.length}</span>
-                </summary>
-                <div className="skill-list">
-                  {group.skills.map((skill) => (
-                    <div className="skill-item" key={`${group.root.id}:${skill.path}`}>
-                      <div>
-                        <p className="skill-title">{skill.name}</p>
-                        <p className="files-path">{skill.path}</p>
-                        <p className="skill-desc">{skill.description || 'No description.'}</p>
-                      </div>
-                      <button type="button" onClick={() => void openSkillInEditor(skill)}>Open</button>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ))}
-            {filteredSkillGroups.length === 0 ? <p>No skills found.</p> : null}
-          </div>
-
-          <pre className="service-output">{skillsStatus || 'Select a skill and open it in editor.'}</pre>
-        </article>
-      </section>
-
-      <section className="grid logs-grid">
-        <article className="panel logs-panel">
-          <h2>Host Log</h2>
-          <pre>{hostLogs || '(empty)'}</pre>
-        </article>
-        <article className="panel logs-panel">
-          <h2>Error Log</h2>
-          <pre>{errorLogs || '(empty)'}</pre>
-        </article>
-      </section>
+      {activeTab === 'logs' ? (
+        <section className="grid logs-grid">
+          <article className="panel logs-panel">
+            <h2>Host Log</h2>
+            <pre>{hostLogs || '(empty)'}</pre>
+          </article>
+          <article className="panel logs-panel">
+            <h2>Error Log</h2>
+            <pre>{errorLogs || '(empty)'}</pre>
+          </article>
+        </section>
+      ) : null}
     </div>
   );
 }

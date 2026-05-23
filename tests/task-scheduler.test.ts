@@ -18,7 +18,11 @@ import {
 import { RegisteredGroup } from '../src/types.js';
 
 function setupTempDb(): { dbPath: string; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-nano-scheduler-test-'));
+  const projectTmp = path.join(process.cwd(), 'data', 'test-db-temp');
+  fs.mkdirSync(projectTmp, { recursive: true });
+  const dirName = `fft-test-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const dir = path.join(projectTmp, dirName);
+  fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, 'messages.db');
   initDatabaseAtPath(dbPath);
   return {
@@ -169,6 +173,41 @@ test('successful recurring task advances next_run', async () => {
   }
 });
 
+test('scheduled task evaluator failure is logged but not appended to task result', async () => {
+  const { cleanup } = setupTempDb();
+  try {
+    createDueTask({
+      id: 'task-evaluator-no-leak',
+      groupFolder: 'main',
+      chatJid: 'telegram:450',
+      scheduleType: 'interval',
+      scheduleValue: '45000',
+    });
+
+    await processDueTasksOnce({
+      sendMessage: async () => undefined,
+      registeredGroups: () => ({ 'telegram:450': makeGroup('main') }),
+      runTaskAgent: async () => ({
+        status: 'success',
+        result: 'operator-safe result',
+      }),
+      runEvaluatorPass: async () => ({
+        pass: false,
+        score: 4,
+        issues: ['internal issue'],
+        feedback: 'internal feedback',
+        skipped: false,
+      }),
+    });
+
+    const task = getTaskById('task-evaluator-no-leak');
+    assert.equal(task?.last_result, 'operator-safe result');
+    assert.doesNotMatch(task?.last_result || '', /Evaluator|score 4\/10|internal issue/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('startSchedulerLoop is idempotent', async () => {
   const { cleanup } = setupTempDb();
   try {
@@ -194,4 +233,3 @@ test('startSchedulerLoop is idempotent', async () => {
     cleanup();
   }
 });
-

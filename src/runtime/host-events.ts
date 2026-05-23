@@ -46,7 +46,8 @@ export type HostEvent =
       isMain: boolean;
       request:
         | import('../types.js').FarmActionRequest
-        | import('../types.js').MemoryActionRequest;
+        | import('../types.js').MemoryActionRequest
+        | import('../types.js').SkillActionRequest;
       resultPath: string;
     })
   | (HostEventBase & {
@@ -127,7 +128,11 @@ export type HostEvent =
         | 'retry_fresh'
         | 'retry_delay'
         | 'retry_provider_switch'
-        | 'stale';
+        | 'stale'
+        | 'finalizing'
+        | 'completed'
+        | 'failed'
+        | 'aborted';
       text: string;
       detail?: string;
       attempt?: number;
@@ -309,9 +314,7 @@ export function projectEventToGatewayFrame(
             ...(typeof event.delayMs === 'number'
               ? { delayMs: event.delayMs }
               : {}),
-            ...(event.fromProvider
-              ? { fromProvider: event.fromProvider }
-              : {}),
+            ...(event.fromProvider ? { fromProvider: event.fromProvider } : {}),
             ...(event.toProvider ? { toProvider: event.toProvider } : {}),
           },
         },

@@ -6,6 +6,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
   PARITY_CONFIG,
   TIMEZONE,
 } from '../config.js';
@@ -30,6 +31,7 @@ export interface CronServiceDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   requestHeartbeatNow?: (reason?: string) => void;
   runContainerTask?: typeof runContainerAgent;
+  runEvaluatorPass?: typeof runEvaluatorPass;
   runSubagentTask?: (
     type: string,
     groupFolder: string,
@@ -385,7 +387,8 @@ export async function runScheduledTaskV2(
 
         // Evaluator pass for cron tasks — always runs
         if (outputResult) {
-          const verdict = await runEvaluatorPass({
+          const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
+          const verdict = await evaluateRun({
             runType: 'cron',
             originalTask: task.prompt,
             agentOutput: outputResult,
@@ -393,17 +396,29 @@ export async function runScheduledTaskV2(
             toolsInvoked: output.toolExecutions?.length ?? 0,
             group,
             chatJid: task.chat_jid,
+            isMain,
+            workspaceDir: isMain
+              ? MAIN_WORKSPACE_DIR
+              : path.join(GROUPS_DIR, task.group_folder),
+            startedAtMs: startedAt,
             abortSignal: abortController.signal,
           }).catch((err) => {
-            logger.warn({ err, taskId: task.id }, 'Evaluator pass failed for cron task');
+            logger.warn(
+              { err, taskId: task.id },
+              'Evaluator pass failed for cron task',
+            );
             return null;
           });
           if (verdict && !verdict.skipped && !verdict.pass) {
             logger.warn(
-              { taskId: task.id, score: verdict.score, issues: verdict.issues },
-              'Cron task evaluator flagged issues',
+              {
+                taskId: task.id,
+                score: verdict.score,
+                issues: verdict.issues,
+                feedback: verdict.feedback,
+              },
+              'Cron task evaluator flagged issues; suppressing user-visible evaluator details',
             );
-            outputResult = `${outputResult}\n\n[Evaluator: score ${verdict.score}/10 — ${verdict.feedback}${verdict.issues.length > 0 ? '\nIssues: ' + verdict.issues.join('; ') : ''}]`;
           }
         }
       }

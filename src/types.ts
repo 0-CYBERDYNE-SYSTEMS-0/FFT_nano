@@ -238,6 +238,32 @@ export interface MemoryActionRequest {
   requestId: string;
 }
 
+export interface SkillActionRequest {
+  type: 'skill_action';
+  action:
+    | 'skill_list'
+    | 'skill_view'
+    | 'skill_create'
+    | 'skill_patch'
+    | 'skill_write_file'
+    | 'skill_archive'
+    | 'skill_restore'
+    | 'skill_pin'
+    | 'skill_unpin'
+    | 'skill_status';
+  params: {
+    name?: string;
+    content?: string;
+    filePath?: string;
+    fileContent?: string;
+    description?: string;
+    groupFolder?: string;
+    includeArchived?: boolean;
+    reason?: string;
+  };
+  requestId: string;
+}
+
 export interface MemorySearchHit {
   source: 'memory_doc' | 'session_transcript';
   score: number;
@@ -307,5 +333,10 @@ export interface FileDeliveryResult {
   executedAt: string;
 }
 
-
-export type RunType = 'chat' | 'coding' | 'scheduled' | 'cron' | 'heartbeat' | 'subagent';
+export type RunType =
+  | 'chat'
+  | 'coding'
+  | 'scheduled'
+  | 'cron'
+  | 'heartbeat'
+  | 'subagent';

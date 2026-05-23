@@ -51,6 +51,20 @@ export function resolveTelegramStreamCompletionState(params: {
   return { effectiveStreamed: false, messagePreviewState: null };
 }
 
+const RUN_STATUS_PREVIEW_PREFIXES = [
+  'Coder status:',
+  'Skill manager status:',
+  'Librarian status:',
+  'Run status:',
+];
+
+export function isTelegramRunStatusPreviewText(text: string): boolean {
+  const trimmed = text.trim();
+  return RUN_STATUS_PREVIEW_PREFIXES.some((prefix) =>
+    trimmed.startsWith(prefix),
+  );
+}
+
 const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
 const MAX_FAILURES_BEFORE_DISABLE = 4;
 const DISABLE_TTL_MS = 120_000;
@@ -205,6 +219,10 @@ class BaseTelegramStreamRegistry {
     this.completedRuns.set(runKey, now);
   }
 
+  isCompleted(runKey: string): boolean {
+    return this.completedRuns.has(runKey);
+  }
+
   consumeCompleted(runKey: string): boolean {
     const had = this.completedRuns.has(runKey);
     if (had) this.completedRuns.delete(runKey);
@@ -261,6 +279,9 @@ export async function updateTelegramPreview(params: {
 }> {
   const runKey = getTelegramPreviewRunKey(params.chatJid, params.requestId);
   params.registry.prune();
+  if (params.registry.isCompleted(runKey)) {
+    return { runKey, sent: false, disabled: true };
+  }
   if (params.registry.isDisabled(runKey)) {
     return { runKey, sent: false, disabled: true };
   }
@@ -355,6 +376,9 @@ export async function updateTelegramDraftPreview(params: {
 }> {
   const runKey = getTelegramPreviewRunKey(params.chatJid, params.requestId);
   params.registry.prune();
+  if (params.registry.isCompleted(runKey)) {
+    return { runKey, sent: false, disabled: true };
+  }
   if (params.registry.isDisabled(runKey)) {
     return { runKey, sent: false, disabled: true };
   }

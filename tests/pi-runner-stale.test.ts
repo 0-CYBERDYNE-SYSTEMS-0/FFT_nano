@@ -9,6 +9,10 @@ import {
   getProviderFallbackCandidates,
   runContainerAgent,
 } from '../src/pi-runner.ts';
+import {
+  dispatchLegacyMessageEnvelope,
+  wrapLegacyMessageEnvelope,
+} from '../src/runtime/boundary-ipc.js';
 import type { RegisteredGroup } from '../src/types.ts';
 
 test('getProviderFallbackCandidates skips attempted providers and dedupes order', () => {
@@ -33,12 +37,22 @@ test('getProviderFallbackCandidates preserves forward-only fallback progression'
   );
 });
 
-test('runContainerAgent handles an already aborted signal without throwing', async () => {
+test('runContainerAgent handles an already aborted signal without throwing', async (t) => {
   const abortController = new AbortController();
   abortController.abort(new Error('stop before start'));
+  const groupFolder = `testrun_aborted_${Date.now().toString(36)}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+  const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+  t.after(() => {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+    fs.rmSync(ipcDir, { recursive: true, force: true });
+    fs.rmSync(piDir, { recursive: true, force: true });
+  });
+
   const group: RegisteredGroup = {
     name: 'Test Group',
-    folder: `testrun_aborted_${Date.now().toString(36)}`,
+    folder: groupFolder,
     trigger: '@FarmFriend',
     added_at: '2026-03-31T00:00:00.000Z',
   };
@@ -587,6 +601,89 @@ setTimeout(() => process.exit(0), 10);
     assert.equal(output.visibleAssistantText, 'visible answer');
   },
 );
+
+test(
+  'runContainerAgent returns forced delegation output without direct chat delivery',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-coder-'));
+    const fakePiPath = path.join(tempDir, 'fake-pi-coder.js');
+    const verdictJson =
+      '{"pass":false,"score":1,"issues":["missing artifact"],"feedback":"retry"}';
+    fs.writeFileSync(
+      fakePiPath,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  type: 'message_end',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'text', text: ${JSON.stringify(verdictJson)} }],
+  },
+}) + '\\n');
+setTimeout(() => process.exit(0), 10);
+`,
+      'utf8',
+    );
+    fs.chmodSync(fakePiPath, 0o755);
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+    const requestId = `req-coder-${Date.now().toString(36)}`;
+    const deliveredTexts: string[] = [];
+    const unsubscribe = hostEventBus.subscribe((event) => {
+      if (
+        event.kind === 'chat_delivery_requested' &&
+        event.requestId === requestId
+      ) {
+        deliveredTexts.push(event.text);
+      }
+    });
+
+    t.after(() => {
+      unsubscribe();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: true,
+      assistantName: 'FarmFriend',
+      requestId,
+      noContinue: true,
+      codingHint: 'force_delegate_execute',
+      suppressPreviewStreaming: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 2500,
+        hardTimeoutMs: 2500,
+      },
+    });
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, verdictJson);
+    assert.equal(output.streamed, false);
+    assert.deepEqual(deliveredTexts, []);
+  },
+);
+
 
 function writeLongQuietToolPiExecutable(dir: string): string {
   const executablePath = path.join(dir, 'fake-pi-long-tool.js');

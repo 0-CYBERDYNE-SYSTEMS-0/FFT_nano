@@ -15,6 +15,7 @@ import {
   DATA_DIR,
   FEATURE_FARM,
   FARM_STATE_ENABLED,
+  FFT_NANO_CODER_GATE_MODE,
   FFT_NANO_ONBOARDING_MODE,
   FFT_NANO_TUI_AUTH_TOKEN,
   FFT_NANO_TUI_ENABLED,
@@ -66,6 +67,7 @@ import {
   getNewMessages,
   getTaskById,
   getTaskRunLogs,
+  getNextDueTaskTime,
   initDatabase,
   setLastGroupSync,
   storeChatMetadata,
@@ -81,15 +83,24 @@ import {
   MemoryActionRequest,
   NewMessage,
   RegisteredGroup,
+  SkillActionRequest,
 } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';
+import { attachActionRequestAudit } from './action-result-audit.js';
 import { getContainerRuntime } from './container-runtime.js';
 import { acquireSingletonLock } from './singleton-lock.js';
-import { runUpdateCommand } from './update-command.js';
+import {
+  getUpdateNotificationsDir,
+  readUpdateNotification,
+  runUpdateCommand,
+  startDetachedUpdateCommand,
+  writeUpdateNotification,
+} from './update-command.js';
 import {
   createTelegramBot,
   isTelegramJid,
+  isTelegramPrivateChatJid,
   parseTelegramChatId,
   splitTelegramText,
 } from './telegram.js';
@@ -148,6 +159,7 @@ import {
 import {
   isSubstantialCodingTask,
   parseDelegationTrigger,
+  shouldSuggestCodingEscalation,
   type CodingHint,
 } from './coding-delegation.js';
 import {
@@ -162,7 +174,24 @@ import {
   stopFarmStateCollector,
 } from './farm-state-collector.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
-import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
+import {
+  applySkillManagerTransitions,
+  executeSkillAction,
+  formatSkillManagerStatus,
+  loadSkillManagerState,
+  resolveGroupSkillsDir,
+  saveSkillManagerState,
+  setSkillManagerPaused,
+  shouldRunSkillManager,
+  snapshotSkills,
+  writeSkillManagerReport,
+  type SkillManagerConfig,
+} from './skill-lifecycle.js';
+import {
+  isValidGroupFolder,
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+} from './group-folder.js';
 import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
 import {
   appendCompactionSummaryToMemory,
@@ -182,6 +211,8 @@ import {
   resolveCronExecutionPlan,
   resolveCronPolicy,
 } from './cron/adapters.js';
+import { computeTaskNextRun } from './task-schedule.js';
+import { buildSystemPrompt } from './system-prompt.js';
 import type { CronV2Schedule } from './cron/types.js';
 import {
   isHeartbeatFileEffectivelyEmpty,
@@ -190,6 +221,7 @@ import {
   shouldSuppressDuplicateHeartbeat,
   stripHeartbeatToken,
 } from './heartbeat-policy.js';
+import { writeHeartbeatChecklist } from './heartbeat-checklist.js';
 import {
   completeMainWorkspaceOnboarding,
   computeBootFileHash,
@@ -228,6 +260,7 @@ import {
 } from './web/control-center-server.js';
 import {
   getTelegramPreviewRunKey,
+  isTelegramRunStatusPreviewText,
   resolveTelegramStreamCompletionState,
   type TelegramMessagePreviewState,
   updateTelegramDraftPreview,
@@ -256,10 +289,9 @@ import {
   dispatchLegacyMessageEnvelope,
   wrapLegacyActionEnvelope,
   wrapLegacyMessageEnvelope,
-  wrapLegacyTaskEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime } from './app.js';
-import { runEvaluatorPass, buildRefinementPrompt } from './evaluator.js';
+import { isActionfulChatTask } from './evaluator.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
@@ -340,6 +372,25 @@ const STATUS_STUCK_WARNING_SECONDS = 120;
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
+const TELEGRAM_GROUP_APPROVALS_PATH = path.join(
+  DATA_DIR,
+  'telegram_group_approvals.json',
+);
+const TELEGRAM_GROUP_APPROVAL_NOTIFY_EVERY_MS = 10 * 60 * 1000;
+
+interface TelegramGroupApprovalRecord {
+  jid: string;
+  name: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastNotifiedAt?: string;
+}
+
+interface TelegramGroupApprovalState {
+  pending: Record<string, TelegramGroupApprovalRecord>;
+  ignored: Record<string, TelegramGroupApprovalRecord & { ignoredAt: string }>;
+}
+
 interface GitInfo {
   branch?: string;
   commit?: string;
@@ -784,6 +835,256 @@ function getAvailableGroups(): AvailableGroup[] {
     }));
 }
 
+function emptyTelegramGroupApprovalState(): TelegramGroupApprovalState {
+  return { pending: {}, ignored: {} };
+}
+
+function loadTelegramGroupApprovals(): TelegramGroupApprovalState {
+  const loaded = loadJson<Partial<TelegramGroupApprovalState>>(
+    TELEGRAM_GROUP_APPROVALS_PATH,
+    emptyTelegramGroupApprovalState(),
+  );
+  return {
+    pending: loaded.pending || {},
+    ignored: loaded.ignored || {},
+  };
+}
+
+function saveTelegramGroupApprovals(
+  approvals: TelegramGroupApprovalState,
+): void {
+  saveJson(TELEGRAM_GROUP_APPROVALS_PATH, approvals);
+}
+
+function isTelegramGroupChatJid(chatJid: string): boolean {
+  if (!isTelegramJid(chatJid) || isTelegramPrivateChatJid(chatJid)) {
+    return false;
+  }
+  const chatId = parseTelegramChatId(chatJid);
+  if (!chatId) return false;
+  return Number(chatId) < 0;
+}
+
+function buildTelegramGroupFolder(chatJid: string): string | null {
+  const chatId = parseTelegramChatId(chatJid);
+  if (!chatId) return null;
+  const folder = `telegram-${chatId}`;
+  return isValidGroupFolder(folder) ? folder : null;
+}
+
+function findAvailableGroup(chatJid: string): AvailableGroup | null {
+  return getAvailableGroups().find((group) => group.jid === chatJid) || null;
+}
+
+function clipTelegramButtonLabel(value: string, max = 26): string {
+  const trimmed = value.trim() || 'Unnamed group';
+  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max - 1)}...`;
+}
+
+function buildTelegramGroupApprovalRecord(params: {
+  chatJid: string;
+  chatName?: string;
+  nowIso: string;
+}): TelegramGroupApprovalRecord {
+  const existing = loadTelegramGroupApprovals().pending[params.chatJid];
+  return {
+    jid: params.chatJid,
+    name:
+      params.chatName?.trim() ||
+      existing?.name ||
+      findAvailableGroup(params.chatJid)?.name ||
+      params.chatJid,
+    firstSeenAt: existing?.firstSeenAt || params.nowIso,
+    lastSeenAt: params.nowIso,
+    lastNotifiedAt: existing?.lastNotifiedAt,
+  };
+}
+
+function buildTelegramGroupApprovalSnapshot(): {
+  approvals: TelegramGroupApprovalState;
+  pending: TelegramGroupApprovalRecord[];
+  ignored: Array<TelegramGroupApprovalRecord & { ignoredAt: string }>;
+} {
+  const approvals = loadTelegramGroupApprovals();
+  const knownGroups = getAvailableGroups().filter(
+    (group) =>
+      isTelegramGroupChatJid(group.jid) &&
+      !group.isRegistered &&
+      !approvals.ignored[group.jid],
+  );
+  for (const group of knownGroups) {
+    if (!approvals.pending[group.jid]) {
+      const nowIso = new Date().toISOString();
+      approvals.pending[group.jid] = {
+        jid: group.jid,
+        name: group.name || group.jid,
+        firstSeenAt: nowIso,
+        lastSeenAt: group.lastActivity || nowIso,
+      };
+    }
+  }
+
+  for (const jid of Object.keys(approvals.pending)) {
+    if (state.registeredGroups[jid]) delete approvals.pending[jid];
+  }
+  for (const jid of Object.keys(approvals.ignored)) {
+    if (state.registeredGroups[jid]) delete approvals.ignored[jid];
+  }
+  saveTelegramGroupApprovals(approvals);
+
+  const pending = Object.values(approvals.pending).sort((a, b) =>
+    b.lastSeenAt.localeCompare(a.lastSeenAt),
+  );
+  const ignored = Object.values(approvals.ignored).sort((a, b) =>
+    b.ignoredAt.localeCompare(a.ignoredAt),
+  );
+  return { approvals, pending, ignored };
+}
+
+async function handleTelegramUnknownGroup(event: {
+  chatJid: string;
+  chatName?: string;
+  content?: string;
+}): Promise<void> {
+  if (!isTelegramGroupChatJid(event.chatJid)) return;
+  if (state.registeredGroups[event.chatJid]) return;
+
+  const content = (event.content || '').trim();
+  if (!content) return;
+  TRIGGER_PATTERN.lastIndex = 0;
+  const addressedToBot =
+    TRIGGER_PATTERN.test(content) ||
+    /^\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)/.test(content);
+  if (!addressedToBot) return;
+
+  const approvals = loadTelegramGroupApprovals();
+  const ignored = approvals.ignored[event.chatJid];
+  if (ignored) {
+    await sendMessage(
+      event.chatJid,
+      `${ASSISTANT_NAME}: this group is not active. Ask the owner to open /groups in the main chat and approve it.`,
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const record = buildTelegramGroupApprovalRecord({
+    chatJid: event.chatJid,
+    chatName: event.chatName,
+    nowIso,
+  });
+  const previousNotifiedAt = record.lastNotifiedAt
+    ? Date.parse(record.lastNotifiedAt)
+    : 0;
+  const shouldNotifyMain =
+    !previousNotifiedAt ||
+    Number.isNaN(previousNotifiedAt) ||
+    now - previousNotifiedAt >= TELEGRAM_GROUP_APPROVAL_NOTIFY_EVERY_MS;
+  if (shouldNotifyMain) {
+    record.lastNotifiedAt = nowIso;
+  }
+  approvals.pending[event.chatJid] = record;
+  saveTelegramGroupApprovals(approvals);
+
+  const mainChatJid = findMainTelegramChatJid();
+  await sendMessage(
+    event.chatJid,
+    mainChatJid
+      ? `${ASSISTANT_NAME}: I see this group, but the owner has not approved me here yet. I sent an approval panel to the main chat.`
+      : `${ASSISTANT_NAME}: I see this group, but no Telegram main/admin chat is configured yet. DM me and run /main <secret> first.`,
+  );
+
+  if (!mainChatJid || !shouldNotifyMain || !state.telegramBot) return;
+  const panel = buildTelegramGroupsPanel(mainChatJid);
+  if (state.telegramBot.sendMessageWithKeyboard) {
+    await state.telegramBot.sendMessageWithKeyboard(
+      mainChatJid,
+      panel.text,
+      panel.keyboard,
+    );
+  } else {
+    await sendMessage(mainChatJid, panel.text);
+  }
+}
+
+async function approveTelegramGroup(
+  chatJid: string,
+): Promise<{ ok: boolean; text: string }> {
+  if (!isTelegramGroupChatJid(chatJid)) {
+    return { ok: false, text: `Cannot approve non-group chat: ${chatJid}` };
+  }
+  if (state.registeredGroups[chatJid]) {
+    return { ok: true, text: 'Group is already active.' };
+  }
+  const folder = buildTelegramGroupFolder(chatJid);
+  if (!folder) {
+    return { ok: false, text: `Cannot create a safe folder for ${chatJid}` };
+  }
+
+  const approvals = loadTelegramGroupApprovals();
+  const pending = approvals.pending[chatJid];
+  const available = findAvailableGroup(chatJid);
+  const name = pending?.name || available?.name || chatJid;
+  registerGroup(chatJid, {
+    name,
+    folder,
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+  });
+  delete approvals.pending[chatJid];
+  delete approvals.ignored[chatJid];
+  saveTelegramGroupApprovals(approvals);
+  await refreshTelegramCommandMenus();
+  await sendMessage(
+    chatJid,
+    `${ASSISTANT_NAME}: this group is active now. Mention @${ASSISTANT_NAME} when you want me to help here.`,
+  );
+  return { ok: true, text: `Approved ${name}.` };
+}
+
+async function ignoreTelegramGroup(
+  chatJid: string,
+): Promise<{ ok: boolean; text: string }> {
+  if (!isTelegramGroupChatJid(chatJid)) {
+    return { ok: false, text: `Cannot ignore non-group chat: ${chatJid}` };
+  }
+  const approvals = loadTelegramGroupApprovals();
+  const pending = approvals.pending[chatJid];
+  const available = findAvailableGroup(chatJid);
+  const nowIso = new Date().toISOString();
+  approvals.ignored[chatJid] = {
+    jid: chatJid,
+    name: pending?.name || available?.name || chatJid,
+    firstSeenAt: pending?.firstSeenAt || nowIso,
+    lastSeenAt: pending?.lastSeenAt || nowIso,
+    lastNotifiedAt: pending?.lastNotifiedAt,
+    ignoredAt: nowIso,
+  };
+  delete approvals.pending[chatJid];
+  saveTelegramGroupApprovals(approvals);
+  return { ok: true, text: `Ignored ${approvals.ignored[chatJid].name}.` };
+}
+
+async function unignoreTelegramGroup(
+  chatJid: string,
+): Promise<{ ok: boolean; text: string }> {
+  const approvals = loadTelegramGroupApprovals();
+  const ignored = approvals.ignored[chatJid];
+  if (!ignored) return { ok: false, text: 'That group is not ignored.' };
+  const nowIso = new Date().toISOString();
+  approvals.pending[chatJid] = {
+    jid: chatJid,
+    name: ignored.name,
+    firstSeenAt: ignored.firstSeenAt || nowIso,
+    lastSeenAt: nowIso,
+    lastNotifiedAt: ignored.lastNotifiedAt,
+  };
+  delete approvals.ignored[chatJid];
+  saveTelegramGroupApprovals(approvals);
+  return { ok: true, text: `Moved ${ignored.name} back to pending.` };
+}
+
 function maybeRegisterTelegramChat(chatJid: string, chatName: string): boolean {
   if (!TELEGRAM_AUTO_REGISTER) return false;
   if (state.registeredGroups[chatJid]) return false;
@@ -792,6 +1093,7 @@ function maybeRegisterTelegramChat(chatJid: string, chatName: string): boolean {
   if (!chatId) return false;
 
   const isMain = TELEGRAM_MAIN_CHAT_ID && chatId === TELEGRAM_MAIN_CHAT_ID;
+  if (isTelegramGroupChatJid(chatJid) && !isMain) return false;
   const folder = isMain ? MAIN_GROUP_FOLDER : `telegram-${chatId}`;
 
   registerGroup(chatJid, {
@@ -3297,6 +3599,7 @@ function formatStatusText(chatJid?: string): string {
     assistantName: ASSISTANT_NAME,
     version,
     runtime,
+    coderGateMode: FFT_NANO_CODER_GATE_MODE,
     serviceStartedAt: SERVICE_STARTED_AT,
     incidentWindowLabel: STATUS_INCIDENT_WINDOW_LABEL,
     stuckWarningSeconds: STATUS_STUCK_WARNING_SECONDS,
@@ -3331,7 +3634,7 @@ function formatStatusText(chatJid?: string): string {
       startedAt: run.startedAt,
       parentRequestId: run.parentRequestId,
       backend: run.backend,
-      route: run.route,
+      config: run.config,
       state: run.state,
       worktreePath: run.worktreePath,
     })),
@@ -3423,14 +3726,109 @@ function formatTasksText(mode: 'list' | 'due' = 'list'): string {
 
 function formatGroupsText(): string {
   const groups = Object.entries(state.registeredGroups);
-  if (groups.length === 0) {
-    return 'No groups are registered.';
+  const { pending, ignored } = buildTelegramGroupApprovalSnapshot();
+  const lines: string[] = [];
+
+  if (pending.length > 0) {
+    lines.push('Pending Telegram group approvals:');
+    for (const record of pending.slice(0, 12)) {
+      lines.push(`- ${record.name} -> ${record.jid}`);
+    }
+    if (pending.length > 12) lines.push(`- ... ${pending.length - 12} more`);
+    lines.push('');
   }
-  const lines = groups.map(([jid, group]) => {
-    const mainTag = group.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
-    return `- ${group.name}${mainTag} -> ${jid} [folder=${group.folder}]`;
-  });
-  return ['Registered groups:', ...lines].join('\n');
+
+  if (groups.length === 0) {
+    lines.push('No groups are registered.');
+  } else {
+    lines.push('Registered groups:');
+    for (const [jid, group] of groups) {
+      const mainTag = group.folder === MAIN_GROUP_FOLDER ? ' (main)' : '';
+      lines.push(
+        `- ${group.name}${mainTag} -> ${jid} [folder=${group.folder}]`,
+      );
+    }
+  }
+
+  if (ignored.length > 0) {
+    lines.push('');
+    lines.push('Ignored Telegram groups:');
+    for (const record of ignored.slice(0, 8)) {
+      lines.push(`- ${record.name} -> ${record.jid}`);
+    }
+    if (ignored.length > 8) lines.push(`- ... ${ignored.length - 8} more`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildTelegramGroupsPanel(chatJid: string): {
+  text: string;
+  keyboard: TelegramInlineKeyboard;
+} {
+  const { pending, ignored } = buildTelegramGroupApprovalSnapshot();
+  const keyboard: TelegramInlineKeyboard = [];
+
+  for (const record of pending.slice(0, 8)) {
+    const label = clipTelegramButtonLabel(record.name, 24);
+    keyboard.push([
+      {
+        text: `Approve ${label}`,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'approve-telegram-group',
+          chatJid: record.jid,
+        }),
+        style: 'primary' as const,
+      },
+      {
+        text: 'Ignore',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'ignore-telegram-group',
+          chatJid: record.jid,
+        }),
+      },
+    ]);
+  }
+
+  for (const record of ignored.slice(0, 4)) {
+    keyboard.push([
+      {
+        text: `Unignore ${clipTelegramButtonLabel(record.name, 20)}`,
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'unignore-telegram-group',
+          chatJid: record.jid,
+        }),
+      },
+      {
+        text: 'Approve',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'approve-telegram-group',
+          chatJid: record.jid,
+        }),
+        style: 'primary' as const,
+      },
+    ]);
+  }
+
+  keyboard.push([
+    {
+      text: 'Refresh',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-groups',
+      }),
+    },
+    {
+      text: 'Back',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-home',
+      }),
+    },
+  ]);
+
+  return {
+    text: formatGroupsText(),
+    keyboard,
+  };
 }
 
 function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
@@ -3471,6 +3869,8 @@ function resolveTelegramSettingsPanel(
       return buildVerbosePanel(chatJid);
     case 'show-queue':
       return buildQueuePanel(chatJid);
+    case 'show-groups':
+      return buildTelegramGroupsPanel(chatJid);
     case 'show-subagents':
       return buildSubagentsPanel(chatJid);
     case 'show-setup-home':
@@ -3955,6 +4355,239 @@ function logTelegramCommandAudit(
   logger.info({ chatJid, command, allowed, reason }, 'Telegram command audit');
 }
 
+async function handleSkillManagerCommand(params: {
+  action: string;
+  input: string;
+  chatJid: string;
+}): Promise<string> {
+  const groupFolder = MAIN_GROUP_FOLDER;
+  const skillsDir = resolveGroupSkillsDir(groupFolder);
+  const action = params.action || 'status';
+  if (action === 'status') {
+    return formatSkillManagerStatus(groupFolder);
+  }
+  if (action === 'pause' || action === 'resume') {
+    setSkillManagerPaused(groupFolder, action === 'pause');
+    return `skill-manager: ${action === 'pause' ? 'paused' : 'resumed'}`;
+  }
+  if (action === 'run' || action === 'dry-run') {
+    const config = toSkillManagerConfig();
+    const dryRun = action === 'dry-run';
+    if (!dryRun && config.backupEnabled) {
+      snapshotSkills({
+        skillsDir,
+        reason: 'telegram skill-manager run',
+        keep: config.backupKeep,
+      });
+    }
+    const transitions = applySkillManagerTransitions({
+      skillsDir,
+      config,
+      dryRun,
+    });
+    const summary = `${dryRun ? 'dry-run' : 'telegram'} skill-manager run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
+    const reportPath = writeSkillManagerReport({
+      groupFolder,
+      skillsDir,
+      dryRun,
+      summary,
+      transitions,
+    });
+    if (!dryRun) {
+      const skillManagerState = loadSkillManagerState(skillsDir);
+      skillManagerState.lastRunAt = new Date().toISOString();
+      skillManagerState.lastRunSummary = summary;
+      skillManagerState.lastReportPath = reportPath;
+      skillManagerState.runCount += 1;
+      saveSkillManagerState(skillsDir, skillManagerState);
+    }
+    return `${summary}\nreport: ${reportPath}`;
+  }
+  if (action === 'backup') {
+    const snap = snapshotSkills({
+      skillsDir,
+      reason: 'telegram backup',
+      keep: PARITY_CONFIG.skills.curator.backup.keep,
+    });
+    return snap
+      ? `skill-manager: backup created at ${snap}`
+      : 'skill-manager: no skills directory to back up';
+  }
+  const skillName = params.input.trim().split(/\s+/)[0];
+  if (!skillName) {
+    return 'Usage: /skill-manager status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
+  }
+  const actionMap: Record<string, SkillActionRequest['action']> = {
+    pin: 'skill_pin',
+    unpin: 'skill_unpin',
+    archive: 'skill_archive',
+    restore: 'skill_restore',
+  };
+  const skillAction = actionMap[action];
+  if (!skillAction) {
+    return 'Usage: /skill-manager status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
+  }
+  const result = await executeSkillAction(
+    {
+      type: 'skill_action',
+      action: skillAction,
+      requestId: `skill-manager-telegram-${Date.now()}`,
+      params: { name: skillName, groupFolder },
+    },
+    {
+      sourceGroup: groupFolder,
+      isMain: true,
+      registeredGroups: state.registeredGroups,
+    },
+  );
+  if (result.status === 'error') return `skill-manager: ${result.error}`;
+  return `skill-manager: ${action} ${skillName}`;
+}
+
+function handleLibrarianCommand(params: {
+  action: string;
+  input: string;
+  chatJid: string;
+}): string {
+  const action = params.action.trim().toLowerCase();
+  if (!action || action === 'status') {
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    return formatKnowledgeWikiStatusText({
+      status: snapshot.status,
+      nightlyTaskStatus: snapshot.nightlyTaskStatus,
+      nightlyTaskNextRun: snapshot.nightlyTaskNextRun,
+    });
+  }
+
+  if (action === 'help') {
+    return [
+      'Usage: /librarian <status|init|task|lint|capture|run|dry-run|log|progress|help>',
+      '',
+      '- /librarian status       — show wiki status and nightly task info',
+      '- /librarian init         — create wiki scaffold',
+      '- /librarian task         — ensure nightly task is registered',
+      '- /librarian lint         — run wiki lint and show report',
+      '- /librarian capture <n>  — capture a raw note',
+      '- /librarian run          — trigger manual wiki refinement (librarian review)',
+      '- /librarian dry-run      — preview wiki refinement without changes',
+      '- /librarian log          — show recent wiki activity log',
+      '- /librarian progress     — show progress entries',
+    ].join('\n');
+  }
+
+  if (action === 'init') {
+    const setup = ensureKnowledgeRuntimeSetup(params.chatJid);
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    const lines = [
+      'Knowledge wiki initialized.',
+      `- created_paths: ${setup.createdPaths.length}`,
+      `- nightly_task: ${setup.nightlyTask.status}`,
+      `- nightly_next_run: ${setup.nightlyTask.nextRun || 'n/a'}`,
+    ];
+    if (setup.createdPaths.length > 0) {
+      lines.push(
+        '',
+        'Created paths:',
+        ...setup.createdPaths.map((entry) => `- ${entry}`),
+      );
+    }
+    if (setup.nightlyTask.skippedReason) {
+      lines.push('', `Task setup skipped: ${setup.nightlyTask.skippedReason}`);
+    }
+    lines.push(
+      '',
+      formatKnowledgeWikiStatusText({
+        status: snapshot.status,
+        nightlyTaskStatus: snapshot.nightlyTaskStatus,
+        nightlyTaskNextRun: snapshot.nightlyTaskNextRun,
+      }),
+    );
+    return lines.join('\n');
+  }
+
+  if (action === 'task') {
+    const result = ensureKnowledgeNightlyTask({ mainChatJid: params.chatJid });
+    if (!result.ensured) {
+      return `Knowledge nightly task not created: ${result.skippedReason || 'unknown reason'}`;
+    }
+    return [
+      `Knowledge nightly task ${result.created ? 'created' : 'already present'}.`,
+      `- task_id: ${result.taskId}`,
+      `- status: ${result.status}`,
+      `- schedule: ${result.schedule}`,
+      `- next_run: ${result.nextRun || 'n/a'}`,
+    ].join('\n');
+  }
+
+  if (action === 'lint') {
+    const report = runKnowledgeWikiLint({ workspaceDir: MAIN_WORKSPACE_DIR });
+    return [
+      `Knowledge lint ${report.ok ? 'passed' : 'failed'}.`,
+      `- report: ${report.reportRelativePath}`,
+      `- errors: ${report.errors.length}`,
+      `- warnings: ${report.warnings.length}`,
+      '',
+      report.text,
+    ].join('\n');
+  }
+
+  if (action === 'ingest' || action === 'capture') {
+    if (!params.input.trim()) {
+      return 'Usage: /librarian capture <note text>';
+    }
+    const capture = captureKnowledgeRawNote({
+      workspaceDir: MAIN_WORKSPACE_DIR,
+      text: params.input,
+      source: params.chatJid,
+    });
+    return [
+      'Knowledge raw capture saved.',
+      `- path: ${capture.relativePath}`,
+      `- captured_at: ${capture.capturedAt}`,
+    ].join('\n');
+  }
+
+  if (action === 'log') {
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    const logPath = snapshot.status.paths.logPath;
+    if (!fs.existsSync(logPath)) return 'librarian: no log file found';
+    const content = fs.readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n').filter(Boolean).slice(-30);
+    return [
+      'librarian: recent log entries:',
+      ...lines.map((l) => `  ${l}`),
+    ].join('\n');
+  }
+
+  if (action === 'progress') {
+    const snapshot = resolveKnowledgeRuntimeSnapshot();
+    const progPath = snapshot.status.paths.progressPath;
+    if (!fs.existsSync(progPath)) return 'librarian: no progress file found';
+    const content = fs.readFileSync(progPath, 'utf-8');
+    const lines = content.split('\n').filter(Boolean).slice(-15);
+    return [
+      'librarian: recent progress entries:',
+      ...lines.map((l) => `  ${l}`),
+    ].join('\n');
+  }
+
+  if (action === 'run' || action === 'dry-run') {
+    // Delegate to the existing knowledge command infrastructure
+    // The /knowledge command already has the full run/ingest logic
+    // Here we route 'run' and 'dry-run' to the knowledge command
+    const knowledgeResult = handleKnowledgeCommand({
+      action,
+      input: params.input,
+      chatJid: params.chatJid,
+    });
+    return typeof knowledgeResult === 'string'
+      ? knowledgeResult
+      : `librarian: ${action} completed`;
+  }
+
+  return handleLibrarianCommand({ ...params, action: 'help' });
+}
+
 const telegramCommandHandlers = createTelegramCommandHandlers({
   state,
   constants: {
@@ -3986,6 +4619,8 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   summarizeTask,
   formatTaskRunsText,
   handleKnowledgeCommand,
+  handleSkillManagerCommand,
+  handleLibrarianCommand,
   runPiListModels,
   validateProviderModelRef,
   normalizeThinkLevel,
@@ -4005,8 +4640,16 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   promoteChatToMain,
   refreshTelegramCommandMenus,
   hasMainGroup,
+  approveTelegramGroup,
+  ignoreTelegramGroup,
+  unignoreTelegramGroup,
   runGatewayServiceCommand,
   runUpdateCommand,
+  startUpdateCommand: (chatJid) =>
+    startDetachedUpdateCommand({
+      cwd: process.cwd(),
+      chatJid,
+    }),
   buildRuntimeProviderPresetUpdates,
   getRuntimeConfigEnv,
   persistRuntimeConfigUpdates,
@@ -4018,6 +4661,20 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   deleteTask,
   emitTuiChatEvent,
   emitTuiAgentEvent,
+  emitRunProgress: (payload) => {
+    hostEventBus.publish({
+      kind: 'run_progress',
+      id: createHostEventId('progress'),
+      createdAt: new Date().toISOString(),
+      source: 'telegram-command',
+      runId: payload.requestId,
+      sessionKey: getSessionKeyForChat(payload.chatJid),
+      chatJid: payload.chatJid,
+      phase: payload.phase,
+      text: payload.text,
+      ...(payload.detail ? { detail: payload.detail } : {}),
+    });
+  },
   getSessionKeyForChat,
   runAgent,
   runCodingTask,
@@ -4285,6 +4942,7 @@ const messageDispatcher = createMessageDispatcher({
     triggerPattern: TRIGGER_PATTERN,
     tuiSenderName: TUI_SENDER_NAME,
     mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+    coderGateMode: FFT_NANO_CODER_GATE_MODE,
   },
   activeChatRuns,
   activeChatRunsById,
@@ -4319,6 +4977,7 @@ const messageDispatcher = createMessageDispatcher({
   sanitizeRunPreferences: sanitizeRunPreferencesModelOverride,
   parseDelegationTrigger,
   isSubstantialCodingTask,
+  shouldSuggestCodingEscalation,
   presentCoderSuggestion,
   prepareCoderTarget,
   createCoderProject,
@@ -4372,6 +5031,7 @@ const appRuntime = createAppRuntime({
   handleTelegramCallbackQuery,
   handleTelegramSetupInput,
   handleTelegramCommand,
+  handleTelegramUnknownGroup,
   storeChatMetadata,
   maybeRegisterTelegramChat,
   isMainChat,
@@ -4440,6 +5100,218 @@ async function runDirectSessionTurn(params: {
   return messageDispatcher.runDirectSessionTurn(params);
 }
 
+function toSkillManagerConfig(): SkillManagerConfig {
+  return {
+    enabled: PARITY_CONFIG.skills.curator.enabled,
+    intervalHours: PARITY_CONFIG.skills.curator.intervalHours,
+    minIdleHours: PARITY_CONFIG.skills.curator.minIdleHours,
+    staleAfterDays: PARITY_CONFIG.skills.curator.staleAfterDays,
+    archiveAfterDays: PARITY_CONFIG.skills.curator.archiveAfterDays,
+    backupEnabled: PARITY_CONFIG.skills.curator.backup.enabled,
+    backupKeep: PARITY_CONFIG.skills.curator.backup.keep,
+  };
+}
+
+function skillSelfImproveStatePath(groupFolder: string): string {
+  return path.join(
+    resolveGroupSkillsDir(groupFolder),
+    '.self_improve_state.json',
+  );
+}
+
+function readSkillSelfImproveState(groupFolder: string): {
+  turnsSinceReview: number;
+  toolsSinceReview: number;
+} {
+  try {
+    const filePath = skillSelfImproveStatePath(groupFolder);
+    if (!fs.existsSync(filePath)) {
+      return { turnsSinceReview: 0, toolsSinceReview: 0 };
+    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return {
+      turnsSinceReview: Number(parsed.turnsSinceReview) || 0,
+      toolsSinceReview: Number(parsed.toolsSinceReview) || 0,
+    };
+  } catch {
+    return { turnsSinceReview: 0, toolsSinceReview: 0 };
+  }
+}
+
+function writeSkillSelfImproveState(
+  groupFolder: string,
+  next: { turnsSinceReview: number; toolsSinceReview: number },
+): void {
+  const filePath = skillSelfImproveStatePath(groupFolder);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+function shouldTriggerSkillSelfImprove(params: {
+  groupFolder: string;
+  toolsInvoked: number;
+}): boolean {
+  if (!PARITY_CONFIG.skills.selfImprove.enabled) return false;
+  const current = readSkillSelfImproveState(params.groupFolder);
+  const next = {
+    turnsSinceReview: current.turnsSinceReview + 1,
+    toolsSinceReview: current.toolsSinceReview + params.toolsInvoked,
+  };
+  const due =
+    next.turnsSinceReview >= PARITY_CONFIG.skills.selfImprove.turnInterval ||
+    next.toolsSinceReview >= PARITY_CONFIG.skills.selfImprove.toolInterval;
+  writeSkillSelfImproveState(
+    params.groupFolder,
+    due ? { turnsSinceReview: 0, toolsSinceReview: 0 } : next,
+  );
+  return due;
+}
+
+function runQuietSkillAgent(params: {
+  group: RegisteredGroup;
+  chatJid: string;
+  prompt: string;
+  requestId: string;
+  runtimePrefs: ChatRunPreferences;
+}): void {
+  const isMain = params.group.folder === MAIN_GROUP_FOLDER;
+  const extraSystemPrompt = [
+    '## Quiet Background Skill Maintenance',
+    'This run is internal maintenance. Do not send chat messages unless explicitly asked.',
+    'Use skill_action IPC for all skill reads and writes.',
+    'Do not inspect or edit skill files directly. Use action_results as the durable source of truth.',
+    'Keep skills organized for non-technical farm operators: clear names, valid frontmatter, class-level reusable workflows, and lean active catalog.',
+    'You may only mutate host-allowed agent-created runtime skills. For source-owned skills, report issues instead of trying to modify them.',
+  ].join('\n');
+  const maintenanceChatJid = `maintenance:${params.group.folder}`;
+  const maintenanceIpcDir = resolveGroupIpcPath(params.group.folder);
+
+  void runContainerAgent(
+    params.group,
+    {
+      prompt: params.prompt,
+      groupFolder: params.group.folder,
+      chatJid: maintenanceChatJid,
+      isMain,
+      assistantName: ASSISTANT_NAME,
+      codingHint: 'none',
+      requestId: params.requestId,
+      isScheduledTask: false,
+      isEvaluatorRun: true,
+      extraSystemPrompt,
+      provider: params.runtimePrefs.provider,
+      model: params.runtimePrefs.model,
+      thinkLevel: params.runtimePrefs.thinkLevel,
+      reasoningLevel: params.runtimePrefs.reasoningLevel,
+      toolMode: 'full',
+      noContinue: true,
+      suppressPreviewStreaming: true,
+      sandboxAllowedPathsOverride: [maintenanceIpcDir],
+      lifecyclePolicyOverride: {
+        hardTimeoutMs: 10 * 60 * 1000,
+        staleAfterMs: 3 * 60 * 1000,
+        toolActiveStaleMs: 2 * 60 * 1000,
+        waitStateStaleMs: 2 * 60 * 1000,
+        allowFreshSessionFallback: false,
+      },
+    },
+    undefined,
+  ).catch((err) => {
+    logger.warn(
+      { err, groupFolder: params.group.folder, requestId: params.requestId },
+      'Quiet skill maintenance run failed',
+    );
+  });
+}
+
+function maybeRunSkillSelfImprovement(params: {
+  group: RegisteredGroup;
+  chatJid: string;
+  originalTask: string;
+  agentOutput: string;
+  toolsInvoked: number;
+  runtimePrefs: ChatRunPreferences;
+  requestId?: string;
+}): void {
+  if (
+    !shouldTriggerSkillSelfImprove({
+      groupFolder: params.group.folder,
+      toolsInvoked: params.toolsInvoked,
+    })
+  ) {
+    return;
+  }
+
+  runQuietSkillAgent({
+    group: params.group,
+    chatJid: params.chatJid,
+    runtimePrefs: params.runtimePrefs,
+    requestId: `${params.requestId || 'run'}:skill-self-improve`,
+    prompt: [
+      'Review the completed conversation for reusable procedural knowledge.',
+      'Use skill_list first. Create or patch a skill only if this run taught a reusable workflow, pitfall, command pattern, farm operating procedure, or troubleshooting recipe.',
+      'Prefer broad class-level skills with labeled sections over many narrow one-off skills.',
+      'Do not duplicate existing skills. Keep frontmatter valid and descriptions practical.',
+      '',
+      'Original task:',
+      params.originalTask.slice(0, 3000),
+      '',
+      'Agent result:',
+      params.agentOutput.slice(0, 5000),
+    ].join('\n'),
+  });
+}
+
+function maybeRunSkillManager(params: {
+  group: RegisteredGroup;
+  chatJid: string;
+  runtimePrefs: ChatRunPreferences;
+  requestId?: string;
+}): void {
+  const skillsDir = resolveGroupSkillsDir(params.group.folder);
+  const config = toSkillManagerConfig();
+  if (!shouldRunSkillManager(skillsDir, config)) return;
+
+  const started = Date.now();
+  if (config.backupEnabled) {
+    snapshotSkills({
+      skillsDir,
+      reason: 'automatic skill-manager run',
+      keep: config.backupKeep,
+    });
+  }
+  const transitions = applySkillManagerTransitions({ skillsDir, config });
+  const summary = `automatic skill-manager run: checked=${transitions.checked} stale=${transitions.markedStale} archived=${transitions.archived} reactivated=${transitions.reactivated}`;
+  const reportPath = writeSkillManagerReport({
+    groupFolder: params.group.folder,
+    skillsDir,
+    dryRun: false,
+    summary,
+    transitions,
+  });
+  const state = loadSkillManagerState(skillsDir);
+  state.lastRunAt = new Date().toISOString();
+  state.lastRunDurationSeconds = Math.round((Date.now() - started) / 1000);
+  state.lastRunSummary = summary;
+  state.lastReportPath = reportPath;
+  state.runCount += 1;
+  saveSkillManagerState(skillsDir, state);
+
+  runQuietSkillAgent({
+    group: params.group,
+    chatJid: params.chatJid,
+    runtimePrefs: params.runtimePrefs,
+    requestId: `${params.requestId || 'run'}:skill-manager`,
+    prompt: [
+      'Run a bounded skill manager review.',
+      'Use skill_status and skill_view to inspect the active library.',
+      'Goal: keep farm/operator skills lean, organized, and valid. Clean frontmatter issues for agent-created skills by patching them. Report source-owned frontmatter issues in your final summary.',
+      'Consolidate near-duplicate agent-created skills into class-level umbrella skills when useful. Archive only agent-created skills that are stale, duplicate, or fully absorbed.',
+      'Do not mutate source-owned project or personal skills.',
+    ].join('\n'),
+  });
+}
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
@@ -4460,9 +5332,16 @@ async function runAgent(
     provider?: string;
     model?: string;
   };
+  suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
 }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
+  const workspaceDir = isMain
+    ? MAIN_WORKSPACE_DIR
+    : resolveGroupFolderPath(group.folder);
   const runAgentStartedAt = Date.now();
+  const shouldBlockForChatEvaluation =
+    !options.isHeartbeatTask && isActionfulChatTask(prompt);
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -4547,7 +5426,9 @@ async function runAgent(
       reasoningLevel: runtimePrefs.reasoningLevel,
       verboseMode: runtimePrefs.verboseMode,
       noContinue: runtimePrefs.nextRunNoContinue === true,
-      suppressPreviewStreaming: runtimePrefs.telegramDeliveryMode === 'off',
+      suppressPreviewStreaming:
+        runtimePrefs.telegramDeliveryMode === 'off' ||
+        shouldBlockForChatEvaluation,
       showReasoning:
         runtimePrefs.showReasoning === true ||
         runtimePrefs.reasoningLevel === 'stream',
@@ -4560,6 +5441,7 @@ async function runAgent(
       runPrefs: ChatRunPreferences,
       attemptRequestId = requestId,
       suppressPreviewStreaming = false,
+      promptOverride?: string,
     ): Promise<{
       status: 'success' | 'error';
       result: string | null;
@@ -4579,6 +5461,7 @@ async function runAgent(
         group,
         {
           ...input,
+          prompt: promptOverride || input.prompt,
           requestId: attemptRequestId,
           verboseMode: runPrefs.verboseMode,
           noContinue: runPrefs.nextRunNoContinue === true,
@@ -4721,35 +5604,29 @@ async function runAgent(
       isAborted: () => abortSignal?.aborted === true,
     });
 
-    const finalResult = emptyOutputPolicy.finalRun;
+    let finalResult = emptyOutputPolicy.finalRun;
 
-    // Evaluator pass — non-blocking for chat/heartbeat: deliver result first,
-    // then evaluate and send a follow-up only if issues are found.
-    if (finalResult.ok && finalResult.result && abortSignal?.aborted !== true) {
-      const runType = options.isHeartbeatTask ? 'heartbeat' : 'chat';
-      void runEvaluatorPass({
-        runType,
-        originalTask: prompt,
-        agentOutput: finalResult.result,
-        durationMs: Date.now() - runAgentStartedAt,
-        toolsInvoked: runToolsInvoked,
+    if (
+      finalResult.ok &&
+      finalResult.result &&
+      !options.isHeartbeatTask &&
+      abortSignal?.aborted !== true
+    ) {
+      maybeRunSkillSelfImprovement({
         group,
         chatJid,
-        abortSignal,
-      })
-        .then((verdict) => {
-          if (verdict.skipped || verdict.pass) return;
-          const followUp =
-            `⚠️ Quality check flagged potential issues (score ${verdict.score}/10):\n` +
-            (verdict.issues.length > 0
-              ? verdict.issues.map((i) => `• ${i}`).join('\n') + '\n'
-              : '') +
-            (verdict.feedback ? verdict.feedback : '');
-          void sendMessage(chatJid, followUp);
-        })
-        .catch((err) => {
-          logger.warn({ err, chatJid }, 'Evaluator pass threw in background');
-        });
+        originalTask: prompt,
+        agentOutput: finalResult.result,
+        toolsInvoked: runToolsInvoked,
+        runtimePrefs,
+        requestId,
+      });
+      maybeRunSkillManager({
+        group,
+        chatJid,
+        runtimePrefs,
+        requestId,
+      });
     }
 
     return {
@@ -4757,6 +5634,8 @@ async function runAgent(
       streamed: finalResult.streamed,
       ok: finalResult.ok,
       usage: finalResult.usage,
+      suppressUserDelivery: finalResult.suppressUserDelivery,
+      controlPlaneStatus: finalResult.controlPlaneStatus,
     };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
@@ -4812,7 +5691,349 @@ function createTuiGatewayAdapters(): TuiGatewayAdapters {
       return { aborted: true };
     },
     serviceGateway: async ({ action }) => runGatewayServiceCommand(action),
-    hostUpdate: () => runUpdateCommand(),
+    hostUpdate: () =>
+      startDetachedUpdateCommand({
+        cwd: process.cwd(),
+      }),
+  };
+}
+
+const PROVIDER_SETUP_URLS: Record<
+  string,
+  {
+    signupUrl?: string;
+    docsUrl?: string;
+    localSetupUrl?: string;
+    note?: string;
+  }
+> = {
+  openai: {
+    signupUrl: 'https://platform.openai.com/api-keys',
+    docsUrl: 'https://platform.openai.com/docs',
+  },
+  anthropic: {
+    signupUrl: 'https://console.anthropic.com/settings/keys',
+    docsUrl: 'https://docs.anthropic.com/',
+  },
+  gemini: {
+    signupUrl: 'https://aistudio.google.com/app/apikey',
+    docsUrl: 'https://ai.google.dev/gemini-api/docs',
+  },
+  openrouter: {
+    signupUrl: 'https://openrouter.ai/keys',
+    docsUrl: 'https://openrouter.ai/docs',
+  },
+  'opencode-go': {
+    docsUrl: 'https://github.com/sst/opencode',
+    note: 'Uses OPENCODE_API_KEY, with PI_API_KEY as a compatibility fallback.',
+  },
+  zai: {
+    signupUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
+    docsUrl: 'https://docs.bigmodel.cn/',
+  },
+  minimax: {
+    signupUrl:
+      'https://platform.minimaxi.com/user-center/basic-information/interface-key',
+    docsUrl: 'https://platform.minimaxi.com/document',
+  },
+  'kimi-coding': {
+    signupUrl: 'https://platform.moonshot.ai/console/api-keys',
+    docsUrl: 'https://platform.moonshot.ai/docs',
+  },
+  ollama: {
+    localSetupUrl: 'https://ollama.com/download',
+    note: 'Local provider. Install Ollama and pull a model; no hosted API key is required.',
+  },
+  'lm-studio': {
+    localSetupUrl: 'https://lmstudio.ai/',
+    note: 'Local OpenAI-compatible provider. Start the local server in LM Studio first.',
+  },
+};
+
+function getControlCenterProviderSetup() {
+  return RUNTIME_PROVIDER_DEFINITIONS.map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    piApi: provider.piApi,
+    defaultModel: provider.defaultModel,
+    apiKeyEnv: provider.apiKeyEnv,
+    apiKeyRequired: provider.apiKeyRequired !== false,
+    endpointEnv: provider.endpointEnv,
+    ...PROVIDER_SETUP_URLS[provider.id],
+  }));
+}
+
+function getControlCenterRuntimeSettings() {
+  const env = getRuntimeConfigEnv();
+  const snapshot = resolveRuntimeConfigSnapshot(env);
+  const whatsappEnabled = !['0', 'false', 'no'].includes(
+    String(env.WHATSAPP_ENABLED || '1')
+      .trim()
+      .toLowerCase(),
+  );
+  return {
+    providerPreset: snapshot.providerPreset,
+    provider: snapshot.provider,
+    model: snapshot.model,
+    apiKeyEnv: snapshot.apiKeyEnv,
+    apiKeyConfigured: snapshot.apiKeyConfigured,
+    endpointEnv: snapshot.endpointEnv,
+    endpointValue: snapshot.endpointValue,
+    telegramBotConfigured: hasMeaningfulSecret(env.TELEGRAM_BOT_TOKEN),
+    whatsappEnabled,
+    heartbeatEnabled: PARITY_CONFIG.heartbeat.enabled,
+    heartbeatEvery: PARITY_CONFIG.heartbeat.every,
+  };
+}
+
+function applyControlCenterRuntimeSettings(payload: {
+  providerPreset?: string;
+  model?: string;
+  apiKey?: string;
+  endpoint?: string;
+  clearEndpoint?: boolean;
+  telegramBotToken?: string;
+  whatsappEnabled?: boolean;
+  heartbeatEnabled?: boolean;
+  heartbeatEvery?: string;
+}): { ok: boolean; requiresRestart: boolean; adminSecret?: string } {
+  const currentEnv = getRuntimeConfigEnv();
+  const updates: Record<string, string | undefined> = {};
+  let generatedSecret: string | null = null;
+  const providerPreset = (payload.providerPreset || '').trim().toLowerCase();
+  let activeProvider = resolveRuntimeConfigSnapshot(currentEnv).providerPreset;
+
+  if (providerPreset) {
+    const matched = RUNTIME_PROVIDER_DEFINITIONS.find(
+      (entry) => entry.id === providerPreset,
+    );
+    if (!matched) throw new Error(`Unknown provider preset: ${providerPreset}`);
+    Object.assign(
+      updates,
+      buildRuntimeProviderPresetUpdates({
+        preset: matched.id,
+        model: payload.model?.trim() || undefined,
+        source: currentEnv,
+        applyLocalDefaults: true,
+      }),
+    );
+    activeProvider = matched.id;
+  } else if (payload.model?.trim()) {
+    updates.PI_MODEL = payload.model.trim();
+  }
+
+  const providerDef =
+    activeProvider === 'manual'
+      ? null
+      : getRuntimeProviderDefinitionByPreset(activeProvider);
+  if (payload.apiKey?.trim()) {
+    updates[providerDef?.apiKeyEnv || 'PI_API_KEY'] = payload.apiKey.trim();
+  }
+  const shouldClearEndpoint =
+    payload.clearEndpoint ||
+    (payload.endpoint === '' && !providerDef?.defaultEndpointValue);
+  if (shouldClearEndpoint) {
+    updates.OPENAI_BASE_URL = undefined;
+    updates.PI_BASE_URL = undefined;
+  } else if (payload.endpoint?.trim()) {
+    updates.OPENAI_BASE_URL = payload.endpoint.trim();
+    updates.PI_BASE_URL = payload.endpoint.trim();
+  }
+  if (payload.telegramBotToken?.trim()) {
+    updates.TELEGRAM_BOT_TOKEN = payload.telegramBotToken.trim();
+    generatedSecret = ensureWebOnboardingAdminSecret(updates, currentEnv);
+    if (generatedSecret) {
+      updates.TELEGRAM_AUTO_REGISTER = '1';
+    }
+  }
+  if (typeof payload.whatsappEnabled === 'boolean') {
+    updates.WHATSAPP_ENABLED = payload.whatsappEnabled ? '1' : '0';
+  }
+  if (typeof payload.heartbeatEnabled === 'boolean') {
+    updates.FFT_NANO_HEARTBEAT_ENABLED = payload.heartbeatEnabled ? '1' : '0';
+  }
+  if (payload.heartbeatEvery?.trim()) {
+    updates.FFT_NANO_HEARTBEAT_EVERY = payload.heartbeatEvery.trim();
+  }
+  persistRuntimeConfigUpdates(updates);
+  return {
+    ok: true,
+    requiresRestart: true,
+    adminSecret: generatedSecret || undefined,
+  };
+}
+
+function buildControlCenterSystemPromptPreview(payload: {
+  sessionKey?: string;
+  mode?: 'normal' | 'scheduled' | 'heartbeat' | 'evaluator';
+}) {
+  const sessionKey = (payload.sessionKey || 'main').trim() || 'main';
+  const chatJid = resolveChatJidForSessionKey(sessionKey) || findMainChatJid();
+  if (!chatJid) throw new Error(`Unknown session: ${sessionKey}`);
+  const group = state.registeredGroups[chatJid];
+  const groupFolder = group?.folder || MAIN_GROUP_FOLDER;
+  const prefs = getTuiSessionPrefs(chatJid);
+  const mode = payload.mode || 'normal';
+  const result = buildSystemPrompt(
+    {
+      groupFolder,
+      chatJid,
+      isMain: groupFolder === MAIN_GROUP_FOLDER,
+      isScheduledTask: mode === 'scheduled',
+      isHeartbeatTask: mode === 'heartbeat',
+      isEvaluatorRun: mode === 'evaluator',
+      assistantName: ASSISTANT_NAME,
+      provider: prefs.provider,
+      model: prefs.model,
+      thinkLevel: prefs.thinkLevel,
+      reasoningLevel: prefs.reasoningLevel,
+      codingHint: 'none',
+      requestId: `control-center-preview-${Date.now()}`,
+    },
+    {
+      groupDir: resolveGroupFolderPath(groupFolder),
+      globalDir: resolveGroupFolderPath('global'),
+      ipcDir: resolveGroupIpcPath(groupFolder),
+    },
+    { delegationExtensionAvailable: true },
+  );
+  return {
+    sessionKey: getSessionKeyForChat(chatJid),
+    chatJid,
+    groupFolder,
+    mode,
+    text: result.text,
+    report: result.report,
+    persisted: false,
+    note: 'Preview only; no role:system message is stored or sent.',
+  };
+}
+
+function listControlCenterTasks() {
+  const tasks = getAllTasks();
+  return {
+    tasks,
+    due: getDueTasks().map((task) => task.id),
+    runs: Object.fromEntries(
+      tasks.map((task) => [task.id, getTaskRunLogs(task.id, 5)]),
+    ),
+  };
+}
+
+function performControlCenterTaskAction(payload: {
+  id?: string;
+  action?: 'pause' | 'resume' | 'cancel' | 'trigger';
+}) {
+  const id = payload.id?.trim() || '';
+  const action = payload.action;
+  if (!id) throw new Error('Task id is required');
+  const task = getTaskById(id);
+  if (!task) throw new Error(`Task not found: ${id}`);
+  if (action === 'pause') {
+    updateTask(id, { status: 'paused' });
+  } else if (action === 'resume') {
+    updateTask(id, {
+      status: 'active',
+      next_run:
+        task.next_run ||
+        computeTaskNextRun(task.schedule_type, task.schedule_value) ||
+        new Date().toISOString(),
+    });
+  } else if (action === 'cancel') {
+    deleteTask(id);
+    return { id, action, deleted: true };
+  } else if (action === 'trigger') {
+    updateTask(id, { status: 'active', next_run: new Date().toISOString() });
+  } else {
+    throw new Error('Action must be pause, resume, cancel, or trigger');
+  }
+  return { id, action, task: getTaskById(id) };
+}
+
+function getControlCenterPipelines() {
+  return {
+    activeRuns: Array.from(activeChatRunsById.values()).map((run) => ({
+      requestId: run.requestId,
+      chatJid: run.chatJid,
+      startedAt: run.startedAt,
+    })),
+    activeCoderRuns: Array.from(activeCoderRuns.values()).map((run) => ({
+      requestId: run.requestId,
+      chatJid: run.chatJid,
+      startedAt: run.startedAt,
+      mode: run.mode,
+      groupName: run.groupName,
+      parentRequestId: run.parentRequestId,
+      state: run.state,
+      worktreePath: run.worktreePath,
+    })),
+    tasks: {
+      total: getAllTasks().length,
+      due: getDueTasks().length,
+      nextRun: getNextDueTaskTime(),
+    },
+    gateway: {
+      tuiClients: state.tuiGatewayServer ? 'listening' : 'offline',
+      web: state.webControlCenterServer ? 'listening' : 'offline',
+    },
+  };
+}
+
+function getControlCenterMemoryOverview() {
+  const roots = [
+    resolveGroupFolderPath(MAIN_GROUP_FOLDER),
+    resolveGroupFolderPath('global'),
+    MAIN_WORKSPACE_DIR,
+  ];
+  const docs = [
+    'NANO.md',
+    'SOUL.md',
+    'TODOS.md',
+    'MEMORY.md',
+    'HEARTBEAT.md',
+    'BOOTSTRAP.md',
+  ];
+  return {
+    roots,
+    docs: roots.flatMap((root) =>
+      docs.map((name) => {
+        const filePath = path.join(root, name);
+        return {
+          root,
+          name,
+          path: filePath,
+          exists: fs.existsSync(filePath),
+          size: fs.existsSync(filePath) ? fs.statSync(filePath).size : 0,
+        };
+      }),
+    ),
+  };
+}
+
+function getControlCenterKnowledgeStatus() {
+  const scaffold = ensureKnowledgeWikiScaffold({
+    workspaceDir: MAIN_WORKSPACE_DIR,
+  });
+  const status = readKnowledgeWikiStatus({ workspaceDir: MAIN_WORKSPACE_DIR });
+  const nightly = getTaskById(KNOWLEDGE_NIGHTLY_TASK_ID);
+  const readIfExists = (filePath: string) =>
+    fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
+  return {
+    status,
+    createdPaths: scaffold.createdPaths,
+    nightlyTask: nightly || null,
+    wiki: {
+      index: readIfExists(status.paths.indexPath),
+      progress: readIfExists(status.paths.progressPath),
+      log: readIfExists(status.paths.logPath),
+    },
+    reports: fs.existsSync(status.paths.reportsDir)
+      ? fs
+          .readdirSync(status.paths.reportsDir)
+          .filter((entry) => entry.endsWith('.md'))
+          .sort()
+          .slice(-10)
+      : [],
   };
 }
 
@@ -4840,7 +6061,48 @@ function createWebControlCenterAdapters(): WebControlCenterAdapters {
     }),
     getOnboardingStatus: () => buildOnboardingStatus(),
     applyOnboardingConfig: async (payload) => applyWebOnboardingConfig(payload),
-    hostUpdate: () => runUpdateCommand(),
+    hostUpdate: () =>
+      startDetachedUpdateCommand({
+        cwd: process.cwd(),
+      }),
+    getProviderSetup: () => getControlCenterProviderSetup(),
+    getRuntimeSettings: () => getControlCenterRuntimeSettings(),
+    applyRuntimeSettings: async (payload) =>
+      applyControlCenterRuntimeSettings(payload),
+    listRuntimeModels: async () => {
+      const result = loadPiModels();
+      return result.ok
+        ? { ok: true, models: result.entries }
+        : { ok: false, models: [], error: result.text };
+    },
+    getSystemPromptPreview: (payload) =>
+      buildControlCenterSystemPromptPreview(payload),
+    listTasks: () => listControlCenterTasks(),
+    taskAction: (payload) => performControlCenterTaskAction(payload),
+    getPipelines: () => getControlCenterPipelines(),
+    getMemoryOverview: () => getControlCenterMemoryOverview(),
+    getKnowledgeStatus: () => getControlCenterKnowledgeStatus(),
+    knowledgeCapture: (payload) =>
+      captureKnowledgeRawNote({
+        workspaceDir: MAIN_WORKSPACE_DIR,
+        text: payload.text || '',
+        source: payload.source || 'control-center',
+      }),
+    knowledgeLint: () =>
+      runKnowledgeWikiLint({ workspaceDir: MAIN_WORKSPACE_DIR }),
+    validateSkills: () => {
+      const result = spawnSync('npm', ['run', 'validate:skills'], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        maxBuffer: 2 * 1024 * 1024,
+      });
+      return {
+        ok: !result.error && result.status === 0,
+        status: result.status,
+        stdout: result.stdout || '',
+        stderr: result.stderr || result.error?.message || '',
+      };
+    },
   };
 }
 
@@ -4858,6 +6120,7 @@ async function startTuiGatewayService(): Promise<void> {
         host: FFT_NANO_TUI_HOST,
         port: FFT_NANO_TUI_PORT,
         authToken: FFT_NANO_TUI_AUTH_TOKEN || undefined,
+        socketPath: '/tmp/fft_nano_tui.sock',
       },
     );
   } catch (err) {
@@ -5078,6 +6341,78 @@ async function sendMessage(jid: string, text: string): Promise<boolean> {
   }
 }
 
+const UPDATE_NOTIFICATION_POLL_MS = 5000;
+let updateNotificationTimer: ReturnType<typeof setInterval> | null = null;
+
+async function processPendingUpdateNotifications(): Promise<void> {
+  if (!state.telegramBot) return;
+  const reportDir = getUpdateNotificationsDir(process.cwd());
+  if (!fs.existsSync(reportDir)) return;
+
+  let entries: string[] = [];
+  try {
+    entries = fs
+      .readdirSync(reportDir)
+      .filter((entry) => entry.endsWith('.json'));
+  } catch (err) {
+    logger.debug({ err, reportDir }, 'Failed to read update notification dir');
+    return;
+  }
+
+  for (const entry of entries) {
+    const reportFile = path.join(reportDir, entry);
+    const record = readUpdateNotification(reportFile);
+    if (!record || record.status !== 'complete' || record.sentAt) continue;
+    if (!record.chatJid) {
+      const sentAt = new Date().toISOString();
+      writeUpdateNotification(reportFile, {
+        ...record,
+        sentAt,
+        updatedAt: sentAt,
+      });
+      logger.info(
+        { reportFile, reportId: record.id },
+        'Update report completed without chat id; marked as consumed',
+      );
+      continue;
+    }
+
+    const label = record.ok ? 'Update complete' : 'Update failed';
+    const sent = await sendMessage(
+      record.chatJid,
+      `${label}:\n${record.text || ''}`,
+    );
+    if (!sent) continue;
+
+    const sentAt = new Date().toISOString();
+    writeUpdateNotification(reportFile, {
+      ...record,
+      sentAt,
+      updatedAt: sentAt,
+    });
+    logger.info(
+      { reportId: record.id, chatJid: record.chatJid, ok: record.ok },
+      'Update notification delivered',
+    );
+  }
+}
+
+function startUpdateNotificationLoop(): void {
+  if (updateNotificationTimer !== null) return;
+  void processPendingUpdateNotifications();
+  updateNotificationTimer = setInterval(() => {
+    if (state.shuttingDown) return;
+    void processPendingUpdateNotifications();
+  }, UPDATE_NOTIFICATION_POLL_MS);
+  updateNotificationTimer.unref?.();
+}
+
+function stopUpdateNotificationLoop(): void {
+  if (updateNotificationTimer === null) return;
+  clearInterval(updateNotificationTimer);
+  updateNotificationTimer = null;
+}
+
 function queueTelegramToolProgressReaction(
   chatJid: string,
   requestId: string,
@@ -5150,7 +6485,6 @@ function queueTelegramToolProgressUpdate(
         trailEntry,
       );
     }
-    return;
   }
 
   if (
@@ -5330,6 +6664,18 @@ function consumeTelegramHostAttemptCompletions(
   return completed;
 }
 
+function noteTelegramHostAttemptCompletions(
+  chatJid: string,
+  requestId: string,
+): void {
+  for (const streamKey of getTelegramHostAttemptStreamKeys(
+    chatJid,
+    requestId,
+  )) {
+    telegramPreviewRegistry.noteCompleted(streamKey);
+  }
+}
+
 function pruneTelegramHostStreamedRuns(): void {
   telegramPreviewRegistry.prune();
 }
@@ -5390,6 +6736,7 @@ async function prepareTelegramCompletionState(params: {
     consumeTelegramHostAttemptCompletions(params.chatJid, params.runId);
     consumeTelegramHostAttemptPreviewStates(params.chatJid, params.runId);
     consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
+    noteTelegramHostAttemptCompletions(params.chatJid, params.runId);
     return {
       externallyCompleted: false,
       previewState: null,
@@ -5398,24 +6745,29 @@ async function prepareTelegramCompletionState(params: {
 
   if (deliveryMode === 'draft' && canUseTelegramNativeDraft(params.chatJid)) {
     consumeTelegramHostAttemptDraftStates(params.chatJid, params.runId);
+    const externallyCompleted = consumeTelegramHostAttemptCompletions(
+      params.chatJid,
+      params.runId,
+    );
+    noteTelegramHostAttemptCompletions(params.chatJid, params.runId);
     return {
-      externallyCompleted: consumeTelegramHostAttemptCompletions(
-        params.chatJid,
-        params.runId,
-      ),
+      externallyCompleted,
       previewState: null,
     };
   }
 
+  const externallyCompleted = consumeTelegramHostAttemptCompletions(
+    params.chatJid,
+    params.runId,
+  );
+  const previewState = consumeTelegramHostAttemptPreviewStates(
+    params.chatJid,
+    params.runId,
+  );
+  noteTelegramHostAttemptCompletions(params.chatJid, params.runId);
   return {
-    externallyCompleted: consumeTelegramHostAttemptCompletions(
-      params.chatJid,
-      params.runId,
-    ),
-    previewState: consumeTelegramHostAttemptPreviewStates(
-      params.chatJid,
-      params.runId,
-    ),
+    externallyCompleted,
+    previewState,
   };
 }
 
@@ -5531,12 +6883,30 @@ async function processHostEvent(event: HostEvent): Promise<void> {
                   'farm_action is disabled in core profile (set FFT_PROFILE=farm or FEATURE_FARM=1)',
                 executedAt: new Date().toISOString(),
               }
-          : await executeMemoryAction(event.request, {
-              sourceGroup: event.sourceGroup,
-              isMain: event.isMain,
-              registeredGroups: state.registeredGroups,
-            });
-      fs.writeFileSync(event.resultPath, JSON.stringify(result, null, 2));
+          : event.request.type === 'skill_action'
+            ? await executeSkillAction(event.request, {
+                sourceGroup: event.sourceGroup,
+                isMain: event.isMain,
+                registeredGroups: state.registeredGroups,
+              })
+            : await executeMemoryAction(event.request, {
+                sourceGroup: event.sourceGroup,
+                isMain: event.isMain,
+                registeredGroups: state.registeredGroups,
+              });
+      fs.writeFileSync(
+        event.resultPath,
+        JSON.stringify(
+          attachActionRequestAudit({
+            result,
+            request: event.request,
+            sourceGroup: event.sourceGroup,
+            isMain: event.isMain,
+          }),
+          null,
+          2,
+        ),
+      );
       return;
     }
     case 'action_result_ready':
@@ -5613,7 +6983,7 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       if (
         existingState &&
         existingState.lastText.trim() &&
-        !existingState.lastText.startsWith('Coder status:')
+        !isTelegramRunStatusPreviewText(existingState.lastText)
       ) {
         return;
       }
@@ -5762,7 +7132,6 @@ function startIpcWatcher(): void {
     for (const sourceGroup of groupFolders) {
       const isMain = sourceGroup === MAIN_GROUP_FOLDER;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
-      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
 
       // Process messages from this group's IPC directory
       try {
@@ -5781,6 +7150,7 @@ function startIpcWatcher(): void {
                   state.registeredGroups,
                   isMain,
                   processHostEventOrdered,
+                  getSessionKeyForChat,
                 );
                 if (outcome === 'delivered') {
                   logger.info(
@@ -5816,47 +7186,6 @@ function startIpcWatcher(): void {
         );
       }
 
-      // Process tasks from this group's IPC directory
-      try {
-        if (fs.existsSync(tasksDir)) {
-          const taskFiles = fs
-            .readdirSync(tasksDir)
-            .filter((f) => f.endsWith('.json'));
-          for (const file of taskFiles) {
-            const filePath = path.join(tasksDir, file);
-            try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              const envelope = wrapLegacyTaskEnvelope(data, sourceGroup);
-              if (envelope) {
-                await processHostEventOrdered({
-                  kind: 'task_requested',
-                  id: envelope.id,
-                  createdAt: envelope.createdAt,
-                  source: 'ipc-boundary',
-                  sourceGroup,
-                  isMain,
-                  request: envelope.payload,
-                });
-              }
-              fs.unlinkSync(filePath);
-            } catch (err) {
-              logger.error(
-                { file, sourceGroup, err },
-                'Error processing IPC task',
-              );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
-            }
-          }
-        }
-      } catch (err) {
-        logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
-      }
-
       // Process farm actions from this group's IPC directory
       try {
         const actionsDir = path.join(ipcBaseDir, sourceGroup, 'actions');
@@ -5870,7 +7199,8 @@ function startIpcWatcher(): void {
             try {
               const request = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as
                 | FarmActionRequest
-                | MemoryActionRequest;
+                | MemoryActionRequest
+                | SkillActionRequest;
 
               const resultDir = path.join(
                 ipcBaseDir,
@@ -5881,7 +7211,8 @@ function startIpcWatcher(): void {
 
               if (
                 request.type === 'farm_action' ||
-                request.type === 'memory_action'
+                request.type === 'memory_action' ||
+                request.type === 'skill_action'
               ) {
                 const resultPath = path.join(
                   resultDir,
@@ -6404,6 +7735,29 @@ async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       { suppressErrorReply: true, isHeartbeatTask: true },
       abortController.signal,
     );
+    try {
+      const checklistPath = writeHeartbeatChecklist({
+        workspaceDir: MAIN_WORKSPACE_DIR,
+        requestId,
+        reason,
+        result: run.result,
+        ok: run.ok,
+        currentTasksPath: path.join(
+          resolveGroupIpcPath(MAIN_GROUP_FOLDER),
+          'current_tasks.json',
+        ),
+        runtimeLogPath: path.join(process.cwd(), 'logs', 'fft_nano.log'),
+      });
+      logger.debug(
+        { chatJid: mainChatJid, reason, checklistPath },
+        'Heartbeat checklist written',
+      );
+    } catch (err) {
+      logger.warn(
+        { err, chatJid: mainChatJid, reason },
+        'Failed to write heartbeat checklist',
+      );
+    }
     if (!run.ok) {
       logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
       return;
@@ -6550,6 +7904,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 function stopFarmServicesForShutdown(signal: string): void {
+  stopUpdateNotificationLoop();
   stopHeartbeatLoop();
   appRuntime.stopFarmServicesForShutdown(signal);
 }
@@ -6558,6 +7913,7 @@ async function shutdownAndExit(
   signal: string,
   exitCode: number,
 ): Promise<void> {
+  stopUpdateNotificationLoop();
   stopHeartbeatLoop();
   await appRuntime.shutdownAndExit(signal, exitCode);
 }
@@ -6568,6 +7924,7 @@ function registerShutdownHandlers(): void {
 
 async function main(): Promise<void> {
   await appRuntime.main();
+  startUpdateNotificationLoop();
 }
 
 main().catch(async (err) => {

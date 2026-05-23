@@ -133,7 +133,7 @@ test('status report renders pulse first and alerts on timeout incidents', () => 
         chatJid: 'telegram:1',
         groupName: 'main',
         startedAt: Date.parse('2026-04-12T11:58:00.000Z'),
-        route: 'coder_execute',
+        config: { toolMode: 'full', isSubagent: false, workspaceMode: 'ephemeral_worktree' },
         state: 'running',
       },
     ],
@@ -194,7 +194,7 @@ test('status report marks warn when active run progress is stale beyond threshol
         chatJid: 'telegram:1',
         groupName: 'main',
         startedAt: Date.parse('2026-04-12T11:50:00.000Z'),
-        route: 'coder_execute',
+        config: { toolMode: 'full', isSubagent: false, workspaceMode: 'ephemeral_worktree' },
         state: 'running',
       },
     ],
@@ -248,4 +248,61 @@ test('status report includes knowledge section when knowledge telemetry is provi
     text,
     /- knowledge_progress: last_update=2026-04-12T09:00:00.000Z next_task_run=2026-04-13T02:17:00.000Z/,
   );
+});
+
+test('status report redacts evaluator verdict details from user-visible incidents', () => {
+  const telemetry = createStatusTelemetry({
+    incidentWindowMs: 30 * 60 * 1000,
+    maxIncidents: 3,
+  });
+
+  telemetry.noteRuntimeError({
+    runId: 'eval-raw-json',
+    chatJid: 'telegram:1',
+    errorMessage: JSON.stringify({
+      pass: false,
+      score: 1,
+      issues: ['internal artifact verification failure'],
+      feedback: 'internal evaluator feedback',
+    }),
+    createdAt: '2026-04-12T11:59:40.000Z',
+  });
+  telemetry.noteRuntimeError({
+    runId: 'eval-text',
+    chatJid: 'telegram:1',
+    errorMessage:
+      'verification_failed: score 1/10 issues internal artifact verification failure feedback internal evaluator feedback',
+    createdAt: '2026-04-12T11:59:45.000Z',
+  });
+
+  const text = formatStatusReport({
+    assistantName: 'FarmFriend',
+    version: '1.2.3 main@abc1234',
+    runtime: 'docker',
+    serviceStartedAt: '2026-04-12T11:00:00.000Z',
+    incidentWindowLabel: '30m',
+    stuckWarningSeconds: 120,
+    nowMs: Date.parse('2026-04-12T12:00:00.000Z'),
+    telegramEnabled: true,
+    whatsappEnabled: true,
+    whatsappConnected: true,
+    registeredGroupCount: 1,
+    mainGroupName: 'main',
+    tasks: { active: 1, paused: 0, completed: 2 },
+    activeChatRuns: [],
+    activeCoderRuns: [],
+    telemetry: telemetry.getSnapshot(Date.parse('2026-04-12T12:00:00.000Z')),
+    agentRunning: false,
+  });
+
+  assert.match(text, /Recent incidents \(30m\):/);
+  assert.match(text, /verification_failed/);
+  assert.doesNotMatch(text, /"pass"\s*:/);
+  assert.doesNotMatch(text, /\bpass\s*:/);
+  assert.doesNotMatch(text, /"score"\s*:/);
+  assert.doesNotMatch(text, /score 1\/10/);
+  assert.doesNotMatch(text, /"issues"\s*:/);
+  assert.doesNotMatch(text, /internal artifact verification failure/);
+  assert.doesNotMatch(text, /"feedback"\s*:/);
+  assert.doesNotMatch(text, /internal evaluator feedback/);
 });

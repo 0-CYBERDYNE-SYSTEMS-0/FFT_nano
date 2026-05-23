@@ -29,6 +29,8 @@ type RunResult = {
   result: string | null;
   streamed: boolean;
   usage?: RunUsage;
+  suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
 };
 
 type CodingRunResult = RunResult & {
@@ -48,6 +50,14 @@ type CodingRunResult = RunResult & {
     error?: string;
   };
 };
+
+type MaintenanceRunProgressPhase =
+  | 'spawn'
+  | 'thinking'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'aborted';
 
 type SetupState = {
   kind:
@@ -148,6 +158,16 @@ export interface TelegramCommandDeps {
     input: string;
     chatJid: string;
   }) => Promise<string> | string;
+  handleSkillManagerCommand?: (params: {
+    action: string;
+    input: string;
+    chatJid: string;
+  }) => Promise<string> | string;
+  handleLibrarianCommand?: (params: {
+    action: string;
+    input: string;
+    chatJid: string;
+  }) => Promise<string> | string;
   runPiListModels: (searchText: string) => { text: string };
   validateProviderModelRef: (
     provider: string,
@@ -181,6 +201,15 @@ export interface TelegramCommandDeps {
   promoteChatToMain: (chatJid: string, chatName: string) => void;
   refreshTelegramCommandMenus: () => Promise<void>;
   hasMainGroup: () => boolean;
+  approveTelegramGroup: (
+    chatJid: string,
+  ) => Promise<{ ok: boolean; text: string }>;
+  ignoreTelegramGroup: (
+    chatJid: string,
+  ) => Promise<{ ok: boolean; text: string }>;
+  unignoreTelegramGroup: (
+    chatJid: string,
+  ) => Promise<{ ok: boolean; text: string }>;
   runGatewayServiceCommand: (action: 'status' | 'restart' | 'doctor') => {
     ok: boolean;
     text: string;
@@ -188,6 +217,11 @@ export interface TelegramCommandDeps {
   runUpdateCommand: () => {
     ok: boolean;
     text: string;
+  };
+  startUpdateCommand: (chatJid: string) => {
+    ok: boolean;
+    text: string;
+    reportId?: string;
   };
   buildRuntimeProviderPresetUpdates: (
     params: any,
@@ -209,6 +243,13 @@ export interface TelegramCommandDeps {
   deleteTask: (taskId: string) => void;
   emitTuiChatEvent: (payload: any) => void;
   emitTuiAgentEvent: (payload: any) => void;
+  emitRunProgress: (payload: {
+    chatJid: string;
+    requestId: string;
+    phase: MaintenanceRunProgressPhase;
+    text: string;
+    detail?: string;
+  }) => void;
   getSessionKeyForChat: (chatJid: string) => string;
   runAgent: (
     group: any,
@@ -224,16 +265,14 @@ export interface TelegramCommandDeps {
     requestId: string;
     parentRequestId?: string;
     mode: 'plan' | 'execute';
-    route:
-      | 'coder_execute'
-      | 'coder_plan'
-      | 'auto_execute'
-      | 'subagent_execute'
-      | 'subagent_plan';
+    config: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     originChatJid: string;
     originGroupFolder: string;
     taskText: string;
-    workspaceMode: 'ephemeral_worktree' | 'read_only';
     timeoutSeconds: number;
     allowFanout: boolean;
     sessionContext: string;
@@ -313,6 +352,33 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     return parseProviderFromModelLabel(deps.getEffectiveModelLabel(chatJid));
   }
 
+  function formatMaintenanceLabel(
+    label: 'librarian' | 'skill-manager',
+  ): string {
+    return label === 'skill-manager' ? 'Skill manager' : 'Librarian';
+  }
+
+  function formatElapsedSeconds(startedAt: number): string {
+    return `${Math.max(0, Math.round((Date.now() - startedAt) / 1000))}s`;
+  }
+
+  function emitMaintenanceProgress(params: {
+    chatJid: string;
+    requestId: string;
+    label: 'librarian' | 'skill-manager';
+    phase: MaintenanceRunProgressPhase;
+    text: string;
+    detail?: string;
+  }): void {
+    deps.emitRunProgress({
+      chatJid: params.chatJid,
+      requestId: params.requestId,
+      phase: params.phase,
+      text: `${formatMaintenanceLabel(params.label)} status: ${params.text}`,
+      ...(params.detail ? { detail: params.detail } : {}),
+    });
+  }
+
   async function validateModelSelection(params: {
     chatJid: string;
     provider: string;
@@ -351,11 +417,321 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
   }
 
+  function buildLibrarianAgentPrompt(
+    action: 'run' | 'dry-run',
+    input: string,
+  ): string {
+    const dryRun = action === 'dry-run';
+    return [
+      dryRun
+        ? 'Manual knowledge librarian dry-run. Inspect the knowledge wiki and explain exactly what you would change, but do not write files.'
+        : 'Manual knowledge librarian run. Perform the knowledge curation work now.',
+      '',
+      'Scope:',
+      '1. Read knowledge/schema/qualia-schema.md and knowledge/wiki/index.md.',
+      '2. Review new captures in knowledge/raw/.',
+      '3. Curate important facts, decisions, procedures, and open questions into knowledge/wiki/*.md.',
+      '4. Update knowledge/wiki/progress.md with a concise summary and next action.',
+      '5. Append one short entry to knowledge/wiki/log.md.',
+      dryRun
+        ? '6. Do not write a report file in dry-run mode; return the proposed report in chat.'
+        : '6. Write a manual run report at knowledge/reports/librarian-<timestamp>.md.',
+      '',
+      'Rules:',
+      '- Do not answer with usage text.',
+      '- Keep changes concise and schema-aligned.',
+      '- Preserve raw captures unless you have a clear reason to move or annotate them.',
+      '- Send concise run_progress IPC updates after major phases or after roughly 30 seconds of work: {"type":"run_progress","chatJid":"<current chat jid>","requestId":"<current request_id>","text":"Librarian status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
+      '- Progress phases to report: schema/index loaded; raw captures reviewed; wiki updates planned/applied; report/progress/log prepared.',
+      '- Final answer must include files inspected, files changed, and report path when a report is written.',
+      input ? ['', 'Operator focus:', input] : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  function buildSkillManagerAgentPrompt(
+    action: 'run' | 'dry-run',
+    input: string,
+  ): string {
+    const dryRun = action === 'dry-run';
+    return [
+      dryRun
+        ? 'Manual skill manager dry-run. Inspect the skill library and explain exactly what you would change, but do not mutate skills.'
+        : 'Manual skill manager run. Perform a bounded skill library review now.',
+      '',
+      'Scope:',
+      '1. Use skill_status first.',
+      '2. Use skill_view to inspect candidate skills before judging them.',
+      '3. Keep skills lean, valid, reusable, and organized for operators.',
+      '4. Clean frontmatter issues for agent-created skills when running live.',
+      '5. Consolidate near-duplicate agent-created skills only when clearly useful.',
+      '6. Archive only agent-created skills that are stale, duplicate, or fully absorbed.',
+      '',
+      'Rules:',
+      '- Do not answer with usage text.',
+      '- Do not mutate source-owned project skills or personal override skills; report issues instead.',
+      '- Send concise run_progress IPC updates after major phases or after roughly 30 seconds of work: {"type":"run_progress","chatJid":"<current chat jid>","requestId":"<current request_id>","text":"Skill manager status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
+      '- Progress phases to report: skill list loaded; candidate skills inspected; mutations planned/applied; report/final summary prepared.',
+      dryRun
+        ? '- Dry-run mode: do not call mutating skill actions such as skill_patch, skill_archive, skill_restore, skill_pin, or skill_unpin.'
+        : '- Live mode: use skill actions for any skill changes and summarize each mutation.',
+      '- Final answer must include skills inspected, changes made or proposed, and residual risks.',
+      input ? ['', 'Operator focus:', input] : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  async function startMaintenanceAgentRun(params: {
+    chatJid: string;
+    command: string;
+    label: 'librarian' | 'skill-manager';
+    action: 'run' | 'dry-run';
+    prompt: string;
+  }): Promise<void> {
+    const group = deps.state.registeredGroups[params.chatJid];
+    if (!group) {
+      await deps.sendMessage(params.chatJid, 'Chat is not registered.');
+      return;
+    }
+    const existingRun = deps.activeChatRuns.get(params.chatJid);
+    if (existingRun) {
+      deps.logTelegramCommandAudit(
+        params.chatJid,
+        params.command,
+        false,
+        `${params.label} blocked: active run`,
+      );
+      await deps.sendMessage(
+        params.chatJid,
+        `Cannot start ${params.label} while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
+      );
+      return;
+    }
+
+    const requestId = `${params.label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const abortController = new AbortController();
+    const activeRun = {
+      chatJid: params.chatJid,
+      startedAt: Date.now(),
+      requestId,
+      abortController,
+    };
+    deps.activeChatRuns.set(params.chatJid, activeRun);
+    deps.activeChatRunsById?.set(requestId, activeRun);
+    deps.emitTuiChatEvent({
+      runId: requestId,
+      sessionKey: deps.getSessionKeyForChat(params.chatJid),
+      state: 'message',
+      message: {
+        role: 'system',
+        content: `Starting ${params.label} ${params.action} (${requestId})...`,
+      },
+    });
+    deps.emitTuiAgentEvent({
+      runId: requestId,
+      sessionKey: deps.getSessionKeyForChat(params.chatJid),
+      phase: 'start',
+      detail: `${params.label} ${params.action}`,
+    });
+    emitMaintenanceProgress({
+      chatJid: params.chatJid,
+      requestId,
+      label: params.label,
+      phase: 'spawn',
+      text:
+        params.label === 'skill-manager'
+          ? 'Starting library review...'
+          : 'Starting wiki review...',
+      detail: `${params.action} ${requestId}`,
+    });
+    await deps.setTyping(params.chatJid, true);
+    try {
+      emitMaintenanceProgress({
+        chatJid: params.chatJid,
+        requestId,
+        label: params.label,
+        phase: 'thinking',
+        text:
+          params.label === 'skill-manager'
+            ? 'Agent is inspecting skills content...'
+            : 'Agent is inspecting wiki content...',
+      });
+      const run = await deps.runAgent(
+        group,
+        params.prompt,
+        params.chatJid,
+        'none',
+        requestId,
+        deps.state.chatRunPreferences[params.chatJid] || {},
+        {},
+        abortController.signal,
+      );
+      deps.updateChatUsage(params.chatJid, run.usage);
+      const runWasAborted = !run.result && abortController.signal.aborted;
+      emitMaintenanceProgress({
+        chatJid: params.chatJid,
+        requestId,
+        label: params.label,
+        phase: 'finalizing',
+        text: 'Finalizing summary...',
+      });
+      if (!run.ok) {
+        const elapsed = formatElapsedSeconds(activeRun.startedAt);
+        deps.emitTuiChatEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'error',
+          errorMessage: `${params.label} run failed`,
+        });
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'error',
+          detail: `${params.label} run failed`,
+        });
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'failed',
+          text: `${params.action} failed (${requestId}, ${elapsed}).`,
+          ...(run.result ? { detail: run.result } : {}),
+        });
+        await deps.sendAgentResultMessage(
+          params.chatJid,
+          `${formatMaintenanceLabel(params.label)} ${params.action} failed (${requestId}, ${elapsed}).${run.result ? `\n\n${run.result}` : ''}`,
+        );
+      } else if (runWasAborted) {
+        const elapsed = formatElapsedSeconds(activeRun.startedAt);
+        deps.emitTuiChatEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'aborted',
+        });
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'aborted',
+        });
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'aborted',
+          text: `${params.action} aborted (${requestId}, ${elapsed}).`,
+        });
+        await deps.sendAgentResultMessage(
+          params.chatJid,
+          `${formatMaintenanceLabel(params.label)} ${params.action} aborted (${requestId}, ${elapsed}).`,
+        );
+      } else if (run.suppressUserDelivery) {
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'completed',
+          text: `${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+        });
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'complete',
+        });
+      } else if (run.result) {
+        deps.persistAssistantHistory(params.chatJid, run.result, requestId);
+        if (!run.streamed) {
+          await deps.sendAgentResultMessage(
+            params.chatJid,
+            `${formatMaintenanceLabel(params.label)} ${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).\n\n${run.result}`,
+          );
+        } else {
+          await deps.sendAgentResultMessage(
+            params.chatJid,
+            `${formatMaintenanceLabel(params.label)} ${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+          );
+        }
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'completed',
+          text: `${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+        });
+        deps.emitTuiChatEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          state: 'final',
+          message: { role: 'assistant', content: run.result },
+          usage: run.usage,
+        });
+        deps.emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: run.streamed ? 'streamed' : 'complete',
+        });
+      } else {
+        emitMaintenanceProgress({
+          chatJid: params.chatJid,
+          requestId,
+          label: params.label,
+          phase: 'completed',
+          text: `${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}).`,
+        });
+        await deps.sendAgentResultMessage(
+          params.chatJid,
+          `${formatMaintenanceLabel(params.label)} ${params.action} complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}) with no final text.`,
+        );
+      }
+    } catch (err) {
+      const elapsed = formatElapsedSeconds(activeRun.startedAt);
+      const diagnostic = err instanceof Error ? err.message : String(err);
+      emitMaintenanceProgress({
+        chatJid: params.chatJid,
+        requestId,
+        label: params.label,
+        phase: 'failed',
+        text: `${params.action} failed (${requestId}, ${elapsed}).`,
+        detail: diagnostic,
+      });
+      deps.emitTuiChatEvent({
+        runId: requestId,
+        sessionKey: deps.getSessionKeyForChat(params.chatJid),
+        state: 'error',
+        errorMessage: `${params.label} run failed`,
+      });
+      deps.emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey: deps.getSessionKeyForChat(params.chatJid),
+        phase: 'error',
+        detail: diagnostic,
+      });
+      await deps.sendAgentResultMessage(
+        params.chatJid,
+        `${formatMaintenanceLabel(params.label)} ${params.action} failed (${requestId}, ${elapsed}).\n\n${diagnostic}`,
+      );
+    } finally {
+      if (deps.activeChatRuns.get(params.chatJid) === activeRun) {
+        deps.activeChatRuns.delete(params.chatJid);
+      }
+      deps.activeChatRunsById?.delete(requestId);
+      await deps.setTyping(params.chatJid, false);
+    }
+  }
+
   async function startCoderRun(params: {
     chatJid: string;
     requestId: string;
     mode: 'plan' | 'execute';
-    route: 'coder_execute' | 'coder_plan';
+    config: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     taskText: string;
     workspaceRoot: string;
     projectLabel: string;
@@ -411,12 +787,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         ? await deps.runCodingTask({
             requestId: params.requestId,
             mode: params.mode,
-            route: params.route,
+            config: params.config,
             originChatJid: params.chatJid,
             originGroupFolder: group.folder,
             taskText: params.taskText,
-            workspaceMode:
-              params.mode === 'plan' ? 'read_only' : 'ephemeral_worktree',
             timeoutSeconds: 1800,
             allowFanout: params.mode === 'execute',
             sessionContext: `[APPROVED CODER ${params.mode.toUpperCase()} REQUEST]\n${params.taskText}`,
@@ -478,6 +852,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           requestId: params.requestId,
           kind: 'coder',
           status: 'aborted',
+        });
+      } else if (run.suppressUserDelivery) {
+        deps.emitTuiAgentEvent({
+          runId: params.requestId,
+          sessionKey: deps.getSessionKeyForChat(params.chatJid),
+          phase: 'end',
+          detail: 'complete',
         });
       } else if (run.result) {
         deps.persistAssistantHistory(
@@ -567,10 +948,17 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             mode:
               settingsAction.kind === 'coder-approve-plan' ? 'plan' : 'execute',
-            route:
-              settingsAction.kind === 'coder-approve-plan'
-                ? 'coder_plan'
-                : 'coder_execute',
+            config: {
+              toolMode:
+                settingsAction.kind === 'coder-approve-plan'
+                  ? 'read_only'
+                  : 'full',
+              isSubagent: false,
+              workspaceMode:
+                settingsAction.kind === 'coder-approve-plan'
+                  ? 'read_only'
+                  : 'ephemeral_worktree',
+            },
             taskText: prepared.taskText,
             workspaceRoot: prepared.workspaceRoot,
             projectLabel: prepared.projectLabel,
@@ -621,8 +1009,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             chatJid: q.chatJid,
             requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             mode: settingsAction.mode,
-            route:
-              settingsAction.mode === 'plan' ? 'coder_plan' : 'coder_execute',
+            config: {
+              toolMode: settingsAction.mode === 'plan' ? 'read_only' : 'full',
+              isSubagent: false,
+              workspaceMode:
+                settingsAction.mode === 'plan'
+                  ? 'read_only'
+                  : 'ephemeral_worktree',
+            },
             taskText: settingsAction.taskText,
             workspaceRoot: settingsAction.projectPath,
             projectLabel: settingsAction.projectLabel,
@@ -648,7 +1042,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               chatJid: q.chatJid,
               requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               mode: 'plan',
-              route: 'coder_plan',
+              config: {
+                toolMode: 'read_only',
+                isSubagent: false,
+                workspaceMode: 'read_only',
+              },
               taskText: settingsAction.taskText,
               workspaceRoot: created.workspaceRoot,
               projectLabel: created.projectLabel,
@@ -659,7 +1057,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             chatJid: q.chatJid,
             requestId: `coder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             mode: 'plan',
-            route: 'coder_plan',
+            config: {
+              toolMode: 'read_only',
+              isSubagent: false,
+              workspaceMode: 'read_only',
+            },
             taskText: settingsAction.taskText,
             workspaceRoot: created.workspaceRoot,
             projectLabel: created.projectLabel,
@@ -690,6 +1092,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         case 'show-delivery':
         case 'show-verbose':
         case 'show-queue':
+        case 'show-groups':
         case 'show-subagents':
         case 'show-setup-home':
         case 'show-setup-providers':
@@ -703,6 +1106,30 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             settingsAction,
           );
           return;
+        case 'approve-telegram-group':
+        case 'ignore-telegram-group':
+        case 'unignore-telegram-group': {
+          if (!deps.isMainChat(q.chatJid)) {
+            await deps.sendMessage(
+              q.chatJid,
+              `${deps.constants.assistantName}: group approval actions are only available in the main/admin chat.`,
+            );
+            return;
+          }
+          const result =
+            settingsAction.kind === 'approve-telegram-group'
+              ? await deps.approveTelegramGroup(settingsAction.chatJid)
+              : settingsAction.kind === 'ignore-telegram-group'
+                ? await deps.ignoreTelegramGroup(settingsAction.chatJid)
+                : await deps.unignoreTelegramGroup(settingsAction.chatJid);
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-groups',
+          });
+          if (!result.ok) {
+            await deps.sendMessage(q.chatJid, result.text);
+          }
+          return;
+        }
         case 'prompt-add-model-for-provider':
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
             kind: 'show-add-model-for-provider',
@@ -1019,7 +1446,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return;
       case 'panel:groups':
         deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
-        await deps.sendMessage(q.chatJid, deps.formatGroupsText());
+        await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+          kind: 'show-groups',
+        });
         return;
       case 'panel:health':
         deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
@@ -1918,6 +2347,80 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
+    if (
+      cmd === '/skill-manager' ||
+      cmd === '/skill_manager' ||
+      cmd === '/librarian' ||
+      cmd === '/curator'
+    ) {
+      const isSkillManager =
+        cmd === '/skill-manager' || cmd === '/skill_manager';
+      const isLibrarian = cmd === '/librarian';
+      const isDeprecatedCurator = cmd === '/curator';
+
+      if (!isMainGroup) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
+        await deps.sendMessage(
+          m.chatJid,
+          `${deps.constants.assistantName}: ${isLibrarian ? 'librarian' : 'skill-manager'} controls are only available in the main/admin chat.`,
+        );
+        return true;
+      }
+
+      const action = (rest[0] || 'status').trim().toLowerCase();
+      const input = rest.slice(1).join(' ').trim();
+      const auditAction = isDeprecatedCurator
+        ? `${action} (deprecated /curator)`
+        : action;
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, auditAction);
+
+      if (isDeprecatedCurator) {
+        await deps.sendMessage(
+          m.chatJid,
+          '⚠️ /curator is deprecated. Please use /skill-manager instead.',
+        );
+      }
+
+      if (
+        (isSkillManager || isLibrarian) &&
+        (action === 'run' || action === 'dry-run')
+      ) {
+        await startMaintenanceAgentRun({
+          chatJid: m.chatJid,
+          command: cmd,
+          label: isLibrarian ? 'librarian' : 'skill-manager',
+          action,
+          prompt: isLibrarian
+            ? buildLibrarianAgentPrompt(action, input)
+            : buildSkillManagerAgentPrompt(action, input),
+        });
+        return true;
+      }
+
+      const handler = isSkillManager
+        ? deps.handleSkillManagerCommand
+        : isLibrarian
+          ? deps.handleLibrarianCommand
+          : deps.handleSkillManagerCommand; // curator routes to skill-manager
+
+      if (!handler) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'unavailable');
+        await deps.sendMessage(
+          m.chatJid,
+          `${isLibrarian ? 'Librarian' : 'Skill Manager'} controls are not available in this runtime.`,
+        );
+        return true;
+      }
+
+      const text = await handler({
+        action,
+        input,
+        chatJid: m.chatJid,
+      });
+      await deps.sendMessage(m.chatJid, text);
+      return true;
+    }
+
     if (cmd === '/setup') {
       const arg = rest.join(' ').trim().toLowerCase();
       if (arg === 'cancel') {
@@ -2125,8 +2628,16 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/groups') {
+      if (!deps.isMainChat(m.chatJid)) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
+        await deps.sendMessage(
+          m.chatJid,
+          `${deps.constants.assistantName}: group management is only available in the main/admin chat.`,
+        );
+        return true;
+      }
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      await deps.sendMessage(m.chatJid, deps.formatGroupsText());
+      await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-groups' });
       return true;
     }
 
@@ -2156,19 +2667,39 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/update') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'update started');
-      await deps.sendMessage(
-        m.chatJid,
-        'Starting update: stash local changes, pull, install, build, reapply changes, then restart.\nThis will take a moment...',
-      );
-      const result = deps.runUpdateCommand();
-      const label = result.ok ? 'Update complete' : 'Update failed';
+      const result = deps.startUpdateCommand(m.chatJid);
+      if (!result.ok) {
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'update start failed',
+        );
+        await deps.sendMessage(
+          m.chatJid,
+          `Update failed to start:\n${result.text}`,
+        );
+        return true;
+      }
       deps.logTelegramCommandAudit(
         m.chatJid,
         cmd,
-        result.ok,
-        result.ok ? 'update succeeded' : 'update failed',
+        true,
+        result.reportId
+          ? `update worker started ${result.reportId}`
+          : 'update worker started',
       );
-      await deps.sendMessage(m.chatJid, `${label}:\n${result.text}`);
+      await deps.sendMessage(
+        m.chatJid,
+        [
+          'Update started.',
+          'I am pulling, reinstalling dependencies, rebuilding, and restarting in the background.',
+          'I will send the final result after the service comes back up.',
+          result.reportId ? `Report id: ${result.reportId}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
       return true;
     }
 
@@ -2291,11 +2822,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             ? await deps.runCodingTask({
                 requestId,
                 mode: 'execute',
-                route: 'subagent_execute',
+                config: {
+                  toolMode: 'full',
+                  isSubagent: true,
+                  workspaceMode: 'ephemeral_worktree',
+                },
                 originChatJid: m.chatJid,
                 originGroupFolder: group.folder,
                 taskText: task,
-                workspaceMode: 'ephemeral_worktree',
                 timeoutSeconds: 1800,
                 allowFanout: false,
                 sessionContext: `[SUBAGENT EXECUTE REQUEST]\n${task}`,
@@ -2354,6 +2888,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               requestId,
               kind: 'subagent',
               status: 'aborted',
+            });
+          } else if (run.suppressUserDelivery) {
+            deps.emitTuiAgentEvent({
+              runId: requestId,
+              sessionKey: deps.getSessionKeyForChat(m.chatJid),
+              phase: 'end',
+              detail: 'complete',
             });
           } else if (run.result) {
             deps.persistAssistantHistory(m.chatJid, run.result, requestId);

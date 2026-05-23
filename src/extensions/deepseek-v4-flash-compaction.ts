@@ -1,6 +1,9 @@
 import { complete } from '@mariozechner/pi-ai';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
-import { convertToLlm, serializeConversation } from '@mariozechner/pi-coding-agent';
+import {
+  convertToLlm,
+  serializeConversation,
+} from '@mariozechner/pi-coding-agent';
 import { logger } from '../logger.js';
 
 const PROVIDER = 'opencode-go';

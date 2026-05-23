@@ -33,6 +33,7 @@ import {
   syncProjectPiSkillsToGroupPiHome,
   type SkillSyncResult,
 } from './pi-skills.js';
+import { noteSkillCatalogUse } from './skill-lifecycle.js';
 import { normalizeTelegramDraftText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
@@ -90,6 +91,7 @@ export interface ContainerInput {
   noContinue?: boolean;
   toolMode?: 'default' | 'read_only' | 'full';
   workspaceDirOverride?: string;
+  sandboxAllowedPathsOverride?: string[];
   piExecutableOverride?: string;
   showReasoning?: boolean;
   skipPromptPreflight?: boolean;
@@ -968,15 +970,21 @@ export async function runContainerAgent(
   const promptStatePath = resolvePromptRuntimeStatePath(wp.piHomeDir);
   let promptState = readPromptRuntimeState(promptStatePath);
 
-  const skillCatalog = buildSkillCatalogEntries(skillSync.sourceDirs, {
+  const mountedSkillsDir = path.join(wp.piHomeDir, 'skills');
+  const skillCatalog = buildSkillCatalogEntries([mountedSkillsDir], {
     maxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
   });
+  noteSkillCatalogUse(
+    mountedSkillsDir,
+    skillCatalog.map((entry) => entry.name),
+  );
 
   const baseInput = {
     groupFolder: input.groupFolder,
     chatJid: input.chatJid,
     isMain,
     isScheduledTask: input.isScheduledTask,
+    isEvaluatorRun: input.isEvaluatorRun,
     assistantName: input.assistantName,
     provider: input.provider,
     model: input.model,
@@ -1308,9 +1316,14 @@ export async function runContainerAgent(
         ...(input.isSubagent ? { FFT_NANO_SUBAGENT: '1' } : {}),
       };
 
+      const sandboxAllowedPaths =
+        input.sandboxAllowedPathsOverride &&
+        input.sandboxAllowedPathsOverride.length > 0
+          ? input.sandboxAllowedPathsOverride
+          : [wp.groupDir, wp.piHomeDir, wp.ipcDir];
       const sandboxed = wrapWithSandbox(piExecutable, piArgs, {
         cwd: wp.groupDir,
-        allowedPaths: [wp.groupDir, wp.piHomeDir, wp.ipcDir],
+        allowedPaths: sandboxAllowedPaths,
         env: env as Record<string, string>,
       });
 
@@ -1980,7 +1993,8 @@ export async function runContainerAgent(
 
             if (fallbackResult.status === 'success') {
               if (timeoutHandle) clearTimeout(timeoutHandle);
-              if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
+              if (abortSignal)
+                abortSignal.removeEventListener('abort', onAbort);
               if (settled) return;
               finish(fallbackResult);
               return;
@@ -2094,50 +2108,6 @@ export async function runContainerAgent(
 
         let finalResult: string | null = result;
         let finalStreamed = lastRes!.streamedDraft;
-
-        if (isForceDelegateHint(codingHint) && !input.isScheduledTask) {
-          const outDir = path.join(wp.groupDir, 'coder_runs');
-          fs.mkdirSync(outDir, { recursive: true });
-          const rid = input.requestId || `coder_${Date.now()}`;
-          const maxInline = isTelegramChatJid(input.chatJid) ? 8000 : 3000;
-          let sent = false;
-
-          if (result.length <= maxInline) {
-            hostEventBus.publish({
-              kind: 'chat_delivery_requested',
-              id: createHostEventId('deliver'),
-              createdAt: new Date().toISOString(),
-              source: 'pi-runner',
-              chatJid: input.chatJid,
-              text: result,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
-            });
-            sent = true;
-          } else {
-            const filePath = path.join(outDir, `${rid}.md`);
-            try {
-              fs.writeFileSync(filePath, result);
-            } catch {
-              /* ignore */
-            }
-            const preview = result.slice(0, Math.min(1200, result.length));
-            hostEventBus.publish({
-              kind: 'chat_delivery_requested',
-              id: createHostEventId('deliver'),
-              createdAt: new Date().toISOString(),
-              source: 'pi-runner',
-              chatJid: input.chatJid,
-              text: `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
-            });
-            sent = true;
-          }
-
-          if (sent) {
-            finalResult = null;
-            finalStreamed = true;
-          }
-        }
 
         logger.info(
           { group: group.name, duration, hasResult: !!finalResult },

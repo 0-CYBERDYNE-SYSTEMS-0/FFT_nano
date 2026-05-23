@@ -26,6 +26,13 @@ function createBaseDeps(): TelegramCommandDeps {
     allowed: boolean;
     reason: string;
   }> = [];
+  const runProgress: Array<{
+    chatJid: string;
+    requestId: string;
+    phase: string;
+    text: string;
+    detail?: string;
+  }> = [];
   const resumedChats: Array<{
     chatJid: string;
     text: string;
@@ -112,7 +119,16 @@ function createBaseDeps(): TelegramCommandDeps {
     promoteChatToMain: () => {},
     refreshTelegramCommandMenus: async () => {},
     hasMainGroup: () => false,
+    approveTelegramGroup: async () => ({ ok: true, text: 'approved' }),
+    ignoreTelegramGroup: async () => ({ ok: true, text: 'ignored' }),
+    unignoreTelegramGroup: async () => ({ ok: true, text: 'unignored' }),
     runGatewayServiceCommand: () => ({ ok: true, text: 'ok' }),
+    runUpdateCommand: () => ({ ok: true, text: 'updated' }),
+    startUpdateCommand: () => ({
+      ok: true,
+      text: 'worker started',
+      reportId: 'update-1',
+    }),
     buildRuntimeProviderPresetUpdates: () => ({}),
     getRuntimeConfigEnv: () => ({}),
     persistRuntimeConfigUpdates: (updates) => {
@@ -129,6 +145,9 @@ function createBaseDeps(): TelegramCommandDeps {
     deleteTask: () => {},
     emitTuiChatEvent: () => {},
     emitTuiAgentEvent: () => {},
+    emitRunProgress: (payload) => {
+      runProgress.push(payload);
+    },
     getSessionKeyForChat: (chatJid) => chatJid,
     runAgent: async () => ({ ok: true, result: 'done', streamed: false }),
     runCodingTask: async () => ({ ok: true, result: 'done', streamed: false }),
@@ -165,6 +184,7 @@ function createBaseDeps(): TelegramCommandDeps {
     panels,
     persisted,
     audits,
+    runProgress,
     keyboardMessages,
     resumedChats,
   });
@@ -228,6 +248,73 @@ test('handleTelegramCallbackQuery routes admin panel actions for main chat', asy
     allowed: true,
     reason: 'ok',
   });
+});
+
+test('handleTelegramCallbackQuery approves pending Telegram groups from settings panel', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  const edited: Array<{ chatJid: string; messageId: number; panel: any }> = [];
+  const approved: string[] = [];
+  deps.isMainChat = () => true;
+  deps.getTelegramSettingsPanelAction = () => ({
+    kind: 'approve-telegram-group',
+    chatJid: 'telegram:-1001',
+  });
+  deps.approveTelegramGroup = async (chatJid) => {
+    approved.push(chatJid);
+    return { ok: true, text: 'approved' };
+  };
+  deps.editTelegramSettingsPanel = async (chatJid, messageId, panel) => {
+    edited.push({ chatJid, messageId, panel });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-approve',
+    chatJid: 'telegram:main',
+    messageId: 55,
+    data: 'settings:group',
+  });
+
+  assert.deepEqual(approved, ['telegram:-1001']);
+  assert.deepEqual(edited, [
+    { chatJid: 'telegram:main', messageId: 55, panel: { kind: 'show-groups' } },
+  ]);
+  assert.deepEqual(deps.sent, []);
+});
+
+test('handleTelegramCommand opens group management panel only in main chat', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    panels: Array<{ chatJid: string; panel: { kind: string } }>;
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = (chatJid) => chatJid === 'telegram:main';
+  const handlers = createTelegramCommandHandlers(deps);
+
+  await handlers.handleTelegramCommand({
+    id: 'm-1',
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    sender: 'user',
+    senderName: 'Owner',
+    timestamp: '2026-05-19T12:00:00.000Z',
+    content: '/groups',
+  });
+  await handlers.handleTelegramCommand({
+    id: 'm-2',
+    chatJid: 'telegram:-1001',
+    chatName: 'Field Team',
+    sender: 'user',
+    senderName: 'Worker',
+    timestamp: '2026-05-19T12:01:00.000Z',
+    content: '/groups',
+  });
+
+  assert.deepEqual(deps.panels, [
+    { chatJid: 'telegram:main', panel: { kind: 'show-groups' } },
+  ]);
+  assert.match(deps.sent[0]?.text || '', /main\/admin chat/);
 });
 
 test('handleTelegramCallbackQuery starts a coder plan from approval actions', async () => {
@@ -383,6 +470,43 @@ test('handleTelegramCommand blocks /coder-create-project while onboarding is pen
     allowed: false,
     reason: 'blocked by onboarding gate',
   });
+});
+
+test('handleTelegramCommand starts /update in background and sends durable ack', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  const started: string[] = [];
+  deps.isMainChat = () => true;
+  deps.startUpdateCommand = (chatJid) => {
+    started.push(chatJid);
+    return { ok: true, text: 'worker started', reportId: 'update-abc' };
+  };
+  deps.runUpdateCommand = () => {
+    throw new Error('sync update should not run for Telegram /update');
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/update',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(started, ['telegram:main']);
+  assert.match(deps.sent[0]?.text || '', /Update started/);
+  assert.match(deps.sent[0]?.text || '', /Report id: update-abc/);
+  assert.deepEqual(
+    deps.audits.map((audit) => audit.reason),
+    ['update started', 'update worker started update-abc'],
+  );
 });
 
 test('handleTelegramCommand registers spawned subagent runs in both active maps', async () => {
@@ -916,6 +1040,144 @@ test('handleTelegramCommand /knowledge routes to host knowledge handler in main 
     allowed: true,
     reason: 'ingest',
   });
+});
+
+test('handleTelegramCommand routes menu-safe skill manager and librarian commands', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.handleSkillManagerCommand = ({ action, input, chatJid }) =>
+    `skill-manager:${action}:${input}:${chatJid}`;
+  deps.handleLibrarianCommand = ({ action, input, chatJid }) =>
+    `librarian:${action}:${input}:${chatJid}`;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const skillHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/skill_manager status',
+  });
+  const librarianHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/librarian capture check pump filter',
+  });
+
+  assert.equal(skillHandled, true);
+  assert.equal(librarianHandled, true);
+  assert.equal(deps.sent[0]?.text, 'skill-manager:status::telegram:main');
+  assert.equal(
+    deps.sent[1]?.text,
+    'librarian:capture:check pump filter:telegram:main',
+  );
+  assert.deepEqual(deps.audits.slice(0, 2), [
+    {
+      chatJid: 'telegram:main',
+      command: '/skill_manager',
+      allowed: true,
+      reason: 'status',
+    },
+    {
+      chatJid: 'telegram:main',
+      command: '/librarian',
+      allowed: true,
+      reason: 'capture',
+    },
+  ]);
+});
+
+test('handleTelegramCommand starts real agent runs for librarian and skill manager run actions', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    agentResults: Array<{
+      chatJid: string;
+      text: string;
+      opts?: { prefixWhatsApp?: boolean };
+    }>;
+    runProgress: Array<{
+      chatJid: string;
+      requestId: string;
+      phase: string;
+      text: string;
+      detail?: string;
+    }>;
+  };
+  const runAgentCalls: Array<{
+    group: any;
+    prompt: string;
+    chatJid: string;
+    requestId?: string;
+  }> = [];
+  deps.isMainChat = () => true;
+  deps.state.registeredGroups['telegram:main'] = {
+    jid: 'telegram:main',
+    name: 'Main',
+    folder: 'main',
+  };
+  deps.runAgent = async (group, prompt, chatJid, _codingHint, requestId) => {
+    runAgentCalls.push({ group, prompt, chatJid, requestId });
+    return {
+      ok: true,
+      result: `agent completed: ${requestId}`,
+      streamed: false,
+    };
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const librarianHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/librarian run focus pumps',
+  });
+  const skillHandled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/skill_manager dry-run focus duplicates',
+  });
+
+  assert.equal(librarianHandled, true);
+  assert.equal(skillHandled, true);
+  assert.equal(runAgentCalls.length, 2);
+  assert.match(runAgentCalls[0]?.prompt || '', /Manual knowledge librarian run/);
+  assert.match(runAgentCalls[0]?.prompt || '', /focus pumps/);
+  assert.match(runAgentCalls[1]?.prompt || '', /Manual skill manager dry-run/);
+  assert.match(runAgentCalls[1]?.prompt || '', /focus duplicates/);
+  assert.match(runAgentCalls[0]?.prompt || '', /run_progress/);
+  assert.match(runAgentCalls[1]?.prompt || '', /run_progress/);
+  assert.equal(deps.agentResults.length, 2);
+  assert.match(
+    deps.agentResults[0]?.text || '',
+    /Librarian run complete \(librarian-/,
+  );
+  assert.match(
+    deps.agentResults[1]?.text || '',
+    /Skill manager dry-run complete \(skill-manager-/,
+  );
+  assert.match(deps.agentResults[0]?.text || '', /agent completed: librarian-/);
+  assert.match(deps.agentResults[1]?.text || '', /agent completed: skill-manager-/);
+  assert.deepEqual(
+    deps.runProgress.map((event) => event.phase),
+    [
+      'spawn',
+      'thinking',
+      'finalizing',
+      'completed',
+      'spawn',
+      'thinking',
+      'finalizing',
+      'completed',
+    ],
+  );
+  assert.match(deps.runProgress[0]?.text || '', /^Librarian status:/);
+  assert.match(deps.runProgress[4]?.text || '', /^Skill manager status:/);
+  assert.equal(deps.activeChatRuns.size, 0);
 });
 
 test('handleTelegramCommand /new sets fresh-run flag and clears session title', async () => {

@@ -1,5 +1,6 @@
 import { PARITY_CONFIG } from './config.js';
 import { logger } from './logger.js';
+import { sanitizeUserFacingVerdictLeak } from './runtime/boundary-ipc.js';
 import type { TelegramMessagePreviewState } from './telegram-streaming.js';
 import type { NewMessage } from './types.js';
 import type { CodingWorkerResult } from './coding-orchestrator.js';
@@ -24,6 +25,8 @@ export interface FinalizeCompletedRunParams {
   externallyCompleted: boolean;
   telegramPreviewState: TelegramMessagePreviewState | null;
   timestampToPersist?: string;
+  suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
   updateChatUsage: (
     chatJid: string,
     usage?: {
@@ -139,6 +142,8 @@ interface RunCompletion {
   result: string | null;
   streamed: boolean;
   usage?: RunUsage;
+  suppressUserDelivery?: boolean;
+  controlPlaneStatus?: 'verification_failed';
 }
 
 export interface PromptInputLogEntry {
@@ -166,6 +171,7 @@ export interface MessageDispatcherDeps {
     triggerPattern: RegExp;
     tuiSenderName: string;
     mainWorkspaceDir?: string;
+    coderGateMode?: 'explicit' | 'autosuggest';
   };
   activeChatRuns: Map<
     string,
@@ -245,21 +251,21 @@ export interface MessageDispatcherDeps {
     streamed: boolean;
     ok: boolean;
     usage?: RunUsage;
+    suppressUserDelivery?: boolean;
+    controlPlaneStatus?: 'verification_failed';
   }>;
   runCodingTask?: (params: {
     requestId: string;
     parentRequestId?: string;
     mode: 'plan' | 'execute';
-    route:
-      | 'coder_execute'
-      | 'coder_plan'
-      | 'auto_execute'
-      | 'subagent_execute'
-      | 'subagent_plan';
+    config: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     originChatJid: string;
     originGroupFolder: string;
     taskText: string;
-    workspaceMode: 'ephemeral_worktree' | 'read_only';
     timeoutSeconds: number;
     allowFanout: boolean;
     sessionContext: string;
@@ -322,6 +328,7 @@ export interface MessageDispatcherDeps {
     projectSlug?: string | null;
   };
   isSubstantialCodingTask?: (text: string) => boolean;
+  shouldSuggestCodingEscalation?: (text: string) => boolean;
   presentCoderSuggestion?: (params: {
     chatJid: string;
     taskText: string;
@@ -474,6 +481,21 @@ function selectRecentConversationMessages(params: {
   return selected;
 }
 
+function isInternalAssistantHistoryMessage(message: NewMessage): boolean {
+  if (message.is_from_me !== 1) return false;
+  const text = message.content.replace(/^[^:\n]{1,80}:\s*/, '').trim();
+  if (!text) return false;
+  return (
+    /^HEARTBEAT_OK$/i.test(text) ||
+    /^Quality check flagged/i.test(text) ||
+    /Quality check flagged potential issues/i.test(text) ||
+    /^LLM produced no user-visible final response/i.test(text) ||
+    /^Evaluator flagged issues/i.test(text) ||
+    /^I could not verify that this task is complete/i.test(text) ||
+    /Approve the exact cleanup\/repair action before I continue/i.test(text)
+  );
+}
+
 function buildInteractivePrompt(params: {
   recentConversation: NewMessage[];
   newInboundMessages: NewMessage[];
@@ -568,7 +590,9 @@ function prepareInteractivePrompt(params: {
     maxChars: recentConversationChars,
     includeMessage: params.includeTuiMessagesInRecentConversation
       ? undefined
-      : (message) => message.sender !== '__fft_tui__',
+      : (message) =>
+          message.sender !== '__fft_tui__' &&
+          !isInternalAssistantHistoryMessage(message),
   });
 
   return {
@@ -672,12 +696,37 @@ export async function finalizeCompletedRun(
     return;
   }
 
+  if (params.suppressUserDelivery) {
+    if (params.telegramPreviewState) {
+      await params.deleteTelegramPreviewMessage(
+        params.chatJid,
+        params.telegramPreviewState.messageId,
+      );
+    }
+    params.emitTuiAgentEvent({
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      phase: 'end',
+      detail: 'complete',
+    });
+    return;
+  }
+
+  const shouldSanitizeVerdictLeak =
+    params.controlPlaneStatus === 'verification_failed';
   const finalText =
-    typeof params.result === 'string' ? params.result.trim() : '';
+    typeof params.result === 'string'
+      ? shouldSanitizeVerdictLeak
+        ? sanitizeUserFacingVerdictLeak(params.result.trim())
+        : params.result.trim()
+      : '';
   const hasVisibleFinalText = finalText.length > 0;
 
   if (!hasVisibleFinalText) {
-    const streamedText = params.telegramPreviewState?.lastText?.trim() || '';
+    const rawStreamedText = params.telegramPreviewState?.lastText?.trim() || '';
+    const streamedText = shouldSanitizeVerdictLeak
+      ? sanitizeUserFacingVerdictLeak(rawStreamedText)
+      : rawStreamedText;
     if (streamedText) {
       const assistantTimestamp = params.persistAssistantHistory(
         params.chatJid,
@@ -731,7 +780,7 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  const effectiveResult = finalText;
+  const effectiveResult = sanitizeUserFacingVerdictLeak(finalText);
   if (effectiveResult) {
     const assistantTimestamp = params.persistAssistantHistory(
       params.chatJid,
@@ -896,6 +945,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     abortSignal: AbortSignal;
     timestampToPersist?: string;
     deliverToChat?: boolean;
+    suppressUserDelivery?: boolean;
+    controlPlaneStatus?: 'verification_failed';
   }): Promise<void> {
     const completionState =
       deps.isTelegramJid(params.chatJid) && deps.prepareTelegramCompletionState
@@ -932,6 +983,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       usage: params.usage,
       abortSignal: params.abortSignal,
       deliverToChat: params.deliverToChat,
+      suppressUserDelivery: params.suppressUserDelivery,
+      controlPlaneStatus: params.controlPlaneStatus,
       timestampToPersist: params.timestampToPersist,
       externallyCompleted: completionState.externallyCompleted,
       telegramPreviewState: telegramCompletionState.messagePreviewState,
@@ -971,6 +1024,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     let streamed = false;
     let ok = false;
     let usage: RunUsage | undefined;
+    let suppressUserDelivery = false;
+    let controlPlaneStatus: 'verification_failed' | undefined;
     const abortController = new AbortController();
     const activeRun = {
       chatJid: params.chatJid,
@@ -1020,22 +1075,20 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
     try {
       try {
+        const isPlan = params.codingHint === 'force_delegate_plan';
         const run: RunCompletion =
           params.route === 'coding_worker' && deps.runCodingTask
             ? await deps.runCodingTask({
                 requestId: params.requestId,
-                mode:
-                  params.codingHint === 'force_delegate_plan'
-                    ? 'plan'
-                    : 'execute',
-                route: params.codingRoute || 'auto_execute',
+                mode: isPlan ? 'plan' : 'execute',
+                config: {
+                  toolMode: isPlan ? 'read_only' : 'full',
+                  isSubagent: false,
+                  workspaceMode: isPlan ? 'read_only' : 'ephemeral_worktree',
+                },
                 originChatJid: params.chatJid,
                 originGroupFolder: params.group.folder,
                 taskText: params.delegationInstruction || params.latestUserText,
-                workspaceMode:
-                  params.codingHint === 'force_delegate_plan'
-                    ? 'read_only'
-                    : 'ephemeral_worktree',
                 timeoutSeconds: 1800,
                 allowFanout:
                   params.codingRoute === 'coder_execute' ||
@@ -1073,6 +1126,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         streamed = run.streamed;
         ok = run.ok;
         usage = run.usage;
+        suppressUserDelivery = run.suppressUserDelivery === true;
+        controlPlaneStatus = run.controlPlaneStatus;
 
         // Capture worker result for reflection (async MEMORY write after completion path)
         // Only for coding execute routes (exclude plan mode for coder-plan).
@@ -1171,6 +1226,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           abortSignal: abortController.signal,
           timestampToPersist: params.timestampToPersist,
           deliverToChat: params.deliverToChat,
+          suppressUserDelivery,
+          controlPlaneStatus,
         });
 
         // Fire-and-forget reflection after success completion.
@@ -1406,11 +1463,14 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 
     const latestUserText =
       selectedMessages[selectedMessages.length - 1]?.content || content;
+    const coderGateMode = deps.constants.coderGateMode || 'explicit';
     const shouldSuggestCoding =
       !wantsDelegation &&
       isMainGroup &&
       !onboardingGate.active &&
-      deps.isSubstantialCodingTask?.(latestUserText) === true;
+      coderGateMode === 'autosuggest' &&
+      deps.isSubstantialCodingTask?.(latestUserText) === true &&
+      deps.shouldSuggestCodingEscalation?.(latestUserText) === true;
     if (shouldSuggestCoding) {
       const suggestionRequestId = deps.makeRunId
         ? deps.makeRunId('coder-suggest')

@@ -3,6 +3,7 @@ import fs from 'fs';
 import {
   ASSISTANT_NAME,
   MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
   SCHEDULER_MODE,
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
@@ -29,6 +30,7 @@ export interface SchedulerDependencies {
   requestHeartbeatNow?: (reason?: string) => void;
   isChatRunActive?: (jid: string) => boolean;
   runTaskAgent?: typeof runContainerAgent;
+  runEvaluatorPass?: typeof runEvaluatorPass;
   scheduleNextTick?: (fn: () => void, delayMs: number) => unknown;
 }
 
@@ -144,7 +146,8 @@ async function runLegacyTask(
 
       // Evaluator pass for scheduled tasks — always runs
       if (result && group) {
-        const verdict = await runEvaluatorPass({
+        const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
+        const verdict = await evaluateRun({
           runType: 'scheduled',
           originalTask: task.prompt,
           agentOutput: result,
@@ -152,16 +155,26 @@ async function runLegacyTask(
           toolsInvoked: output.toolExecutions?.length ?? 0,
           group,
           chatJid: task.chat_jid,
+          isMain,
+          workspaceDir: isMain ? MAIN_WORKSPACE_DIR : groupDir,
+          startedAtMs: startTime,
         }).catch((err) => {
-          logger.warn({ err, taskId: task.id }, 'Evaluator pass failed for scheduled task');
+          logger.warn(
+            { err, taskId: task.id },
+            'Evaluator pass failed for scheduled task',
+          );
           return null;
         });
         if (verdict && !verdict.skipped && !verdict.pass) {
           logger.warn(
-            { taskId: task.id, score: verdict.score, issues: verdict.issues },
-            'Scheduled task evaluator flagged issues',
+            {
+              taskId: task.id,
+              score: verdict.score,
+              issues: verdict.issues,
+              feedback: verdict.feedback,
+            },
+            'Scheduled task evaluator flagged issues; suppressing user-visible evaluator details',
           );
-          result = `${result}\n\n[Evaluator: score ${verdict.score}/10 — ${verdict.feedback}${verdict.issues.length > 0 ? '\nIssues: ' + verdict.issues.join('; ') : ''}]`;
         }
       }
     }

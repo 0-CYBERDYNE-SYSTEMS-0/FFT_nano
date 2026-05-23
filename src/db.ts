@@ -411,11 +411,7 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(
-      lastTimestamp,
-      ...jids,
-      '__fft_tui__',
-    ) as NewMessage[];
+    .all(lastTimestamp, ...jids, '__fft_tui__') as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
@@ -438,12 +434,7 @@ export function getMessagesSince(
       AND content != '' AND content IS NOT NULL
     ORDER BY timestamp
   `;
-  return db
-    .prepare(sql)
-    .all(
-      chatJid,
-      sinceTimestamp,
-    ) as NewMessage[];
+  return db.prepare(sql).all(chatJid, sinceTimestamp) as NewMessage[];
 }
 
 export function createTask(

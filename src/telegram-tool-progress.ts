@@ -142,14 +142,20 @@ export function shouldUseTelegramPreviewToolTrail(params: {
   deliveryMode: TelegramDeliveryMode;
   verboseMode: VerboseMode;
 }): boolean {
-  return false;
+  return (
+    params.deliveryMode !== 'off' &&
+    (params.verboseMode === 'all' || params.verboseMode === 'verbose')
+  );
 }
 
 export function shouldUseStandaloneTelegramToolProgress(params: {
   deliveryMode: TelegramDeliveryMode;
   verboseMode: VerboseMode;
 }): boolean {
-  return false;
+  return (
+    params.deliveryMode !== 'off' &&
+    (params.verboseMode === 'all' || params.verboseMode === 'verbose')
+  );
 }
 
 export function buildTelegramPreviewToolTrailEntry(
@@ -211,14 +217,13 @@ export function enqueueTelegramToolProgressMessage(params: {
 
       const text = buildTelegramToolProgressMessage(run.lines);
       if (!run.messageId) {
-        run.messageId = await params.bot.sendStreamMessage(params.chatJid, text);
+        run.messageId = await params.bot.sendStreamMessage(
+          params.chatJid,
+          text,
+        );
         return;
       }
-      await params.bot.editStreamMessage(
-        params.chatJid,
-        run.messageId,
-        text,
-      );
+      await params.bot.editStreamMessage(params.chatJid, run.messageId, text);
     });
 
   params.runs.set(key, run);

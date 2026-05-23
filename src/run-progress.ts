@@ -9,7 +9,11 @@ type RunProgressPhase =
   | 'retry_fresh'
   | 'retry_delay'
   | 'retry_provider_switch'
-  | 'stale';
+  | 'stale'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'aborted';
 
 type RunProgressEvent = Extract<HostEvent, { kind: 'run_progress' }>;
 
@@ -116,10 +120,7 @@ export function createRunProgressReporter(params: {
         clearHeartbeat();
         return;
       case 'thinking':
-        emitProgress(
-          'thinking',
-          'Coder status: Reasoning about the task.',
-        );
+        emitProgress('thinking', 'Coder status: Reasoning about the task.');
         startHeartbeat('thinking');
         return;
       case 'tool':

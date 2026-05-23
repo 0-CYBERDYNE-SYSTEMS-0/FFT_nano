@@ -200,6 +200,10 @@ export const FFT_NANO_TUI_ENABLED = envFlag(
   process.env.FFT_NANO_TUI_ENABLED,
   true,
 );
+export const FFT_NANO_TUI_LOCAL = envFlag(
+  process.env.FFT_NANO_TUI_LOCAL,
+  false,
+);
 export const FFT_NANO_TUI_PORT = envInt(
   process.env.FFT_NANO_TUI_PORT,
   28989,
@@ -214,6 +218,13 @@ export const FFT_NANO_ONBOARDING_MODE = envFlag(
   process.env.FFT_NANO_ONBOARDING_MODE,
   false,
 );
+
+export type CoderGateMode = 'explicit' | 'autosuggest';
+export const FFT_NANO_CODER_GATE_MODE: CoderGateMode =
+  (process.env.FFT_NANO_CODER_GATE_MODE || 'explicit').trim().toLowerCase() ===
+  'autosuggest'
+    ? 'autosuggest'
+    : 'explicit';
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -269,7 +280,10 @@ export const FFT_NANO_JITTER_FACTOR = (() => {
 })();
 export const FFT_NANO_PROVIDER_FALLBACK_ORDER = (() => {
   const raw = process.env.FFT_NANO_PROVIDER_FALLBACK_ORDER || '';
-  return raw.split(',').map((p) => p.trim()).filter(Boolean);
+  return raw
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
 })();
 export const FFT_NANO_PROVIDER_FALLBACK_ENABLED = envFlag(
   process.env.FFT_NANO_PROVIDER_FALLBACK_ENABLED,

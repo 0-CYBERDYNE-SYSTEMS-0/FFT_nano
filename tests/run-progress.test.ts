@@ -2,6 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createRunProgressReporter } from '../src/run-progress.ts';
+import { isTelegramRunStatusPreviewText } from '../src/telegram-streaming.ts';
+
+test('telegram run status preview guard accepts maintenance status prefixes', () => {
+  assert.equal(isTelegramRunStatusPreviewText('Coder status: Running bash.'), true);
+  assert.equal(
+    isTelegramRunStatusPreviewText('Skill manager status: Inspecting skills.'),
+    true,
+  );
+  assert.equal(
+    isTelegramRunStatusPreviewText('Librarian status: Reviewing captures.'),
+    true,
+  );
+  assert.equal(isTelegramRunStatusPreviewText('Run status: Working.'), true);
+  assert.equal(isTelegramRunStatusPreviewText('Here is a draft answer.'), false);
+});
 
 test('run progress reporter emits immediate and heartbeat updates for long-running tools', async () => {
   const events: Array<Record<string, unknown>> = [];

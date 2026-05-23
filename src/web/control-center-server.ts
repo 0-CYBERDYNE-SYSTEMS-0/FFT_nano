@@ -4,6 +4,8 @@ import path from 'path';
 
 import type { WebAccessMode } from '../config.js';
 import { logger } from '../logger.js';
+import { sanitizeUserFacingVerdictLeak } from '../runtime/boundary-ipc.js';
+import type { UpdateCommandStartResult } from '../update-command.js';
 
 interface RuntimeStatusPayload {
   runtime: string;
@@ -52,6 +54,61 @@ interface OnboardingConfigPayload {
   whatsappEnabled?: boolean;
 }
 
+interface ProviderSetupLink {
+  id: string;
+  label: string;
+  piApi: string;
+  defaultModel: string;
+  apiKeyEnv: string;
+  apiKeyRequired: boolean;
+  endpointEnv?: string;
+  signupUrl?: string;
+  docsUrl?: string;
+  localSetupUrl?: string;
+  note?: string;
+}
+
+interface RuntimeSettingsPayload {
+  providerPreset?: string;
+  model?: string;
+  apiKey?: string;
+  endpoint?: string;
+  clearEndpoint?: boolean;
+  telegramBotToken?: string;
+  whatsappEnabled?: boolean;
+  heartbeatEnabled?: boolean;
+  heartbeatEvery?: string;
+}
+
+interface RuntimeSettingsSnapshot {
+  providerPreset: string;
+  provider: string;
+  model: string;
+  apiKeyEnv: string;
+  apiKeyConfigured: boolean;
+  endpointEnv?: string;
+  endpointValue?: string;
+  telegramBotConfigured: boolean;
+  whatsappEnabled: boolean;
+  heartbeatEnabled: boolean;
+  heartbeatEvery: string;
+}
+
+interface SystemPromptPreviewPayload {
+  sessionKey?: string;
+  mode?: 'normal' | 'scheduled' | 'heartbeat' | 'evaluator';
+}
+
+interface ControlTaskActionPayload {
+  id?: string;
+  action?: 'pause' | 'resume' | 'cancel' | 'trigger';
+}
+
+interface KnowledgeCapturePayload {
+  text?: string;
+  source?: string;
+}
+
 export interface WebControlCenterFileRoot {
   id: string;
   label: string;
@@ -73,7 +130,32 @@ export interface WebControlCenterAdapters {
   applyOnboardingConfig?: (
     payload: OnboardingConfigPayload,
   ) => Promise<{ ok: boolean; requiresRestart: boolean; adminSecret?: string }>;
-  hostUpdate?: () => { ok: boolean; text: string };
+  hostUpdate?: () => UpdateCommandStartResult;
+  getProviderSetup?: () => ProviderSetupLink[];
+  getRuntimeSettings?: () => RuntimeSettingsSnapshot;
+  applyRuntimeSettings?: (
+    payload: RuntimeSettingsPayload,
+  ) => Promise<{ ok: boolean; requiresRestart: boolean; adminSecret?: string }>;
+  listRuntimeModels?: () => Promise<{
+    ok: boolean;
+    models: Array<{ provider: string; model: string }>;
+    error?: string;
+  }>;
+  getSystemPromptPreview?: (
+    payload: SystemPromptPreviewPayload,
+  ) => Promise<unknown> | unknown;
+  listTasks?: () => Promise<unknown> | unknown;
+  taskAction?: (
+    payload: ControlTaskActionPayload,
+  ) => Promise<unknown> | unknown;
+  getPipelines?: () => Promise<unknown> | unknown;
+  getMemoryOverview?: () => Promise<unknown> | unknown;
+  getKnowledgeStatus?: () => Promise<unknown> | unknown;
+  knowledgeCapture?: (
+    payload: KnowledgeCapturePayload,
+  ) => Promise<unknown> | unknown;
+  knowledgeLint?: () => Promise<unknown> | unknown;
+  validateSkills?: () => Promise<unknown> | unknown;
 }
 
 export interface WebControlCenterServerOptions {
@@ -411,6 +493,41 @@ function tailFile(filePath: string, lineCount: number): string {
   return lines.slice(-lineCount).join('\n');
 }
 
+function redactUserFacingLogText(text: string): string {
+  if (!text.trim()) return text;
+  const lines = text.split('\n');
+  const redacted: string[] = [];
+  let inVerdictBlock = false;
+  for (const line of lines) {
+    const sanitizedLine = sanitizeUserFacingVerdictLeak(line);
+    if (sanitizedLine !== line) {
+      redacted.push(sanitizedLine);
+      inVerdictBlock = false;
+      continue;
+    }
+    if (/"pass"\s*:/i.test(line)) {
+      redacted.push('verification_failed');
+      inVerdictBlock = true;
+      continue;
+    }
+    if (inVerdictBlock) {
+      redacted.push('verification_failed');
+      if (/\}/.test(line)) inVerdictBlock = false;
+      continue;
+    }
+    const partialVerdictLike =
+      /pass\s*:\s*(true|false)/i.test(line) &&
+      /issues?/i.test(line) &&
+      /feedback/i.test(line);
+    if (partialVerdictLike) {
+      redacted.push('verification_failed');
+      continue;
+    }
+    redacted.push(line);
+  }
+  return redacted.join('\n');
+}
+
 function resolveGatewayWsUrl(
   req: http.IncomingMessage,
   gateway: GatewayStatusPayload,
@@ -566,7 +683,10 @@ export async function startWebControlCenterServer(
           return;
         }
         if (!adapters.applyOnboardingConfig) {
-          sendJson(res, 404, { ok: false, error: 'Onboarding config API unavailable' });
+          sendJson(res, 404, {
+            ok: false,
+            error: 'Onboarding config API unavailable',
+          });
           return;
         }
         try {
@@ -596,6 +716,265 @@ export async function startWebControlCenterServer(
         return;
       }
 
+      if (requestPath === '/api/settings/providers') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          providers: adapters.getProviderSetup?.() || [],
+        });
+        return;
+      }
+
+      if (requestPath === '/api/settings/runtime') {
+        if (method === 'GET') {
+          if (!adapters.getRuntimeSettings) {
+            sendJson(res, 501, {
+              ok: false,
+              error: 'Runtime settings API unavailable',
+            });
+            return;
+          }
+          sendJson(res, 200, {
+            ok: true,
+            settings: adapters.getRuntimeSettings(),
+          });
+          return;
+        }
+        if (method === 'POST') {
+          if (!adapters.applyRuntimeSettings) {
+            sendJson(res, 501, {
+              ok: false,
+              error: 'Runtime settings API unavailable',
+            });
+            return;
+          }
+          try {
+            const payload = await readJsonBody<RuntimeSettingsPayload>(req);
+            const result = await adapters.applyRuntimeSettings(payload);
+            sendJson(res, 200, result);
+          } catch (err) {
+            sendJson(res, 400, {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
+        sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+        return;
+      }
+
+      if (requestPath === '/api/settings/models') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.listRuntimeModels) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Model inventory API unavailable',
+          });
+          return;
+        }
+        try {
+          const result = await adapters.listRuntimeModels();
+          sendJson(res, 200, result);
+        } catch (err) {
+          sendJson(res, 500, {
+            ok: false,
+            models: [],
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/system-prompt') {
+        if (method !== 'GET' && method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.getSystemPromptPreview) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'System prompt preview API unavailable',
+          });
+          return;
+        }
+        try {
+          const payload =
+            method === 'POST'
+              ? await readJsonBody<SystemPromptPreviewPayload>(req)
+              : {
+                  sessionKey: url.searchParams.get('sessionKey') || 'main',
+                  mode: url.searchParams.get('mode') || 'normal',
+                };
+          const result = await adapters.getSystemPromptPreview(
+            payload as SystemPromptPreviewPayload,
+          );
+          sendJson(res, 200, { ok: true, preview: result });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/tasks') {
+        if (method === 'GET') {
+          if (!adapters.listTasks) {
+            sendJson(res, 501, { ok: false, error: 'Tasks API unavailable' });
+            return;
+          }
+          sendJson(res, 200, {
+            ok: true,
+            ...((await adapters.listTasks()) as Record<string, unknown>),
+          });
+          return;
+        }
+        if (method === 'POST') {
+          if (!adapters.taskAction) {
+            sendJson(res, 501, { ok: false, error: 'Tasks API unavailable' });
+            return;
+          }
+          try {
+            const payload = await readJsonBody<ControlTaskActionPayload>(req);
+            const result = await adapters.taskAction(payload);
+            sendJson(res, 200, { ok: true, result });
+          } catch (err) {
+            sendJson(res, 400, {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
+        sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+        return;
+      }
+
+      if (requestPath === '/api/pipelines') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.getPipelines) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Pipelines API unavailable',
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          ...((await adapters.getPipelines()) as Record<string, unknown>),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/memory') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.getMemoryOverview) {
+          sendJson(res, 501, { ok: false, error: 'Memory API unavailable' });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          ...((await adapters.getMemoryOverview()) as Record<string, unknown>),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/knowledge') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.getKnowledgeStatus) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Knowledge API unavailable',
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          ...((await adapters.getKnowledgeStatus()) as Record<string, unknown>),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/knowledge/capture') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.knowledgeCapture) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Knowledge capture API unavailable',
+          });
+          return;
+        }
+        try {
+          const payload = await readJsonBody<KnowledgeCapturePayload>(req);
+          const result = await adapters.knowledgeCapture(payload);
+          sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/knowledge/lint') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.knowledgeLint) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Knowledge lint API unavailable',
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          result: await adapters.knowledgeLint(),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/skills/validate') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.validateSkills) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Skills validation API unavailable',
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          result: await adapters.validateSkills(),
+        });
+        return;
+      }
+
       if (requestPath === '/api/logs/recent') {
         if (method !== 'GET') {
           sendJson(res, 405, { ok: false, error: 'Method not allowed' });
@@ -606,7 +985,7 @@ export async function startWebControlCenterServer(
         const fileName =
           target === 'error' ? 'fft_nano.error.log' : 'fft_nano.log';
         const filePath = path.join(logsDir, fileName);
-        const text = tailFile(filePath, lines);
+        const text = redactUserFacingLogText(tailFile(filePath, lines));
         sendJson(res, 200, {
           ok: true,
           target,
@@ -848,6 +1227,9 @@ export async function startWebControlCenterServer(
           sendJson(res, result.ok ? 200 : 500, {
             ok: result.ok,
             text: result.text,
+            ...(typeof result.reportId === 'string'
+              ? { reportId: result.reportId }
+              : {}),
           });
         } catch (err) {
           sendJson(res, 500, {

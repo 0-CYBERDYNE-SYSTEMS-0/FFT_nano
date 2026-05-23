@@ -43,6 +43,7 @@ export interface AppRuntimeDeps {
   handleTelegramCallbackQuery: (event: any) => Promise<void>;
   handleTelegramSetupInput: (event: any) => Promise<boolean>;
   handleTelegramCommand: (event: any) => Promise<boolean>;
+  handleTelegramUnknownGroup?: (event: any) => Promise<void>;
   storeChatMetadata: (
     chatJid: string,
     timestamp: string,
@@ -151,7 +152,11 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.state.telegramBot.startPolling(async (event: any) => {
       try {
         deps.logger.debug?.(
-          { kind: event.kind, chatJid: event.chatJid, contentLength: event.content?.length },
+          {
+            kind: event.kind,
+            chatJid: event.chatJid,
+            contentLength: event.content?.length,
+          },
           'Telegram event received from polling',
         );
 
@@ -162,12 +167,19 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
 
         const m = event;
         deps.storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
-        const didRegister = deps.maybeRegisterTelegramChat(m.chatJid, m.chatName);
+        const didRegister = deps.maybeRegisterTelegramChat(
+          m.chatJid,
+          m.chatName,
+        );
         if (didRegister && deps.isMainChat(m.chatJid)) {
           await deps.refreshTelegramCommandMenus();
         }
         if (await deps.handleTelegramSetupInput(m)) return;
         if (await deps.handleTelegramCommand(m)) return;
+        if (!deps.state.registeredGroups[m.chatJid]) {
+          await deps.handleTelegramUnknownGroup?.(m);
+          return;
+        }
         if (deps.state.registeredGroups[m.chatJid]) {
           const finalContent = m.media
             ? await deps.persistTelegramMedia(m)
@@ -191,7 +203,9 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     });
 
     deps.logger.info?.('Telegram polling started');
-    void deps.refreshTelegramCommandMenus();
+    // Await the initial menu refresh so failures surface as startup errors,
+    // not silently swallowed unhandled promise rejections.
+    await deps.refreshTelegramCommandMenus();
   }
 
   async function connectWhatsApp(): Promise<void> {
@@ -485,7 +499,13 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     });
     process.on('unhandledRejection', (reason, promise) => {
       deps.logger.error?.(
-        { reason: reason instanceof Error ? { message: reason.message, stack: reason.stack } : reason, promise: String(promise) },
+        {
+          reason:
+            reason instanceof Error
+              ? { message: reason.message, stack: reason.stack }
+              : reason,
+          promise: String(promise),
+        },
         'Unhandled promise rejection — promise was not caught',
       );
     });

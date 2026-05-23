@@ -16,6 +16,13 @@ test('every registered Telegram menu command normalizes from slash syntax', () =
   }
 });
 
+test('registered Telegram menu commands use Bot API-safe command names', () => {
+  const registered = [...TELEGRAM_COMMON_COMMANDS, ...TELEGRAM_ADMIN_COMMANDS];
+  for (const command of registered) {
+    assert.match(command.command, /^[a-z0-9_]{1,32}$/);
+  }
+});
+
 test('Telegram command normalization accepts aliases and bot-suffixed forms', () => {
   assert.equal(normalizeTelegramCommandToken('/restart@TestBot'), '/restart');
   assert.equal(normalizeTelegramCommandToken('/gateway:restart'), '/gateway');
@@ -23,6 +30,15 @@ test('Telegram command normalization accepts aliases and bot-suffixed forms', ()
     normalizeTelegramCommandToken('/coder-plan@TestBot'),
     '/coder-plan',
   );
+  assert.equal(
+    normalizeTelegramCommandToken('/skill-manager@TestBot'),
+    '/skill-manager',
+  );
+  assert.equal(
+    normalizeTelegramCommandToken('/skill_manager@TestBot'),
+    '/skill_manager',
+  );
+  assert.equal(normalizeTelegramCommandToken('/curator@TestBot'), '/curator');
   assert.equal(normalizeTelegramCommandToken('/coding@TestBot'), '/coding');
   assert.equal(normalizeTelegramCommandToken('/delivery@TestBot'), '/delivery');
   assert.equal(

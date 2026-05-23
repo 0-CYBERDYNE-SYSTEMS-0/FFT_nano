@@ -33,6 +33,7 @@ function createDeps() {
       triggerPattern: /@FarmFriend/i,
       tuiSenderName: 'TUI',
       mainWorkspaceDir: '/tmp/main',
+      coderGateMode: 'explicit',
     },
     activeChatRuns: new Map(),
     activeChatRunsById: new Map(),
@@ -111,6 +112,8 @@ function createDeps() {
       return { hint: 'none', trigger: 'none', instruction: null, projectSlug: null };
     },
     isSubstantialCodingTask: (text: string) => text.includes('build an app'),
+    shouldSuggestCodingEscalation: (text: string) =>
+      text.includes('build an app'),
     isCoderDelegationCommand: () => false,
     onboardingCommandBlockedText: () => 'blocked',
     makeRunId: (prefix: string) => `${prefix}-1`,
@@ -174,12 +177,31 @@ test('processMessage routes /coding requests to the coding worker with a resolve
   assert.match(sent[0] || '', /Starting coder run .*agintel-dashboard/i);
 });
 
-test('processMessage suggests coder instead of auto-running for substantial natural-language coding asks', async () => {
+test('processMessage keeps natural-language coding asks on direct path when gate mode is explicit', async () => {
   const { deps, codingCalls, agentCalls, suggestions } = createDeps();
   const dispatcher = createMessageDispatcher(deps as any);
 
   await dispatcher.processMessage({
     id: '2',
+    chat_jid: 'telegram:main',
+    sender: 'user',
+    sender_name: 'User',
+    content: 'please build an app with auth and tests',
+    timestamp: '2026-03-22T00:00:00.000Z',
+  });
+
+  assert.equal(codingCalls.length, 0);
+  assert.equal(agentCalls.length, 1);
+  assert.equal(suggestions.length, 0);
+});
+
+test('processMessage suggests coder in autosuggest mode when objective reevaluation passes', async () => {
+  const { deps, codingCalls, agentCalls, suggestions } = createDeps();
+  deps.constants.coderGateMode = 'autosuggest';
+  const dispatcher = createMessageDispatcher(deps as any);
+
+  await dispatcher.processMessage({
+    id: '2b',
     chat_jid: 'telegram:main',
     sender: 'user',
     sender_name: 'User',
