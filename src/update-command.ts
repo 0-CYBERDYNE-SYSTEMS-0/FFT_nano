@@ -392,9 +392,22 @@ export function runUpdateCommand(
       branch.status === 0 && branch.stdout?.trim()
         ? branch.stdout.trim()
         : null;
-    const pullArgs = currentBranch
-      ? ['pull', '--ff-only', 'origin', currentBranch]
-      : ['pull', '--ff-only'];
+    let pullBranch = currentBranch || 'main';
+    if (currentBranch) {
+      const remoteBranchCheck = runRaw('git', [
+        'show-ref',
+        '--verify',
+        '--quiet',
+        `refs/remotes/origin/${currentBranch}`,
+      ]);
+      if (remoteBranchCheck.status !== 0) {
+        pullBranch = 'main';
+        outputLines.push(
+          `Remote branch origin/${currentBranch} not found; pulling origin/main instead.`,
+        );
+      }
+    }
+    const pullArgs = ['pull', '--ff-only', 'origin', pullBranch];
     const pull = runStep('git pull', 'git', pullArgs);
     if (!pull.ok) {
       restoreAutostashAfterAbort();
