@@ -67,6 +67,11 @@ test('runUpdateCommand updates a clean checkout without stashing', () => {
     },
     {
       command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
+    },
+    {
+      command: 'git',
       args: ['pull', '--ff-only', 'origin', 'main'],
       result: ok('Already up to date.\n'),
     },
@@ -106,6 +111,7 @@ test('runUpdateCommand updates a clean checkout without stashing', () => {
       ['git', 'status'],
       ['git', 'fetch'],
       ['git', 'symbolic-ref'],
+      ['git', 'show-ref'],
       ['git', 'pull'],
       ['npm', 'ci'],
       ['npm', 'run'],
@@ -144,6 +150,11 @@ test('runUpdateCommand stashes dirty changes and reapplies them after pull', () 
       command: 'git',
       args: ['symbolic-ref', '--short', 'HEAD'],
       result: ok('main\n'),
+    },
+    {
+      command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
     },
     {
       command: 'git',
@@ -193,6 +204,7 @@ test('runUpdateCommand stashes dirty changes and reapplies them after pull', () 
       'stash list',
       'fetch origin',
       'symbolic-ref --short',
+      'show-ref --verify',
       'pull --ff-only',
       'stash apply',
       'stash drop',
@@ -229,6 +241,11 @@ test('runUpdateCommand restores dirty changes and retains backup stash when pull
       command: 'git',
       args: ['symbolic-ref', '--short', 'HEAD'],
       result: ok('main\n'),
+    },
+    {
+      command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
     },
     {
       command: 'git',
@@ -287,6 +304,11 @@ test('runUpdateCommand aborts before build when autostash cannot be reapplied cl
     },
     {
       command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
+    },
+    {
+      command: 'git',
       args: ['pull', '--ff-only', 'origin', 'main'],
       result: ok('Updating abc..def\n'),
     },
@@ -320,6 +342,69 @@ test('runUpdateCommand aborts before build when autostash cannot be reapplied cl
     calls.some((call) => call.command === 'npm'),
     false,
   );
+});
+
+test('runUpdateCommand falls back to origin/main when branch upstream is gone', () => {
+  const { run, remaining } = makeRunner([
+    {
+      command: 'git',
+      args: ['rev-parse', '--is-inside-work-tree'],
+      result: ok('true\n'),
+    },
+    { command: 'git', args: ['status', '--porcelain'], result: ok('') },
+    { command: 'git', args: ['fetch', 'origin'], result: ok('') },
+    {
+      command: 'git',
+      args: ['symbolic-ref', '--short', 'HEAD'],
+      result: ok('codex/fix-update-dev-deps\n'),
+    },
+    {
+      command: 'git',
+      args: [
+        'show-ref',
+        '--verify',
+        '--quiet',
+        'refs/remotes/origin/codex/fix-update-dev-deps',
+      ],
+      result: fail(''),
+    },
+    {
+      command: 'git',
+      args: ['pull', '--ff-only', 'origin', 'main'],
+      result: ok('Already up to date.\n'),
+    },
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
+    { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'restart'],
+      result: ok('restarted\n'),
+    },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'status'],
+      result: ok('running\n'),
+    },
+  ]);
+
+  const result = runUpdateCommand({
+    cwd,
+    run,
+    existsSync: (filePath) =>
+      filePath === '/tmp/fft_nano/package-lock.json' ||
+      filePath === '/tmp/fft_nano/scripts/service.sh',
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(
+    result.text,
+    /Remote branch origin\/codex\/fix-update-dev-deps not found; pulling origin\/main instead\./,
+  );
+  assert.equal(remaining.length, 0);
 });
 
 test('startDetachedUpdateCommand writes report and launches worker detached', () => {
