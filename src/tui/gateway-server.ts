@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
-import { createServer } from 'net';
+import { existsSync, unlinkSync } from 'fs';
+import { Socket, createServer } from 'net';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { logger } from '../logger.js';
@@ -192,6 +193,41 @@ function parseMessage(data: WebSocket.RawData): GatewayRequestFrame | null {
     return parsed;
   } catch {
     return null;
+  }
+}
+
+export async function isUnixSocketAcceptingConnections(
+  socketPath: string,
+): Promise<boolean> {
+  if (!existsSync(socketPath)) return false;
+
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    let settled = false;
+
+    const finish = (accepting: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(accepting);
+    };
+
+    socket.setTimeout(250, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.connect(socketPath);
+  });
+}
+
+export async function removeStaleUnixSocket(socketPath: string): Promise<void> {
+  if (!(await isUnixSocketAcceptingConnections(socketPath))) {
+    try {
+      unlinkSync(socketPath);
+      logger.warn({ socketPath }, 'Removed stale TUI local socket');
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
+    }
   }
 }
 
@@ -510,6 +546,8 @@ export async function startTuiGatewayServer(
   // Local mode: Unix socket server for direct TUI connections
   let localServer: ReturnType<typeof createServer> | undefined;
   if (socketPath) {
+    await removeStaleUnixSocket(socketPath);
+
     localServer = createServer();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const localWss = new WebSocketServer({ server: localServer as any });
