@@ -46,6 +46,8 @@ import {
   runContainerAgent,
   type ExtensionUIRequest,
   type ExtensionUIResponse,
+  type ContainerInput,
+  type ContainerProgressEvent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './pi-runner.js';
@@ -304,6 +306,7 @@ import {
 } from './message-dispatch.js';
 import { writePromptInputLogFile } from './prompt-input-log.js';
 import { createTelegramCommandHandlers } from './telegram-commands.js';
+import { createLongRunService } from './long-run-service.js';
 import {
   state,
   activeCoderRuns,
@@ -3953,6 +3956,35 @@ function formatActiveSubagentsText(): string {
   return ['Active subagent runs:', ...runs].join('\n');
 }
 
+const longRunService = createLongRunService({
+  getGroupForChat: (chatJid) => state.registeredGroups[chatJid],
+  isMainChat,
+  getSessionKeyForChat,
+  sendMessage,
+  sendAgentResultMessage,
+  persistAssistantHistory,
+  updateChatUsage,
+  emitRunProgress: (payload) => {
+    hostEventBus.publish({
+      kind: 'run_progress',
+      id: createHostEventId('progress'),
+      createdAt: new Date().toISOString(),
+      source: 'long-run-service',
+      runId: payload.requestId,
+      sessionKey: getSessionKeyForChat(payload.chatJid),
+      chatJid: payload.chatJid,
+      phase: payload.phase,
+      text: payload.text,
+      ...(payload.detail ? { detail: payload.detail } : {}),
+    });
+  },
+  emitTuiChatEvent,
+  emitTuiAgentEvent,
+  runAgent,
+  getRuntimePrefs: (chatJid) => state.chatRunPreferences[chatJid] || {},
+  logger,
+});
+
 let codingOrchestrator: ReturnType<typeof createCodingOrchestrator> | null =
   null;
 
@@ -4621,6 +4653,8 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   formatHelpText,
   formatUsageText,
   formatActiveSubagentsText,
+  handleLongRunCommand: (chatJid, content) =>
+    longRunService.handleCommand(chatJid, content),
   summarizeTask,
   formatTaskRunsText,
   handleKnowledgeCommand,
@@ -4991,6 +5025,8 @@ const messageDispatcher = createMessageDispatcher({
   completeMainWorkspaceOnboarding,
   rememberHeartbeatTarget,
   runAgent,
+  handleLongRunCommand: (chatJid, content) =>
+    longRunService.handleCommand(chatJid, content),
   runCodingTask,
   consumeNextRunNoContinue,
   updateChatUsage,
@@ -5351,7 +5387,14 @@ async function runAgent(
   codingHint: CodingHint = 'none',
   requestId?: string,
   runtimePrefs: ChatRunPreferences = {},
-  options: { suppressErrorReply?: boolean; isHeartbeatTask?: boolean } = {},
+  options: {
+    suppressErrorReply?: boolean;
+    isHeartbeatTask?: boolean;
+    suppressPreviewStreaming?: boolean;
+    skipSkillMaintenance?: boolean;
+    lifecyclePolicyOverride?: ContainerInput['lifecyclePolicyOverride'];
+    onProgressEvent?: (event: ContainerProgressEvent) => void;
+  } = {},
   abortSignal?: AbortSignal,
 ): Promise<{
   result: string | null;
@@ -5459,8 +5502,10 @@ async function runAgent(
       verboseMode: runtimePrefs.verboseMode,
       noContinue: runtimePrefs.nextRunNoContinue === true,
       suppressPreviewStreaming:
+        options.suppressPreviewStreaming === true ||
         runtimePrefs.telegramDeliveryMode === 'off' ||
         shouldBlockForChatEvaluation,
+      lifecyclePolicyOverride: options.lifecyclePolicyOverride,
       showReasoning:
         runtimePrefs.showReasoning === true ||
         runtimePrefs.reasoningLevel === 'stream',
@@ -5531,6 +5576,7 @@ async function runAgent(
           });
         },
         (request) => handlePermissionGateRequest(chatJid, request),
+        options.onProgressEvent,
       );
       cancelPendingConfirmationsForChat(chatJid);
       runToolsInvoked = output.toolExecutions?.length ?? 0;
@@ -5643,6 +5689,7 @@ async function runAgent(
       finalResult.ok &&
       finalResult.result &&
       !options.isHeartbeatTask &&
+      !options.skipSkillMaintenance &&
       abortSignal?.aborted !== true
     ) {
       maybeRunSkillSelfImprovement({

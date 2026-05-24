@@ -52,6 +52,7 @@ export function resolveTelegramStreamCompletionState(params: {
 }
 
 const RUN_STATUS_PREVIEW_PREFIXES = [
+  'Agent status:',
   'Coder status:',
   'Skill manager status:',
   'Librarian status:',

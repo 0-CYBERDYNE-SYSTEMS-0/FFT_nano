@@ -221,6 +221,44 @@ test('handleTelegramSetupInput persists provider value and confirms to chat', as
   assert.match(deps.sent[0]?.text || '', /Saved provider: minimax/);
 });
 
+test('handleTelegramCommand /run delegates to long-run command handler and acknowledges', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.handleLongRunCommand = async (chatJid, content) => {
+    assert.equal(chatJid, 'telegram:1');
+    assert.equal(content, '/run inspect the orchard logs');
+    await deps.sendMessage(
+      chatJid,
+      "Started long run run-test. I'll post the result here.",
+    );
+    return true;
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/run inspect the orchard logs',
+  });
+
+  assert.equal(handled, true);
+  assert.match(deps.sent[0]?.text || '', /Started long run run-test/);
+  assert.deepEqual(deps.audits.at(-1), {
+    chatJid: 'telegram:1',
+    command: '/run',
+    allowed: true,
+    reason: 'long-run',
+  });
+});
+
 test('handleTelegramCallbackQuery routes admin panel actions for main chat', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
