@@ -664,6 +664,10 @@ function injectUnresolvedWorkPreamble(
   ].join('\n');
 }
 
+function isRunnerTimeoutFinalText(text: string): boolean {
+  return /^LLM error:\s+Pi runner timed out after \d+ms\b/.test(text);
+}
+
 export async function finalizeCompletedRun(
   params: FinalizeCompletedRunParams,
 ): Promise<void> {
@@ -782,9 +786,15 @@ export async function finalizeCompletedRun(
 
   const effectiveResult = sanitizeUserFacingVerdictLeak(finalText);
   if (effectiveResult) {
+    const streamedText = params.telegramPreviewState?.lastText?.trim() || '';
+    const shouldPreserveStreamedTimeoutPreview =
+      streamedText.length > 0 && isRunnerTimeoutFinalText(effectiveResult);
+    let sentSeparateTimeoutStatus = false;
     const assistantTimestamp = params.persistAssistantHistory(
       params.chatJid,
-      effectiveResult,
+      shouldPreserveStreamedTimeoutPreview
+        ? `${streamedText}\n\n${effectiveResult}`
+        : effectiveResult,
       params.runId,
     );
     if (assistantTimestamp) {
@@ -795,8 +805,21 @@ export async function finalizeCompletedRun(
       finalizedPreview = await params.finalizeTelegramPreviewMessage(
         params.chatJid,
         params.telegramPreviewState.messageId,
-        effectiveResult,
+        shouldPreserveStreamedTimeoutPreview ? streamedText : effectiveResult,
       );
+      if (
+        finalizedPreview &&
+        shouldPreserveStreamedTimeoutPreview &&
+        params.deliverToChat !== false
+      ) {
+        sentSeparateTimeoutStatus = await params.sendAgentResultMessage(
+          params.chatJid,
+          effectiveResult,
+          {
+            prefixWhatsApp: true,
+          },
+        );
+      }
     }
     // Send a fallback message if:
     // - delivery is enabled
@@ -809,6 +832,7 @@ export async function finalizeCompletedRun(
     const shouldSend =
       params.deliverToChat !== false &&
       !params.externallyCompleted &&
+      !sentSeparateTimeoutStatus &&
       (!params.streamed || !params.telegramPreviewState || !finalizedPreview);
 
     if (shouldSend) {

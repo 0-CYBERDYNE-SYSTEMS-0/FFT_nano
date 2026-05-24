@@ -51,6 +51,8 @@ import {
 } from './pi-runner.js';
 import {
   createPendingConfirmation,
+  cancelPendingConfirmationsForChat,
+  getExpiredConfirmation,
   parsePermissionGateCallback,
   resolvePendingConfirmation,
   shouldPromptPermissionGate,
@@ -168,7 +170,10 @@ import {
 } from './coding-orchestrator.js';
 import { resolveCoderProjectTarget } from './coder-project-resolver.js';
 import { executeFarmAction } from './farm-action-gateway.js';
-import { processFileDeliveryRequest } from './file-delivery.js';
+import {
+  normalizeFileDeliveryRequest,
+  processFileDeliveryRequest,
+} from './file-delivery.js';
 import {
   startFarmStateCollector,
   stopFarmStateCollector,
@@ -4704,13 +4709,32 @@ async function handleTelegramCallbackQuery(
   const pgRequestId = parsePermissionGateCallback(q.data);
   if (pgRequestId) {
     const confirmed = q.data.startsWith('pg_allow:');
-    resolvePendingConfirmation(pgRequestId, { confirmed });
+    const resolved = resolvePendingConfirmation(pgRequestId, { confirmed });
+    const expired = resolved ? null : getExpiredConfirmation(pgRequestId);
     const bot = state.telegramBot;
     if (bot) {
       try {
-        await bot.answerCallbackQuery?.(q.id);
+        await bot.answerCallbackQuery?.(
+          q.id,
+          resolved
+            ? undefined
+            : expired
+              ? 'This approval request has expired.'
+              : 'This approval request is no longer active.',
+        );
       } catch {
         // Ignore duplicate callback acknowledgements.
+      }
+      if (!resolved) {
+        logger.warn(
+          {
+            requestId: pgRequestId,
+            chatJid: q.chatJid,
+            expiredReason: expired?.reason,
+          },
+          'Ignoring stale permission gate callback',
+        );
+        return;
       }
       try {
         await bot.editMessageWithKeyboard(
@@ -4755,7 +4779,15 @@ async function handlePermissionGateRequest(
         ],
       ],
     );
-    return promise;
+    const response = await promise;
+    const expired = getExpiredConfirmation(request.id);
+    if (response.confirmed === false && expired?.reason === 'timeout') {
+      await state.telegramBot.sendMessage(
+        chatJid,
+        `Permission request timed out and was auto-denied: ${request.title ?? 'Action'}`,
+      );
+    }
+    return response;
   }
 
   logger.warn(
@@ -5500,6 +5532,7 @@ async function runAgent(
         },
         (request) => handlePermissionGateRequest(chatJid, request),
       );
+      cancelPendingConfirmationsForChat(chatJid);
       runToolsInvoked = output.toolExecutions?.length ?? 0;
       return {
         ...output,
@@ -6541,7 +6574,12 @@ async function finalizeTelegramPreviewMessage(
   if (extracted.hints.length > 0) {
     const sent = await sendTelegramAgentReply(chatJid, text);
     logger.info(
-      { chatJid, messageId, finalizeMode: 'send-full-reply' },
+      {
+        chatJid,
+        messageId,
+        finalizeMode: 'send-full-reply',
+        textLength: text.length,
+      },
       'Telegram streaming preview finalized',
     );
     return sent;
@@ -6577,6 +6615,7 @@ async function finalizeTelegramPreviewMessage(
       messageId,
       finalizeMode: chunks.length > 1 ? 'edit-plus-followups' : 'edit-in-place',
       chunkCount: chunks.length,
+      textLength: text.length,
     },
     'Telegram streaming preview finalized',
   );
@@ -7277,119 +7316,131 @@ function startIpcWatcher(): void {
             const filePath = path.join(deliverFilesDir, file);
             let trackedRequestId: string | null = null;
             let trackedChatJid: string | null = null;
+            let parsedRequestId: string | null = null;
             try {
-              const request = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (
-                request.type === 'farm_action' &&
-                request.action === 'deliver_file'
-              ) {
-                const groupJid = Object.keys(state.registeredGroups).find(
-                  (jid) => state.registeredGroups[jid].folder === sourceGroup,
-                );
-                const chatJid = request.params?.chatJid || groupJid;
-                trackedRequestId =
-                  typeof request.requestId === 'string'
-                    ? request.requestId
-                    : null;
-                trackedChatJid = chatJid || null;
-                if (!trackedRequestId) {
-                  throw new Error('File delivery request missing requestId');
-                }
-                noteDeliveryPending(trackedChatJid, trackedRequestId);
+              const rawRequest = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              const request = normalizeFileDeliveryRequest(rawRequest);
+              parsedRequestId = request.requestId;
+              const groupJid = Object.keys(state.registeredGroups).find(
+                (jid) => state.registeredGroups[jid].folder === sourceGroup,
+              );
+              const chatJid = request.params?.chatJid || groupJid;
+              trackedRequestId = request.requestId;
+              trackedChatJid = chatJid || null;
+              noteDeliveryPending(trackedChatJid, trackedRequestId);
 
-                await processHostEventOrdered({
-                  kind: 'file_delivery_requested',
-                  id: `fd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                  createdAt: new Date().toISOString(),
-                  source: 'ipc-boundary',
-                  sourceGroup,
-                  isMain,
-                  chatJid: chatJid || '',
-                  requestId: request.requestId,
-                  filePath: request.params?.filePath || '',
-                  mediaKind: request.params?.kind || 'document',
-                  caption: request.params?.caption,
-                });
+              await processHostEventOrdered({
+                kind: 'file_delivery_requested',
+                id: `fd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                createdAt: new Date().toISOString(),
+                source: 'ipc-boundary',
+                sourceGroup,
+                isMain,
+                chatJid: chatJid || '',
+                requestId: request.requestId,
+                filePath: request.params?.filePath || '',
+                mediaKind: request.params?.kind || 'document',
+                caption: request.params?.caption,
+              });
 
-                const result = await processFileDeliveryRequest(
-                  request,
-                  { sourceGroup, isMain, chatJid },
-                  {
-                    telegramBot: state.telegramBot ?? undefined,
-                    registeredGroups: state.registeredGroups,
-                    resolveGroupWorkspaceDir: (folder) => {
-                      return folder === MAIN_GROUP_FOLDER
-                        ? MAIN_WORKSPACE_DIR
-                        : resolveGroupFolderPath(folder);
-                    },
+              const result = await processFileDeliveryRequest(
+                request,
+                { sourceGroup, isMain, chatJid },
+                {
+                  telegramBot: state.telegramBot ?? undefined,
+                  registeredGroups: state.registeredGroups,
+                  resolveGroupWorkspaceDir: (folder) => {
+                    return folder === MAIN_GROUP_FOLDER
+                      ? MAIN_WORKSPACE_DIR
+                      : resolveGroupFolderPath(folder);
                   },
-                );
-                const resultDir = path.join(
-                  ipcBaseDir,
+                },
+              );
+              const resultDir = path.join(
+                ipcBaseDir,
+                sourceGroup,
+                'action_results',
+              );
+              fs.mkdirSync(resultDir, { recursive: true });
+              const resultPath = path.join(
+                resultDir,
+                `${request.requestId}.json`,
+              );
+              writeJsonAtomic(resultPath, result);
+              noteDeliverySettled({
+                chatJid: trackedChatJid,
+                requestId: request.requestId,
+                status: result.status,
+                error: result.error,
+              });
+
+              await processHostEventOrdered({
+                kind: 'file_delivery_completed',
+                id: `fdc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                createdAt: new Date().toISOString(),
+                source: 'ipc-boundary',
+                sourceGroup,
+                chatJid: chatJid || '',
+                requestId: request.requestId,
+                filePath: request.params?.filePath || '',
+                success: result.status === 'success',
+                mediaKind: result.result?.kind,
+                error: result.error,
+              });
+
+              fs.unlinkSync(filePath);
+              logger.info(
+                {
                   sourceGroup,
-                  'action_results',
-                );
-                fs.mkdirSync(resultDir, { recursive: true });
-                const resultPath = path.join(
-                  resultDir,
-                  `${request.requestId}.json`,
-                );
-                writeJsonAtomic(resultPath, result);
-                noteDeliverySettled({
-                  chatJid: trackedChatJid,
                   requestId: request.requestId,
                   status: result.status,
-                  error: result.error,
-                });
-
-                await processHostEventOrdered({
-                  kind: 'file_delivery_completed',
-                  id: `fdc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                  createdAt: new Date().toISOString(),
-                  source: 'ipc-boundary',
-                  sourceGroup,
-                  chatJid: chatJid || '',
-                  requestId: request.requestId,
-                  filePath: request.params?.filePath || '',
-                  success: result.status === 'success',
-                  mediaKind: result.result?.kind,
-                  error: result.error,
-                });
-
-                fs.unlinkSync(filePath);
-                logger.info(
-                  {
-                    sourceGroup,
-                    requestId: request.requestId,
-                    status: result.status,
-                  },
-                  'File delivery processed',
-                );
-              } else {
-                logger.warn(
-                  { sourceGroup, file },
-                  'Ignoring IPC file delivery: expected farm_action deliver_file',
-                );
-              }
+                },
+                'File delivery processed',
+              );
             } catch (err) {
+              const errorMessage =
+                err instanceof Error ? err.message : String(err);
               if (trackedRequestId) {
                 noteDeliverySettled({
                   chatJid: trackedChatJid,
                   requestId: trackedRequestId,
                   status: 'error',
-                  error: err instanceof Error ? err.message : String(err),
+                  error: errorMessage,
                 });
               }
               logger.error(
                 { file, sourceGroup, err },
                 'Error processing file delivery request',
               );
+              const resultDir = path.join(
+                ipcBaseDir,
+                sourceGroup,
+                'action_results',
+              );
+              fs.mkdirSync(resultDir, { recursive: true });
+              const resultRequestId =
+                trackedRequestId ||
+                parsedRequestId ||
+                `invalid-${path.basename(file, '.json')}`;
+              writeJsonAtomic(path.join(resultDir, `${resultRequestId}.json`), {
+                requestId: resultRequestId,
+                status: 'error',
+                error: errorMessage,
+                executedAt: new Date().toISOString(),
+              });
               const errorDir = path.join(ipcBaseDir, 'errors');
               fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `delivery-${sourceGroup}-${file}`),
+              const baseErrorPath = path.join(
+                errorDir,
+                `delivery-${sourceGroup}-${file}`,
               );
+              const errorPath = fs.existsSync(baseErrorPath)
+                ? path.join(
+                    errorDir,
+                    `delivery-${sourceGroup}-${Date.now()}-${file}`,
+                  )
+                : baseErrorPath;
+              fs.renameSync(filePath, errorPath);
             }
           }
         }
