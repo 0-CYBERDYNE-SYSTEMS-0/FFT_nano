@@ -1,4 +1,4 @@
-import { normalizeTelegramDraftText, type TelegramBot } from './telegram.js';
+import { normalizeTelegramPreviewText, type TelegramBot } from './telegram.js';
 import { logger } from './logger.js';
 
 export interface TelegramMessagePreviewState {
@@ -288,7 +288,7 @@ export async function updateTelegramPreview(params: {
 
   try {
     const now = Date.now();
-    const baseText = normalizeTelegramDraftText(params.text);
+    const baseText = normalizeTelegramPreviewText(params.text);
     const nextText = params.toolTrailFooter
       ? `${baseText}\n\n${params.toolTrailFooter}`
       : baseText;
@@ -385,7 +385,7 @@ export async function updateTelegramDraftPreview(params: {
 
   try {
     const now = Date.now();
-    const baseText = normalizeTelegramDraftText(params.text);
+    const baseText = normalizeTelegramPreviewText(params.text);
     const nextText = params.toolTrailFooter
       ? `${baseText}\n\n${params.toolTrailFooter}`
       : baseText;
