@@ -34,7 +34,7 @@ import {
   type SkillSyncResult,
 } from './pi-skills.js';
 import { noteSkillCatalogUse } from './skill-lifecycle.js';
-import { normalizeTelegramDraftText } from './telegram.js';
+import { normalizeTelegramPreviewText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
@@ -922,6 +922,9 @@ export async function runContainerAgent(
   const startTime = Date.now();
   const projectRoot = process.cwd();
   const codingHint = normalizeCodingHint(input.codingHint);
+  let extendHardTimeoutForWait:
+    | ((requestTimeoutMs: number | undefined) => void)
+    | null = null;
 
   let groupDir: string;
   try {
@@ -1405,7 +1408,7 @@ export async function runContainerAgent(
       let lastDraftText = '';
       const publishDraftPreview = (text: string, force = false) => {
         if (!canStreamTelegramDraft) return;
-        const normalized = normalizeTelegramDraftText(text);
+        const normalized = normalizeTelegramPreviewText(text);
         if (!normalized) return;
         const now = Date.now();
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
@@ -1605,14 +1608,14 @@ export async function runContainerAgent(
           return;
         }
 
-        noteWaitState(
-          Math.max(
-            lifecyclePolicy.waitStateStaleMs ??
-              lifecyclePolicy.staleAfterMs ??
-              0,
-            (request.timeout ?? 60_000) + 1_000,
-          ),
+        const waitBudgetMs = Math.max(
+          lifecyclePolicy.waitStateStaleMs ?? lifecyclePolicy.staleAfterMs ?? 0,
+          (request.timeout ?? 60_000) + 1_000,
         );
+        noteWaitState(waitBudgetMs, request.method !== 'confirm');
+        if (request.method === 'confirm') {
+          extendHardTimeoutForWait?.(request.timeout);
+        }
 
         if (!onExtensionUIRequest) {
           logger.warn(
@@ -1832,6 +1835,7 @@ export async function runContainerAgent(
       if (settled) return;
       settled = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
+      extendHardTimeoutForWait = null;
       resolve(output);
     };
 
@@ -1841,14 +1845,31 @@ export async function runContainerAgent(
     }
 
     const timeoutMs = lifecyclePolicy.hardTimeoutMs;
-    timeoutHandle = setTimeout(() => {
-      killActiveChild();
-      finish({
-        status: 'error',
-        result: null,
-        error: `Pi runner timed out after ${timeoutMs}ms`,
-      });
-    }, timeoutMs);
+    const armHardTimeout = (delayMs = timeoutMs) => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      timeoutHandle = setTimeout(() => {
+        killActiveChild();
+        finish({
+          status: 'error',
+          result: null,
+          error: `Pi runner timed out after ${timeoutMs}ms`,
+        });
+      }, delayMs);
+    };
+    extendHardTimeoutForWait = (requestTimeoutMs) => {
+      const waitMs = Math.max(0, requestTimeoutMs ?? 60_000);
+      const graceMs = Math.min(Math.max(waitMs + 5_000, 30_000), 125_000);
+      logger.info(
+        {
+          group: group.name,
+          requestId: input.requestId,
+          graceMs,
+        },
+        'Extending Pi runner hard timeout for permission wait',
+      );
+      armHardTimeout(graceMs);
+    };
+    armHardTimeout();
 
     const onAbort = () => {
       if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -1898,15 +1919,7 @@ export async function runContainerAgent(
             });
             // Give the fresh attempt its own full budget — the stale attempt already
             // consumed most of the original ceiling and would starve this retry.
-            if (timeoutHandle) clearTimeout(timeoutHandle);
-            timeoutHandle = setTimeout(() => {
-              killActiveChild();
-              finish({
-                status: 'error',
-                result: null,
-                error: `Pi runner timed out after ${timeoutMs}ms`,
-              });
-            }, timeoutMs);
+            armHardTimeout();
             lastRes = await runPi(false);
             if (lastRes.code === 0) break;
             finalError =

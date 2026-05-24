@@ -260,6 +260,59 @@ test('finalizeCompletedRun preserves streamed Telegram preview when final output
   );
 });
 
+test('finalizeCompletedRun preserves streamed Telegram preview on runner timeout', async () => {
+  const emitter = createEmitter();
+  const persisted: string[] = [];
+  const sent: string[] = [];
+  const finalized: Array<{ messageId: number; text: string }> = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-timeout-preview',
+    sessionKey: 'telegram:1',
+    result: 'LLM error: Pi runner timed out after 600000ms',
+    streamed: true,
+    usage: undefined,
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: {
+      messageId: 445,
+      lastText: 'Partial streamed response that should not be overwritten.',
+      updatedAt: Date.now(),
+    },
+    updateChatUsage: () => {},
+    persistLastAgentTimestamp: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+      return '2026-05-11T00:00:00.000Z';
+    },
+    deleteTelegramPreviewMessage: async () => {
+      throw new Error('should not delete streamed preview');
+    },
+    finalizeTelegramPreviewMessage: async (_chatJid, messageId, text) => {
+      finalized.push({ messageId, text });
+      return true;
+    },
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(finalized, [
+    {
+      messageId: 445,
+      text: 'Partial streamed response that should not be overwritten.',
+    },
+  ]);
+  assert.deepEqual(sent, ['LLM error: Pi runner timed out after 600000ms']);
+  assert.deepEqual(persisted, [
+    'Partial streamed response that should not be overwritten.\n\nLLM error: Pi runner timed out after 600000ms',
+  ]);
+});
+
 test('finalizeCompletedRun sends durable fallback after streamed empty retry output', async () => {
   const emitter = createEmitter();
   const persisted: string[] = [];
@@ -302,7 +355,8 @@ test('finalizeCompletedRun sanitizes evaluator verdict-shaped final output at de
     chatJid: 'telegram:1',
     runId: 'run-sanitize-final',
     sessionKey: 'telegram:1',
-    result: '{"pass":false,"score":"1","issues":["missing artifact"],"feedback":"retry"}',
+    result:
+      '{"pass":false,"score":"1","issues":["missing artifact"],"feedback":"retry"}',
     streamed: false,
     usage: undefined,
     abortSignal: new AbortController().signal,
@@ -1097,7 +1151,10 @@ test('processMessage excludes legacy internal evaluator rows from recent convers
   assert.doesNotMatch(capturedPrompt, /Quality check flagged/);
   assert.doesNotMatch(capturedPrompt, /score 4\/10/);
   assert.doesNotMatch(capturedPrompt, /I could not verify/);
-  assert.doesNotMatch(capturedPrompt, /Approve the exact cleanup\/repair action/);
+  assert.doesNotMatch(
+    capturedPrompt,
+    /Approve the exact cleanup\/repair action/,
+  );
 });
 
 test('processMessage keeps interrupt queue semantics only for new inbound messages', async () => {
