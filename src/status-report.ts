@@ -86,6 +86,16 @@ export interface FormatStatusReportParams {
     chatJid: string;
     startedAt: number;
   }>;
+  activeLongRuns?: Array<{
+    id: string;
+    chatJid: string;
+    status: 'queued' | 'running';
+    createdAt: number;
+    startedAt?: number | null;
+    lastProgressAt?: number | null;
+    phase?: string | null;
+    detail?: string | null;
+  }>;
   activeCoderRuns: Array<{
     requestId: string;
     mode: 'execute' | 'plan';
@@ -310,6 +320,7 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
     (run) => run.config?.isSubagent === true,
   ).length;
   const coderRuns = params.activeCoderRuns.length - subagentRuns;
+  const activeLongRuns = params.activeLongRuns || [];
 
   const stuckRuns = params.activeCoderRuns.filter((run) => {
     const snapshot = runProgressByRunId.get(run.requestId);
@@ -328,7 +339,7 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
       ? [`- coder_gate_mode: ${params.coderGateMode}`]
       : []),
     `- agent_running: ${params.agentRunning ? 'working' : 'idle'}`,
-    `- active_runs: agent=${params.activeChatRuns.length} coder=${coderRuns} subagent=${subagentRuns}`,
+    `- active_runs: agent=${params.activeChatRuns.length + activeLongRuns.length} coder=${coderRuns} subagent=${subagentRuns}`,
     `- channels: telegram=${params.telegramEnabled ? 'yes' : 'no'} whatsapp=${params.whatsappEnabled ? 'yes' : 'no'} connected=${params.whatsappConnected ? 'yes' : 'no'}`,
     `- groups: registered=${params.registeredGroupCount} main=${params.mainGroupName || 'none'}`,
     `- tasks: active=${params.tasks.active} paused=${params.tasks.paused} completed=${params.tasks.completed}`,
@@ -374,6 +385,26 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
     )) {
       lines.push(
         `- request=${run.requestId} age=${formatAgeSeconds(nowMs, run.startedAt)} chat=${run.chatJid}`,
+      );
+    }
+  }
+
+  lines.push('', 'Active long runs:');
+  if (activeLongRuns.length === 0) {
+    lines.push('- none');
+  } else {
+    for (const run of activeLongRuns.sort(
+      (a, b) => a.createdAt - b.createdAt,
+    )) {
+      const phase = run.phase
+        ? `${run.phase}${run.detail ? `(${run.detail})` : ''}`
+        : 'n/a';
+      const ageBase = run.startedAt || run.createdAt;
+      const lastProgress = run.lastProgressAt
+        ? `${formatDurationShort(nowMs - run.lastProgressAt)} ago`
+        : 'none';
+      lines.push(
+        `- id=${run.id} status=${run.status} phase=${phase} age=${formatAgeSeconds(nowMs, ageBase)} last_progress=${lastProgress} chat=${run.chatJid}`,
       );
     }
   }

@@ -69,6 +69,7 @@ import {
   getMessagesSince,
   getPromptTranscriptMessages,
   getNewMessages,
+  listActiveAgentRuns,
   getTaskById,
   getTaskRunLogs,
   getNextDueTaskTime,
@@ -3593,8 +3594,10 @@ function formatStatusText(chatJid?: string): string {
   const completed = tasks.filter((task) => task.status === 'completed').length;
   const knowledgeSnapshot = resolveKnowledgeRuntimeSnapshot();
   const chatActiveRun = chatJid ? activeChatRuns.get(chatJid) || null : null;
+  const durableActiveRuns = listActiveAgentRuns(chatJid);
   const agentRunning = chatJid
     ? chatActiveRun !== null ||
+      durableActiveRuns.length > 0 ||
       Array.from(activeCoderRuns.values()).some(
         (run) =>
           run.chatJid === chatJid &&
@@ -3602,7 +3605,9 @@ function formatStatusText(chatJid?: string): string {
           run.state !== 'failed' &&
           run.state !== 'aborted',
       )
-    : activeChatRunsById.size > 0 || activeCoderRuns.size > 0;
+    : activeChatRunsById.size > 0 ||
+      durableActiveRuns.length > 0 ||
+      activeCoderRuns.size > 0;
   return formatStatusReport({
     assistantName: ASSISTANT_NAME,
     version,
@@ -3633,6 +3638,18 @@ function formatStatusText(chatJid?: string): string {
       requestId: run.requestId,
       chatJid: run.chatJid,
       startedAt: run.startedAt,
+    })),
+    activeLongRuns: durableActiveRuns.map((run) => ({
+      id: run.id,
+      chatJid: run.chat_jid,
+      status: run.status as 'queued' | 'running',
+      createdAt: Date.parse(run.created_at),
+      startedAt: run.started_at ? Date.parse(run.started_at) : null,
+      lastProgressAt: run.last_progress_at
+        ? Date.parse(run.last_progress_at)
+        : null,
+      phase: run.current_phase,
+      detail: run.current_detail,
     })),
     activeCoderRuns: Array.from(activeCoderRuns.values()).map((run) => ({
       requestId: run.requestId,
@@ -3962,6 +3979,7 @@ const longRunService = createLongRunService({
   getSessionKeyForChat,
   sendMessage,
   sendAgentResultMessage,
+  setTyping,
   persistAssistantHistory,
   updateChatUsage,
   emitRunProgress: (payload) => {
@@ -7081,6 +7099,15 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       if (deliveryMode === 'off') return;
       if (deliveryMode === 'append') {
         await state.telegramBot.sendMessage(event.chatJid, event.text);
+        logger.debug(
+          {
+            runId: event.runId,
+            chatJid: event.chatJid,
+            phase: event.phase,
+            messageId: null,
+          },
+          'Telegram run-progress message sent',
+        );
         return;
       }
 
@@ -7118,6 +7145,16 @@ async function processHostEvent(event: HostEvent): Promise<void> {
             },
             'Telegram draft run-progress update failed; continuing without status draft updates for this run',
           );
+        } else if (sendResult.sent) {
+          logger.debug(
+            {
+              runId: event.runId,
+              chatJid: event.chatJid,
+              phase: event.phase,
+              messageId: sendResult.draftId ?? null,
+            },
+            'Telegram draft run-progress update sent',
+          );
         }
         return;
       }
@@ -7139,6 +7176,16 @@ async function processHostEvent(event: HostEvent): Promise<void> {
             err: sendResult.error,
           },
           'Telegram run-progress update failed; disabling status preview updates for this run',
+        );
+      } else if (sendResult.sent) {
+        logger.debug(
+          {
+            runId: event.runId,
+            chatJid: event.chatJid,
+            phase: event.phase,
+            messageId: sendResult.messageId ?? null,
+          },
+          'Telegram run-progress preview updated',
         );
       }
       return;
