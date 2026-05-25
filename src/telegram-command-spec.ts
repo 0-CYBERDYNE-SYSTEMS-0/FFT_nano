@@ -33,6 +33,10 @@ export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'coding', description: 'Alias for /coder' },
   { command: 'coder_plan', description: 'Delegate coding plan-only' },
   { command: 'subagents', description: 'List/stop/spawn subagent runs' },
+  { command: 'run', description: 'Start a durable long agent run' },
+  { command: 'runs', description: 'List recent long agent runs' },
+  { command: 'run_status', description: 'Show long run status' },
+  { command: 'cancel_run', description: 'Cancel a long agent run' },
   {
     command: 'skill_manager',
     description: 'Manage skill lifecycle (stale detection, archiving, backups)',
@@ -78,6 +82,12 @@ export type TelegramCommandName =
   | '/queue'
   | '/compact'
   | '/subagents'
+  | '/run'
+  | '/runs'
+  | '/run-status'
+  | '/run_status'
+  | '/cancel-run'
+  | '/cancel_run'
   | '/skill-manager'
   | '/skill_manager'
   | '/librarian'
@@ -124,6 +134,12 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/queue',
   '/compact',
   '/subagents',
+  '/run',
+  '/runs',
+  '/run-status',
+  '/run_status',
+  '/cancel-run',
+  '/cancel_run',
   '/skill-manager',
   '/skill_manager',
   '/librarian',
@@ -210,6 +226,10 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/coding <task> - alias for /coder',
     '/coder-plan <task> - explicit delegated planning run',
     '/subagents list|stop|spawn - manage delegated subagent runs',
+    '/run <task> - start a durable long normal-agent run',
+    '/runs - list recent long normal-agent runs',
+    '/run-status <id> - show long run status',
+    '/cancel-run <id> - cancel an active long run',
     '/skill-manager status|dry-run|run|pause|resume|pin|unpin|archive|restore|backup - manage skill lifecycle',
     '/librarian status|lint|capture|run|dry-run|log|progress - manage knowledge wiki',
     '/curator status|dry-run|run|pause|resume|pin|unpin|archive|restore|backup - [DEPRECATED: use /skill-manager]',

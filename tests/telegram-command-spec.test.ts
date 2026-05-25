@@ -40,6 +40,15 @@ test('Telegram command normalization accepts aliases and bot-suffixed forms', ()
   );
   assert.equal(normalizeTelegramCommandToken('/curator@TestBot'), '/curator');
   assert.equal(normalizeTelegramCommandToken('/coding@TestBot'), '/coding');
+  assert.equal(normalizeTelegramCommandToken('/run@TestBot'), '/run');
+  assert.equal(
+    normalizeTelegramCommandToken('/run-status@TestBot'),
+    '/run-status',
+  );
+  assert.equal(
+    normalizeTelegramCommandToken('/cancel_run@TestBot'),
+    '/cancel_run',
+  );
   assert.equal(normalizeTelegramCommandToken('/delivery@TestBot'), '/delivery');
   assert.equal(
     normalizeTelegramCommandToken('/text_delivery@TestBot'),
@@ -61,6 +70,8 @@ test('main chat help includes admin restart alias and non-main help does not', (
   );
   assert.doesNotMatch(nonMainHelp, /\/knowledge \[/);
   assert.match(mainHelp, /\/restart - alias for \/gateway restart/);
+  assert.match(mainHelp, /\/run <task> - start a durable long normal-agent run/);
+  assert.match(mainHelp, /\/run-status <id> - show long run status/);
   assert.match(
     mainHelp,
     /\/setup \[cancel\] - runtime setup wizard for provider\/model\/key/,

@@ -195,6 +195,10 @@ export interface TelegramCommandDeps {
     chatJid: string,
     instructions: string,
   ) => Promise<string>;
+  handleLongRunCommand?: (
+    chatJid: string,
+    content: string,
+  ) => Promise<boolean>;
   parseTelegramChatId: (chatJid: string) => string | null;
   parseTelegramTargetJid: (value: string) => string | null;
   normalizeTelegramCommandToken: (token: string) => string | null;
@@ -2147,6 +2151,27 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'run');
       const response = await deps.runCompactionForChat(m.chatJid, instructions);
       await deps.sendMessage(m.chatJid, response);
+      return true;
+    }
+
+    if (
+      cmd === '/run' ||
+      cmd === '/runs' ||
+      cmd === '/run-status' ||
+      cmd === '/run_status' ||
+      cmd === '/cancel-run' ||
+      cmd === '/cancel_run'
+    ) {
+      const handled = await deps.handleLongRunCommand?.(m.chatJid, content);
+      deps.logTelegramCommandAudit(
+        m.chatJid,
+        cmd,
+        handled === true,
+        handled ? 'long-run' : 'not configured',
+      );
+      if (!handled) {
+        await deps.sendMessage(m.chatJid, 'Long runs are not configured.');
+      }
       return true;
     }
 
