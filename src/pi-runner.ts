@@ -157,6 +157,7 @@ export type ContainerProgressEvent =
   | {
       kind: 'assistant';
       at: number;
+      text?: string;
     }
   | {
       kind: 'thinking';
@@ -1545,7 +1546,7 @@ export async function runContainerAgent(
 
       const noteProgress = (
         event:
-          | { kind: 'assistant'; at: number }
+          | { kind: 'assistant'; at: number; text?: string }
           | { kind: 'thinking'; at: number }
           | {
               kind: 'tool';
@@ -1815,7 +1816,11 @@ export async function runContainerAgent(
           if (delta) {
             if (delta.kind === 'append') assistantSoFar += delta.text;
             else assistantSoFar = delta.text;
-            noteProgress({ kind: 'assistant', at: Date.now() });
+            noteProgress({
+              kind: 'assistant',
+              at: Date.now(),
+              text: assistantSoFar,
+            });
             maybeSendDraft(false);
           }
         } catch {

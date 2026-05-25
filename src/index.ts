@@ -6588,7 +6588,6 @@ function queueTelegramToolProgressUpdate(
   const effectiveMode = getEffectiveVerboseMode(mode);
 
   if (effectiveMode === 'off') return;
-  if (effectiveMode === 'new') return;
 
   if (
     shouldUseTelegramPreviewToolTrail({
@@ -6596,7 +6595,12 @@ function queueTelegramToolProgressUpdate(
       verboseMode: effectiveMode,
     })
   ) {
-    const trailEntry = buildTelegramPreviewToolTrailEntry(event, effectiveMode);
+    const key = getTelegramToolProgressKey(chatJid, requestId);
+    const trailEntry = buildTelegramPreviewToolTrailEntry(
+      event,
+      effectiveMode,
+      telegramToolProgressRuns.get(key)?.lastToolName,
+    );
     if (trailEntry) {
       telegramPreviewRegistry.appendToolTrail(
         getTelegramHostStreamKey(chatJid, requestId),
@@ -6604,6 +6608,8 @@ function queueTelegramToolProgressUpdate(
       );
     }
   }
+
+  if (effectiveMode === 'new') return;
 
   if (
     shouldUseStandaloneTelegramToolProgress({
@@ -7057,28 +7063,19 @@ async function processHostEvent(event: HostEvent): Promise<void> {
       const verboseMode = getEffectiveVerboseMode(
         state.chatRunPreferences[event.chatJid]?.verboseMode,
       );
-      if (
-        !shouldUseStandaloneTelegramToolProgress({
-          deliveryMode,
-          verboseMode,
-        })
-      ) {
-        return;
-      }
-      enqueueTelegramToolProgressMessage({
-        bot: state.telegramBot,
-        runs: telegramToolProgressRuns,
-        chatJid: event.chatJid,
-        requestId: event.runId,
-        mode: verboseMode as 'all' | 'verbose',
-        event: {
+      queueTelegramToolProgressUpdate(
+        event.chatJid,
+        event.runId,
+        deliveryMode,
+        verboseMode,
+        {
           toolName: event.toolName,
           status: event.status,
-          args: event.args,
-          output: event.output,
-          error: event.error,
+          ...(event.args ? { args: event.args } : {}),
+          ...(event.output ? { output: event.output } : {}),
+          ...(event.error ? { error: event.error } : {}),
         },
-      });
+      );
       return;
     }
     case 'run_progress': {

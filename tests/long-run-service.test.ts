@@ -200,6 +200,68 @@ test('exact /run query starts durable run and status can be polled while progres
   });
 });
 
+test('long run service forwards assistant draft deltas to live clients', async () => {
+  await withTempDb(async () => {
+    const typingEvents: Array<{ chatJid: string; typing: boolean }> = [];
+    const tuiChatEvents: Array<{
+      state?: string;
+      message?: { role?: string; content?: string };
+    }> = [];
+    let sawPreviewStreamingEnabled = false;
+    const service = createLongRunService({
+      ...createDeps(
+        async (
+          _group,
+          _prompt,
+          _chatJid,
+          _codingHint,
+          _requestId,
+          _prefs,
+          options,
+        ) => {
+          sawPreviewStreamingEnabled =
+            (options as { suppressPreviewStreaming?: boolean })
+              .suppressPreviewStreaming !== true;
+          const onProgressEvent = (
+            options as {
+              onProgressEvent?: (event: ContainerProgressEvent) => void;
+            }
+          ).onProgressEvent;
+          onProgressEvent?.({
+            kind: 'assistant',
+            at: Date.now(),
+            text: 'I am checking the long-run stream now.',
+          });
+          return { ok: true, result: 'done', streamed: true };
+        },
+        typingEvents,
+      ),
+      emitTuiChatEvent: (event) => {
+        tuiChatEvents.push(event);
+      },
+    });
+
+    await service.startRun('telegram:1', 'stream progress', {
+      id: 'run-delta',
+    });
+    await waitFor(
+      () => tuiChatEvents.some((event) => event.state === 'delta'),
+      'assistant delta event',
+    );
+
+    assert.equal(sawPreviewStreamingEnabled, true);
+    assert.equal(
+      tuiChatEvents.some(
+        (event) =>
+          event.state === 'delta' &&
+          event.message?.role === 'assistant' &&
+          event.message.content?.includes('long-run stream'),
+      ),
+      true,
+    );
+  });
+});
+
 test('long run service stops typing after failed run', async () => {
   await withTempDb(async () => {
     const typingEvents: Array<{ chatJid: string; typing: boolean }> = [];
