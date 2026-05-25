@@ -37,3 +37,35 @@
 - Workspace matching decision: previous plan context is included only when the effective workspace root matches the current execute request. This avoids carrying a plan from one project into another project just because it came from the same chat.
 - Evaluator loop change: execute mode now evaluates the initial result and each refined result up to the refinement cap, rather than allowing the final refinement to go unchecked. This makes the QA verdict in the final message match the latest evaluated output.
 - Release hygiene decision: `groups/**/coder-runs/` is ignored because these artifacts are runtime records like logs and group state, not release assets. The final message gives absolute paths so the operator can inspect them locally.
+
+## 2026-05-25 — Streaming Simplification (SPEC Implementation)
+
+### Decisions Not In The Spec
+
+1. **pi-runner: kept existing rate-limiting in `publishDraftPreview`**
+   The spec said "replace direct hostEventBus.publish with onProgressEvent({ kind: 'delta' })". In practice, `publishDraftPreview` already had its own rate-limiting (min interval, dedup by text). Kept that in place and only swapped the delivery mechanism. StreamConsumer also has rate-limiting, so this is belt-and-suspenders — but removing pi-runner's throttle would change behavior for callers not yet on StreamConsumer.
+
+2. **run-progress.ts: added `delta` case (no-op)**
+   The existing `createRunProgressReporter` switch would hit `default: return` for the new `delta` kind. Added explicit `case 'delta': return` for TypeScript exhaustiveness safety.
+
+3. **Removed `hostEventBus` AND `createHostEventId` imports from pi-runner**
+   Both became dead code after the `publishDraftPreview` change. `createHostEventId` was only used to generate IDs for `telegram_preview_requested` events.
+
+### Tradeoffs
+
+- **StreamConsumer.onDelta is async, old publishDraftPreview was sync**: The old code fired `hostEventBus.publish()` synchronously. `StreamConsumer.onDelta()` returns a Promise. In `handleProgress` for `case 'delta'`, we call `this.onDelta(event.text)` without awaiting — matches the fire-and-forget pattern of the old system.
+
+### PR Structure Change
+Spec called for 3 separate PRs. Doing 2 commits on one branch instead: Commit 1 (additive, new files), Commit 2 (the swap). Simpler for review.
+
+### Bridge Pattern for Finalization (not in spec)
+The spec said "use StreamConsumer.getPreviewState() instead of telegramPreviewRegistry in message-dispatch.ts". In practice, the finalization path in message-dispatch.ts has deep dependencies on `consumeTelegramHostStreamState`, `consumeTelegramHostCompletedRun`, and `resolveTelegramStreamCompletionState`. Instead of rewriting all of that, I used a bridge: after `executeRun` completes, the StreamConsumer's preview state is written INTO `telegramPreviewRegistry`. This means message-dispatch.ts works unchanged. Full decoupling deferred to follow-up.
+
+### LongRunService deferred
+The spec said wire StreamConsumer into LongRunService. The LongRunService still uses `createRunProgressReporter` which emits `run_progress` events to hostEventBus, and the `processHostEvent` handler still routes those to Telegram. This path works correctly — StreamConsumer only handles the `runAgent` path. LongRunService migration is a clean follow-up since the paths don't conflict.
+
+### tool_progress handler simplified, not deleted
+The `processHostEvent` `tool_progress` handler was routing tool events from hostEventBus to Telegram via `queueTelegramToolProgressUpdate`. Since StreamConsumer now handles tool events directly in the `runAgent` callback, the handler was simplified to a no-op (events stay on the bus for TUI consumers).
+
+### Test update: pi-runner-stale.test.ts
+Test "creates an early Telegram draft" was listening for `telegram_preview_requested` events on hostEventBus. Updated to use `onProgressEvent` callback with `kind: 'delta'` instead, matching the new pi-runner behavior.
