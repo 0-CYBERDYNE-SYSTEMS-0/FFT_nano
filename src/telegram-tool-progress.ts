@@ -144,7 +144,9 @@ export function shouldUseTelegramPreviewToolTrail(params: {
 }): boolean {
   return (
     params.deliveryMode !== 'off' &&
-    (params.verboseMode === 'all' || params.verboseMode === 'verbose')
+    (params.verboseMode === 'new' ||
+      params.verboseMode === 'all' ||
+      params.verboseMode === 'verbose')
   );
 }
 
@@ -160,11 +162,13 @@ export function shouldUseStandaloneTelegramToolProgress(params: {
 
 export function buildTelegramPreviewToolTrailEntry(
   event: TelegramToolProgressEvent,
-  mode: Extract<VerboseMode, 'all' | 'verbose'>,
+  mode: Extract<VerboseMode, 'new' | 'all' | 'verbose'>,
+  lastToolName?: string,
 ): string | null {
   if (event.status !== 'start') return null;
+  if (mode === 'new' && event.toolName === lastToolName) return null;
   const emoji = getTelegramToolEmoji(event.toolName);
-  if (mode === 'all') {
+  if (mode === 'new' || mode === 'all') {
     return `${emoji} ${event.toolName}`;
   }
   const preview = extractToolProgressPreview(event.args);

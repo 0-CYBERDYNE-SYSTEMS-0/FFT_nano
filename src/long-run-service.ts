@@ -260,6 +260,14 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         phase = 'thinking';
       } else if (event.kind === 'assistant' || event.kind === 'stdout') {
         phase = event.kind;
+        if (event.kind === 'assistant' && event.text?.trim()) {
+          deps.emitTuiChatEvent({
+            runId,
+            sessionKey,
+            state: 'delta',
+            message: { role: 'assistant', content: event.text },
+          });
+        }
       } else if (event.kind === 'wait') {
         phase = 'waiting_permission';
         detail = event.reason;
@@ -299,7 +307,6 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         deps.getRuntimePrefs(run.chat_jid),
         {
           suppressErrorReply: true,
-          suppressPreviewStreaming: true,
           skipSkillMaintenance: true,
           lifecyclePolicyOverride: lifecyclePolicyOverride(),
           onProgressEvent: noteProgress,

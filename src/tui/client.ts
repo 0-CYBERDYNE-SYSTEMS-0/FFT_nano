@@ -350,6 +350,16 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         return;
       }
 
+      if (evt.state === 'delta') {
+        const message = parseChatMessage(evt.message);
+        if (!message || message.role !== 'assistant') return;
+        activeRunId = evt.runId;
+        setActivityStatus('running');
+        chatLog.updateAssistant(message.text, evt.runId);
+        tui.requestRender();
+        return;
+      }
+
       if (evt.state === 'final') {
         if (activeRunId === evt.runId) activeRunId = null;
         const message = parseChatMessage(evt.message);
@@ -403,6 +413,22 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           evt.data,
           sessionPrefs.verboseMode || 'all',
         );
+        tui.requestRender();
+        return;
+      }
+
+      if (evt.stream === 'progress') {
+        const data = evt.data || {};
+        if (['completed', 'failed', 'aborted'].includes(data.phase || '')) {
+          if (activeRunId === evt.runId) activeRunId = null;
+          setActivityStatus(data.phase === 'failed' ? 'error' : 'idle');
+        } else {
+          activeRunId = evt.runId;
+          setActivityStatus('running');
+        }
+        if (data.text && !/^Agent status: Still /i.test(data.text)) {
+          chatLog.addSystem(data.text);
+        }
         tui.requestRender();
         return;
       }
