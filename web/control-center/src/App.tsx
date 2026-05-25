@@ -131,6 +131,36 @@ function asText(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function summarizeAgentEvent(payload: unknown): string {
+  const event = (payload || {}) as {
+    sessionKey?: string;
+    runId?: string;
+    stream?: string;
+    data?: Record<string, unknown>;
+  };
+  const session = event.sessionKey || '-';
+  const run = event.runId || '-';
+  const data = event.data || {};
+  if (event.stream === 'progress') {
+    return [
+      'progress',
+      session,
+      run,
+      String(data.phase || '-'),
+      String(data.text || ''),
+    ]
+      .join(' ')
+      .trim();
+  }
+  if (event.stream === 'tool') {
+    return `tool ${session} ${run} ${String(data.toolName || '-')} ${String(data.status || '-')}`.trim();
+  }
+  if (event.stream === 'lifecycle') {
+    return `lifecycle ${session} ${run} ${String(data.phase || '-')}`.trim();
+  }
+  return `agent ${asText(payload).slice(0, 300)}`;
+}
+
 function renderMarkdownLite(input: string): JSX.Element {
   return <pre className="markdown-lite">{input || '(empty)'}</pre>;
 }
@@ -414,12 +444,33 @@ export function App(): JSX.Element {
             },
           ]);
         }
+        if (
+          (payload.state === 'delta' || payload.state === 'final') &&
+          payload.message?.role === 'assistant'
+        ) {
+          setActiveRunId(payload.runId || '');
+          setHistory((prev) => {
+            const idx = prev.findIndex(
+              (msg) => msg.runId === payload.runId && msg.role === 'assistant',
+            );
+            const nextMessage = {
+              role: 'assistant' as const,
+              text: payload.message?.content || '',
+              timestamp: new Date().toISOString(),
+              runId: payload.runId,
+            };
+            if (idx === -1) return [...prev, nextMessage];
+            const next = [...prev];
+            next[idx] = nextMessage;
+            return next;
+          });
+        }
         if (['final', 'aborted', 'error'].includes(payload.state || ''))
           setActiveRunId('');
         return;
       }
       if (parsed.event === 'agent_event') {
-        appendEvent(`agent ${asText(parsed.payload).slice(0, 300)}`);
+        appendEvent(summarizeAgentEvent(parsed.payload));
       }
     };
     return () => {
