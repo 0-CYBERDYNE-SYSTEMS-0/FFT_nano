@@ -7,10 +7,32 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-25
+
+### Added
+
+- Durable long-running agent runs can persist across process restarts and expose
+  operator controls/status through Telegram command surfaces.
+- Termux installer support for Android-hosted setup paths.
+
 ### Fixed
 
 - `/update` now preserves dirty local checkouts by stashing tracked and untracked
   changes, pulling upstream, reapplying the stash, then rebuilding/restarting.
+- `/update` falls back to `origin/main` when the current branch ref is missing.
+- Telegram delivery timeout recovery now keeps operator feedback and final delivery
+  paths consistent across delayed runs.
+- Durable long-run timeout handling now reports state transitions more clearly and
+  recovers long-running work through the long-run service.
+- Telegram long-run feedback now includes hardened status reporting for runs that
+  continue beyond normal response windows.
+- TUI startup now removes a stale Unix socket before binding.
+
+## [0.3.0] - 2026-05-11
+
+### Fixed
+
+- Release version bump to `0.3.0`.
 
 ## [0.2.2] - 2026-05-11
 
