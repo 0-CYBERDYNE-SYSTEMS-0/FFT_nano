@@ -184,6 +184,8 @@ export function createRunProgressReporter(params: {
         );
         clearHeartbeat();
         return;
+      case 'delta':
+        return;
       case 'assistant':
         clearHeartbeat();
         return;
