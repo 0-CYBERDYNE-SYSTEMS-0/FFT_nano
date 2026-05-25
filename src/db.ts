@@ -795,6 +795,22 @@ export function listAgentRunsForChat(
     .all(chatJid, safeLimit) as AgentRunRecord[];
 }
 
+export function listActiveAgentRuns(chatJid?: string): AgentRunRecord[] {
+  const sql = chatJid
+    ? `
+      SELECT * FROM agent_runs
+      WHERE chat_jid = ? AND kind = 'agent_long' AND status IN ('queued', 'running')
+      ORDER BY created_at ASC
+    `
+    : `
+      SELECT * FROM agent_runs
+      WHERE kind = 'agent_long' AND status IN ('queued', 'running')
+      ORDER BY created_at ASC
+    `;
+  const statement = db.prepare(sql);
+  return (chatJid ? statement.all(chatJid) : statement.all()) as AgentRunRecord[];
+}
+
 export function updateAgentRun(
   id: string,
   updates: Partial<{
