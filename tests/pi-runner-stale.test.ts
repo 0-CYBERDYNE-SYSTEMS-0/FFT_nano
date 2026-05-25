@@ -102,6 +102,86 @@ setTimeout(() => process.exit(0), 10);
   return executablePath;
 }
 
+function writeTimeoutPiExecutable(dir: string): string {
+  const executablePath = path.join(dir, 'timeout-pi.js');
+  fs.writeFileSync(
+    executablePath,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'message_delta', delta: { content: [{ type: 'text', text: 'partial before timeout' }] } }) + '\\n');
+setTimeout(() => process.exit(0), 1000);
+`,
+    'utf8',
+  );
+  fs.chmodSync(executablePath, 0o755);
+  return executablePath;
+}
+
+test(
+  'runContainerAgent writes timeout capture on hard timeout',
+  { timeout: 3000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-timeout-'));
+    const fakePiPath = writeTimeoutPiExecutable(tempDir);
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_timeout_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'timeout',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      requestId: 'req-timeout-capture',
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      suppressPreviewStreaming: true,
+      lifecyclePolicyOverride: {
+        hardTimeoutMs: 100,
+        staleAfterMs: null,
+        toolActiveStaleMs: null,
+        waitStateStaleMs: null,
+        allowFreshSessionFallback: false,
+      },
+    });
+
+    assert.equal(output.status, 'error');
+    assert.equal(output.error, 'Pi runner timed out after 100ms');
+
+    const captureDir = path.join(workspaceDir, 'logs', 'pi-runs');
+    const captures = fs
+      .readdirSync(captureDir)
+      .filter((name) => name.includes('req-timeout-capture-timeout'));
+    assert.equal(captures.length, 1);
+    const payload = JSON.parse(
+      fs.readFileSync(path.join(captureDir, captures[0] as string), 'utf8'),
+    );
+    assert.equal(payload.reason, 'timeout');
+    assert.equal(payload.timeoutMs, 100);
+    assert.equal(typeof payload.stdout, 'string');
+    assert.equal(typeof payload.stderr, 'string');
+  },
+);
+
 test(
   'runContainerAgent retries a stale continued interactive run with a fresh session',
   { timeout: 5000, concurrency: false },
@@ -683,7 +763,6 @@ setTimeout(() => process.exit(0), 10);
     assert.deepEqual(deliveredTexts, []);
   },
 );
-
 
 function writeLongQuietToolPiExecutable(dir: string): string {
   const executablePath = path.join(dir, 'fake-pi-long-tool.js');
