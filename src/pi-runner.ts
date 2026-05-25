@@ -63,9 +63,6 @@ import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox } from './sandbox.js';
 import type { RegisteredGroup } from './types.js';
-import { hostEventBus } from './app-state.js';
-import { createHostEventId } from './runtime/host-events.js';
-
 export interface ContainerInput {
   prompt: string;
   groupFolder: string;
@@ -162,6 +159,11 @@ export type ContainerProgressEvent =
   | {
       kind: 'thinking';
       at: number;
+    }
+  | {
+      kind: 'delta';
+      at: number;
+      text: string;
     }
   | {
       kind: 'wait';
@@ -1459,17 +1461,7 @@ export async function runContainerAgent(
         const now = Date.now();
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
         if (normalized === lastDraftText) return;
-        const requestId = (input.requestId || '').trim();
-        if (!requestId) return;
-        hostEventBus.publish({
-          kind: 'telegram_preview_requested',
-          id: createHostEventId('preview'),
-          createdAt: new Date(now).toISOString(),
-          source: 'pi-runner',
-          chatJid: input.chatJid,
-          requestId,
-          text: normalized,
-        });
+        onProgressEvent?.({ kind: 'delta', at: now, text: normalized });
         streamedDraft = true;
         lastDraftSentAt = now;
         lastDraftText = normalized;
