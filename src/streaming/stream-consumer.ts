@@ -179,6 +179,10 @@ export class StreamConsumer {
         this.clearHeartbeat();
         return;
 
+      case 'delta':
+        this.onDelta(event.text);
+        return;
+
       case 'assistant':
         this.clearHeartbeat();
         return;

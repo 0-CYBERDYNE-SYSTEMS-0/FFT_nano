@@ -274,6 +274,8 @@ import {
   updateTelegramDraftPreview,
   updateTelegramPreview,
 } from './telegram-streaming.js';
+import { StreamConsumer } from './streaming/stream-consumer.js';
+import { createTelegramAdapter } from './streaming/telegram-adapter.js';
 import {
   awaitTelegramToolProgressRun,
   buildTelegramPreviewToolTrailEntry,
@@ -5536,6 +5538,8 @@ async function runAgent(
     const sessionKey = getSessionKeyForChat(chatJid);
     let runToolsInvoked = 0;
 
+    let streamConsumer: StreamConsumer | null = null;
+
     const executeRun = async (
       runPrefs: ChatRunPreferences,
       attemptRequestId = requestId,
@@ -5556,6 +5560,24 @@ async function runAgent(
       };
     }> => {
       let hadToolSideEffects = false;
+      if (
+        state.telegramBot &&
+        isTelegramJid(chatJid) &&
+        !suppressPreviewStreaming &&
+        (runPrefs.telegramDeliveryMode || 'stream') !== 'off'
+      ) {
+        streamConsumer = new StreamConsumer({
+          chatId: chatJid,
+          runId: attemptRequestId || `run-${Date.now()}`,
+          adapter: createTelegramAdapter(state.telegramBot),
+          label: 'Agent',
+          heartbeatMs: 0,
+          deliveryMode: runPrefs.telegramDeliveryMode || 'stream',
+          verboseMode: runPrefs.verboseMode || 'off',
+        });
+      } else {
+        streamConsumer = null;
+      }
       const output = await runContainerAgent(
         group,
         {
@@ -5571,20 +5593,14 @@ async function runAgent(
         (event) => {
           if (event.kind !== 'tool' || !attemptRequestId) return;
           hadToolSideEffects = true;
-          if (isTelegramJid(chatJid)) {
-            queueTelegramToolProgressUpdate(
-              chatJid,
-              attemptRequestId,
-              runPrefs.telegramDeliveryMode || 'stream',
-              runPrefs.verboseMode,
-              {
-                toolName: event.toolName,
-                status: event.status,
-                ...(event.args ? { args: event.args } : {}),
-                ...(event.output ? { output: event.output } : {}),
-                ...(event.error ? { error: event.error } : {}),
-              },
-            );
+          if (streamConsumer) {
+            streamConsumer.onToolEvent({
+              toolName: event.toolName,
+              status: event.status,
+              ...(event.args ? { args: event.args } : {}),
+              ...(event.output ? { output: event.output } : {}),
+              ...(event.error ? { error: event.error } : {}),
+            });
           }
           emitTuiToolEvent({
             runId: attemptRequestId,
@@ -5598,10 +5614,29 @@ async function runAgent(
           });
         },
         (request) => handlePermissionGateRequest(chatJid, request),
-        options.onProgressEvent,
+        (event) => {
+          if (streamConsumer) streamConsumer.handleProgress(event);
+          options.onProgressEvent?.(event);
+        },
       );
       cancelPendingConfirmationsForChat(chatJid);
       runToolsInvoked = output.toolExecutions?.length ?? 0;
+
+      // Bridge: write StreamConsumer preview state into the registry
+      // so the existing finalization path in message-dispatch.ts works unchanged
+      if (streamConsumer && attemptRequestId && isTelegramJid(chatJid)) {
+        const preview = streamConsumer.getPreviewState();
+        if (preview) {
+          const streamKey = getTelegramPreviewRunKey(chatJid, attemptRequestId);
+          telegramPreviewRegistry.setPreviewState(streamKey, {
+            messageId: Number(preview.messageId),
+            lastText: preview.lastText,
+            updatedAt: Date.now(),
+          });
+        }
+        streamConsumer.stop();
+      }
+
       return {
         ...output,
         hadToolSideEffects,
@@ -6903,89 +6938,6 @@ async function prepareTelegramCompletionState(params: {
 
 async function processHostEvent(event: HostEvent): Promise<void> {
   switch (event.kind) {
-    case 'telegram_preview_requested': {
-      if (!state.telegramBot) return;
-      if (!isTelegramJid(event.chatJid)) return;
-      if (!state.registeredGroups[event.chatJid]) return;
-
-      const deliveryMode = getTelegramDeliveryMode(event.chatJid);
-      if (deliveryMode === 'off') return;
-
-      const streamKey = getTelegramPreviewRunKey(
-        event.chatJid,
-        event.requestId,
-      );
-
-      if (deliveryMode === 'append') {
-        const toolTrailFooter =
-          telegramPreviewRegistry.getToolTrailFooter(streamKey);
-        const text = toolTrailFooter
-          ? `${event.text}\n\n${toolTrailFooter}`
-          : event.text;
-        await state.telegramBot.sendMessage(event.chatJid, text);
-        return;
-      }
-
-      if (
-        deliveryMode === 'draft' &&
-        canUseTelegramNativeDraft(event.chatJid)
-      ) {
-        const sendResult = await updateTelegramDraftPreview({
-          bot: state.telegramBot,
-          registry: telegramPreviewRegistry,
-          chatJid: event.chatJid,
-          requestId: event.requestId,
-          draftId: deriveTelegramDraftId(streamKey),
-          text: event.text,
-          toolTrailFooter:
-            telegramPreviewRegistry.getToolTrailFooter(streamKey),
-        });
-        if (sendResult.error) {
-          logger.warn(
-            {
-              chatJid: event.chatJid,
-              requestId: event.requestId,
-              runKey: sendResult.runKey,
-              err: sendResult.error,
-            },
-            'Telegram draft preview update failed; falling back to normal completion only for this run',
-          );
-        }
-        return;
-      }
-
-      const toolTrailFooter =
-        telegramPreviewRegistry.getToolTrailFooter(streamKey);
-      const sendResult = await updateTelegramPreview({
-        bot: state.telegramBot,
-        registry: telegramPreviewRegistry,
-        chatJid: event.chatJid,
-        requestId: event.requestId,
-        text: event.text,
-        toolTrailFooter,
-      });
-      if (sendResult.error) {
-        logger.warn(
-          {
-            chatJid: event.chatJid,
-            requestId: event.requestId,
-            runKey: sendResult.runKey,
-            err: sendResult.error,
-          },
-          'Telegram preview update failed; disabling preview updates for this run',
-        );
-      }
-      if (sendResult.pendingReaction !== undefined && sendResult.messageId) {
-        state.telegramBot
-          .setMessageReaction(
-            event.chatJid,
-            sendResult.messageId,
-            sendResult.pendingReaction,
-          )
-          .catch(() => {});
-      }
-      return;
-    }
     case 'chat_delivery_requested':
       await deliverRuntimeAgentMessage({
         chatJid: event.chatJid,
@@ -7054,30 +7006,10 @@ async function processHostEvent(event: HostEvent): Promise<void> {
         'Host event reported error',
       );
       return;
-    case 'tool_progress': {
-      if (!event.chatJid) return;
-      if (!isTelegramJid(event.chatJid)) return;
-      if (!state.telegramBot) return;
-
-      const deliveryMode = getTelegramDeliveryMode(event.chatJid);
-      const verboseMode = getEffectiveVerboseMode(
-        state.chatRunPreferences[event.chatJid]?.verboseMode,
-      );
-      queueTelegramToolProgressUpdate(
-        event.chatJid,
-        event.runId,
-        deliveryMode,
-        verboseMode,
-        {
-          toolName: event.toolName,
-          status: event.status,
-          ...(event.args ? { args: event.args } : {}),
-          ...(event.output ? { output: event.output } : {}),
-          ...(event.error ? { error: event.error } : {}),
-        },
-      );
+    case 'tool_progress':
+      // Telegram routing now handled by StreamConsumer in runAgent callback.
+      // Event stays on the bus for TUI consumers.
       return;
-    }
     case 'run_progress': {
       statusTelemetry.noteRunProgress({
         runId: event.runId,

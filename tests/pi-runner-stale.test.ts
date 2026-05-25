@@ -565,17 +565,8 @@ test(
     const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
     const requestId = `req-draft-${Date.now().toString(36)}`;
     const seenPreviewTexts: string[] = [];
-    const unsubscribe = hostEventBus.subscribe((event) => {
-      if (
-        event.kind === 'telegram_preview_requested' &&
-        event.requestId === requestId
-      ) {
-        seenPreviewTexts.push(event.text);
-      }
-    });
 
     t.after(() => {
-      unsubscribe();
       fs.rmSync(tempDir, { recursive: true, force: true });
       fs.rmSync(workspaceDir, { recursive: true, force: true });
       fs.rmSync(groupDir, { recursive: true, force: true });
@@ -590,21 +581,32 @@ test(
       added_at: '2026-03-31T00:00:00.000Z',
     };
 
-    const output = await runContainerAgent(group, {
-      prompt: 'reply once',
-      groupFolder,
-      chatJid: 'telegram:test',
-      isMain: true,
-      assistantName: 'FarmFriend',
-      requestId,
-      noContinue: true,
-      workspaceDirOverride: workspaceDir,
-      piExecutableOverride: fakePiPath,
-      lifecyclePolicyOverride: {
-        staleAfterMs: 2500,
-        hardTimeoutMs: 2500,
+    const output = await runContainerAgent(
+      group,
+      {
+        prompt: 'reply once',
+        groupFolder,
+        chatJid: 'telegram:test',
+        isMain: true,
+        assistantName: 'FarmFriend',
+        requestId,
+        noContinue: true,
+        workspaceDirOverride: workspaceDir,
+        piExecutableOverride: fakePiPath,
+        lifecyclePolicyOverride: {
+          staleAfterMs: 2500,
+          hardTimeoutMs: 2500,
+        },
       },
-    });
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        if (event.kind === 'delta') {
+          seenPreviewTexts.push(event.text);
+        }
+      },
+    );
 
     assert.equal(output.status, 'success');
     assert.equal(output.result, 'final answer');
