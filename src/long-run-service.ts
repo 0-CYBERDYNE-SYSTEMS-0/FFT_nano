@@ -35,6 +35,7 @@ export interface LongRunServiceDeps {
     text: string,
     opts?: { prefixWhatsApp?: boolean },
   ) => Promise<boolean>;
+  setTyping: (chatJid: string, typing: boolean) => Promise<void>;
   persistAssistantHistory: (
     chatJid: string,
     text: string,
@@ -94,6 +95,7 @@ export interface LongRunService {
       continuationPreamble?: string;
       sourceRequestId?: string;
       source?: string;
+      onCreated?: (run: AgentRunRecord) => Promise<void>;
     },
   ) => Promise<AgentRunRecord>;
   listRunsText: (chatJid: string) => string;
@@ -216,13 +218,25 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       phase: 'start',
       detail: 'long run',
     });
+    deps.emitRunProgress({
+      chatJid: run.chat_jid,
+      requestId: runId,
+      phase: 'spawn',
+      text: `Agent status: Starting long run ${runId}.`,
+      detail: 'starting',
+    });
+    await deps.setTyping(run.chat_jid, true);
 
     const reporter = createRunProgressReporter({
       source: 'long-run-service',
       runId,
       sessionKey,
       chatJid: run.chat_jid,
-      heartbeatMs: 60_000,
+      heartbeatMs: parseRuntimeMs(
+        process.env.FFT_NANO_LONG_RUN_PROGRESS_HEARTBEAT_MS,
+        15_000,
+        1_000,
+      ),
       label: 'Agent',
       emit: (event) => {
         deps.emitRunProgress({
@@ -327,6 +341,13 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
           current_phase: 'failed',
           error: reason,
         });
+        deps.emitRunProgress({
+          chatJid: run.chat_jid,
+          requestId: runId,
+          phase: 'failed',
+          text: `Agent status: Run ${runId} failed.`,
+          detail: reason,
+        });
         deps.emitTuiChatEvent({
           runId,
           sessionKey,
@@ -403,6 +424,16 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         current_phase: status,
         error: reason,
       });
+      deps.emitRunProgress({
+        chatJid: run.chat_jid,
+        requestId: runId,
+        phase: status,
+        text:
+          status === 'aborted'
+            ? `Agent status: Run ${runId} aborted.`
+            : `Agent status: Run ${runId} failed.`,
+        detail: reason,
+      });
       deps.logger?.error?.({ err, runId }, 'Long agent run failed');
       await deps.sendAgentResultMessage(
         run.chat_jid,
@@ -419,6 +450,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
     } finally {
       reporter.stop();
       active.delete(runId);
+      await deps.setTyping(run.chat_jid, false);
     }
   }
 
@@ -430,6 +462,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       continuationPreamble?: string;
       sourceRequestId?: string;
       source?: string;
+      onCreated?: (run: AgentRunRecord) => Promise<void>;
     } = {},
   ): Promise<AgentRunRecord> {
     const group = deps.getGroupForChat(chatJid);
@@ -447,6 +480,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       kind: 'agent_long',
       prompt: finalPrompt,
     });
+    await options.onCreated?.(run);
     void runLongAgentRun(run.id).catch((err) => {
       deps.logger?.error?.({ err, runId: run.id }, 'Long agent run crashed');
     });
@@ -525,11 +559,14 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         await deps.sendMessage(chatJid, 'Usage: /run <task>');
         return true;
       }
-      const run = await startRun(chatJid, task);
-      await deps.sendMessage(
-        chatJid,
-        `Started long run ${run.id}. I'll post the result here.`,
-      );
+      await startRun(chatJid, task, {
+        onCreated: async (run) => {
+          await deps.sendMessage(
+            chatJid,
+            `Started long run ${run.id}. I'll post the result here.`,
+          );
+        },
+      });
       return true;
     }
     if (cmd === '/runs') {
