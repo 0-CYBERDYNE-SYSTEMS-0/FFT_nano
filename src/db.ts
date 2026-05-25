@@ -84,6 +84,25 @@ export function initDatabaseAtPath(dbPath: string): void {
       FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT,
+      last_progress_at TEXT,
+      current_phase TEXT,
+      current_detail TEXT,
+      result TEXT,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_chat_created ON agent_runs(chat_jid, created_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
   `);
 
   // Add sender_name column if it doesn't exist (migration for existing DBs)
@@ -161,6 +180,8 @@ export function initDatabaseAtPath(dbPath: string): void {
   if (!hadMessagesFts) {
     db.exec(`INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')`);
   }
+
+  markActiveAgentRunsFailedOnStartup();
 }
 
 export function closeDatabase(): void {
@@ -696,4 +717,122 @@ export function searchMessagesByFts(
   return db
     .prepare(sql)
     .all(ftsQuery, ...chatJids, limit) as TranscriptSearchRow[];
+}
+
+export type AgentRunKind = 'agent_long';
+export type AgentRunStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'aborted';
+
+export interface AgentRunRecord {
+  id: string;
+  chat_jid: string;
+  group_folder: string;
+  kind: AgentRunKind;
+  status: AgentRunStatus;
+  prompt: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  last_progress_at: string | null;
+  current_phase: string | null;
+  current_detail: string | null;
+  result: string | null;
+  error: string | null;
+}
+
+export function createAgentRun(input: {
+  id: string;
+  chatJid: string;
+  groupFolder: string;
+  kind: AgentRunKind;
+  prompt: string;
+  createdAt?: string;
+}): AgentRunRecord {
+  const createdAt = input.createdAt || new Date().toISOString();
+  db.prepare(
+    `
+    INSERT INTO agent_runs (
+      id, chat_jid, group_folder, kind, status, prompt, created_at
+    ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
+  `,
+  ).run(
+    input.id,
+    input.chatJid,
+    input.groupFolder,
+    input.kind,
+    input.prompt,
+    createdAt,
+  );
+  return getAgentRunById(input.id) as AgentRunRecord;
+}
+
+export function getAgentRunById(id: string): AgentRunRecord | undefined {
+  return db.prepare(`SELECT * FROM agent_runs WHERE id = ?`).get(id) as
+    | AgentRunRecord
+    | undefined;
+}
+
+export function listAgentRunsForChat(
+  chatJid: string,
+  limit = 10,
+): AgentRunRecord[] {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(50, Math.floor(limit)))
+    : 10;
+  return db
+    .prepare(
+      `
+      SELECT * FROM agent_runs
+      WHERE chat_jid = ? AND kind = 'agent_long'
+      ORDER BY created_at DESC
+      LIMIT ?
+    `,
+    )
+    .all(chatJid, safeLimit) as AgentRunRecord[];
+}
+
+export function updateAgentRun(
+  id: string,
+  updates: Partial<{
+    status: AgentRunStatus;
+    started_at: string | null;
+    finished_at: string | null;
+    last_progress_at: string | null;
+    current_phase: string | null;
+    current_detail: string | null;
+    result: string | null;
+    error: string | null;
+  }>,
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return;
+  values.push(id);
+  db.prepare(`UPDATE agent_runs SET ${fields.join(', ')} WHERE id = ?`).run(
+    ...values,
+  );
+}
+
+export function markActiveAgentRunsFailedOnStartup(): number {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `
+      UPDATE agent_runs
+      SET status = 'failed',
+          finished_at = ?,
+          error = 'host_restarted_before_completion'
+      WHERE kind = 'agent_long' AND status IN ('queued', 'running')
+    `,
+    )
+    .run(now);
+  return result.changes;
 }

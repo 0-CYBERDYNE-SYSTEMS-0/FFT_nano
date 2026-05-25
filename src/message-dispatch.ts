@@ -254,6 +254,10 @@ export interface MessageDispatcherDeps {
     suppressUserDelivery?: boolean;
     controlPlaneStatus?: 'verification_failed';
   }>;
+  handleLongRunCommand?: (
+    chatJid: string,
+    content: string,
+  ) => Promise<boolean>;
   runCodingTask?: (params: {
     requestId: string;
     parentRequestId?: string;
@@ -1626,6 +1630,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     status: 'started' | 'queued' | 'already_running';
   }> {
     const { chatJid, text, runId, deliver } = params;
+    if (text.trim().startsWith('/')) {
+      const handled = await deps.handleLongRunCommand?.(chatJid, text);
+      if (handled) return { runId, status: 'started' };
+    }
     const group = deps.state.registeredGroups[chatJid];
     if (!group) {
       throw new Error(`Chat is not registered: ${chatJid}`);

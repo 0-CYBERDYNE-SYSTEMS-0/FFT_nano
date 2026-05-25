@@ -5,6 +5,7 @@ import { createRunProgressReporter } from '../src/run-progress.ts';
 import { isTelegramRunStatusPreviewText } from '../src/telegram-streaming.ts';
 
 test('telegram run status preview guard accepts maintenance status prefixes', () => {
+  assert.equal(isTelegramRunStatusPreviewText('Agent status: Running bash.'), true);
   assert.equal(isTelegramRunStatusPreviewText('Coder status: Running bash.'), true);
   assert.equal(
     isTelegramRunStatusPreviewText('Skill manager status: Inspecting skills.'),

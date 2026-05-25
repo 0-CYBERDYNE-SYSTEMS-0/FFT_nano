@@ -23,8 +23,10 @@ export function createRunProgressReporter(params: {
   sessionKey: string;
   chatJid?: string;
   heartbeatMs: number;
+  label?: string;
   emit: (event: RunProgressEvent) => void;
 }) {
+  const label = params.label || 'Coder';
   let heartbeat: NodeJS.Timeout | null = null;
   let activeHeartbeatPhase: RunProgressPhase | null = null;
   let activeHeartbeatDetail = '';
@@ -84,7 +86,7 @@ export function createRunProgressReporter(params: {
         const suffix = detail ? ` ${detail}` : '';
         emitProgress(
           phase,
-          `Coder status: Still running${suffix} (${elapsedSeconds}s).`,
+          `${label} status: Still running${suffix} (${elapsedSeconds}s).`,
           detail ? { detail } : {},
         );
         return;
@@ -92,7 +94,7 @@ export function createRunProgressReporter(params: {
       if (phase === 'waiting_permission') {
         emitProgress(
           phase,
-          `Coder status: Still waiting for approval to continue (${elapsedSeconds}s).`,
+          `${label} status: Still waiting for approval to continue (${elapsedSeconds}s).`,
           detail ? { detail } : {},
         );
         return;
@@ -100,7 +102,7 @@ export function createRunProgressReporter(params: {
       if (phase === 'thinking') {
         emitProgress(
           phase,
-          `Coder status: Still reasoning about the task (${elapsedSeconds}s).`,
+          `${label} status: Still reasoning about the task (${elapsedSeconds}s).`,
           detail ? { detail } : {},
         );
       }
@@ -113,14 +115,14 @@ export function createRunProgressReporter(params: {
         emitProgress(
           'spawn',
           event.resumed
-            ? 'Coder status: Resuming worker session.'
-            : 'Coder status: Starting worker session.',
+            ? `${label} status: Resuming worker session.`
+            : `${label} status: Starting worker session.`,
           { detail: event.resumed ? 'resumed' : 'fresh' },
         );
         clearHeartbeat();
         return;
       case 'thinking':
-        emitProgress('thinking', 'Coder status: Reasoning about the task.');
+        emitProgress('thinking', `${label} status: Reasoning about the task.`);
         startHeartbeat('thinking');
         return;
       case 'tool':
@@ -130,7 +132,7 @@ export function createRunProgressReporter(params: {
         }
         emitProgress(
           'tool_running',
-          `Coder status: Running ${event.toolName}.`,
+          `${label} status: Running ${event.toolName}.`,
           { detail: event.toolName },
         );
         startHeartbeat('tool_running', event.toolName);
@@ -138,7 +140,7 @@ export function createRunProgressReporter(params: {
       case 'wait':
         emitProgress(
           'waiting_permission',
-          'Coder status: Waiting for approval to continue.',
+          `${label} status: Waiting for approval to continue.`,
           { detail: event.reason },
         );
         startHeartbeat('waiting_permission', event.reason);
@@ -146,14 +148,14 @@ export function createRunProgressReporter(params: {
       case 'retry_fresh':
         emitProgress(
           'retry_fresh',
-          'Coder status: Retrying with a fresh session.',
+          `${label} status: Retrying with a fresh session.`,
         );
         clearHeartbeat();
         return;
       case 'retry_delay':
         emitProgress(
           'retry_delay',
-          `Coder status: Retrying after ${event.delayMs}ms.`,
+          `${label} status: Retrying after ${event.delayMs}ms.`,
           {
             detail: event.reason,
             attempt: event.attempt,
@@ -165,7 +167,7 @@ export function createRunProgressReporter(params: {
       case 'retry_provider_switch':
         emitProgress(
           'retry_provider_switch',
-          `Coder status: Switching provider from ${event.fromProvider} to ${event.toProvider}.`,
+          `${label} status: Switching provider from ${event.fromProvider} to ${event.toProvider}.`,
           {
             fromProvider: event.fromProvider,
             toProvider: event.toProvider,
@@ -177,8 +179,8 @@ export function createRunProgressReporter(params: {
         emitProgress(
           'stale',
           event.retryingFresh
-            ? 'Coder status: Run stalled; retrying fresh.'
-            : 'Coder status: Run stalled.',
+            ? `${label} status: Run stalled; retrying fresh.`
+            : `${label} status: Run stalled.`,
         );
         clearHeartbeat();
         return;
@@ -190,7 +192,7 @@ export function createRunProgressReporter(params: {
       case 'retry_exhausted':
         emitProgress(
           'stale',
-          `Coder status: Retries exhausted. ${event.finalError}`,
+          `${label} status: Retries exhausted. ${event.finalError}`,
           { detail: event.finalError },
         );
         clearHeartbeat();
