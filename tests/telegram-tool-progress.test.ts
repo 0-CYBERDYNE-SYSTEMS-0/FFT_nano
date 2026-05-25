@@ -164,7 +164,7 @@ test('shouldUseStandaloneTelegramToolProgress enables all and verbose modes unle
   );
 });
 
-test('shouldUseTelegramPreviewToolTrail enables all and verbose modes unless delivery is off', () => {
+test('shouldUseTelegramPreviewToolTrail enables visible modes unless delivery is off', () => {
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
       deliveryMode: 'draft',
@@ -184,7 +184,7 @@ test('shouldUseTelegramPreviewToolTrail enables all and verbose modes unless del
       deliveryMode: 'partial',
       verboseMode: 'new',
     }),
-    false,
+    true,
   );
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
@@ -196,6 +196,29 @@ test('shouldUseTelegramPreviewToolTrail enables all and verbose modes unless del
 });
 
 test('buildTelegramPreviewToolTrailEntry keeps draft trail concise', () => {
+  assert.equal(
+    buildTelegramPreviewToolTrailEntry(
+      {
+        toolName: 'bash',
+        status: 'start',
+        args: '{"command":"git status"}',
+      },
+      'new',
+    ),
+    '🔥 bash',
+  );
+  assert.equal(
+    buildTelegramPreviewToolTrailEntry(
+      {
+        toolName: 'bash',
+        status: 'start',
+        args: '{"command":"git status"}',
+      },
+      'new',
+      'bash',
+    ),
+    null,
+  );
   assert.equal(
     buildTelegramPreviewToolTrailEntry(
       {

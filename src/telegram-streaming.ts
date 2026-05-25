@@ -57,6 +57,7 @@ const RUN_STATUS_PREVIEW_PREFIXES = [
   'Skill manager status:',
   'Librarian status:',
   'Run status:',
+  'Working on your reply',
 ];
 
 export function isTelegramRunStatusPreviewText(text: string): boolean {
@@ -134,14 +135,15 @@ class BaseTelegramStreamRegistry {
 
   appendToolTrail(runKey: string, entry: string): void {
     const trail = this.toolTrails.get(runKey) || [];
+    if (trail[trail.length - 1] === entry) return;
     trail.push(entry);
-    this.toolTrails.set(runKey, trail);
+    this.toolTrails.set(runKey, trail.slice(-8));
   }
 
   getToolTrailFooter(runKey: string): string | undefined {
     const trail = this.toolTrails.get(runKey);
     if (!trail || trail.length === 0) return undefined;
-    return trail.join(' → ');
+    return `Tools: ${trail.join(' → ')}`;
   }
 
   clearToolTrail(runKey: string): void {
