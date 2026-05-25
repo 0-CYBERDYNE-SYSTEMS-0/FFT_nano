@@ -77,10 +77,25 @@ export interface LongRunServiceDeps {
     error?: (payload: unknown, msg?: string) => void;
     warn?: (payload: unknown, msg?: string) => void;
   };
+  noteRunSettled?: (params: {
+    chatJid: string;
+    requestId: string;
+    ok: boolean;
+    result: string | null;
+  }) => void;
 }
 
 export interface LongRunService {
-  startRun: (chatJid: string, prompt: string) => Promise<AgentRunRecord>;
+  startRun: (
+    chatJid: string,
+    prompt: string,
+    options?: {
+      id?: string;
+      continuationPreamble?: string;
+      sourceRequestId?: string;
+      source?: string;
+    },
+  ) => Promise<AgentRunRecord>;
   listRunsText: (chatJid: string) => string;
   statusText: (chatJid: string, id: string) => string;
   cancelRun: (chatJid: string, id: string) => Promise<string>;
@@ -127,9 +142,7 @@ function isAbortError(err: unknown): boolean {
   return /abort|aborted|stopped|cancel/i.test(msg);
 }
 
-export function createLongRunService(
-  deps: LongRunServiceDeps,
-): LongRunService {
+export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
   const active = new Map<string, AbortController>();
 
   function lifecyclePolicyOverride() {
@@ -294,7 +307,16 @@ export function createLongRunService(
           phase: 'aborted',
           text: `Agent status: Run ${runId} aborted.`,
         });
-        await deps.sendAgentResultMessage(run.chat_jid, `Run ${runId} aborted.`);
+        await deps.sendAgentResultMessage(
+          run.chat_jid,
+          `Run ${runId} aborted.`,
+        );
+        deps.noteRunSettled?.({
+          chatJid: run.chat_jid,
+          requestId: runId,
+          ok: false,
+          result: 'cancelled',
+        });
         return;
       }
       if (!result.ok) {
@@ -321,6 +343,12 @@ export function createLongRunService(
           run.chat_jid,
           `Run ${runId} failed: ${reason}`,
         );
+        deps.noteRunSettled?.({
+          chatJid: run.chat_jid,
+          requestId: runId,
+          ok: false,
+          result: reason,
+        });
         return;
       }
       const output = result.result || 'Completed with no final text.';
@@ -355,6 +383,12 @@ export function createLongRunService(
         run.chat_jid,
         `Run ${runId} complete.\n\n${output}`,
       );
+      deps.noteRunSettled?.({
+        chatJid: run.chat_jid,
+        requestId: runId,
+        ok: true,
+        result: output,
+      });
     } catch (err) {
       const finishedAt = new Date().toISOString();
       const reason = isAbortError(err)
@@ -376,6 +410,12 @@ export function createLongRunService(
           ? `Run ${runId} aborted.`
           : `Run ${runId} failed: ${reason}`,
       );
+      deps.noteRunSettled?.({
+        chatJid: run.chat_jid,
+        requestId: runId,
+        ok: false,
+        result: reason,
+      });
     } finally {
       reporter.stop();
       active.delete(runId);
@@ -385,18 +425,27 @@ export function createLongRunService(
   async function startRun(
     chatJid: string,
     prompt: string,
+    options: {
+      id?: string;
+      continuationPreamble?: string;
+      sourceRequestId?: string;
+      source?: string;
+    } = {},
   ): Promise<AgentRunRecord> {
     const group = deps.getGroupForChat(chatJid);
     if (!group) throw new Error('Chat is not registered.');
     if (!deps.isMainChat(chatJid)) {
       throw new Error('Long runs are only available in the main/admin chat.');
     }
+    const finalPrompt = options.continuationPreamble
+      ? `${options.continuationPreamble.trim()}\n\n${prompt}`
+      : prompt;
     const run = createAgentRun({
-      id: makeLongRunId(),
+      id: options.id || makeLongRunId(),
       chatJid,
       groupFolder: group.folder,
       kind: 'agent_long',
-      prompt,
+      prompt: finalPrompt,
     });
     void runLongAgentRun(run.id).catch((err) => {
       deps.logger?.error?.({ err, runId: run.id }, 'Long agent run crashed');

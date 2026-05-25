@@ -3982,6 +3982,7 @@ const longRunService = createLongRunService({
   emitTuiAgentEvent,
   runAgent,
   getRuntimePrefs: (chatJid) => state.chatRunPreferences[chatJid] || {},
+  noteRunSettled: noteContinuityRunSettled,
   logger,
 });
 
@@ -5027,6 +5028,8 @@ const messageDispatcher = createMessageDispatcher({
   runAgent,
   handleLongRunCommand: (chatJid, content) =>
     longRunService.handleCommand(chatJid, content),
+  startLongRun: (chatJid, prompt, options) =>
+    longRunService.startRun(chatJid, prompt, options),
   runCodingTask,
   consumeNextRunNoContinue,
   updateChatUsage,
@@ -5409,6 +5412,7 @@ async function runAgent(
   };
   suppressUserDelivery?: boolean;
   controlPlaneStatus?: 'verification_failed';
+  errorKind?: 'runner_timeout';
 }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const workspaceDir = isMain
@@ -5603,6 +5607,22 @@ async function runAgent(
       }
       if (isUserAbortedErrorMessage(output.error)) {
         return { result: null, streamed: false, ok: true };
+      }
+      if (
+        typeof output.error === 'string' &&
+        /^Pi runner timed out after \d+ms\b/.test(output.error.trim())
+      ) {
+        logger.warn(
+          { group: group.name, error: output.error },
+          'Container agent timed out',
+        );
+        return {
+          result: output.error,
+          streamed: !!output.streamed,
+          ok: false,
+          usage: output.usage,
+          errorKind: 'runner_timeout',
+        };
       }
       if (options.suppressErrorReply) {
         logger.warn(

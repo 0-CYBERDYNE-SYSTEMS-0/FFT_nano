@@ -637,13 +637,14 @@ function truncateRunCaptureText(value: string): {
 function writeRawRunCapture(params: {
   groupDir: string;
   requestId?: string;
-  reason: 'error' | 'empty_final';
+  reason: 'error' | 'empty_final' | 'timeout';
   code: number | null;
   stdout: string;
   stderr: string;
   stdoutTruncated?: boolean;
   provider?: string;
   model?: string;
+  timeoutMs?: number;
 }): void {
   try {
     const outDir = path.join(params.groupDir, 'logs', 'pi-runs');
@@ -661,6 +662,7 @@ function writeRawRunCapture(params: {
       code: params.code,
       provider: params.provider || null,
       model: params.model || null,
+      timeoutMs: params.timeoutMs || null,
       stdout: stdout.text,
       stderr: stderr.text,
       truncated: {
@@ -1228,15 +1230,51 @@ export async function runContainerAgent(
 
   // Hoisted reference so timeout/abort handlers can kill the active child process.
   let activeChild: import('child_process').ChildProcess | null = null;
+  let runFinalized = false;
+  let activeChildSnapshot: {
+    stdout: string;
+    stderr: string;
+    stdoutTruncated?: boolean;
+  } = {
+    stdout: '',
+    stderr: '',
+    stdoutTruncated: false,
+  };
+  let settleActiveLocal:
+    | ((value: {
+        code: number | null;
+        stdout: string;
+        stderr: string;
+        streamedDraft: boolean;
+        visibleAssistantText?: string;
+        stdoutTruncated?: boolean;
+        retryFresh?: boolean;
+      }) => void)
+    | null = null;
 
   const killActiveChild = () => {
     if (!activeChild) return;
     const ref = activeChild;
     if (ref.exitCode !== null || ref.signalCode !== null) return;
-    ref.kill('SIGTERM');
+    const signal = (sig: NodeJS.Signals) => {
+      if (ref.pid && process.platform !== 'win32') {
+        try {
+          process.kill(-ref.pid, sig);
+          return;
+        } catch {
+          // Fall back to signaling the direct child below.
+        }
+      }
+      ref.kill(sig);
+    };
+    signal('SIGTERM');
+    ref.stdin?.destroy();
+    ref.stdout?.destroy();
+    ref.stderr?.destroy();
+    ref.unref();
     const forceKillTimer = setTimeout(() => {
       if (ref.exitCode === null && ref.signalCode === null) {
-        ref.kill('SIGKILL');
+        signal('SIGKILL');
       }
     }, 5_000);
     forceKillTimer.unref?.();
@@ -1334,6 +1372,7 @@ export async function runContainerAgent(
         cwd: wp.groupDir,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
       });
       const closeRpcInput = () => {
         if (
@@ -1358,6 +1397,11 @@ export async function runContainerAgent(
         );
       }
       activeChild = child;
+      activeChildSnapshot = {
+        stdout: '',
+        stderr: '',
+        stdoutTruncated: false,
+      };
       onProgressEvent?.({
         kind: 'spawn',
         at: Date.now(),
@@ -1407,6 +1451,7 @@ export async function runContainerAgent(
       let lastDraftSentAt = 0;
       let lastDraftText = '';
       const publishDraftPreview = (text: string, force = false) => {
+        if (runFinalized || localSettled) return;
         if (!canStreamTelegramDraft) return;
         const normalized = normalizeTelegramPreviewText(text);
         if (!normalized) return;
@@ -1441,8 +1486,15 @@ export async function runContainerAgent(
         localSettled = true;
         if (ticker) clearInterval(ticker);
         if (staleTimer) clearTimeout(staleTimer);
+        activeChildSnapshot = {
+          stdout: value.stdout,
+          stderr: value.stderr,
+          stdoutTruncated: value.stdoutTruncated,
+        };
+        if (settleActiveLocal === settleLocal) settleActiveLocal = null;
         resolve(value);
       };
+      settleActiveLocal = settleLocal;
 
       const armStaleTimer = (
         delayMs: number | null = lifecyclePolicy.staleAfterMs,
@@ -1450,6 +1502,7 @@ export async function runContainerAgent(
         if (!delayMs) return;
         if (staleTimer) clearTimeout(staleTimer);
         staleTimer = setTimeout(() => {
+          if (runFinalized || localSettled) return;
           const now = Date.now();
           const retryFresh =
             useContinue &&
@@ -1501,6 +1554,7 @@ export async function runContainerAgent(
               status: 'start' | 'ok' | 'error';
             },
       ) => {
+        if (runFinalized || localSettled) return;
         sawMeaningfulProgress = true;
         onProgressEvent?.(event);
         if (event.kind === 'tool') {
@@ -1522,6 +1576,7 @@ export async function runContainerAgent(
       };
 
       const noteActivity = (event?: { kind: 'stdout'; at: number }) => {
+        if (runFinalized || localSettled) return;
         if (event) onProgressEvent?.(event);
         armStaleTimer(
           sawToolActivity
@@ -1531,6 +1586,7 @@ export async function runContainerAgent(
       };
 
       const noteWaitState = (delayMs?: number, meaningful = true) => {
+        if (runFinalized || localSettled) return;
         if (meaningful) sawMeaningfulProgress = true;
         armStaleTimer(
           delayMs ??
@@ -1540,6 +1596,7 @@ export async function runContainerAgent(
       };
 
       const maybeSendDraft = (force = false) => {
+        if (runFinalized || localSettled) return;
         if (!assistantSoFar) return;
         let previewText = assistantSoFar;
         if (input.showReasoning && thinkingSoFar) {
@@ -1556,6 +1613,7 @@ export async function runContainerAgent(
         requestId: string,
         response: ExtensionUIResponse,
       ) => {
+        if (runFinalized || localSettled) return;
         if (
           !child.stdin ||
           child.stdin.destroyed ||
@@ -1579,6 +1637,7 @@ export async function runContainerAgent(
       const handleExtensionUIRequest = async (
         request: ExtensionUIRequest,
       ): Promise<void> => {
+        if (runFinalized || localSettled) return;
         logger.info(
           {
             requestId: request.id,
@@ -1656,6 +1715,7 @@ export async function runContainerAgent(
       };
 
       const processStdoutLine = (line: string) => {
+        if (runFinalized || localSettled) return;
         const trimmed = line.trim();
         if (!trimmed) return;
         try {
@@ -1769,6 +1829,7 @@ export async function runContainerAgent(
       armStaleTimer(initialStaleDelayMs);
 
       child.stdout.on('data', (d: Buffer) => {
+        if (runFinalized || localSettled) return;
         const chunk = d.toString();
         noteActivity({ kind: 'stdout', at: Date.now() });
         if (!stdoutTruncated) {
@@ -1780,6 +1841,7 @@ export async function runContainerAgent(
             stdout += chunk;
           }
         }
+        activeChildSnapshot = { stdout, stderr, stdoutTruncated };
         lineBuffer += chunk;
         while (true) {
           const newlineIdx = lineBuffer.indexOf('\n');
@@ -1791,14 +1853,16 @@ export async function runContainerAgent(
       });
 
       child.stderr.on('data', (d: Buffer) => {
+        if (runFinalized || localSettled) return;
         if (stderr.length < STDERR_MAX_SIZE) {
           const chunk = d.toString();
           stderr += chunk.slice(0, STDERR_MAX_SIZE - stderr.length);
         }
+        activeChildSnapshot = { stdout, stderr, stdoutTruncated };
       });
 
       child.on('close', (code) => {
-        if (localSettled) return;
+        if (runFinalized || localSettled) return;
         // When stale timer kills the child via SIGTERM, the close event fires
         // synchronously BEFORE the stale callback finishes calling settleLocal.
         // staleKillInProgress flag tells us the stale timer already fired.
@@ -1817,6 +1881,7 @@ export async function runContainerAgent(
       });
 
       child.on('error', (err) => {
+        if (runFinalized || localSettled) return;
         settleLocal({
           code: 1,
           stdout,
@@ -1834,7 +1899,16 @@ export async function runContainerAgent(
     const finish = (output: ContainerOutput) => {
       if (settled) return;
       settled = true;
+      runFinalized = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
+      settleActiveLocal?.({
+        code: null,
+        stdout: activeChildSnapshot.stdout,
+        stderr: activeChildSnapshot.stderr,
+        streamedDraft: false,
+        stdoutTruncated: activeChildSnapshot.stdoutTruncated,
+      });
+      settleActiveLocal = null;
       extendHardTimeoutForWait = null;
       resolve(output);
     };
@@ -1849,6 +1923,18 @@ export async function runContainerAgent(
       if (timeoutHandle) clearTimeout(timeoutHandle);
       timeoutHandle = setTimeout(() => {
         killActiveChild();
+        writeRawRunCapture({
+          groupDir: wp.groupDir,
+          requestId: input.requestId,
+          reason: 'timeout',
+          code: null,
+          stdout: activeChildSnapshot.stdout,
+          stderr: activeChildSnapshot.stderr,
+          stdoutTruncated: activeChildSnapshot.stdoutTruncated,
+          provider: input.provider,
+          model: input.model,
+          timeoutMs,
+        });
         finish({
           status: 'error',
           result: null,
@@ -1890,8 +1976,10 @@ export async function runContainerAgent(
         let didFreshRetry = false;
 
         while (attempt < FFT_NANO_MAX_RETRIES) {
+          if (settled) return;
           const useContinue = attempt === 0 && !effectiveInputNoContinue;
           lastRes = await runPi(useContinue);
+          if (settled) return;
 
           if (lastRes.code === 0) break; // success
 
@@ -1957,6 +2045,7 @@ export async function runContainerAgent(
           });
 
           await sleep(delayMs);
+          if (settled) return;
         }
 
         // If all retries exhausted, try provider fallback chain

@@ -144,6 +144,7 @@ interface RunCompletion {
   usage?: RunUsage;
   suppressUserDelivery?: boolean;
   controlPlaneStatus?: 'verification_failed';
+  errorKind?: 'runner_timeout';
 }
 
 export interface PromptInputLogEntry {
@@ -254,10 +255,16 @@ export interface MessageDispatcherDeps {
     suppressUserDelivery?: boolean;
     controlPlaneStatus?: 'verification_failed';
   }>;
-  handleLongRunCommand?: (
+  handleLongRunCommand?: (chatJid: string, content: string) => Promise<boolean>;
+  startLongRun?: (
     chatJid: string,
-    content: string,
-  ) => Promise<boolean>;
+    prompt: string,
+    options?: {
+      continuationPreamble?: string;
+      sourceRequestId?: string;
+      source?: string;
+    },
+  ) => Promise<{ id: string }>;
   runCodingTask?: (params: {
     requestId: string;
     parentRequestId?: string;
@@ -672,6 +679,42 @@ function isRunnerTimeoutFinalText(text: string): boolean {
   return /^LLM error:\s+Pi runner timed out after \d+ms\b/.test(text);
 }
 
+function isRunnerTimeoutText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /^(?:LLM error:\s+)?Pi runner timed out after \d+ms\b/.test(
+    text.trim(),
+  );
+}
+
+function shouldAutoRouteLongRun(params: {
+  isMainGroup: boolean;
+  onboardingActive: boolean;
+  content: string;
+  latestUserText: string;
+  shouldUseCodingWorker: boolean;
+  deps: MessageDispatcherDeps;
+}): boolean {
+  if (!params.isMainGroup || params.onboardingActive) return false;
+  if (!params.deps.startLongRun) return false;
+  const text = `${params.content}\n${params.latestUserText}`.toLowerCase();
+  if (
+    /^\s*\/(run|runs|run-status|run_status|cancel-run|cancel_run)\b/.test(text)
+  ) {
+    return false;
+  }
+  if (params.shouldUseCodingWorker) return true;
+  if (params.deps.isSubstantialCodingTask?.(params.latestUserText) === true) {
+    return true;
+  }
+  return [
+    /\b(video|render|rendering|tts|text[- ]to[- ]speech|voiceover|audio|media|animation|transcode)\b/,
+    /\b(end[- ]to[- ]end|tonight|deliverable|production[- ]ready|full implementation|ship it)\b/,
+    /\b(long[- ]running|long running|long[- ]horizon|take a while|keep working)\b/,
+    /\b(research|investigate|deep dive|compare sources|write a report)\b/,
+    /\b(multi[- ]step|several steps|from start to finish)\b/,
+  ].some((pattern) => pattern.test(text));
+}
+
 export async function finalizeCompletedRun(
   params: FinalizeCompletedRunParams,
 ): Promise<void> {
@@ -790,6 +833,58 @@ export async function finalizeCompletedRun(
 
   const effectiveResult = sanitizeUserFacingVerdictLeak(finalText);
   if (effectiveResult) {
+    if (isRunnerTimeoutText(effectiveResult)) {
+      const streamedText = params.telegramPreviewState?.lastText?.trim() || '';
+      if (streamedText) {
+        const assistantTimestamp = params.persistAssistantHistory(
+          params.chatJid,
+          streamedText,
+          params.runId,
+        );
+        if (assistantTimestamp) {
+          params.persistLastAgentTimestamp?.(
+            params.chatJid,
+            assistantTimestamp,
+          );
+        }
+        const finalizedPreview =
+          params.telegramPreviewState && !params.externallyCompleted
+            ? await params.finalizeTelegramPreviewMessage(
+                params.chatJid,
+                params.telegramPreviewState.messageId,
+                streamedText,
+              )
+            : false;
+        if (
+          !finalizedPreview &&
+          params.deliverToChat !== false &&
+          !params.externallyCompleted
+        ) {
+          await params.sendAgentResultMessage(params.chatJid, streamedText, {
+            prefixWhatsApp: true,
+          });
+        }
+        params.emitTuiChatEvent({
+          runId: params.runId,
+          sessionKey: params.sessionKey,
+          state: 'final',
+          message: { role: 'assistant', content: streamedText },
+          usage: params.usage,
+        });
+      } else if (params.telegramPreviewState && !params.externallyCompleted) {
+        await params.deleteTelegramPreviewMessage(
+          params.chatJid,
+          params.telegramPreviewState.messageId,
+        );
+      }
+      params.emitTuiAgentEvent({
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        phase: 'end',
+        detail: params.streamed ? 'streamed' : 'complete',
+      });
+      return;
+    }
     const streamedText = params.telegramPreviewState?.lastText?.trim() || '';
     const shouldPreserveStreamedTimeoutPreview =
       streamedText.length > 0 && isRunnerTimeoutFinalText(effectiveResult);
@@ -898,6 +993,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
 } {
   type ProcessMessageOutcome = 'ignored' | 'queued' | 'started';
   const inboundMessageQueue = new Map<string, NewMessage>();
+  const timeoutContinuationRequestIds = new Set<string>();
 
   function enqueueInboundMessage(msg: NewMessage): void {
     // Keep only the latest pending inbound trigger per chat.
@@ -961,6 +1057,27 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       finalPrompt,
       deps.getUnresolvedWorkSummary?.(chatJid),
     );
+  }
+
+  async function startDurableLongRun(params: {
+    chatJid: string;
+    prompt: string;
+    notice: string;
+    continuationPreamble?: string;
+    sourceRequestId?: string;
+    source: string;
+  }): Promise<{ id: string } | null> {
+    if (!deps.startLongRun) return null;
+    const run = await deps.startLongRun(params.chatJid, params.prompt, {
+      continuationPreamble: params.continuationPreamble,
+      sourceRequestId: params.sourceRequestId,
+      source: params.source,
+    });
+    await deps.sendMessage(
+      params.chatJid,
+      params.notice.replace('<id>', run.id),
+    );
+    return run;
   }
 
   async function finalizeRun(params: {
@@ -1054,6 +1171,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     let usage: RunUsage | undefined;
     let suppressUserDelivery = false;
     let controlPlaneStatus: 'verification_failed' | undefined;
+    let errorKind: RunCompletion['errorKind'] | undefined;
     const abortController = new AbortController();
     const activeRun = {
       chatJid: params.chatJid,
@@ -1156,6 +1274,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         usage = run.usage;
         suppressUserDelivery = run.suppressUserDelivery === true;
         controlPlaneStatus = run.controlPlaneStatus;
+        errorKind = run.errorKind;
 
         // Capture worker result for reflection (async MEMORY write after completion path)
         // Only for coding execute routes (exclude plan mode for coder-plan).
@@ -1262,6 +1381,34 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         triggerAsyncCoderReflection();
 
         return;
+      }
+
+      if (
+        params.route === 'agent' &&
+        deps.startLongRun &&
+        controlPlaneStatus === undefined &&
+        (isRunnerTimeoutText(result) ||
+          (result === null && errorKind === 'runner_timeout')) &&
+        !timeoutContinuationRequestIds.has(params.requestId)
+      ) {
+        timeoutContinuationRequestIds.add(params.requestId);
+        const longRun = await startDurableLongRun({
+          chatJid: params.chatJid,
+          prompt: params.finalPrompt,
+          notice: 'Run timed out; continuing as long run <id>.',
+          continuationPreamble: `Previous run ${params.requestId} timed out. Inspect existing artifacts, logs, and workspace state. Continue from the current state without restarting completed work.`,
+          sourceRequestId: params.requestId,
+          source: 'timeout-continuation',
+        });
+        if (longRun) {
+          deps.emitTuiAgentEvent({
+            runId: params.requestId,
+            sessionKey: params.sessionKey,
+            phase: 'end',
+            detail: 'timeout continued',
+          });
+          return;
+        }
       }
 
       deps.emitTuiChatEvent({
@@ -1591,6 +1738,25 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     if (deps.activeChatRuns.has(msg.chat_jid)) {
       enqueueInboundMessage(msg);
       return 'queued';
+    }
+    if (
+      shouldAutoRouteLongRun({
+        isMainGroup: request.group.folder === deps.constants.mainGroupFolder,
+        onboardingActive: request.onboardingGate.active,
+        content: request.content,
+        latestUserText: request.latestUserText,
+        shouldUseCodingWorker: request.shouldUseCodingWorker,
+        deps,
+      })
+    ) {
+      await startDurableLongRun({
+        chatJid: msg.chat_jid,
+        prompt: request.finalPrompt,
+        notice: "Started long run <id>. I'll post the result here.",
+        sourceRequestId: request.requestId,
+        source: 'auto-route',
+      });
+      return 'started';
     }
 
     await executeDispatchRun({
