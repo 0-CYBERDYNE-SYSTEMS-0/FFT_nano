@@ -6,6 +6,7 @@ import { EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE } from '../src/agent-empty-output.js
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
+  type MessageDispatcherDeps,
 } from '../src/message-dispatch.js';
 
 function createEmitter() {
@@ -21,6 +22,64 @@ function createEmitter() {
     emitTuiAgentEvent: (payload: Record<string, unknown>) => {
       events.push({ kind: 'agent', payload });
     },
+  };
+}
+
+function createDispatcherDeps(
+  overrides: Partial<MessageDispatcherDeps> = {},
+): MessageDispatcherDeps {
+  return {
+    state: {
+      registeredGroups: {
+        'telegram:1': {
+          jid: 'telegram:1',
+          name: 'Main',
+          folder: 'main',
+          trigger: '@FarmFriend',
+        },
+      },
+      chatRunPreferences: {},
+    },
+    constants: {
+      assistantName: 'FarmFriend',
+      mainGroupFolder: 'main',
+      triggerPattern: /@FarmFriend/i,
+      tuiSenderName: 'TUI',
+    },
+    activeChatRuns: new Map(),
+    activeChatRunsById: new Map(),
+    activeCoderRuns: new Map(),
+    tuiMessageQueue: new Map(),
+    sendMessage: async () => true,
+    setTyping: async () => {},
+    getMessagesSince: () => [],
+    getSessionKeyForChat: (chatJid) => chatJid,
+    resolveMainOnboardingGate: () => ({ active: false }),
+    buildOnboardingInterviewPrompt: ({ prompt }) => prompt,
+    extractOnboardingCompletion: (text) => ({ text, completed: false }),
+    completeMainWorkspaceOnboarding: () => {},
+    rememberHeartbeatTarget: () => {},
+    runAgent: async () => ({ ok: true, result: 'done', streamed: false }),
+    consumeNextRunNoContinue: () => false,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async () => true,
+    emitTuiChatEvent: () => {},
+    emitTuiAgentEvent: () => {},
+    isTelegramJid: () => true,
+    consumeTelegramHostCompletedRun: () => false,
+    consumeTelegramHostStreamState: () => null,
+    resolveTelegramStreamCompletionState: ({
+      externallyCompleted,
+      previewState,
+    }) => ({
+      effectiveStreamed: externallyCompleted,
+      messagePreviewState: previewState,
+    }),
+    finalizeCompletedRun,
+    ...overrides,
   };
 }
 
@@ -260,7 +319,7 @@ test('finalizeCompletedRun preserves streamed Telegram preview when final output
   );
 });
 
-test('finalizeCompletedRun preserves streamed Telegram preview on runner timeout', async () => {
+test('finalizeCompletedRun preserves streamed Telegram preview without persisting timeout as success', async () => {
   const emitter = createEmitter();
   const persisted: string[] = [];
   const sent: string[] = [];
@@ -307,9 +366,103 @@ test('finalizeCompletedRun preserves streamed Telegram preview on runner timeout
       text: 'Partial streamed response that should not be overwritten.',
     },
   ]);
-  assert.deepEqual(sent, ['LLM error: Pi runner timed out after 600000ms']);
+  assert.deepEqual(sent, []);
   assert.deepEqual(persisted, [
-    'Partial streamed response that should not be overwritten.\n\nLLM error: Pi runner timed out after 600000ms',
+    'Partial streamed response that should not be overwritten.',
+  ]);
+});
+
+test('processMessage auto-routes likely long media work to durable long run', async () => {
+  const sent: string[] = [];
+  const longRuns: Array<{ chatJid: string; prompt: string }> = [];
+  let normalRuns = 0;
+  const dispatcher = createMessageDispatcher(
+    createDispatcherDeps({
+      sendMessage: async (_chatJid, text) => {
+        sent.push(text);
+        return true;
+      },
+      startLongRun: async (chatJid, prompt) => {
+        longRuns.push({ chatJid, prompt });
+        return { id: 'run-long-1' };
+      },
+      runAgent: async () => {
+        normalRuns += 1;
+        return { ok: true, result: 'done', streamed: false };
+      },
+    }),
+  );
+
+  await dispatcher.processMessage({
+    id: 'm-long',
+    chat_jid: 'telegram:1',
+    sender: 'telegram:1',
+    sender_name: 'User',
+    content: 'Render a video with TTS and deliver the final media tonight',
+    timestamp: '2026-05-25T00:00:00.000Z',
+    is_from_me: 0,
+  });
+
+  assert.equal(normalRuns, 0);
+  assert.equal(longRuns.length, 1);
+  assert.match(longRuns[0]?.prompt || '', /Render a video with TTS/);
+  assert.deepEqual(sent, [
+    "Started long run run-long-1. I'll post the result here.",
+  ]);
+});
+
+test('processMessage continues runner timeout as exactly one durable long run', async () => {
+  const sent: string[] = [];
+  const longRuns: Array<{
+    prompt: string;
+    options?: { continuationPreamble?: string; sourceRequestId?: string };
+  }> = [];
+  const dispatcher = createMessageDispatcher(
+    createDispatcherDeps({
+      sendMessage: async (_chatJid, text) => {
+        sent.push(text);
+        return true;
+      },
+      makeRunId: () => 'chat-timeout-1',
+      startLongRun: async (_chatJid, prompt, options) => {
+        longRuns.push({ prompt, options });
+        return { id: 'run-cont-1' };
+      },
+      runAgent: async () => ({
+        ok: false,
+        result: 'Pi runner timed out after 600000ms',
+        streamed: false,
+        errorKind: 'runner_timeout',
+      }),
+      sendAgentResultMessage: async (_chatJid, text) => {
+        sent.push(text);
+        return true;
+      },
+    }),
+  );
+
+  const msg = {
+    id: 'm-timeout',
+    chat_jid: 'telegram:1',
+    sender: 'telegram:1',
+    sender_name: 'User',
+    content: 'quick normal task',
+    timestamp: '2026-05-25T00:00:00.000Z',
+    is_from_me: 0,
+  };
+
+  await dispatcher.processMessage(msg);
+  await dispatcher.processMessage({ ...msg, id: 'm-timeout-2' });
+
+  assert.equal(longRuns.length, 1);
+  assert.equal(longRuns[0]?.options?.sourceRequestId, 'chat-timeout-1');
+  assert.match(
+    longRuns[0]?.options?.continuationPreamble || '',
+    /Previous run chat-timeout-1 timed out/,
+  );
+  assert.deepEqual(sent, [
+    'Run timed out; continuing as long run run-cont-1.',
+    'Pi runner timed out after 600000ms',
   ]);
 });
 
