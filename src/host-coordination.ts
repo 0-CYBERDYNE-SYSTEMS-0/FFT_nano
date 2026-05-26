@@ -293,7 +293,8 @@ export async function processHostEvent(
         deps,
       );
       return;
-    case 'task_requested':
+    case 'ipc_request':
+      if (event.requestKind === 'task') {
       await processTaskIpc(
         event.request as Parameters<typeof processTaskIpc>[0],
         event.sourceGroup,
@@ -301,7 +302,7 @@ export async function processHostEvent(
         deps,
       );
       return;
-    case 'action_requested': {
+      }
       const result =
         event.request.type === 'farm_action'
           ? FEATURE_FARM
@@ -338,8 +339,7 @@ export async function processHostEvent(
         ),
       );
       return;
-    }
-    case 'action_result_ready':
+    case 'ipc_result':
       fs.writeFileSync(event.resultPath, JSON.stringify(event.result, null, 2));
       return;
     case 'host_error':
@@ -467,22 +467,21 @@ export async function processHostEvent(
       }
       return;
     }
-    case 'run_failed':
-      deps.statusTelemetry.noteRunFailed({
-        runId: event.runId,
-        errorMessage: event.errorMessage,
-        detail: event.detail,
-        chatJid: event.chatJid,
-        createdAt: event.createdAt,
-      });
+    case 'run_state':
+      if ('state' in event && event.state === 'error') {
+        deps.statusTelemetry.noteRunFailed({
+          runId: event.runId,
+          errorMessage: event.errorMessage || 'Run failed',
+          detail: event.errorMessage,
+          chatJid: event.chatJid,
+          createdAt: event.createdAt,
+        });
+      } else if ('phase' in event && event.phase === 'end') {
+        deps.statusTelemetry.clearRun(event.runId);
+      }
       return;
-    case 'run_finished':
-    case 'run_aborted':
-      deps.statusTelemetry.clearRun(event.runId);
-      return;
-    case 'run_started':
-      return;
-    case 'file_delivery_requested':
+    case 'file_transfer':
+      if (event.phase === 'requested') {
       logger.info(
         {
           sourceGroup: event.sourceGroup,
@@ -494,7 +493,7 @@ export async function processHostEvent(
         'File delivery requested via IPC',
       );
       return;
-    case 'file_delivery_completed':
+      }
       if (event.success) {
         logger.info(
           {
@@ -658,7 +657,8 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
                   resultPath,
                 );
                 await processHostEventOrdered({
-                  kind: 'action_requested',
+                  kind: 'ipc_request',
+                  requestKind: 'action',
                   id: envelope.id,
                   createdAt: envelope.createdAt,
                   source: 'ipc-boundary',
@@ -724,7 +724,8 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
               deps.noteDeliveryPending(trackedChatJid, trackedRequestId);
 
               await processHostEventOrdered({
-                kind: 'file_delivery_requested',
+                kind: 'file_transfer',
+                phase: 'requested',
                 id: `fd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 createdAt: new Date().toISOString(),
                 source: 'ipc-boundary',
@@ -769,7 +770,8 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
               });
 
               await processHostEventOrdered({
-                kind: 'file_delivery_completed',
+                kind: 'file_transfer',
+                phase: 'completed',
                 id: `fdc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 createdAt: new Date().toISOString(),
                 source: 'ipc-boundary',
