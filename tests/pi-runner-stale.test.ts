@@ -961,8 +961,41 @@ test(
   },
 );
 
-function writeRpcPermissionGatePiExecutable(dir: string): string {
+function writeRpcPermissionGatePiExecutable(
+  dir: string,
+  requestMethod: 'confirm' | 'notify' = 'confirm',
+): string {
+  fs.mkdirSync(dir, { recursive: true });
   const executablePath = path.join(dir, 'fake-pi-rpc-permission-gate.js');
+  const request =
+    requestMethod === 'notify'
+      ? `{
+        type: 'extension_ui_request',
+        id: 'pg-1',
+        method: 'notify',
+        title: 'Status',
+        message: 'Working',
+      }`
+      : `{
+        type: 'extension_ui_request',
+        id: 'pg-1',
+        method: 'confirm',
+        title: 'Protected Path',
+        message: 'Allow this edit?',
+        timeout: 1000,
+      }`;
+  const afterRequest =
+    requestMethod === 'notify'
+      ? `process.stdout.write(JSON.stringify({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'rpc notified' }],
+        },
+      }) + '\\n');
+      responded = true;
+      setTimeout(() => process.exit(0), 10);`
+      : '';
   fs.writeFileSync(
     executablePath,
     `#!/usr/bin/env node
@@ -1017,14 +1050,8 @@ process.stdin.on('data', (chunk) => {
         command: 'prompt',
         success: true,
       }) + '\\n');
-      process.stdout.write(JSON.stringify({
-        type: 'extension_ui_request',
-        id: 'pg-1',
-        method: 'confirm',
-        title: 'Protected Path',
-        message: 'Allow this edit?',
-        timeout: 1000,
-      }) + '\\n');
+      process.stdout.write(JSON.stringify(${request}) + '\\n');
+      ${afterRequest}
       continue;
     }
     if (message.type === 'extension_ui_response' && message.id === 'pg-1') {
@@ -1112,5 +1139,106 @@ test(
 
     assert.equal(output.status, 'success');
     assert.equal(output.result, 'rpc allowed');
+  },
+);
+
+test(
+  'runContainerAgent emits wait progress only for blocking extension UI requests',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-rpc-ui-'));
+    const blockingPiPath = writeRpcPermissionGatePiExecutable(
+      path.join(tempDir, 'blocking'),
+      'confirm',
+    );
+    const notifyPiPath = writeRpcPermissionGatePiExecutable(
+      path.join(tempDir, 'notify'),
+      'notify',
+    );
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+    const baseInput = {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      noContinue: true,
+      workspaceDirOverride: workspaceDir,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 300,
+        hardTimeoutMs: 2500,
+      },
+    };
+    const blockingProgress: string[] = [];
+    const blockingOutput = await runContainerAgent(
+      group,
+      {
+        ...baseInput,
+        requestId: 'req-rpc-ui-blocking',
+        piExecutableOverride: blockingPiPath,
+      },
+      undefined,
+      undefined,
+      async (request) => {
+        assert.equal(request.method, 'confirm');
+        return { confirmed: true };
+      },
+      (event) => {
+        blockingProgress.push(event.kind);
+      },
+    );
+
+    const notifyProgress: string[] = [];
+    const notifyOutput = await runContainerAgent(
+      group,
+      {
+        ...baseInput,
+        requestId: 'req-rpc-ui-notify',
+        piExecutableOverride: notifyPiPath,
+      },
+      undefined,
+      undefined,
+      async (request) => {
+        assert.equal(request.method, 'notify');
+        return {};
+      },
+      (event) => {
+        notifyProgress.push(event.kind);
+      },
+    );
+
+    assert.equal(blockingOutput.status, 'success');
+    assert.equal(blockingOutput.result, 'rpc allowed');
+    assert.ok(
+      blockingProgress.includes('wait'),
+      'blocking extension UI should emit wait progress',
+    );
+    assert.equal(notifyOutput.status, 'success');
+    assert.equal(notifyOutput.result, 'rpc notified');
+    assert.ok(
+      !notifyProgress.includes('wait'),
+      'fire-and-forget extension UI should not emit wait progress',
+    );
   },
 );
