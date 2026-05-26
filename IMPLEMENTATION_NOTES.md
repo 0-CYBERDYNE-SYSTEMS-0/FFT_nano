@@ -8,17 +8,19 @@ Updated: 2026-05-26
 - Preserved compatibility imports by making `src/message-dispatch.ts` a thin re-export to `src/pipeline/message-dispatch-pipeline.ts`. This avoids broad import churn while moving the canonical dispatch implementation under `src/pipeline/`.
 - Consolidated host IPC event names conservatively without changing the external legacy TUI `chat` / `agent` frame concepts. `tool_progress` and `run_progress` remain separate because tests and consumers distinguish them.
 - Updated `HANDOFF.md` to reflect the current implementation state so future work does not restart completed milestones.
+- Suppressed false visible "Waiting for approval to continue" progress for fire-and-forget extension UI events. The wait progress event now only emits for blocking extension UI requests that can actually require an operator response.
 
 ## Tradeoffs
 
 - The pipeline migration is structural first: message dispatch now lives under the pipeline layer, but the existing detailed dispatcher logic was preserved rather than rewritten into smaller pipeline classes in the same pass. This reduces regression risk for queueing, finalization, and active-run behavior.
 - The runtime event consolidation removes stale and redundant event kinds while keeping projection behavior stable for the gateway.
+- The approval-message fix was made at the `pi-runner.ts` source instead of masking the Telegram text downstream. This keeps real permission waits visible while preventing ordinary UI decoration events like `notify` from looking like approval gates.
 - Full release verification required elevated execution because this sandbox blocks local IPC sockets and localhost port binds used by `tsx`, TUI gateway tests, and web control center tests.
 
 ## Verification Completed
 
 - `npm run typecheck`
-- `npm test` — 665 pass, 0 fail, 2 skipped
+- `npm test` — 666 pass, 0 fail, 2 skipped
 - `npm run release-check` — passed skills validation, typecheck, tests, secret scan, and pack content check
 - `git diff --check`
 
