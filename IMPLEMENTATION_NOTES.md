@@ -28,5 +28,5 @@ Updated: 2026-05-26
 
 - `origin/main` must remain untouched for this validation.
 - The feature branch is `feat/fft-simplification-spec`.
-- The installed runtime checkout is `/Users/scrimwiggins/FFT_nano`.
+- The installed runtime checkout should be the local service checkout configured by the operator, not a hard-coded personal path.
 - Before switching the runtime checkout off `main`, preserve the current local `main` state with both a local backup ref and a stash for dirty work.
