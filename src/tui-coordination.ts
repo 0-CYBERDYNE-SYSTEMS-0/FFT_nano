@@ -138,7 +138,7 @@ export function emitTuiChatEvent(
 ): void {
   const createdAt = new Date().toISOString();
   hostEventBus.publish({
-    kind: 'chat_state_changed',
+    kind: 'run_state',
     id: createHostEventId('chat'),
     createdAt,
     source: 'index',
@@ -161,7 +161,7 @@ export function emitTuiAgentEvent(
   },
 ): void {
   hostEventBus.publish({
-    kind: 'run_lifecycle_changed',
+    kind: 'run_state',
     id: createHostEventId('run'),
     createdAt: new Date().toISOString(),
     source: 'index',

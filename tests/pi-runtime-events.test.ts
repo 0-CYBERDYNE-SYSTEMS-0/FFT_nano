@@ -16,7 +16,7 @@ test('HostEventBus emits to subscribers and supports unsubscribe', () => {
   });
 
   hub.publish({
-    kind: 'telegram_preview_requested',
+    kind: 'chat_delivery_requested',
     id: 'evt-1',
     createdAt: '2026-03-21T00:00:00.000Z',
     source: 'test',
@@ -35,7 +35,7 @@ test('HostEventBus emits to subscribers and supports unsubscribe', () => {
     text: 'done',
   });
 
-  assert.deepEqual(seen, ['telegram_preview_requested']);
+  assert.deepEqual(seen, ['chat_delivery_requested']);
 });
 
 test('invokeHostEventHandlerSafely catches async delivery failures', async () => {
@@ -71,7 +71,7 @@ test('createOrderedHostEventProcessor preserves event order across async handler
   const processor = createOrderedHostEventProcessor(
     async (event) => {
       seen.push(`start:${event.kind}`);
-      if (event.kind === 'telegram_preview_requested') {
+      if (event.kind === 'chat_delivery_requested') {
         await firstDone;
       }
       seen.push(`end:${event.kind}`);
@@ -80,7 +80,7 @@ test('createOrderedHostEventProcessor preserves event order across async handler
   );
 
   processor({
-    kind: 'telegram_preview_requested',
+    kind: 'chat_delivery_requested',
     id: 'evt-1',
     createdAt: '2026-03-21T00:00:00.000Z',
     source: 'test',
@@ -99,13 +99,13 @@ test('createOrderedHostEventProcessor preserves event order across async handler
   });
 
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(seen, ['start:telegram_preview_requested']);
+  assert.deepEqual(seen, ['start:chat_delivery_requested']);
   releaseFirst?.();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(seen, [
-    'start:telegram_preview_requested',
-    'end:telegram_preview_requested',
+    'start:chat_delivery_requested',
+    'end:chat_delivery_requested',
     'start:chat_delivery_requested',
     'end:chat_delivery_requested',
   ]);
@@ -115,7 +115,7 @@ test('createOrderedHostEventProcessor lets callers await handler failures', asyn
   const seen: string[] = [];
   const processor = createOrderedHostEventProcessor(
     async (event) => {
-      if (event.kind === 'task_requested') {
+      if (event.kind === 'ipc_request' && event.requestKind === 'task') {
         throw new Error('task failed');
       }
       seen.push(event.kind);
@@ -127,7 +127,8 @@ test('createOrderedHostEventProcessor lets callers await handler failures', asyn
 
   await assert.rejects(
     processor({
-      kind: 'task_requested',
+      kind: 'ipc_request',
+      requestKind: 'task',
       id: 'evt-1',
       createdAt: '2026-03-21T00:00:00.000Z',
       source: 'test',
