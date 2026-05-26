@@ -22,12 +22,6 @@ export interface HostRunUsage {
 
 export type HostEvent =
   | (HostEventBase & {
-      kind: 'telegram_preview_requested';
-      chatJid: string;
-      requestId: string;
-      text: string;
-    })
-  | (HostEventBase & {
       kind: 'chat_delivery_requested';
       chatJid: string;
       text: string;
@@ -35,13 +29,15 @@ export type HostEvent =
       prefixWhatsApp?: boolean;
     })
   | (HostEventBase & {
-      kind: 'task_requested';
+      kind: 'ipc_request';
+      requestKind: 'task';
       sourceGroup: string;
       isMain: boolean;
       request: Record<string, unknown>;
     })
   | (HostEventBase & {
-      kind: 'action_requested';
+      kind: 'ipc_request';
+      requestKind: 'action';
       sourceGroup: string;
       isMain: boolean;
       request:
@@ -51,14 +47,15 @@ export type HostEvent =
       resultPath: string;
     })
   | (HostEventBase & {
-      kind: 'action_result_ready';
+      kind: 'ipc_result';
       sourceGroup: string;
       requestId: string;
       resultPath: string;
       result: unknown;
     })
   | (HostEventBase & {
-      kind: 'file_delivery_requested';
+      kind: 'file_transfer';
+      phase: 'requested';
       sourceGroup: string;
       isMain: boolean;
       chatJid: string;
@@ -68,7 +65,8 @@ export type HostEvent =
       caption?: string;
     })
   | (HostEventBase & {
-      kind: 'file_delivery_completed';
+      kind: 'file_transfer';
+      phase: 'completed';
       sourceGroup: string;
       chatJid: string;
       requestId: string;
@@ -86,7 +84,7 @@ export type HostEvent =
       requestId?: string;
     })
   | (HostEventBase & {
-      kind: 'chat_state_changed';
+      kind: 'run_state';
       runId: string;
       sessionKey: string;
       chatJid?: string;
@@ -96,7 +94,7 @@ export type HostEvent =
       usage?: HostRunUsage;
     })
   | (HostEventBase & {
-      kind: 'run_lifecycle_changed';
+      kind: 'run_state';
       runId: string;
       sessionKey: string;
       chatJid?: string;
@@ -139,33 +137,6 @@ export type HostEvent =
       delayMs?: number;
       fromProvider?: string;
       toProvider?: string;
-    })
-  | (HostEventBase & {
-      kind: 'assistant_final';
-      runId: string;
-      sessionKey: string;
-      chatJid: string;
-      message: { role: 'assistant' | 'user' | 'system'; content: string };
-      usage?: HostRunUsage;
-    })
-  | (HostEventBase & {
-      kind: 'run_started' | 'run_finished' | 'run_aborted' | 'run_failed';
-      runId: string;
-      sessionKey: string;
-      chatJid: string;
-      detail?: string;
-      errorMessage?: string;
-    })
-  | (HostEventBase & {
-      kind: 'tool_started' | 'tool_finished' | 'tool_failed';
-      runId: string;
-      sessionKey: string;
-      chatJid: string;
-      index: number;
-      toolName: string;
-      args?: string;
-      output?: string;
-      error?: string;
     });
 
 export type LegacyTuiEvent =
@@ -254,20 +225,21 @@ export function projectEventToGatewayFrame(
   }
 
   switch (event.kind) {
-    case 'chat_state_changed':
-      return {
-        event: 'chat_event',
-        payload: {
-          runId: event.runId,
-          sessionKey: event.sessionKey,
-          state: event.state,
-          ...(event.message ? { message: event.message } : {}),
-          ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
-          ...(event.usage ? { usage: event.usage } : {}),
-          timestamp: event.createdAt,
-        },
-      };
-    case 'run_lifecycle_changed':
+    case 'run_state':
+      if ('state' in event) {
+        return {
+          event: 'chat_event',
+          payload: {
+            runId: event.runId,
+            sessionKey: event.sessionKey,
+            state: event.state,
+            ...(event.message ? { message: event.message } : {}),
+            ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+            ...(event.usage ? { usage: event.usage } : {}),
+            timestamp: event.createdAt,
+          },
+        };
+      }
       return {
         event: 'agent_event',
         payload: {
@@ -316,80 +288,6 @@ export function projectEventToGatewayFrame(
               : {}),
             ...(event.fromProvider ? { fromProvider: event.fromProvider } : {}),
             ...(event.toProvider ? { toProvider: event.toProvider } : {}),
-          },
-        },
-      };
-    case 'assistant_final':
-      return {
-        event: 'chat_event',
-        payload: {
-          runId: event.runId,
-          sessionKey: event.sessionKey,
-          state: 'final',
-          message: event.message,
-          timestamp: event.createdAt,
-          usage: event.usage,
-        },
-      };
-    case 'run_started':
-      return {
-        event: 'agent_event',
-        payload: {
-          runId: event.runId,
-          sessionKey: event.sessionKey,
-          stream: 'lifecycle',
-          data: {
-            phase: 'start',
-            detail: event.detail,
-          },
-        },
-      };
-    case 'run_finished':
-    case 'run_aborted':
-      return {
-        event: 'agent_event',
-        payload: {
-          runId: event.runId,
-          sessionKey: event.sessionKey,
-          stream: 'lifecycle',
-          data: {
-            phase: 'end',
-            detail: event.kind === 'run_aborted' ? 'aborted' : event.detail,
-          },
-        },
-      };
-    case 'run_failed':
-      return {
-        event: 'chat_event',
-        payload: {
-          runId: event.runId,
-          sessionKey: event.sessionKey,
-          state: 'error',
-          errorMessage: event.errorMessage || event.detail || 'Run failed',
-          timestamp: event.createdAt,
-        },
-      };
-    case 'tool_started':
-    case 'tool_finished':
-    case 'tool_failed':
-      return {
-        event: 'agent_event',
-        payload: {
-          runId: event.runId,
-          sessionKey: event.sessionKey,
-          stream: 'tool',
-          data: {
-            index: event.index,
-            toolName: event.toolName,
-            status:
-              event.kind === 'tool_started'
-                ? 'start'
-                : event.kind === 'tool_finished'
-                  ? 'ok'
-                  : 'error',
-            ...(event.args ? { args: event.args } : {}),
-            ...(event.output ? { output: event.output } : {}),
-            ...(event.error ? { error: event.error } : {}),
           },
         },
       };

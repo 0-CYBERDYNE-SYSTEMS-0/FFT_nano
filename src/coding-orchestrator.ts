@@ -971,13 +971,14 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
     deps.activeRuns.set(request.requestId, activeRun);
 
     deps.publishEvent({
-      kind: 'run_started',
+      kind: 'run_state',
       id: createHostEventId('coder'),
       createdAt: startedAt,
       source: 'coding-orchestrator',
       runId: request.requestId,
       sessionKey: request.sessionKey,
       chatJid: request.originChatJid,
+      phase: 'start',
       detail: deriveEventDetail(request.config),
     });
 
@@ -1118,14 +1119,16 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         activeRun.state = aborted ? 'aborted' : 'failed';
         await cleanupWorktree();
         deps.publishEvent({
-          kind: aborted ? 'run_aborted' : 'run_failed',
+          kind: 'run_state',
           id: createHostEventId('coder'),
           createdAt: new Date().toISOString(),
           source: 'coding-orchestrator',
           runId: request.requestId,
           sessionKey: request.sessionKey,
           chatJid: request.originChatJid,
-          ...(aborted ? { detail: message } : { errorMessage: message }),
+          ...(aborted
+            ? { phase: 'end' as const, detail: message }
+            : { state: 'error' as const, errorMessage: message }),
         });
         return createWorkerErrorResult(
           request,
@@ -1334,13 +1337,14 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
 
       activeRun.state = 'completed';
       deps.publishEvent({
-        kind: 'run_finished',
+        kind: 'run_state',
         id: createHostEventId('coder'),
         createdAt: finishedAt,
         source: 'coding-orchestrator',
         runId: request.requestId,
         sessionKey: request.sessionKey,
         chatJid: request.originChatJid,
+        phase: 'end',
         detail: deriveEventDetail(request.config),
       });
       return {
@@ -1356,14 +1360,16 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       activeRun.state = aborted ? 'aborted' : 'failed';
       await cleanupWorktree();
       deps.publishEvent({
-        kind: aborted ? 'run_aborted' : 'run_failed',
+        kind: 'run_state',
         id: createHostEventId('coder'),
         createdAt: new Date().toISOString(),
         source: 'coding-orchestrator',
         runId: request.requestId,
         sessionKey: request.sessionKey,
         chatJid: request.originChatJid,
-        ...(aborted ? { detail: message } : { errorMessage: message }),
+        ...(aborted
+          ? { phase: 'end' as const, detail: message }
+          : { state: 'error' as const, errorMessage: message }),
       });
       return createWorkerErrorResult(
         request,

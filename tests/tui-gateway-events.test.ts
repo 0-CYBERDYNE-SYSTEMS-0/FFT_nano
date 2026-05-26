@@ -51,7 +51,7 @@ function waitForMessage<T = unknown>(ws: WebSocket): Promise<T> {
   });
 }
 
-test('gateway projects assistant_final host events into chat_event frames', async () => {
+test('gateway projects final run_state host events into chat_event frames', async () => {
   const port = await getFreePort();
   const bus = new HostEventBus();
   const gateway = await startTuiGatewayServer(
@@ -78,13 +78,14 @@ test('gateway projects assistant_final host events into chat_event frames', asyn
   try {
     const ws = await connectWs(`ws://127.0.0.1:${port}`);
     bus.publish({
-      kind: 'assistant_final',
+      kind: 'run_state',
       id: 'evt-1',
       createdAt: '2026-03-21T00:00:00.000Z',
       source: 'message-dispatch',
       runId: 'r1',
       sessionKey: 'main',
       chatJid: 'telegram:1',
+      state: 'final',
       message: { role: 'assistant', content: 'done' },
     });
 
