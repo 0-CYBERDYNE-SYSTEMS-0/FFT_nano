@@ -1640,12 +1640,6 @@ export async function runContainerAgent(
           },
           'Extension UI request from pi',
         );
-        onProgressEvent?.({
-          kind: 'wait',
-          at: Date.now(),
-          reason: 'extension_ui',
-        });
-
         const fireAndForgetMethods = new Set([
           'notify',
           'setStatus',
@@ -1659,6 +1653,12 @@ export async function runContainerAgent(
           noteActivity();
           return;
         }
+
+        onProgressEvent?.({
+          kind: 'wait',
+          at: Date.now(),
+          reason: 'extension_ui',
+        });
 
         const waitBudgetMs = Math.max(
           lifecyclePolicy.waitStateStaleMs ?? lifecyclePolicy.staleAfterMs ?? 0,
