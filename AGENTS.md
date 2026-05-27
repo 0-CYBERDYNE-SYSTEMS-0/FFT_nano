@@ -80,7 +80,7 @@ Notes:
 - Main workspace bootstrap/context files are auto-seeded if missing:
   - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/`
 - Heartbeat is enabled by default and reads `HEARTBEAT.md` periodically.
-- Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `30m`).
+- Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `4h`).
 - Optional heartbeat tuning: `FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, `FFT_NANO_HEARTBEAT_ACTIVE_HOURS`.
 
 ## Pi-Native Project Skills

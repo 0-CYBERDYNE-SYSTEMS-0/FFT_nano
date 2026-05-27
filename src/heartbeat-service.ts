@@ -79,7 +79,7 @@ export interface HeartbeatServiceDeps {
 // Heartbeat config constants
 const HEARTBEAT_PROMPT = PARITY_CONFIG.heartbeat.prompt;
 const HEARTBEAT_INTERVAL_MS =
-  parseDurationMs(PARITY_CONFIG.heartbeat.every || '30m') || 30 * 60 * 1000;
+  parseDurationMs(PARITY_CONFIG.heartbeat.every || '4h') || 4 * 60 * 60 * 1000;
 export const HEARTBEAT_ENABLED =
   PARITY_CONFIG.heartbeat.enabled && HEARTBEAT_INTERVAL_MS > 0;
 const HEARTBEAT_ACK_MAX_CHARS = Math.max(
@@ -303,13 +303,13 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       maxAckChars: HEARTBEAT_ACK_MAX_CHARS,
     });
     if (normalized.shouldSkip || !normalized.text.trim()) {
-      if (HEARTBEAT_SHOW_OK && /HEARTBEAT_OK/.test(run.result)) {
+      if (HEARTBEAT_SHOW_OK && normalized.didStrip) {
         const destination = resolveHeartbeatTargetJid(mainChatJid, deps);
         if (!destination) {
           logHeartbeatSkip('no-destination', { chatJid: mainChatJid, reason });
           return;
         }
-        const sent = await deps.sendMessage(destination, 'HEARTBEAT_OK');
+        const sent = await deps.sendMessage(destination, 'heartbeat okay');
         if (!sent) {
           logger.error(
             { chatJid: mainChatJid, destination, reason },
