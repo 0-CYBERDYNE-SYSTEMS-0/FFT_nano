@@ -169,7 +169,7 @@ const nodes = [
   { id: 'memory',      label: 'Memory System',        subtitle: 'src/memory-*.ts',               layer: 'support',   x: 560, y: 600, w: 155, h: 48,
     desc: 'Semantic/BM25 search across memory documents + session history. memory-retrieval.ts searches and ranks results. Results injected into system prompt with daily budget cap.' },
   { id: 'heartbeat',   label: 'Heartbeat Loop',       subtitle: 'heartbeat-policy.ts',           layer: 'support',   x: 100, y: 660, w: 155, h: 48,
-    desc: 'Periodic health check runs (default 30min, configurable). Active hours support (e.g. Mon-Fri@9:00-17:00), duplicate suppression, acknowledgment normalization. Only extracts thinking content when HEARTBEAT_INCLUDE_REASONING=true. Uses same agent pipeline as messages.' },
+    desc: 'Periodic health check runs (default 4h, configurable). Active hours support (e.g. Mon-Fri@9:00-17:00), duplicate suppression, acknowledgment normalization. Only extracts thinking content when HEARTBEAT_INCLUDE_REASONING=true. Uses same agent pipeline as messages.' },
 ];
 
 const connections = [
