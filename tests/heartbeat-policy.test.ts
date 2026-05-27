@@ -18,7 +18,10 @@ test('isHeartbeatContentEffectivelyEmpty treats comments and blank lines as empt
     isHeartbeatContentEffectivelyEmpty('# HEARTBEAT\n\n# comment\n- [ ]\n'),
     true,
   );
-  assert.equal(isHeartbeatContentEffectivelyEmpty('# HEARTBEAT\nCheck pumps.'), false);
+  assert.equal(
+    isHeartbeatContentEffectivelyEmpty('# HEARTBEAT\nCheck pumps.'),
+    false,
+  );
 });
 
 test('isHeartbeatFileEffectivelyEmpty handles readable files and missing files', () => {
@@ -26,17 +29,26 @@ test('isHeartbeatFileEffectivelyEmpty handles readable files and missing files',
   const filePath = path.join(dir, 'HEARTBEAT.md');
   fs.writeFileSync(filePath, '# HEARTBEAT\n\n# comment only\n', 'utf-8');
   assert.equal(isHeartbeatFileEffectivelyEmpty(filePath), true);
-  assert.equal(isHeartbeatFileEffectivelyEmpty(path.join(dir, 'missing.md')), false);
+  assert.equal(
+    isHeartbeatFileEffectivelyEmpty(path.join(dir, 'missing.md')),
+    false,
+  );
 });
 
 test('stripHeartbeatToken strips wrapped heartbeat token and suppresses short ack fluff', () => {
-  assert.deepEqual(stripHeartbeatToken('<b>HEARTBEAT_OK</b>', { mode: 'heartbeat' }), {
-    shouldSkip: true,
-    text: '',
-    didStrip: true,
-  });
   assert.deepEqual(
-    stripHeartbeatToken('HEARTBEAT_OK all good', { mode: 'heartbeat', maxAckChars: 20 }),
+    stripHeartbeatToken('<b>HEARTBEAT_OK</b>', { mode: 'heartbeat' }),
+    {
+      shouldSkip: true,
+      text: '',
+      didStrip: true,
+    },
+  );
+  assert.deepEqual(
+    stripHeartbeatToken('HEARTBEAT_OK all good', {
+      mode: 'heartbeat',
+      maxAckChars: 20,
+    }),
     { shouldSkip: true, text: '', didStrip: true },
   );
   assert.deepEqual(
@@ -44,7 +56,30 @@ test('stripHeartbeatToken strips wrapped heartbeat token and suppresses short ac
       mode: 'heartbeat',
       maxAckChars: 10,
     }),
-    { shouldSkip: false, text: 'valve 4 has been offline for 15m', didStrip: true },
+    {
+      shouldSkip: false,
+      text: 'valve 4 has been offline for 15m',
+      didStrip: true,
+    },
+  );
+});
+
+test('stripHeartbeatToken treats plain heartbeat okay as ack-only', () => {
+  assert.deepEqual(
+    stripHeartbeatToken('heartbeat okay', { mode: 'heartbeat' }),
+    {
+      shouldSkip: true,
+      text: '',
+      didStrip: true,
+    },
+  );
+  assert.deepEqual(
+    stripHeartbeatToken('Heartbeat OK.', { mode: 'heartbeat' }),
+    {
+      shouldSkip: true,
+      text: '',
+      didStrip: true,
+    },
   );
 });
 

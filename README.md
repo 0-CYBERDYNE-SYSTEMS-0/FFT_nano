@@ -550,10 +550,11 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
   - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE=1|0`
   - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING=1|0`
 - Optional startup ritual file: `BOOT.md` (enable with `FFT_NANO_WORKSPACE_ENABLE_BOOT_MD=1` or parity config).
-- Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
-- Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
+- Heartbeat loop is enabled by default (`4h`) and runs a main-session check using `HEARTBEAT.md`.
+- Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `1h`, `4h`).
 - If `HEARTBEAT.md` exists but is effectively empty (headers/comments only), heartbeat runs are skipped.
 - Heartbeat acknowledgements are normalized with token stripping and max-ack gating (`FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, default `300`).
+- OK-only heartbeat runs send `heartbeat okay` by default; set `FFT_NANO_HEARTBEAT_SHOW_OK=0` to make normal heartbeats silent.
 - Optional active-hours gate: `FFT_NANO_HEARTBEAT_ACTIVE_HOURS` (format: `HH:MM-HH:MM` or `Mon-Fri@HH:MM-HH:MM`).
 - Optional parity config file: `config/runtime.parity.json` (override path via `FFT_NANO_PARITY_CONFIG_PATH`).
 

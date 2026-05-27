@@ -82,9 +82,9 @@ On failure:
 ## Heartbeat Runs
 
 Heartbeat loop (main chat only):
-- interval from `FFT_NANO_HEARTBEAT_EVERY` (default 30m)
+- interval from `FFT_NANO_HEARTBEAT_EVERY` (default 4h)
 - prompt from `FFT_NANO_HEARTBEAT_PROMPT`
-- suppresses output when result is only `HEARTBEAT_OK`
+- sends `heartbeat okay` for OK-only results when `FFT_NANO_HEARTBEAT_SHOW_OK=1`; otherwise suppresses OK-only output
 
 ## Command Path vs Agent Path
 

@@ -236,7 +236,7 @@ var nodes = [
   { id: 'scheduler',    label: 'Task Scheduler',           sub: 'src/task-scheduler.ts + cron/',    layer: 'support',      x: 130,  y: 830, w: 160, h: 46, status: '',
     desc: 'Hybrid scheduler: v2 cron (event-driven via cron/service.ts) + legacy polling (checks DB every 60s). Fires scheduled prompts through same agent pipeline as interactive messages.' },
   { id: 'heartbeat',    label: 'Heartbeat Loop',           sub: 'src/heartbeat-policy.ts',          layer: 'support',      x: 380,  y: 830, w: 160, h: 46, status: '',
-    desc: 'Periodic health checks (default 30min). Active hours support (Mon-Fri@9:00-17:00), duplicate suppression, acknowledgment normalization. Only extracts thinking when HEARTBEAT_INCLUDE_REASONING=true.' },
+    desc: 'Periodic health checks (default 4h). Active hours support (Mon-Fri@9:00-17:00), duplicate suppression, acknowledgment normalization. Only extracts thinking when HEARTBEAT_INCLUDE_REASONING=true.' },
   { id: 'farm',         label: 'Farm Actions',              sub: 'src/farm-*.ts',                    layer: 'support',      x: 630,  y: 830, w: 160, h: 46, status: '',
     desc: 'Farm state collector and action gateway. Monitors connected IoT/farm devices, collects sensor data, executes farm actions through the agent pipeline.' },
   { id: 'ha',           label: 'Home Assistant',             sub: 'src/home-assistant.ts',            layer: 'support',      x: 880,  y: 830, w: 160, h: 46, status: '',
