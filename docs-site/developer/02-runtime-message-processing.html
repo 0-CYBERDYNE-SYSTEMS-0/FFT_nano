@@ -195,9 +195,9 @@
 <h2 id="heartbeat-runs">Heartbeat Runs</h2>
 <p>Heartbeat loop (main chat only):</p>
 <ul>
-<li>interval from <code>FFT_NANO_HEARTBEAT_EVERY</code> (default 30m)</li>
+<li>interval from <code>FFT_NANO_HEARTBEAT_EVERY</code> (default 4h)</li>
 <li>prompt from <code>FFT_NANO_HEARTBEAT_PROMPT</code></li>
-<li>suppresses output when result is only <code>HEARTBEAT_OK</code></li>
+<li>sends <code>heartbeat okay</code> for OK-only results when <code>FFT_NANO_HEARTBEAT_SHOW_OK=1</code>; otherwise suppresses OK-only output</li>
 </ul>
 <h2 id="command-path-vs-agent-path">Command Path vs Agent Path</h2>
 <p>Telegram command handler intercepts lightweight/admin commands before agent invocation.

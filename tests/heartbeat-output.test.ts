@@ -11,6 +11,11 @@ test('exact HEARTBEAT_OK is treated as ack-only', () => {
   assert.equal(isHeartbeatAckOnly('HEARTBEAT_OK'), true);
 });
 
+test('plain heartbeat okay is treated as ack-only', () => {
+  assert.equal(isHeartbeatAckOnly('heartbeat okay'), true);
+  assert.equal(isHeartbeatAckOnly('Heartbeat OK.'), true);
+});
+
 test('HEARTBEAT_OK wrapped in markup is treated as ack-only', () => {
   assert.equal(isHeartbeatAckOnly('<b>HEARTBEAT_OK</b>'), true);
   assert.equal(isHeartbeatAckOnly('**HEARTBEAT_OK**'), true);
@@ -37,4 +42,3 @@ test('actionable heartbeat text is not treated as ack-only', () => {
   );
   assert.equal(isHeartbeatAckOnly('HEARTBEAT_OK and also do X'), false);
 });
-

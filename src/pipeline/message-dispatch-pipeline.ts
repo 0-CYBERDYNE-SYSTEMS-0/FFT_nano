@@ -498,6 +498,7 @@ function isInternalAssistantHistoryMessage(message: NewMessage): boolean {
   if (!text) return false;
   return (
     /^HEARTBEAT_OK$/i.test(text) ||
+    /^heartbeat\s+(?:ok|okay)[\s.!?]*$/i.test(text) ||
     /^Quality check flagged/i.test(text) ||
     /Quality check flagged potential issues/i.test(text) ||
     /^LLM produced no user-visible final response/i.test(text) ||

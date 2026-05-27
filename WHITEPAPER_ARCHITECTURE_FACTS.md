@@ -374,7 +374,7 @@ Three collection cadences:
 | Type | Description | Example |
 |------|-------------|---------|
 | `cron` | Standard 5-field cron expression | `*/30 * * * *` |
-| `interval` | Millisecond-based recurring | Every 30 minutes |
+| `interval` | Millisecond-based recurring | Every 4 hours |
 | `once` | One-time execution at specific time | `2026-01-01T09:00:00` |
 
 ### Policy System

@@ -137,7 +137,7 @@ const DEFAULTS: ParityConfig = {
   },
   heartbeat: {
     enabled: true,
-    every: '30m',
+    every: '4h',
     prompt:
       'Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.',
     target: 'main',
@@ -147,7 +147,7 @@ const DEFAULTS: ParityConfig = {
     ackMaxChars: 300,
     activeHours: null,
     activeHoursRaw: null,
-    visibility: { showOk: false, showAlerts: true, useIndicator: true },
+    visibility: { showOk: true, showAlerts: true, useIndicator: true },
   },
   cron: {
     isolatedDefaultDelivery: 'announce',

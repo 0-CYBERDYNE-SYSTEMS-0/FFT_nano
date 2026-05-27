@@ -1,4 +1,5 @@
 const HEARTBEAT_TOKEN = 'HEARTBEAT_OK';
+const HEARTBEAT_OK_TEXT_RE = /^heartbeat\s+(?:ok|okay)[\s.!?]*$/i;
 
 function normalizeHeartbeatTokenMarkup(text: string): string {
   return text
@@ -46,6 +47,7 @@ export function isHeartbeatAckOnly(text: string): boolean {
   if (looksLikeThinkingOnlyToolCall(trimmed)) return true;
 
   const normalized = normalizeHeartbeatTokenMarkup(trimmed);
+  if (HEARTBEAT_OK_TEXT_RE.test(normalized)) return true;
   if (normalized === HEARTBEAT_TOKEN) return true;
 
   const withoutPrefix = normalized
