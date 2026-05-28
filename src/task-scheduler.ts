@@ -22,6 +22,7 @@ import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 import { startCronV2Service } from './cron/service.js';
 import { resolveNoContinueForTask } from './cron/adapters.js';
+import type { OutboxDeliverer } from './outbox.js';
 import { computeRecurringTaskNextRun } from './task-schedule.js';
 
 export interface SchedulerDependencies {
@@ -32,6 +33,7 @@ export interface SchedulerDependencies {
   runTaskAgent?: typeof runContainerAgent;
   runEvaluatorPass?: typeof runEvaluatorPass;
   scheduleNextTick?: (fn: () => void, delayMs: number) => unknown;
+  outbox?: OutboxDeliverer;
 }
 
 async function runLegacyTask(
@@ -267,6 +269,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     sendMessage: deps.sendMessage,
     registeredGroups: deps.registeredGroups,
     requestHeartbeatNow: deps.requestHeartbeatNow,
+    outbox: deps.outbox,
   });
 }
 

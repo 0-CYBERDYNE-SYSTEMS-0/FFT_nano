@@ -17,7 +17,15 @@ import {
   shouldTriggerWakeNow,
 } from '../src/cron/service.ts';
 import { PARITY_CONFIG, TIMEZONE } from '../src/config.ts';
-import { closeDatabase, createTask, getTaskById, initDatabaseAtPath } from '../src/db.ts';
+import {
+  closeDatabase,
+  createTask,
+  getDeliveryByDedupeKey,
+  getTaskById,
+  initDatabaseAtPath,
+  listPendingDeliveries,
+} from '../src/db.ts';
+import { createOutboxDeliverer } from '../src/outbox.ts';
 import type { RegisteredGroup, ScheduledTask } from '../src/types.ts';
 import type { ContainerInput } from '../src/pi-runner.js';
 
@@ -231,6 +239,71 @@ test('runScheduledTaskV2 triggers wake_mode=now and announce delivery', async ()
   assert.deepEqual(sentJids, ['telegram:99']);
   assert.match(sentMessages[0], /\[scheduled:wake-now-task\]/);
   assert.deepEqual(wakeReasons, ['cron:wake-now-task']);
+
+  closeDatabase();
+});
+
+test('runScheduledTaskV2 routes announce through the outbox and survives a delivery outage', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = makeTask({
+    id: 'outbox-task',
+    schedule_type: 'once',
+    delivery_mode: 'announce',
+    delivery_to: 'telegram:77',
+  });
+  createTask(task);
+
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  let channelUp = false;
+  const sends: Array<{ jid: string; text: string }> = [];
+  const outbox = createOutboxDeliverer({
+    sendMessage: async (jid, text) => {
+      if (!channelUp) return false;
+      sends.push({ jid, text });
+      return true;
+    },
+  });
+
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async () => {
+      throw new Error('cron must deliver via the outbox, not sendMessage');
+    },
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runContainerTask: async () => ({ status: 'success', result: 'nightly ok' }),
+    runEvaluatorPass: async () => ({
+      pass: true,
+      score: 9,
+      issues: [],
+      feedback: '',
+      skipped: true,
+    }),
+    outbox,
+  });
+
+  // The channel was down: the announce is durably queued, not lost.
+  assert.equal(sends.length, 0);
+  const pending = listPendingDeliveries();
+  assert.equal(pending.length, 1);
+  assert.match(pending[0].dedupe_key, /^cron:outbox-task:\d+$/);
+  assert.equal(pending[0].destination, 'telegram:77');
+
+  // Channel recovers; flush delivers exactly once.
+  channelUp = true;
+  await outbox.flushPending();
+  assert.equal(sends.length, 1);
+  assert.deepEqual(sends[0].jid, 'telegram:77');
+  assert.match(sends[0].text, /\[scheduled:outbox-task\]/);
+  assert.equal(getDeliveryByDedupeKey(pending[0].dedupe_key)?.status, 'delivered');
 
   closeDatabase();
 });

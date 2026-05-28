@@ -117,6 +117,21 @@ export function initDatabaseAtPath(dbPath: string): void {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_eval_verdicts_group ON evaluator_verdicts(group_folder, created_at);
+
+    CREATE TABLE IF NOT EXISTS delivery_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      dedupe_key TEXT NOT NULL UNIQUE,
+      destination TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      delivered_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_delivery_outbox_status ON delivery_outbox(status, created_at);
   `);
 
   // Add sender_name column if it doesn't exist (migration for existing DBs)
@@ -1047,4 +1062,111 @@ export function getEvaluatorStats(
     passRate: total > 0 ? passes / total : 0,
     recentIssues,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Delivery outbox (at-least-once + dedupe for non-interactive finals/cron)
+// ---------------------------------------------------------------------------
+
+export type DeliveryOutboxStatus = 'pending' | 'delivered' | 'failed';
+
+export interface DeliveryOutboxRecord {
+  id: number;
+  dedupe_key: string;
+  destination: string;
+  body: string;
+  status: DeliveryOutboxStatus;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  delivered_at: string | null;
+}
+
+/**
+ * Enqueue an outbound message idempotently. The `dedupeKey` is UNIQUE, so a
+ * second enqueue for the same logical message is a no-op — this is what
+ * prevents double-posting when a producer (cron re-run, resumed run, retry)
+ * re-emits the same final. Returns the existing/new row plus whether it was a
+ * duplicate so callers can skip re-delivering an already-delivered message.
+ */
+export function enqueueDelivery(input: {
+  dedupeKey: string;
+  destination: string;
+  body: string;
+  maxAttempts?: number;
+}): { record: DeliveryOutboxRecord; duplicate: boolean } {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO delivery_outbox (
+         dedupe_key, destination, body, status, attempts, max_attempts, created_at, updated_at
+       ) VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)`,
+    )
+    .run(
+      input.dedupeKey,
+      input.destination,
+      input.body,
+      input.maxAttempts ?? 5,
+      now,
+      now,
+    );
+  const record = db
+    .prepare(`SELECT * FROM delivery_outbox WHERE dedupe_key = ?`)
+    .get(input.dedupeKey) as DeliveryOutboxRecord;
+  return { record, duplicate: result.changes === 0 };
+}
+
+/**
+ * Pending entries that still have attempts left, oldest first. Drives both the
+ * inline delivery attempt and the startup/periodic flush.
+ */
+export function listPendingDeliveries(limit = 100): DeliveryOutboxRecord[] {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(500, Math.floor(limit)))
+    : 100;
+  return db
+    .prepare(
+      `SELECT * FROM delivery_outbox
+       WHERE status = 'pending' AND attempts < max_attempts
+       ORDER BY created_at ASC
+       LIMIT ?`,
+    )
+    .all(safeLimit) as DeliveryOutboxRecord[];
+}
+
+export function getDeliveryByDedupeKey(
+  dedupeKey: string,
+): DeliveryOutboxRecord | undefined {
+  return db
+    .prepare(`SELECT * FROM delivery_outbox WHERE dedupe_key = ?`)
+    .get(dedupeKey) as DeliveryOutboxRecord | undefined;
+}
+
+/** Mark an outbox entry delivered. Idempotent. */
+export function markDeliveryDelivered(id: number): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE delivery_outbox
+     SET status = 'delivered', attempts = attempts + 1,
+         delivered_at = ?, updated_at = ?, last_error = NULL
+     WHERE id = ? AND status != 'delivered'`,
+  ).run(now, now, id);
+}
+
+/**
+ * Record a failed attempt. Increments the attempt counter; once the cap is hit
+ * the entry is marked `failed` so the flush stops retrying it (and an operator
+ * can see it stuck). Below the cap it stays `pending` for the next flush.
+ */
+export function markDeliveryFailedAttempt(id: number, error: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE delivery_outbox
+     SET attempts = attempts + 1,
+         status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,
+         last_error = ?, updated_at = ?
+     WHERE id = ? AND status != 'delivered'`,
+  ).run(error.slice(0, 500), now, id);
 }

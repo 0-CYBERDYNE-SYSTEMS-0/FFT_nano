@@ -25,6 +25,7 @@ import { logger } from '../logger.js';
 import { RegisteredGroup, ScheduledTask } from '../types.js';
 import { resolveNoContinueForTask } from './adapters.js';
 import { getEffectiveTimezone } from '../time-context.js';
+import type { OutboxDeliverer } from '../outbox.js';
 
 export interface CronServiceDependencies {
   sendMessage: (jid: string, text: string) => Promise<boolean>;
@@ -38,6 +39,9 @@ export interface CronServiceDependencies {
     prompt: string,
     options?: { fireAndForget?: boolean; chatJid?: string },
   ) => Promise<string | null>;
+  // When provided, announce deliveries go through the durable outbox
+  // (at-least-once + dedupe) instead of a fire-and-forget sendMessage.
+  outbox?: OutboxDeliverer;
 }
 
 const ERROR_BACKOFF_MS = [30_000, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
@@ -195,6 +199,7 @@ async function deliverTaskOutcome(
   hadError: boolean,
   result: string | null,
   deps: CronServiceDependencies,
+  startedAtMs: number,
 ): Promise<void> {
   const mode = getTaskDeliveryMode(task);
   if (mode === 'none') return;
@@ -205,6 +210,30 @@ async function deliverTaskOutcome(
 
   if (mode === 'announce') {
     const destination = task.delivery_to?.trim() || task.chat_jid;
+    // Stable per-execution dedupe key: a single task run delivers exactly one
+    // announce, and a retry/flush of that same run never double-posts.
+    const dedupeKey = `cron:${task.id}:${startedAtMs}`;
+    if (deps.outbox) {
+      try {
+        const delivered = await deps.outbox.deliver({
+          dedupeKey,
+          destination,
+          body: text,
+        });
+        if (!delivered) {
+          logger.warn(
+            { taskId: task.id, destination, dedupeKey },
+            'Scheduled task announce queued but not yet delivered; will retry via outbox',
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { taskId: task.id, destination, err },
+          'Scheduled task announce enqueue threw an exception',
+        );
+      }
+      return;
+    }
     try {
       const sent = await deps.sendMessage(destination, text.slice(0, 4000));
       if (!sent) {
@@ -473,6 +502,7 @@ export async function runScheduledTaskV2(
     hadError,
     hadError ? outputError : outputResult,
     deps,
+    startedAt,
   );
 
   if (shouldTriggerWakeNow(task)) {
