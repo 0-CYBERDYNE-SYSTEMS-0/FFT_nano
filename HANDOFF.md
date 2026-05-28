@@ -1,175 +1,203 @@
-# FFT_nano Simplification — Handoff Document
+# HANDOFF — FFT_nano
 
-**Branch:** `feat/fft-simplification-spec`  
-**Spec:** `SPEC.md`  
-**Status as of latest update:** Milestones 1, 2, 3, 4, and 5 complete enough for the current simplification pass.
-**Tests:** 665 pass, 0 fail, 2 skipped
-**Typecheck:** Clean
-**Release check:** Passed
+This file has two parts:
+1. **Current handoff** — the Agent Durability & Self-Improvement pass and what's
+   left to finish (read this first).
+2. **Archived handoff** — the earlier Simplification pass (done + merged), kept
+   for historical context.
 
 ---
+
+# Part 1 — Agent Durability & Self-Improvement (CURRENT)
+
+Last updated: 2026-05-28. Companion to `MISSION_CONTRACT.md` (the what/why) — this
+section is the **how to continue**.
+
+## 1.1 Where things stand
+
+The report-card pass (§1 self-improvement, §2 durability, §6 modes, §7 safety) is
+**implemented, tested, merged to `dev`, deployed, and verified live** on the
+running `com.fft_nano` service. Grade: C+ → B+. Full suite 683 pass / 0 fail.
+
+What shipped, with file pointers:
+
+| Area | Code | Notes |
+|------|------|-------|
+| Evaluator verdict store | `src/db.ts` → `evaluator_verdicts` table, `recordEvaluatorVerdict`, `getEvaluatorStats` | New table, additive. |
+| Verdict feed-forward | `src/coding-orchestrator.ts` → `formatEvaluatorStatsContext` (~L516), record call (~L1290), context build (~L1043/1075) | Prepends prior pass-rate + recurring issues to each coding/subagent run. |
+| Restart triage | `src/db.ts` → `triageActiveAgentRunsOnStartup`, `listRecoverableAgentRuns`, new `agent_runs` columns | Replaces `markActiveAgentRunsFailedOnStartup` (removed). |
+| Dispatch validation | `src/pipeline/pipeline-dispatcher.ts` → `validateDispatchRequest` | Pure fn, called in `dispatch`. |
+| Bash-guard canonicalization | `src/bash-guard.ts` → `canonicalizeForDetection` | Used by `isDestructiveCommand`. |
+| Tests | `tests/{bash-guard,db-evaluator-verdicts,db-agent-runs-recovery,dispatch-validation}.test.ts` | 15 new. |
+
+## 1.2 ⚠️ Critical gaps — plumbed but NOT yet functional
+
+Fix these first or the §2 durability gain is structural-only.
+
+### (a) `worktree_path` is never written → triage always marks runs `dead`
+- `triageActiveAgentRunsOnStartup` (`src/db.ts`) decides recoverable vs dead by
+  checking whether `agent_runs.worktree_path` exists on disk.
+- **Nothing sets `worktree_path`.** `agent_runs` rows are created/updated only by
+  `src/long-run-service.ts` (`createAgentRun` ~L483; `updateAgentRun` L186…L528),
+  and none of those calls pass `worktree_path`.
+- **Result:** every interrupted run currently triages as `failed`/`dead` — same as
+  old behavior in practice. The recoverable path is correct but starved of input.
+- **To finish:** when a long run is backed by an ephemeral worktree (created in
+  `src/coding-orchestrator.ts`; search `worktreePath` / `ephemeral_worktree`),
+  thread that path into `long-run-service.ts` and call
+  `updateAgentRun(runId, { worktree_path })` at run start.
+
+### (b) No resume consumer for recoverable runs
+- `listRecoverableAgentRuns()` exists and is correct, but **nothing calls it.**
+  Interrupted runs are preserved and listed, never re-enqueued.
+- **To finish:** at startup (after `initDatabaseAtPath`, likely `src/app.ts`
+  `main()` or long-run-service init), read `listRecoverableAgentRuns()` and
+  re-dispatch each via `message-dispatch` / `coding-orchestrator`, resuming from
+  the preserved worktree. Add a max-attempts cap to avoid crash loops.
+- This is the single change that turns §2 from B− into a true B.
+
+### (c) Verdict feed-forward is group-scoped, coding/subagent only
+- `getEvaluatorStats(groupFolder)` is consumed only by `coding-orchestrator.ts`.
+  Chat/cron/heartbeat neither write nor read it (by design — evaluator only runs
+  for coding/subagent). No cross-group learning. Confirm `evaluator_verdicts`
+  actually populates after a real coding run before assuming the loop closes.
+
+## 1.3 Deferred sections (next contract, by priority)
+
+1. **Resume consumer + `worktree_path` wiring** — §1.2(a)(b). Highest leverage.
+2. **§4a memory injection consistency** — cron + subagent get no memory context.
+   Wire `buildMemoryContext` (`src/memory-retrieval.ts`) into `src/cron/service.ts`
+   and the subagent path. Cheap, no new deps.
+3. **§3 outbox delivery queue** — at-least-once + dedupe for finals/cron. ⚠️ Highest
+   blast radius: dedupe must be right or it double-posts to Telegram. Tests first.
+   Touches `host-events.ts`, `telegram-streaming.ts`, `cron/service.ts`.
+4. **§4b semantic memory** — local embedding index behind `memory-backend.ts`
+   facade; blend with lexical in `mergeAndRankMemoryHits` (`src/memory-search.ts`).
+   Keep lexical fallback. No external API (project rule: no mock/sim).
+5. **§5 skill versioning** — snapshot `SKILL.md` to `.history/` before patch; add
+   rollback. Lowest leverage, do last.
+
+## 1.4 Branch model & workflow (MUST follow)
+
+Two-track, two-worktree. **They share one `.git` — a branch can only be checked
+out in one worktree at a time.**
+
+- **`origin/main`** — blessed/release. PR-gated (0 approvals = self-mergeable),
+  force-push blocked. Moves ONLY by merging `dev` + tagging a release.
+- **`origin/dev`** — active integration line. Direct (non-PR) pushes allowed,
+  force-push blocked (even for admins). This is what the runtime runs.
+- **`~/fft_nano-dev`** — edit/build/test worktree. Work on FEATURE branches here,
+  never on `dev`.
+- **`~/fft_nano`** (= `/Users/scrimwiggins/FFT_nano`, case-insensitive FS) —
+  runtime worktree on `dev`. **Never hand-edit.** Builds + restarts the launchd
+  service from merged `dev`.
+
+**Loop:** edit in `fft_nano-dev` on a feature branch → push → merge into
+`origin/dev` (direct fast-forward push allowed) → in `~/fft_nano`:
+`git pull --ff-only origin dev` → `npm run build` → restart → verify → when
+blessed, PR `dev → main` + tag.
+
+## 1.5 Build / test / deploy / verify
+
+```bash
+# Edit worktree (~/fft_nano-dev), feature branch:
+npm run typecheck
+npm test                         # node --test, ~14s, expect 683 pass / 2 skip
+npm run release-check            # typecheck + tests + secret-scan + pack-check
+
+# Deploy (in ~/fft_nano, on dev):
+git pull --ff-only origin dev
+npm run build                    # service runs prebuilt dist/ — BUILD IS REQUIRED
+launchctl kickstart -k "gui/$(id -u)/com.fft_nano"
+
+# Verify live:
+launchctl list | grep com.fft_nano                   # new PID = restarted
+tail -20 ~/fft_nano/logs/fft_nano.log                # clean startup
+sqlite3 ~/fft_nano/store/messages.db ".schema evaluator_verdicts"
+sqlite3 ~/fft_nano/store/messages.db "PRAGMA table_info(agent_runs);"
+```
+
+## 1.6 Gotchas
+
+- **The service runs `dist/`, not `src/`.** `git pull` without `npm run build`
+  deploys nothing. Always rebuild.
+- **DB migrations run at startup** (`initDatabaseAtPath`, `src/db.ts`) as
+  idempotent `ALTER TABLE` in try/catch. Additive + nullable. Live DB:
+  `~/fft_nano/store/messages.db` (`STORE_DIR`, `src/app-config.ts:107`).
+- **Worktree branch lock:** "already checked out at …" means the other worktree
+  holds that branch. Switch it off first.
+- **`origin/dev` force-push is blocked even for admins** — to reset its history,
+  lift protection in GitHub settings first (`enforce_admins` on).
+- **Commit hygiene:** no `claude`/Anthropic references, no `Co-Authored-By`. Hooks
+  in `hooks/` — don't bypass with `--no-verify`.
+- **Rollback floor:** tagged releases / `release/0.3.1`. To roll back live: check
+  out the tag in `~/fft_nano`, `npm run build`, restart.
+
+## 1.7 Cold-start orientation
+
+1. Read `MISSION_CONTRACT.md`, then Part 1 of this file.
+2. `CLAUDE.md` (repo root) = architecture, message flow, key files.
+3. Start with §1.2(a)+(b) — most valuable unfinished piece, well-scoped.
+
+---
+
+# Part 2 — FFT_nano Simplification (ARCHIVED — done + merged)
+
+**Branch:** `feat/fft-simplification-spec` · **Spec:** `SPEC.md`
+**Status:** Milestones 1–5 complete; merged into `main`/`dev`.
+**Tests at handoff:** 665 pass, 0 fail, 2 skipped · Typecheck clean · Release check passed
 
 ## What Was Done
 
 ### Milestone 5 — COMPLETE ✅
 `memory-action-gateway.ts` split from 703 lines into 3 focused files:
 - `src/memory-action-validation.ts` (121 lines) — Zod schema, path guards, string helpers
-- `src/memory-action-io.ts` (336 lines) — all file read/write, section manipulation, mutation functions
-- `src/memory-action-gateway.ts` (181 lines) — orchestration only; `executeMemoryAction` export unchanged
+- `src/memory-action-io.ts` (336 lines) — file read/write, section manipulation, mutation
+- `src/memory-action-gateway.ts` (181 lines) — orchestration only; `executeMemoryAction` unchanged
 
 ### Milestone 3 — COMPLETE ✅
 Config consolidated from 5 sources:
-- `src/app-config.ts` (256 lines) — new canonical home: profile detection + all env-var constants
-- `src/config.ts` (60 lines) — re-export stub; all existing imports still work unchanged
-- `src/parity-config.ts` (400 lines, was 676) — condensed; `PARITY_CONFIG` and `PARITY_CONFIG_PATH` exports unchanged
-- `src/profile.ts` (109 lines) — **kept separate** (tests use cache-busting dynamic imports that would break if turned into a re-export stub)
+- `src/app-config.ts` (256 lines) — canonical home: profile detection + env-var constants
+- `src/config.ts` (60 lines) — re-export stub; existing imports still work
+- `src/parity-config.ts` (400 lines, was 676) — condensed; exports unchanged
+- `src/profile.ts` (109 lines) — kept separate (tests use cache-busting dynamic imports)
 - `src/runtime-config.ts` (321 lines) — untouched per spec
 
 ### Milestone 1 — COMPLETE ✅
-**Target:** index.ts ~1,500 lines. **Current:** 2,071 lines (was 8,030).
-
-New modules extracted and **fully wired** (index.ts delegates to them via thin wrappers):
-
-| Module | Lines | What it contains |
-|---|---|---|
-| `src/host-coordination.ts` | ~1,094 | `processHostEvent`, `startIpcWatcher`, `processTaskIpc`, `deliverRuntimeAgentMessage`, Telegram stream state helpers |
-| `src/heartbeat-service.ts` | ~434 | `runHeartbeatTurn`, `startHeartbeatLoop`, `stopHeartbeatLoop`, `requestHeartbeatNow`, heartbeat config constants |
-| `src/update-service.ts` | ~91 | `processPendingUpdateNotifications`, `startUpdateNotificationLoop`, `stopUpdateNotificationLoop` |
-| `src/tui-coordination.ts` | ~340 | `emitTuiChatEvent/AgentEvent/ToolEvent`, `buildTuiSessionList`, `getTuiSessionHistory`, `createTuiGatewayAdapters`, `startTuiGatewayService`, `stopTuiGatewayService` |
-| `src/web-control-center.ts` | ~600 | `getControlCenter*`, `createWebControlCenterAdapters`, `startWebControlCenterService`, `stopWebControlCenterService` |
-| `src/state-persistence.ts` | ~388 | `loadState`, `saveState`, `registerGroup`, `syncGroupMetadata`, `getAvailableGroups`, migrations, `writeJsonAtomic` |
-| `src/telegram-group-mgmt.ts` | ~631 | Telegram group approval flow, `approveTelegramGroup`, `promoteChatToMain`, `findMainTelegramChatJid`, group panels |
-| `src/agent-runner.ts` | ~905 | `runAgent`, `runCodingTask`, `runCompactionForChat`, `getCodingOrchestrator`, continuity ledger |
-| `src/skill-service.ts` | ~545 | `handleSkillManagerCommand`, `handleLibrarianCommand`, `maybeRunSkillManager`, `maybeRunSkillSelfImprovement` |
-
-Additional modules are now extracted and wired through thin delegates in index.ts:
-
-| Module | Lines | Status |
-|---|---|---|
-| `src/telegram-delivery.ts` | 1,149 | Wired; index.ts delegates Telegram delivery/status/task/knowledge/media/tool-progress functions |
-| `src/telegram-settings.ts` | 1,906 | Wired; index.ts delegates settings panels, runtime config, setup input, and model helpers |
+index.ts reduced from 8,030 → ~2,071 lines. Modules extracted and wired via thin
+wrappers: `host-coordination.ts`, `heartbeat-service.ts`, `update-service.ts`,
+`tui-coordination.ts`, `web-control-center.ts`, `state-persistence.ts`,
+`telegram-group-mgmt.ts`, `agent-runner.ts`, `skill-service.ts`,
+`telegram-delivery.ts`, `telegram-settings.ts`.
 
 ### Milestone 2 — COMPLETE ✅
-Message dispatch now has a canonical implementation under the pipeline layer:
-- `src/pipeline/message-dispatch-pipeline.ts` (1,900 lines) — moved implementation from the former monolithic dispatcher
-- `src/message-dispatch.ts` (9 lines) — compatibility re-export only
-
-This keeps existing imports stable while making `src/pipeline/` the canonical location for dispatch logic.
+- `src/pipeline/message-dispatch-pipeline.ts` (1,900 lines) — canonical dispatch
+- `src/message-dispatch.ts` (9 lines) — compatibility re-export
 
 ### Milestone 4 — COMPLETE ✅
-Host IPC event types were consolidated in `src/runtime/host-events.ts`:
-- `task_requested` and `action_requested` merged into `ipc_request`
-- `action_result_ready` merged into `ipc_result`
-- `file_delivery_requested` and `file_delivery_completed` merged into `file_transfer`
-- `chat_state_changed`, `run_lifecycle_changed`, `assistant_final`, and run lifecycle events merged into `run_state`
-- stale `telegram_preview_requested` and unused tool lifecycle event kinds removed
-
-Emitters and consumers were updated in:
-- `src/host-coordination.ts`
-- `src/coding-orchestrator.ts`
-- `src/tui-coordination.ts`
-- host event and TUI gateway tests
-
----
-
-## Remaining Work
-
-No required implementation work remains from the current SPEC.md simplification pass.
-
-Optional follow-up before merge:
-- Run a built-service smoke after `npm run build` from the intended runtime checkout.
-- Decide whether to further reduce `src/index.ts` below 2,071 lines toward the approximate 1,500-line target.
-
-### Verify app-config.ts / profile.ts consolidation
-
-The `src/app-config.ts` was created (256 lines) to merge `config.ts` + `profile.ts`. However `profile.ts` was intentionally kept at 109 lines because tests use cache-busting dynamic imports.
-
-**Verify:** Check if `app-config.ts` is actually being used (is `config.ts` re-exporting from it?) or if it's dead code. Run `grep -r "app-config" src/` to find all usages.
-
-If `config.ts` re-exports from `app-config.ts` and tests still pass — it's working.
-If `app-config.ts` is unused — either wire it in or delete it to keep the codebase clean.
-
----
-
-## Verification Checklist Before Merging
-
-```bash
-npm run typecheck          # must be clean
-npm test                   # must be 665 pass, 0 fail
-npm run release-check      # pre-release gates
-npm run secret-scan        # no secrets
-npm run validate:skills    # pi skill manifests valid
-```
-
-Also: smoke-test the running service after building (`npm run build`) to confirm no runtime regressions.
-
----
+Host IPC event types consolidated in `src/runtime/host-events.ts` (17 → ~8 kinds):
+`ipc_request`, `ipc_result`, `file_transfer`, `run_state`; stale kinds removed.
+Emitters/consumers updated across `host-coordination.ts`, `coding-orchestrator.ts`,
+`tui-coordination.ts`, and tests.
 
 ## Architecture Notes for Incoming Devs
 
 ### Dependency Injection Pattern
-The extracted modules use a `*Deps` interface pattern for functions that need to call back into index.ts or other modules. Example:
-
-```typescript
-// In host-coordination.ts
-export interface HostCoordinationDeps {
-  sendTelegramAgentReply: (chatJid: string, text: string) => Promise<boolean>;
-  finalizeTelegramPreviewMessage: (...) => Promise<void>;
-  // ...
-}
-export async function processHostEvent(event: HostEvent, deps: HostCoordinationDeps) { ... }
-
-// In index.ts
-function buildHostCoordinationDeps(): HostCoordinationDeps {
-  return { sendTelegramAgentReply, finalizeTelegramPreviewMessage, ... };
-}
-function processHostEvent(event: HostEvent) {
-  return hcProcessHostEvent(event, buildHostCoordinationDeps());
-}
-```
-
-This pattern avoids circular imports and keeps modules testable.
+Extracted modules use a `*Deps` interface for callbacks into index.ts/other
+modules. `buildXDeps()` in index.ts constructs them; thin wrappers delegate. Avoids
+circular imports, keeps modules testable.
 
 ### Module Init Pattern
-`agent-runner.ts` uses an `initAgentRunner(deps)` call-once pattern. index.ts calls it during startup:
-
-```typescript
-import { initAgentRunner } from './agent-runner.js';
-// During startup:
-initAgentRunner({ statusTelemetry, getSessionKeyForChat, emitTuiToolEvent, ... });
-```
+`agent-runner.ts` uses `initAgentRunner(deps)` call-once at startup.
 
 ### Shared State
-All global mutable state lives in `src/app-state.ts`. All extracted modules import from there directly — no need to pass state through deps.
+All global mutable state lives in `src/app-state.ts`; extracted modules import it
+directly (not via deps).
 
 ### ESM
 All imports use `.js` extensions. No exceptions.
 
----
-
-## File Size Summary (Current State)
-
-| File | Lines | Status |
-|---|---|---|
-| `src/index.ts` | 2,071 | Delegating orchestration surface; target was approximate ~1,500 |
-| `src/message-dispatch.ts` | 9 | Compatibility re-export to pipeline dispatch implementation |
-| `src/pipeline/message-dispatch-pipeline.ts` | 1,900 | Canonical message dispatch implementation |
-| `src/telegram-delivery.ts` | 1,149 | Wired into index.ts |
-| `src/telegram-settings.ts` | 1,906 | Wired into index.ts |
-| `src/agent-runner.ts` | ~905 | Done ✅ |
-| `src/skill-service.ts` | ~545 | Done ✅ |
-| `src/host-coordination.ts` | 1,096 | Updated for consolidated host events ✅ |
-| `src/heartbeat-service.ts` | ~434 | Done ✅ |
-| `src/tui-coordination.ts` | ~340 | Done ✅ |
-| `src/web-control-center.ts` | ~600 | Done ✅ |
-| `src/state-persistence.ts` | ~388 | Done ✅ |
-| `src/telegram-group-mgmt.ts` | ~631 | Done ✅ |
-| `src/update-service.ts` | ~91 | Done ✅ |
-| `src/memory-action-gateway.ts` | 181 | Done ✅ (was 703) |
-| `src/memory-action-validation.ts` | 121 | Done ✅ |
-| `src/memory-action-io.ts` | 336 | Done ✅ |
-| `src/parity-config.ts` | 400 | Done ✅ (was 676) |
-| `src/config.ts` | 60 | Done ✅ (was 294, re-exports from app-config.ts) |
-| `src/app-config.ts` | 256 | Done ✅ (verify it's wired, see note above) |
-| `src/runtime/host-events.ts` | 297 | Consolidated event types ✅ |
-| `src/pipeline/` core files | 885 | Existing pipeline abstractions retained |
+## Open verification note (from that pass)
+Confirm `app-config.ts` is wired (is `config.ts` re-exporting from it?) vs dead
+code: `grep -r "app-config" src/`. If `config.ts` re-exports and tests pass, it's
+working; if unused, wire or delete to keep the tree clean.
