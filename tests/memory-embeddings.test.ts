@@ -81,6 +81,35 @@ test('semantic similarity can override lexical when weighted fully', () => {
   );
 });
 
+test('a candidate skipped by the budget keeps its lexical rank, not a zero-similarity penalty', () => {
+  // a + c embed; b is short-circuited (null). b must be scored on pure lexical
+  // (0.5), so it stays ahead of the low-similarity embedded candidate c, rather
+  // than being deflated to (1-weight)*lexical with an implicit zero semantic.
+  const queryEmbedding = [1, 0];
+  const embeddings: Record<string, number[] | null> = {
+    alpha: [0, 1], // sim 0 -> sem 0.5
+    bravo: null, // budget-skipped / embedder down
+    charlie: [0, 1], // sim 0 -> sem 0.5
+  };
+  const candidates = [
+    { item: 'a', lexicalScore: 4, text: 'alpha' }, // normLex 1
+    { item: 'b', lexicalScore: 2, text: 'bravo' }, // normLex 0.5
+    { item: 'c', lexicalScore: 0, text: 'charlie' }, // normLex 0
+  ];
+  const ranked = blendSemanticScores({
+    candidates,
+    queryEmbedding,
+    embed: (text) => embeddings[text] ?? null,
+    weight: 0.5,
+  });
+  assert.deepEqual(
+    ranked.map((r) => r.item),
+    ['a', 'b', 'c'],
+  );
+  const b = ranked.find((r) => r.item === 'b');
+  assert.ok(Math.abs((b?.score ?? -1) - 0.5) < 1e-9); // pure lexical, not 0.25
+});
+
 test('budgeted embedder stops calling once the time budget is spent', () => {
   let calls = 0;
   const slowEmbed = (_text: string): number[] => {
