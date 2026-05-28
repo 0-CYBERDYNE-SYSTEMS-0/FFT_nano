@@ -163,6 +163,7 @@ export function initDatabaseAtPath(dbPath: string): void {
     `ALTER TABLE agent_runs ADD COLUMN worktree_path TEXT`,
     `ALTER TABLE agent_runs ADD COLUMN evaluator_score INTEGER`,
     `ALTER TABLE agent_runs ADD COLUMN evaluator_pass INTEGER`,
+    `ALTER TABLE agent_runs ADD COLUMN resume_attempts INTEGER`,
   ];
   for (const migration of agentRunMigrations) {
     try {
@@ -757,7 +758,7 @@ export type AgentRunStatus =
   | 'aborted'
   | 'interrupted';
 
-export type AgentRunRecoveryState = 'recoverable' | 'dead';
+export type AgentRunRecoveryState = 'recoverable' | 'dead' | 'resumed';
 
 export interface AgentRunRecord {
   id: string;
@@ -778,6 +779,7 @@ export interface AgentRunRecord {
   worktree_path: string | null;
   evaluator_score: number | null;
   evaluator_pass: number | null;
+  resume_attempts: number | null;
 }
 
 export function createAgentRun(input: {
@@ -787,13 +789,14 @@ export function createAgentRun(input: {
   kind: AgentRunKind;
   prompt: string;
   createdAt?: string;
+  resumeAttempts?: number;
 }): AgentRunRecord {
   const createdAt = input.createdAt || new Date().toISOString();
   db.prepare(
     `
     INSERT INTO agent_runs (
-      id, chat_jid, group_folder, kind, status, prompt, created_at
-    ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
+      id, chat_jid, group_folder, kind, status, prompt, created_at, resume_attempts
+    ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
   `,
   ).run(
     input.id,
@@ -802,6 +805,7 @@ export function createAgentRun(input: {
     input.kind,
     input.prompt,
     createdAt,
+    input.resumeAttempts ?? 0,
   );
   return getAgentRunById(input.id) as AgentRunRecord;
 }
@@ -864,6 +868,7 @@ export function updateAgentRun(
     worktree_path: string | null;
     evaluator_score: number | null;
     evaluator_pass: number | null;
+    resume_attempts: number | null;
   }>,
 ): void {
   const fields: string[] = [];

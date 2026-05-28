@@ -107,6 +107,10 @@ export interface AppRuntimeDeps {
   startHeartbeatLoop?: () => void;
   maybeRunBootMdOnce?: () => void;
   getContainerRuntime?: () => string;
+  resumeRecoverableLongRuns?: () => Promise<{
+    resumed: number;
+    abandoned: number;
+  }>;
 }
 
 export function createAppRuntime(deps: AppRuntimeDeps): {
@@ -601,6 +605,18 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       deps.startHeartbeatLoop?.();
     } else {
       deps.logger.info?.('WhatsApp disabled (WHATSAPP_ENABLED=0)');
+    }
+    // Resume long runs preserved by startup triage now that state is loaded and
+    // delivery channels are up, so resumed runs can stream/deliver normally.
+    if (deps.resumeRecoverableLongRuns) {
+      try {
+        const outcome = await deps.resumeRecoverableLongRuns();
+        if (outcome.resumed > 0 || outcome.abandoned > 0) {
+          deps.logger.info?.(outcome, 'Resumed interrupted long runs');
+        }
+      } catch (err) {
+        deps.logger.warn?.({ err }, 'Long-run resume consumer failed');
+      }
     }
     deps.maybeRunBootMdOnce?.();
   }

@@ -4,7 +4,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { closeDatabase, initDatabaseAtPath } from '../src/db.js';
+import {
+  closeDatabase,
+  createAgentRun,
+  getAgentRunById,
+  initDatabaseAtPath,
+  listAgentRunsForChat,
+  updateAgentRun,
+} from '../src/db.js';
 import {
   createLongRunService,
   type LongRunServiceDeps,
@@ -50,6 +57,7 @@ function createDeps(
 ): LongRunServiceDeps {
   return {
     getGroupForChat: () => group,
+    resolveWorkspacePath: () => os.tmpdir(),
     isMainChat: () => true,
     getSessionKeyForChat: (chatJid) => chatJid,
     sendMessage: async (_chatJid, text) => {
@@ -319,6 +327,126 @@ test('long run service stops typing after aborted run', async () => {
       { chatJid: 'telegram:1', typing: false },
     ]);
   });
+});
+
+test('starting a long run records its durable workspace as worktree_path', async () => {
+  await withTempDb(async () => {
+    const typingEvents: Array<{ chatJid: string; typing: boolean }> = [];
+    let releaseRun: (() => void) | null = null;
+    const service = createLongRunService({
+      ...createDeps(async () => {
+        await new Promise<void>((resolve) => {
+          releaseRun = resolve;
+        });
+        return { ok: true, result: 'done', streamed: false };
+      }, typingEvents),
+      resolveWorkspacePath: () => '/tmp/fft-workspace-main',
+    });
+
+    await service.startRun('telegram:1', 'do durable work', {
+      id: 'run-wt',
+    });
+    await waitFor(
+      () => getAgentRunById('run-wt')?.worktree_path != null,
+      'worktree_path to be recorded once running',
+    );
+    assert.equal(
+      getAgentRunById('run-wt')?.worktree_path,
+      '/tmp/fft-workspace-main',
+    );
+    releaseRun?.();
+  });
+});
+
+test('resumeRecoverableRuns re-enqueues a recoverable run and marks the source resumed', async () => {
+  await withTempDb(async () => {
+    const typingEvents: Array<{ chatJid: string; typing: boolean }> = [];
+    const prompts: string[] = [];
+    const service = createLongRunService(
+      createDeps(async (_group, prompt) => {
+        prompts.push(prompt);
+        return { ok: true, result: 'done', streamed: false };
+      }, typingEvents),
+    );
+
+    // Seed a run that a restart preserved as recoverable.
+    createAgentRun({
+      id: 'run-interrupted',
+      chatJid: 'telegram:1',
+      groupFolder: 'main',
+      kind: 'agent_long',
+      prompt: 'original durable task',
+    });
+    updateAgentRun('run-interrupted', {
+      status: 'interrupted',
+      recovery_state: 'recoverable',
+    });
+
+    const outcome = await service.resumeRecoverableRuns();
+    assert.equal(outcome.resumed, 1);
+    assert.equal(outcome.abandoned, 0);
+
+    // Source no longer eligible for re-resume.
+    assert.equal(
+      getAgentRunById('run-interrupted')?.recovery_state,
+      'resumed',
+    );
+
+    // A new continuation run was created carrying the original prompt + attempt.
+    const runs = listAgentRunsForChat('telegram:1', 10);
+    const resumedRun = runs.find((r) => r.id !== 'run-interrupted');
+    assert.ok(resumedRun, 'expected a new resumed run');
+    assert.equal(resumedRun?.resume_attempts, 1);
+
+    await waitFor(
+      () => prompts.some((p) => p.includes('original durable task')),
+      'resumed run to execute with original prompt',
+    );
+    assert.ok(prompts[0]?.includes('resuming an interrupted long run'));
+  });
+});
+
+test('resumeRecoverableRuns abandons a run that has hit the resume cap', async () => {
+  const prev = process.env.FFT_NANO_LONG_RUN_MAX_RESUMES;
+  process.env.FFT_NANO_LONG_RUN_MAX_RESUMES = '2';
+  try {
+    await withTempDb(async () => {
+      const typingEvents: Array<{ chatJid: string; typing: boolean }> = [];
+      let runAgentCalls = 0;
+      const service = createLongRunService(
+        createDeps(async () => {
+          runAgentCalls += 1;
+          return { ok: true, result: 'done', streamed: false };
+        }, typingEvents),
+      );
+
+      createAgentRun({
+        id: 'run-looping',
+        chatJid: 'telegram:1',
+        groupFolder: 'main',
+        kind: 'agent_long',
+        prompt: 'task that keeps crashing the host',
+        resumeAttempts: 2,
+      });
+      updateAgentRun('run-looping', {
+        status: 'interrupted',
+        recovery_state: 'recoverable',
+      });
+
+      const outcome = await service.resumeRecoverableRuns();
+      assert.equal(outcome.resumed, 0);
+      assert.equal(outcome.abandoned, 1);
+      assert.equal(
+        getAgentRunById('run-looping')?.recovery_state,
+        'resumed',
+      );
+      assert.equal(listAgentRunsForChat('telegram:1', 10).length, 1);
+      assert.equal(runAgentCalls, 0);
+    });
+  } finally {
+    if (prev === undefined) delete process.env.FFT_NANO_LONG_RUN_MAX_RESUMES;
+    else process.env.FFT_NANO_LONG_RUN_MAX_RESUMES = prev;
+  }
 });
 
 test('long run /run command acknowledges before status preview progress', async () => {

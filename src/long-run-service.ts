@@ -2,6 +2,7 @@ import {
   createAgentRun,
   getAgentRunById,
   listAgentRunsForChat,
+  listRecoverableAgentRuns,
   updateAgentRun,
   type AgentRunRecord,
 } from './db.js';
@@ -27,6 +28,7 @@ type LongRunResult = {
 
 export interface LongRunServiceDeps {
   getGroupForChat: (chatJid: string) => RegisteredGroup | undefined;
+  resolveWorkspacePath: (group: RegisteredGroup) => string;
   isMainChat: (chatJid: string) => boolean;
   getSessionKeyForChat: (chatJid: string) => string;
   sendMessage: (chatJid: string, text: string) => Promise<boolean>;
@@ -95,6 +97,7 @@ export interface LongRunService {
       continuationPreamble?: string;
       sourceRequestId?: string;
       source?: string;
+      resumeAttempts?: number;
       onCreated?: (run: AgentRunRecord) => Promise<void>;
     },
   ) => Promise<AgentRunRecord>;
@@ -102,6 +105,7 @@ export interface LongRunService {
   statusText: (chatJid: string, id: string) => string;
   cancelRun: (chatJid: string, id: string) => Promise<string>;
   handleCommand: (chatJid: string, content: string) => Promise<boolean>;
+  resumeRecoverableRuns: () => Promise<{ resumed: number; abandoned: number }>;
 }
 
 function parseRuntimeMs(
@@ -199,12 +203,16 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
     active.set(runId, abortController);
     const sessionKey = deps.getSessionKeyForChat(run.chat_jid);
     const startedAt = new Date().toISOString();
+    // Record the durable workspace this run operates in so restart triage can
+    // classify it recoverable: a long run executes in its group's persistent
+    // workspace directory, which survives a host restart.
     updateAgentRun(runId, {
       status: 'running',
       started_at: startedAt,
       last_progress_at: startedAt,
       current_phase: 'spawn',
       current_detail: 'starting',
+      worktree_path: deps.resolveWorkspacePath(group),
     });
     deps.emitTuiChatEvent({
       runId,
@@ -469,6 +477,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       continuationPreamble?: string;
       sourceRequestId?: string;
       source?: string;
+      resumeAttempts?: number;
       onCreated?: (run: AgentRunRecord) => Promise<void>;
     } = {},
   ): Promise<AgentRunRecord> {
@@ -486,6 +495,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       groupFolder: group.folder,
       kind: 'agent_long',
       prompt: finalPrompt,
+      resumeAttempts: options.resumeAttempts ?? 0,
     });
     await options.onCreated?.(run);
     void runLongAgentRun(run.id).catch((err) => {
@@ -599,5 +609,66 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
     return false;
   }
 
-  return { startRun, listRunsText, statusText, cancelRun, handleCommand };
+  /**
+   * Resume consumer for runs preserved by restart triage. Reads runs that were
+   * interrupted mid-flight but whose workspace survived, and re-enqueues each as
+   * a fresh continuation run that picks up from the preserved workspace state.
+   *
+   * A per-run attempt counter (carried forward into the resumed run) caps how
+   * many times a run can be revived, so a run that crashes the host on every
+   * boot is abandoned instead of looping. The source run is always marked
+   * `resumed` (so it drops out of `listRecoverableAgentRuns`) before the new run
+   * is started, making this idempotent across repeated startups.
+   */
+  async function resumeRecoverableRuns(): Promise<{
+    resumed: number;
+    abandoned: number;
+  }> {
+    const maxResumes = Math.max(
+      0,
+      parseRuntimeMs(process.env.FFT_NANO_LONG_RUN_MAX_RESUMES, 2, 0),
+    );
+    const recoverable = listRecoverableAgentRuns();
+    let resumed = 0;
+    let abandoned = 0;
+    for (const run of recoverable) {
+      const attempts = (run.resume_attempts ?? 0) + 1;
+      // Mark the source consumed up front so a crash partway through never
+      // leaves it eligible for re-resume on the next boot.
+      updateAgentRun(run.id, { recovery_state: 'resumed' });
+      const group = deps.getGroupForChat(run.chat_jid);
+      if (!group || !deps.isMainChat(run.chat_jid) || attempts > maxResumes) {
+        abandoned += 1;
+        deps.logger?.warn?.(
+          { runId: run.id, attempts, maxResumes },
+          'Abandoning interrupted long run (cap reached or chat unavailable)',
+        );
+        continue;
+      }
+      try {
+        await startRun(run.chat_jid, run.prompt, {
+          source: 'resume',
+          resumeAttempts: attempts,
+          continuationPreamble: `You are resuming an interrupted long run (original id ${run.id}) after a host restart. Your prior work persists in this workspace — inspect it, determine what is already done, and continue the task to completion rather than starting over.`,
+        });
+        resumed += 1;
+      } catch (err) {
+        abandoned += 1;
+        deps.logger?.error?.(
+          { err, runId: run.id },
+          'Failed to resume interrupted long run',
+        );
+      }
+    }
+    return { resumed, abandoned };
+  }
+
+  return {
+    startRun,
+    listRunsText,
+    statusText,
+    cancelRun,
+    handleCommand,
+    resumeRecoverableRuns,
+  };
 }
