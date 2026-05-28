@@ -18,14 +18,15 @@ export interface ActiveCoderRun {
   chatJid: string;
   groupName: string;
   startedAt: number;
+  lastProgressAt?: number;
+  watchdogAbortAt?: number;
   parentRequestId?: string;
   backend?: 'pi';
-  route?:
-    | 'coder_execute'
-    | 'coder_plan'
-    | 'auto_execute'
-    | 'subagent_execute'
-    | 'subagent_plan';
+  config?: {
+    toolMode: 'read_only' | 'full';
+    isSubagent: boolean;
+    workspaceMode: 'ephemeral_worktree' | 'read_only';
+  };
   state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
   worktreePath?: string;
   childRunIds?: string[];
@@ -40,7 +41,12 @@ export type ThinkLevel =
   | 'high'
   | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
-export type TelegramDeliveryMode = 'off' | 'partial' | 'draft';
+export type TelegramDeliveryMode =
+  | 'off'
+  | 'stream'
+  | 'draft'
+  | 'partial'
+  | 'append';
 export type QueueMode =
   | 'collect'
   | 'interrupt'
@@ -59,6 +65,7 @@ export type PanelScope =
 export interface ChatRunPreferences {
   provider?: string;
   model?: string;
+  sessionTitle?: string;
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
   telegramDeliveryMode?: TelegramDeliveryMode;
@@ -117,6 +124,10 @@ export type TelegramSettingsPanelAction =
   | { kind: 'set-verbose'; value: VerboseMode }
   | { kind: 'show-queue' }
   | { kind: 'set-queue-mode'; value: QueueMode }
+  | { kind: 'show-groups' }
+  | { kind: 'approve-telegram-group'; chatJid: string }
+  | { kind: 'ignore-telegram-group'; chatJid: string }
+  | { kind: 'unignore-telegram-group'; chatJid: string }
   | { kind: 'show-subagents' }
   | { kind: 'stop-subagents'; target: 'current' | 'all' }
   | { kind: 'trigger-new' }
@@ -152,6 +163,7 @@ export type TelegramSettingsPanelAction =
       slug: string;
       projectLabel: string;
     }
+  | { kind: 'coder-cancel-resume'; taskText: string }
   | { kind: 'coder-cancel' }
   | { kind: 'show-add-model-for-provider'; provider: string }
   | { kind: 'prompt-add-model-for-provider'; provider: string };
@@ -159,6 +171,8 @@ export type TelegramSettingsPanelAction =
 export interface ActiveChatRun {
   chatJid: string;
   startedAt: number;
+  lastProgressAt?: number;
+  watchdogAbortAt?: number;
   requestId: string;
   abortController: AbortController;
 }
@@ -267,6 +281,87 @@ export const telegramToolProgressRuns = new Map<
   string,
   TelegramToolProgressState
 >();
+
+// ---------------------------------------------------------------------------
+// Stale-state pruning — call periodically to prevent unbounded map growth
+// ---------------------------------------------------------------------------
+
+const STALE_RUN_AGE_MS = 24 * 60 * 60 * 1000; // 24 h
+const STALE_QUEUE_AGE_MS = 4 * 60 * 60 * 1000; // 4 h
+
+export function pruneStaleState(): {
+  staleChatRuns: number;
+  staleCoderRuns: number;
+  expiredPanelActions: number;
+  expiredSetupInputs: number;
+  expiredToolProgress: number;
+  staleTuiQueues: number;
+} {
+  const now = Date.now();
+  let staleChatRuns = 0;
+  let staleCoderRuns = 0;
+  let expiredPanelActions = 0;
+  let expiredSetupInputs = 0;
+  let expiredToolProgress = 0;
+  let staleTuiQueues = 0;
+
+  for (const [key, run] of activeChatRuns) {
+    if (now - run.startedAt > STALE_RUN_AGE_MS) {
+      activeChatRuns.delete(key);
+      staleChatRuns++;
+    }
+  }
+  for (const [key, run] of activeChatRunsById) {
+    if (now - run.startedAt > STALE_RUN_AGE_MS) {
+      activeChatRunsById.delete(key);
+    }
+  }
+  for (const [key, run] of activeCoderRuns) {
+    if (now - run.startedAt > STALE_RUN_AGE_MS) {
+      activeCoderRuns.delete(key);
+      staleCoderRuns++;
+    }
+  }
+
+  for (const [key, entry] of telegramSettingsPanelActions) {
+    if (now > entry.expiresAt) {
+      telegramSettingsPanelActions.delete(key);
+      expiredPanelActions++;
+    }
+  }
+  for (const [key, entry] of telegramSetupInputStates) {
+    if (now > entry.expiresAt) {
+      telegramSetupInputStates.delete(key);
+      expiredSetupInputs++;
+    }
+  }
+
+  // Tool progress runs that have no matching active chat run are orphaned
+  for (const [key] of telegramToolProgressRuns) {
+    const chatJid = key.split(':')[0];
+    if (!activeChatRuns.has(chatJid) && !activeChatRunsById.has(key)) {
+      telegramToolProgressRuns.delete(key);
+      expiredToolProgress++;
+    }
+  }
+
+  // TUI message queues for chats with no recent activity
+  for (const [chatJid, queue] of tuiMessageQueue) {
+    if (!activeChatRuns.has(chatJid) && queue.length === 0) {
+      tuiMessageQueue.delete(chatJid);
+      staleTuiQueues++;
+    }
+  }
+
+  return {
+    staleChatRuns,
+    staleCoderRuns,
+    expiredPanelActions,
+    expiredSetupInputs,
+    expiredToolProgress,
+    staleTuiQueues,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Constants that were interleaved with state in index.ts

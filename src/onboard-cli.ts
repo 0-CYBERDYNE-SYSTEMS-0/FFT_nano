@@ -19,6 +19,7 @@ export type OnboardMode = 'local' | 'remote';
 export type OnboardRuntime = 'auto' | 'docker' | 'host';
 export type OnboardAuthChoice =
   | 'openai'
+  | 'opencode-go'
   | 'lm-studio'
   | 'anthropic'
   | 'gemini'
@@ -108,6 +109,13 @@ function ensureAdminSecret(
   updates.TELEGRAM_ADMIN_SECRET = randomBytes(24).toString('hex');
 }
 
+function getSeedRuntime(
+  envMap: Record<string, string>,
+  fallback: OnboardRuntime,
+): OnboardRuntime {
+  return parseRuntime(envMap.CONTAINER_RUNTIME) || fallback;
+}
+
 function usage(): string {
   return [
     'Usage:',
@@ -127,7 +135,7 @@ function usage(): string {
     '  --flow <quickstart|advanced|manual>',
     '  --mode <local|remote>',
     '  --runtime <auto|docker|host>',
-    '  --auth-choice <openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip>',
+    '  --auth-choice <openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip>',
     '  --model <provider/model-or-id>',
     '  --api-key <token>            API key for selected auth choice',
     '  --remote-url <url>           Remote gateway URL (remote mode)',
@@ -190,6 +198,7 @@ function parseAuthChoice(
   const value = raw.trim().toLowerCase();
   if (
     value === 'openai' ||
+    value === 'opencode-go' ||
     value === 'lm-studio' ||
     value === 'anthropic' ||
     value === 'gemini' ||
@@ -203,7 +212,7 @@ function parseAuthChoice(
     return value;
   }
   throw new Error(
-    `Invalid --auth-choice (use openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip): ${raw}`,
+    `Invalid --auth-choice (use openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip): ${raw}`,
   );
 }
 
@@ -396,7 +405,10 @@ function renderSoul(operator: string, assistantName: string): string {
   ].join('\n');
 }
 
-function renderMissionControlTodo(operator: string, assistantName: string): string {
+function renderMissionControlTodo(
+  operator: string,
+  assistantName: string,
+): string {
   return [
     '# TODOS.md = MISSION CONTROL: Onboarding',
     '',
@@ -457,9 +469,7 @@ function shouldRewriteSoulFile(existingBody: string, force: boolean): boolean {
   ) {
     return true;
   }
-  if (
-    /You are FarmFriend: an agricultural assistant\./i.test(existingBody)
-  ) {
+  if (/You are FarmFriend: an agricultural assistant\./i.test(existingBody)) {
     return true;
   }
   return false;
@@ -568,7 +578,9 @@ async function resolveWizardSelections(
   if (opts.nonInteractive) {
     const flow = opts.flow || 'quickstart';
     const mode = opts.mode || (flow === 'quickstart' ? 'local' : 'local');
-    const runtime = opts.runtime || (mode === 'local' ? 'docker' : 'auto');
+    const runtime =
+      opts.runtime ||
+      (mode === 'local' ? getSeedRuntime(envMap, 'docker') : 'auto');
     const authChoice = opts.authChoice || 'skip';
     const installDaemon = opts.installDaemon ?? true;
     const hatch = opts.hatch || 'tui';
@@ -630,7 +642,12 @@ async function resolveWizardSelections(
 
     const runtime = opts.runtime
       ? opts.runtime
-      : await askSelect(rl, 'Agent runtime', ['docker', 'host'], 'docker');
+      : await askSelect(
+          rl,
+          'Agent runtime',
+          ['docker', 'host'],
+          getSeedRuntime(envMap, 'docker'),
+        );
 
     const authChoice = opts.authChoice
       ? opts.authChoice
@@ -841,15 +858,14 @@ export async function runOnboarding(
 
   if (wizard.mode === 'local') {
     const updates: Record<string, string | undefined> = {
+      ASSISTANT_NAME: resolved.assistantName,
       FFT_NANO_TUI_PORT:
         typeof wizard.gatewayPort === 'number'
           ? String(wizard.gatewayPort)
           : undefined,
       CONTAINER_RUNTIME: wizard.runtime,
+      FFT_NANO_ALLOW_HOST_RUNTIME: wizard.runtime === 'host' ? '1' : undefined,
     };
-    if (wizard.runtime === 'host') {
-      updates.FFT_NANO_ALLOW_HOST_RUNTIME = '1';
-    }
     ensureAdminSecret(updates, envMap);
 
     if (wizard.authChoice !== 'skip') {
@@ -892,13 +908,13 @@ export async function runOnboarding(
     upsertDotEnv(envPath, updates);
   } else {
     const updates: Record<string, string | undefined> = {
+      ASSISTANT_NAME: resolved.assistantName,
       FFT_NANO_REMOTE_URL: wizard.remoteUrl?.trim() || '',
     };
     if (opts.runtime) {
       updates.CONTAINER_RUNTIME = wizard.runtime;
-      if (wizard.runtime === 'host') {
-        updates.FFT_NANO_ALLOW_HOST_RUNTIME = '1';
-      }
+      updates.FFT_NANO_ALLOW_HOST_RUNTIME =
+        wizard.runtime === 'host' ? '1' : undefined;
     }
     upsertDotEnv(envPath, updates);
   }

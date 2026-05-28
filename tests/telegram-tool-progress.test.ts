@@ -133,10 +133,10 @@ test('buildTelegramToolProgressMessage keeps a stable header', () => {
   );
 });
 
-test('shouldUseStandaloneTelegramToolProgress is disabled for draft and off delivery', () => {
+test('shouldUseStandaloneTelegramToolProgress enables all and verbose modes unless delivery is off', () => {
   assert.equal(
     shouldUseStandaloneTelegramToolProgress({
-      deliveryMode: 'partial',
+      deliveryMode: 'stream',
       verboseMode: 'all',
     }),
     true,
@@ -144,7 +144,14 @@ test('shouldUseStandaloneTelegramToolProgress is disabled for draft and off deli
   assert.equal(
     shouldUseStandaloneTelegramToolProgress({
       deliveryMode: 'draft',
-      verboseMode: 'all',
+      verboseMode: 'verbose',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseStandaloneTelegramToolProgress({
+      deliveryMode: 'partial',
+      verboseMode: 'new',
     }),
     false,
   );
@@ -157,7 +164,7 @@ test('shouldUseStandaloneTelegramToolProgress is disabled for draft and off deli
   );
 });
 
-test('shouldUseTelegramPreviewToolTrail is enabled for draft all and verbose', () => {
+test('shouldUseTelegramPreviewToolTrail enables visible modes unless delivery is off', () => {
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
       deliveryMode: 'draft',
@@ -167,7 +174,7 @@ test('shouldUseTelegramPreviewToolTrail is enabled for draft all and verbose', (
   );
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
-      deliveryMode: 'draft',
+      deliveryMode: 'stream',
       verboseMode: 'verbose',
     }),
     true,
@@ -175,6 +182,13 @@ test('shouldUseTelegramPreviewToolTrail is enabled for draft all and verbose', (
   assert.equal(
     shouldUseTelegramPreviewToolTrail({
       deliveryMode: 'partial',
+      verboseMode: 'new',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseTelegramPreviewToolTrail({
+      deliveryMode: 'off',
       verboseMode: 'verbose',
     }),
     false,
@@ -182,6 +196,29 @@ test('shouldUseTelegramPreviewToolTrail is enabled for draft all and verbose', (
 });
 
 test('buildTelegramPreviewToolTrailEntry keeps draft trail concise', () => {
+  assert.equal(
+    buildTelegramPreviewToolTrailEntry(
+      {
+        toolName: 'bash',
+        status: 'start',
+        args: '{"command":"git status"}',
+      },
+      'new',
+    ),
+    '🔥 bash',
+  );
+  assert.equal(
+    buildTelegramPreviewToolTrailEntry(
+      {
+        toolName: 'bash',
+        status: 'start',
+        args: '{"command":"git status"}',
+      },
+      'new',
+      'bash',
+    ),
+    null,
+  );
   assert.equal(
     buildTelegramPreviewToolTrailEntry(
       {

@@ -5,6 +5,7 @@ import {
   isSubstantialCodingTask,
   normalizeDelegationAlias,
   parseDelegationTrigger,
+  shouldSuggestCodingEscalation,
 } from '../src/coding-delegation.js';
 
 test('parses /coder execute trigger', () => {
@@ -96,5 +97,23 @@ test('does not classify memory compaction prompts as substantial coding asks', (
       ].join('\n'),
     ),
     false,
+  );
+});
+
+test('autosuggest reevaluation rejects simple non-project asks', () => {
+  assert.equal(
+    shouldSuggestCodingEscalation(
+      'get the ff branding skill from cyberdyne.skills and use aqua teal forest green with playfair typography',
+    ),
+    false,
+  );
+});
+
+test('autosuggest reevaluation accepts concrete coding project asks', () => {
+  assert.equal(
+    shouldSuggestCodingEscalation(
+      'build a multi-file backend service project with sqlite schema migration and tests',
+    ),
+    true,
   );
 });

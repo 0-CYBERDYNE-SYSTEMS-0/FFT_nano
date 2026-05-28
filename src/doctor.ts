@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { spawnSync } from 'child_process';
 import { pathToFileURL } from 'url';
 
 import {
@@ -14,7 +15,12 @@ import {
 } from './config.js';
 import { closeDatabase, getAllTasks, initDatabaseAtPath } from './db.js';
 import { parseHeartbeatActiveHours } from './heartbeat-policy.js';
+import {
+  RECOMMENDED_PI_CODING_AGENT_VERSION,
+  resolvePiExecutable,
+} from './pi-executable.js';
 import type { SystemPromptReport } from './system-prompt.js';
+import { readWatchdogStatus } from './watchdog.js';
 import { readMainWorkspaceState } from './workspace-bootstrap.js';
 
 type CheckLevel = 'pass' | 'warn' | 'fail';
@@ -358,6 +364,49 @@ function checkPromptLifecycle(): CheckResult {
   }
 }
 
+function checkWatchdogStatus(): CheckResult {
+  const status = readWatchdogStatus(DATA_DIR);
+  const incidentTotal = Object.values(status.incidentCounts).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+  const detail = [
+    `last_scan=${status.lastScanAt || 'never'}`,
+    `last_file_scan=${status.lastFileScanAt || 'never'}`,
+    `incidents=${incidentTotal}`,
+    `stale_runs=${status.staleRunCount}`,
+    `quarantined=${status.quarantinedFileCount}`,
+    status.latestIncident
+      ? `latest=${status.latestIncident.kind}:${status.latestIncident.action}`
+      : 'latest=none',
+  ].join(' ');
+  if (!status.enabled) {
+    return {
+      id: 'watchdog.status',
+      level: 'warn',
+      summary: 'Watchdog is disabled',
+      detail,
+    };
+  }
+  if (status.staleRunCount > 0) {
+    return {
+      id: 'watchdog.status',
+      level: 'fail',
+      summary: 'Watchdog reports active stale runs',
+      detail,
+    };
+  }
+  return {
+    id: 'watchdog.status',
+    level: incidentTotal > 0 ? 'warn' : 'pass',
+    summary:
+      incidentTotal > 0
+        ? 'Watchdog is enabled with prior incidents'
+        : 'Watchdog is enabled',
+    detail,
+  };
+}
+
 function checkStateDirs(): CheckResult {
   const exists = fs.existsSync(DATA_DIR);
   return {
@@ -387,10 +436,48 @@ function checkRuntimeProfile(): CheckResult {
   };
 }
 
+function checkPiRuntime(): CheckResult {
+  const piPath = resolvePiExecutable();
+  if (!piPath) {
+    return {
+      id: 'runtime.pi',
+      level: 'fail',
+      summary: 'Pi coding agent executable was not found',
+      detail:
+        'Run npm install, set PI_PATH, or install @mariozechner/pi-coding-agent globally.',
+    };
+  }
+
+  const result = spawnSync(piPath, ['--version'], {
+    encoding: 'utf-8',
+    timeout: 10_000,
+  });
+  if (result.error || result.status !== 0) {
+    return {
+      id: 'runtime.pi',
+      level: 'fail',
+      summary: 'Pi coding agent executable did not run',
+      detail: `path=${piPath} error=${result.error?.message || result.stderr.trim() || `exit=${result.status}`}`,
+    };
+  }
+
+  const version = result.stdout.trim().split(/\s+/)[0] || 'unknown';
+  const isRecommended = version === RECOMMENDED_PI_CODING_AGENT_VERSION;
+  return {
+    id: 'runtime.pi',
+    level: isRecommended ? 'pass' : 'warn',
+    summary: isRecommended
+      ? 'Pi coding agent version matches the tested runtime'
+      : 'Pi coding agent version differs from the tested runtime',
+    detail: `path=${piPath} version=${version} recommended=${RECOMMENDED_PI_CODING_AGENT_VERSION}`,
+  };
+}
+
 export function buildDoctorReport(): DoctorReport {
   const checks: CheckResult[] = [
     checkStateDirs(),
     checkRuntimeProfile(),
+    checkPiRuntime(),
     checkWorkspaceFiles(),
     checkLegacyWorkspaceFiles(),
     checkWorkspaceBootstrapCaps(),
@@ -399,6 +486,7 @@ export function buildDoctorReport(): DoctorReport {
     checkCronHealth(),
     checkMemoryConfig(),
     checkPromptLifecycle(),
+    checkWatchdogStatus(),
   ];
   return {
     status: summarizeStatus(checks),

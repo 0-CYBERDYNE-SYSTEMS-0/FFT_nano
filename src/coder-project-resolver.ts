@@ -52,7 +52,10 @@ const FALLBACK_EXCLUDED_DIRS = new Set([
 ]);
 
 function normalizeLoose(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 function normalizeTight(value: string): string {
@@ -106,7 +109,10 @@ export function extractProjectOverride(taskText: string): {
     return { projectHint: null, cleanedTaskText: taskText.trim() };
   }
   const projectHint = match[1]?.trim() || null;
-  const cleanedTaskText = taskText.replace(match[0], '').replace(/\s+/g, ' ').trim();
+  const cleanedTaskText = taskText
+    .replace(match[0], '')
+    .replace(/\s+/g, ' ')
+    .trim();
   return {
     projectHint,
     cleanedTaskText: cleanedTaskText || taskText.trim(),
@@ -119,7 +125,10 @@ export function listCoderProjectCandidates(
   const candidates: CoderProjectCandidate[] = [];
   const seenPaths = new Set<string>();
 
-  if (fs.existsSync(mainWorkspaceDir) && fs.statSync(mainWorkspaceDir).isDirectory()) {
+  if (
+    fs.existsSync(mainWorkspaceDir) &&
+    fs.statSync(mainWorkspaceDir).isDirectory()
+  ) {
     const isGitRepo = isGitRepoDir(mainWorkspaceDir);
     candidates.push({
       projectLabel: path.basename(mainWorkspaceDir) || 'main-workspace',
@@ -148,7 +157,9 @@ export function listCoderProjectCandidates(
   }
 
   if (fs.existsSync(mainWorkspaceDir)) {
-    for (const entry of fs.readdirSync(mainWorkspaceDir, { withFileTypes: true })) {
+    for (const entry of fs.readdirSync(mainWorkspaceDir, {
+      withFileTypes: true,
+    })) {
       if (!entry.isDirectory()) continue;
       if (!looksLikeProjectDir(entry.name)) continue;
       const workspaceRoot = path.join(mainWorkspaceDir, entry.name);
@@ -178,8 +189,10 @@ function scoreCandidate(projectLabel: string, query: string): number {
   let score = 0;
   if (queryLoose.includes(labelLoose)) score += 100;
   else if (queryTight.includes(labelTight)) score += 90;
-  else if (labelLoose.includes(queryLoose) && queryLoose.length >= 4) score += 85;
-  else if (labelTight.includes(queryTight) && queryTight.length >= 4) score += 80;
+  else if (labelLoose.includes(queryLoose) && queryLoose.length >= 4)
+    score += 85;
+  else if (labelTight.includes(queryTight) && queryTight.length >= 4)
+    score += 80;
 
   const queryTokens = tokenize(query);
   const labelTokens = tokenize(projectLabel);
@@ -212,11 +225,18 @@ export function resolveCoderProjectTarget(params: {
   mainWorkspaceDir: string;
   taskText: string;
 }): ResolveCoderProjectTargetResult {
-  const { projectHint, cleanedTaskText } = extractProjectOverride(params.taskText);
-  const candidates = listCoderProjectCandidates(params.mainWorkspaceDir).map((candidate) => ({
-    ...candidate,
-    score: scoreCandidate(candidate.projectLabel, projectHint || cleanedTaskText),
-  }));
+  const { projectHint, cleanedTaskText } = extractProjectOverride(
+    params.taskText,
+  );
+  const candidates = listCoderProjectCandidates(params.mainWorkspaceDir).map(
+    (candidate) => ({
+      ...candidate,
+      score: scoreCandidate(
+        candidate.projectLabel,
+        projectHint || cleanedTaskText,
+      ),
+    }),
+  );
   const ranked = [...candidates].sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     const sourceRank = (source: CoderProjectCandidate['source']): number => {
@@ -229,17 +249,24 @@ export function resolveCoderProjectTarget(params: {
           return 2;
       }
     };
-    if (a.source !== b.source) return sourceRank(a.source) - sourceRank(b.source);
+    if (a.source !== b.source)
+      return sourceRank(a.source) - sourceRank(b.source);
     return a.projectLabel.localeCompare(b.projectLabel);
   });
   const top = ranked[0];
   const second = ranked[1];
-  const mainWorkspaceCandidate = candidates.find((candidate) => candidate.source === 'main');
+  const mainWorkspaceCandidate = candidates.find(
+    (candidate) => candidate.source === 'main',
+  );
 
   const minimumScore = projectHint ? 12 : 18;
   const implicitProjectMinimumScore = 40;
   if (!projectHint && mainWorkspaceCandidate) {
-    if (!top || top.source === 'main' || top.score < implicitProjectMinimumScore) {
+    if (
+      !top ||
+      top.source === 'main' ||
+      top.score < implicitProjectMinimumScore
+    ) {
       return {
         status: 'resolved',
         workspaceRoot: mainWorkspaceCandidate.workspaceRoot,
@@ -260,13 +287,13 @@ export function resolveCoderProjectTarget(params: {
   }
 
   const isAmbiguous =
-    !!second &&
-    second.score >= minimumScore &&
-    top.score - second.score <= 12;
+    !!second && second.score >= minimumScore && top.score - second.score <= 12;
   if (isAmbiguous) {
     return {
       status: 'ambiguous',
-      candidates: ranked.filter((candidate) => candidate.score >= minimumScore).slice(0, 3),
+      candidates: ranked
+        .filter((candidate) => candidate.score >= minimumScore)
+        .slice(0, 3),
       taskText: cleanedTaskText,
       projectHint,
     };

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import YAML from 'yaml';
 
+import { loadSkillUsage } from './skill-lifecycle.js';
 import type { SkillCatalogEntry } from './system-prompt.js';
 
 export const PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES = [
@@ -15,6 +16,7 @@ export const REQUIRED_PROJECT_PI_SKILLS = [
   'fft-debug',
   'fft-telegram-ops',
   'fft-coder-ops',
+  'web-search',
 ] as const;
 
 export interface SkillValidationIssue {
@@ -51,6 +53,11 @@ const FRONTMATTER_OPTIONAL_FIELDS = [
   'compatibility',
   'metadata',
   'allowed-tools',
+  'version',
+  'author',
+  'dependencies',
+  'category',
+  'disable-model-invocation',
 ] as const;
 const FRONTMATTER_ALLOWED_FIELDS = new Set<string>([
   ...FRONTMATTER_REQUIRED_FIELDS,
@@ -78,13 +85,19 @@ type SkillSectionPolicy = 'required' | 'recommended' | 'none';
 
 interface SkillValidationOptions {
   enforceFftPolicy: boolean;
-  whenToUsePolicy: SkillSectionPolicy;
-  whenNotToUsePolicy: SkillSectionPolicy;
+  highRiskNegativeScopePolicy: SkillSectionPolicy;
 }
 
 interface SkillMarkdownValidation {
   issues: SkillValidationIssue[];
   warnings: SkillValidationIssue[];
+}
+
+type ManagedSkillSource = 'project' | 'external';
+
+interface ManagedSkillManifest {
+  managed: string[];
+  sources: Record<string, ManagedSkillSource>;
 }
 
 function parseSkillMarkdown(
@@ -103,7 +116,7 @@ function parseSkillMarkdown(
   try {
     parsed = YAML.parse(yamlFrontmatter);
   } catch {
-    return null;
+    parsed = parseLooseFrontmatter(yamlFrontmatter);
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
     return null;
@@ -112,6 +125,28 @@ function parseSkillMarkdown(
     content,
     body: content.slice(end + '\n---\n'.length),
   };
+}
+
+function parseLooseFrontmatter(raw: string): Record<string, unknown> | null {
+  const parsed: Record<string, unknown> = {};
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(trimmed);
+    if (!match) return null;
+    const key = match[1];
+    const value = match[2] ?? '';
+    if (value === 'true') {
+      parsed[key] = true;
+    } else if (value === 'false') {
+      parsed[key] = false;
+    } else if (value === '[]') {
+      parsed[key] = [];
+    } else {
+      parsed[key] = value.replace(/^['"]|['"]$/g, '');
+    }
+  }
+  return Object.keys(parsed).length > 0 ? parsed : null;
 }
 
 function toTrimmedString(value: unknown): string | null {
@@ -140,17 +175,8 @@ function validateMetadataMap(
       });
       continue;
     }
-    if (typeof item !== 'string') {
-      issues.push({
-        file: skillMarkdownPath,
-        message: `Frontmatter field "metadata.${key}" must be a string`,
-      });
-    }
+    if (item === undefined) continue;
   }
-}
-
-function hasWhenToUseSection(body: string): boolean {
-  return WHEN_TO_USE_SECTION_PATTERN.test(body);
 }
 
 function hasWhenNotToUseSection(body: string): boolean {
@@ -160,7 +186,7 @@ function hasWhenNotToUseSection(body: string): boolean {
   );
 }
 
-function addSectionPolicyIssue(
+function addPolicyIssue(
   policy: SkillSectionPolicy,
   issue: SkillValidationIssue,
   issues: SkillValidationIssue[],
@@ -178,25 +204,30 @@ function isHighRiskSkillName(skillName: string): boolean {
   return HIGH_RISK_SKILL_NAME_PATTERN.test(skillName);
 }
 
-function requiredSkillSectionPolicy(skillName: string): {
-  whenToUsePolicy: SkillSectionPolicy;
-  whenNotToUsePolicy: SkillSectionPolicy;
+function hasNegativeScopeGuidance(description: string, body: string): boolean {
+  if (hasWhenNotToUseSection(body)) return true;
+  return /\b(?:do not use|don't use|not for|avoid using|skip this skill|limitations?)\b/i.test(
+    `${description}\n${body}`,
+  );
+}
+
+function requiredSkillValidationPolicy(skillName: string): {
+  highRiskNegativeScopePolicy: SkillSectionPolicy;
 } {
   return {
-    whenToUsePolicy: 'required',
-    whenNotToUsePolicy: isHighRiskSkillName(skillName)
+    highRiskNegativeScopePolicy: isHighRiskSkillName(skillName)
       ? 'required'
-      : 'recommended',
+      : 'none',
   };
 }
 
-function nonRequiredSkillSectionPolicy(skillName: string): {
-  whenToUsePolicy: SkillSectionPolicy;
-  whenNotToUsePolicy: SkillSectionPolicy;
+function nonRequiredSkillValidationPolicy(skillName: string): {
+  highRiskNegativeScopePolicy: SkillSectionPolicy;
 } {
   return {
-    whenToUsePolicy: 'recommended',
-    whenNotToUsePolicy: isHighRiskSkillName(skillName) ? 'recommended' : 'none',
+    highRiskNegativeScopePolicy: isHighRiskSkillName(skillName)
+      ? 'recommended'
+      : 'none',
   };
 }
 
@@ -323,25 +354,16 @@ function validateSkillMarkdown(
 
   validateMetadataMap(frontmatter.metadata, skillMarkdownPath, issues);
 
-  if (!hasWhenToUseSection(body)) {
-    addSectionPolicyIssue(
-      options.whenToUsePolicy,
-      {
-        file: skillMarkdownPath,
-        message: 'Missing section: "## When to use this skill"',
-      },
-      issues,
-      warnings,
-    );
-  }
-
-  if (!hasWhenNotToUseSection(body)) {
-    addSectionPolicyIssue(
-      options.whenNotToUsePolicy,
+  if (
+    isHighRiskSkillName(expectedSkillName) &&
+    !hasNegativeScopeGuidance(rawDescription ?? '', body)
+  ) {
+    addPolicyIssue(
+      options.highRiskNegativeScopePolicy,
       {
         file: skillMarkdownPath,
         message:
-          'Missing section: "## When not to use this skill" (or "## Limitations")',
+          'High-risk skill missing clear "when not to use" guidance (add "## When not to use this skill"/"## Limitations" or explicit non-use wording in description/body)',
       },
       issues,
       warnings,
@@ -428,6 +450,12 @@ function validateSkillPathSafety(skillPath: string): SkillValidationIssue[] {
     }
 
     for (const entry of entries) {
+      if (
+        entry.isDirectory() &&
+        ['.venv', 'node_modules', '.git', '__pycache__'].includes(entry.name)
+      ) {
+        continue;
+      }
       const entryPath = path.join(current, entry.name);
       let stats: fs.Stats;
       try {
@@ -516,6 +544,16 @@ function extractSectionText(body: string, headingPattern: RegExp): string {
   return summarizeParagraph(section.replace(/^[\s*-]+/gm, ' ').trim());
 }
 
+function parseAllowedTools(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  const raw = toTrimmedString(value);
+  if (!raw) return [];
+  const parts = raw.includes(',') ? raw.split(',') : raw.split(/\s+/);
+  return parts.map((item) => item.trim()).filter(Boolean);
+}
+
 export function buildSkillCatalogEntries(
   sourceDirs: string[],
   options: { maxChars: number } = { maxChars: 6000 },
@@ -525,20 +563,28 @@ export function buildSkillCatalogEntries(
   for (let rootIndex = 0; rootIndex < sourceDirs.length; rootIndex += 1) {
     const sourceDir = sourceDirs[rootIndex];
     if (!isDirectory(sourceDir)) continue;
-    const source: SkillCatalogEntry['source'] =
-      rootIndex === 0 ? 'project' : 'external';
+    const usage = loadSkillUsage(sourceDir);
+    const managedManifest = readManagedSkillManifest(
+      path.join(sourceDir, '.fft_nano_managed_skills.json'),
+    );
+    const managedNames = new Set(managedManifest.managed);
     for (const skillName of listSkillDirectories(sourceDir)) {
+      const managedSource = managedManifest.sources[skillName];
+      const source: SkillCatalogEntry['source'] = managedNames.has(skillName)
+        ? managedSource || 'project'
+        : usage[skillName]?.created_by === 'agent'
+          ? 'agent'
+          : rootIndex === 0
+            ? 'project'
+            : 'external';
       const markdownPath = path.join(sourceDir, skillName, 'SKILL.md');
       const parsed = parseSkillMarkdown(markdownPath);
       if (!parsed) continue;
       const description =
         toTrimmedString(parsed.frontmatter.description) || skillName;
-      const allowedToolsRaw = parsed.frontmatter['allowed-tools'];
-      const allowedTools = Array.isArray(allowedToolsRaw)
-        ? allowedToolsRaw.filter(
-            (value): value is string => typeof value === 'string',
-          )
-        : [];
+      const allowedTools = parseAllowedTools(
+        parsed.frontmatter['allowed-tools'],
+      );
       const whenToUse =
         extractSectionText(parsed.body, WHEN_TO_USE_SECTION_PATTERN) ||
         summarizeParagraph(parsed.body);
@@ -565,27 +611,53 @@ export function buildSkillCatalogEntries(
   return results;
 }
 
-function readManagedSkillNames(manifestPath: string): string[] {
-  if (!fs.existsSync(manifestPath)) return [];
+function readManagedSkillManifest(manifestPath: string): ManagedSkillManifest {
+  const empty: ManagedSkillManifest = { managed: [], sources: {} };
+  if (!fs.existsSync(manifestPath)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
       managed?: unknown;
+      sources?: unknown;
     };
-    if (!Array.isArray(parsed.managed)) return [];
-    return parsed.managed.filter(
+    if (!Array.isArray(parsed.managed)) return empty;
+    const managed = parsed.managed.filter(
       (entry): entry is string => typeof entry === 'string',
     );
+    const sources: Record<string, ManagedSkillSource> = {};
+    if (
+      parsed.sources &&
+      typeof parsed.sources === 'object' &&
+      !Array.isArray(parsed.sources)
+    ) {
+      for (const [name, source] of Object.entries(
+        parsed.sources as Record<string, unknown>,
+      )) {
+        if (source === 'project' || source === 'external') {
+          sources[name] = source;
+        }
+      }
+    }
+    return { managed, sources };
   } catch {
-    return [];
+    return empty;
   }
 }
 
-function writeManagedSkillNames(manifestPath: string, managed: string[]): void {
+function readManagedSkillNames(manifestPath: string): string[] {
+  return readManagedSkillManifest(manifestPath).managed;
+}
+
+function writeManagedSkillNames(
+  manifestPath: string,
+  managed: string[],
+  sources: Record<string, ManagedSkillSource> = {},
+): void {
   fs.writeFileSync(
     manifestPath,
     JSON.stringify(
       {
         managed: Array.from(new Set(managed)).sort(),
+        sources,
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -642,7 +714,7 @@ export function validateProjectPiSkills(
     const skillMarkdownPath = path.join(skillPath, 'SKILL.md');
     const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
       enforceFftPolicy: true,
-      ...requiredSkillSectionPolicy(skillName),
+      ...requiredSkillValidationPolicy(skillName),
     });
     issues.push(...validation.issues);
     warnings.push(...validation.warnings);
@@ -654,7 +726,7 @@ export function validateProjectPiSkills(
     const skillMarkdownPath = path.join(skillsRoot, skillName, 'SKILL.md');
     const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
       enforceFftPolicy: false,
-      ...nonRequiredSkillSectionPolicy(skillName),
+      ...nonRequiredSkillValidationPolicy(skillName),
     });
     issues.push(...validation.issues);
     warnings.push(...validation.warnings);
@@ -745,21 +817,27 @@ export function syncProjectPiSkillsToGroupPiHome(
     }
   }
 
-  const validatedSkills = new Map<string, string>();
+  const validatedSkills = new Map<
+    string,
+    { skillPath: string; source: ManagedSkillSource }
+  >();
   for (const [skillName, entries] of mergedSkills.entries()) {
     const invalidCandidates: SkillValidationIssue[] = [];
     const isRequiredSkill = REQUIRED_PROJECT_PI_SKILL_SET.has(skillName);
-    const sectionPolicy = isRequiredSkill
-      ? requiredSkillSectionPolicy(skillName)
-      : nonRequiredSkillSectionPolicy(skillName);
-    let selectedSkillPath: string | null = null;
+    const validationPolicy = isRequiredSkill
+      ? requiredSkillValidationPolicy(skillName)
+      : nonRequiredSkillValidationPolicy(skillName);
+    let selectedSkill: {
+      skillPath: string;
+      source: ManagedSkillSource;
+    } | null = null;
 
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
       const skillMarkdownPath = path.join(entry.skillPath, 'SKILL.md');
       const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
         enforceFftPolicy: isRequiredSkill,
-        ...sectionPolicy,
+        ...validationPolicy,
       });
       if (validation.issues.length > 0) {
         invalidCandidates.push(...validation.issues);
@@ -774,16 +852,16 @@ export function syncProjectPiSkillsToGroupPiHome(
         result.warnings.push(...validation.warnings);
         result.warnedSkills.push(skillName);
       }
-      selectedSkillPath = entry.skillPath;
+      selectedSkill = entry;
       break;
     }
 
-    if (!selectedSkillPath) {
+    if (!selectedSkill) {
       result.invalid.push(...invalidCandidates);
       result.skippedInvalid.push(skillName);
       continue;
     }
-    validatedSkills.set(skillName, selectedSkillPath);
+    validatedSkills.set(skillName, selectedSkill);
   }
   result.skippedInvalid = Array.from(new Set(result.skippedInvalid)).sort();
   result.warnedSkills = Array.from(new Set(result.warnedSkills)).sort();
@@ -806,15 +884,24 @@ export function syncProjectPiSkillsToGroupPiHome(
   }
 
   for (const skillName of Array.from(nextManaged).sort()) {
-    const source = validatedSkills.get(skillName);
-    if (!source) continue;
+    const selected = validatedSkills.get(skillName);
+    if (!selected) continue;
     const dest = path.join(destRoot, skillName);
 
     fs.rmSync(dest, { recursive: true, force: true });
-    fs.cpSync(source, dest, { recursive: true });
+    fs.cpSync(selected.skillPath, dest, { recursive: true });
     result.copied.push(skillName);
   }
 
-  writeManagedSkillNames(manifestPath, result.managed);
+  writeManagedSkillNames(
+    manifestPath,
+    result.managed,
+    Object.fromEntries(
+      Array.from(validatedSkills.entries()).map(([skillName, selected]) => [
+        skillName,
+        selected.source,
+      ]),
+    ),
+  );
   return result;
 }

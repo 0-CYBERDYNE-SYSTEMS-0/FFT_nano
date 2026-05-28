@@ -185,6 +185,25 @@ test('runOnboarding non-interactive local auth provider writes provider env', as
   assert.match(envBody, /^FFT_NANO_TUI_PORT=29999$/m);
 });
 
+test('runOnboarding OpenCode Go choice writes provider env', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    authChoice: 'opencode-go',
+    apiKey: 'go-key',
+    model: 'deepseek-v4-flash',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.match(envBody, /^FFT_NANO_RUNTIME_PROVIDER_PRESET=opencode-go$/m);
+  assert.match(envBody, /^PI_API=opencode-go$/m);
+  assert.match(envBody, /^PI_MODEL=deepseek-v4-flash$/m);
+  assert.match(envBody, /^OPENCODE_API_KEY=go-key$/m);
+});
+
 test('runOnboarding local LM Studio choice writes local endpoint defaults without requiring an API key', async () => {
   const workspace = makeTmpWorkspace();
   const envPath = path.join(workspace, '.env');
@@ -219,6 +238,22 @@ test('runOnboarding defaults local runtime to docker and persists it', async () 
   assert.match(envBody, /^CONTAINER_RUNTIME=docker$/m);
 });
 
+test('runOnboarding defaults local runtime from existing env runtime', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  fs.writeFileSync(envPath, 'CONTAINER_RUNTIME=host\nFFT_NANO_ALLOW_HOST_RUNTIME=1\n', 'utf-8');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.equal(result.runtime, 'host');
+  assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
+  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+});
+
 test('runOnboarding host runtime writes host opt-in env flags', async () => {
   const workspace = makeTmpWorkspace();
   const envPath = path.join(workspace, '.env');
@@ -233,6 +268,23 @@ test('runOnboarding host runtime writes host opt-in env flags', async () => {
   assert.equal(result.runtime, 'host');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
   assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+});
+
+test('runOnboarding docker runtime clears lingering host opt-in env flag', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  fs.writeFileSync(envPath, 'CONTAINER_RUNTIME=host\nFFT_NANO_ALLOW_HOST_RUNTIME=1\n', 'utf-8');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    runtime: 'docker',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.equal(result.runtime, 'docker');
+  assert.match(envBody, /^CONTAINER_RUNTIME=docker$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
 });
 
 test('parseOnboardArgs parses and validates --runtime', () => {

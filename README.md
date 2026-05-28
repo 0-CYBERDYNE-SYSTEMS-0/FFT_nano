@@ -11,9 +11,7 @@ An autonomous AI coworker that runs on your farm's hardware. It learns your oper
 ## Quick Start
 
 ```bash
-git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
-cd FFT_nano
-./scripts/onboard-all.sh
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
 ```
 
 Runs on Raspberry Pi, your own server, or local hardware. Chat via Telegram or WhatsApp.
@@ -22,7 +20,7 @@ Runs on Raspberry Pi, your own server, or local hardware. Chat via Telegram or W
 
 | Persistent Memory | Equipment Control | Multi-Provider AI |
 |-------------------|-------------------|-------------------|
-| Carries context across sessions. Learns your operation over time. | Discovers and controls equipment via Telegram. Writes automation code automatically. | OpenAI, Anthropic, Gemini, OpenRouter, Ollama, LM Studio. Local-first. |
+| Carries context across sessions. Learns your operation over time. | Discovers and controls equipment via Telegram. Writes automation code automatically. | OpenAI, OpenCode Go, Anthropic, Gemini, OpenRouter, Ollama, LM Studio. Local-first. |
 
 ## Farm-Proven
 
@@ -42,7 +40,15 @@ Built by a farmer with 24 years of field experience. Three years of real operati
 
 This is the canonical install-and-run flow.
 
-### 1. Clone and run guided onboarding
+### 1. Run the installer
+
+```bash
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
+```
+
+The installer downloads the latest stable release, installs missing basics where it can, chooses Docker when it is already healthy, falls back to host runtime when Docker is unavailable, then runs `./scripts/onboard-all.sh`.
+
+Developer/manual install:
 
 ```bash
 git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano.git
@@ -50,16 +56,16 @@ cd FFT_nano
 ./scripts/onboard-all.sh
 ```
 
-`./scripts/onboard-all.sh` performs:
+The guided flow performs:
 
 - safety backup (`~/nano`, `.env`, `data/`, `groups/`)
 - dependency install (`npm ci` when lockfile exists)
 - `npm run typecheck`
 - `npm run build`
-- global CLI link (`npm link`) so `fft ...` commands are available
+- pinned `~/.local/bin/fft` launcher plus global CLI link (`npm link`) so `fft ...` commands are available
 - runtime prep:
-  - Docker runtime: build agent image
-  - Host runtime: prepare host `pi` runner deps (no image build)
+  - Docker runtime: build agent image with the repo-pinned `pi` coding agent package
+  - Host runtime: use the repo-local `node_modules/.bin/pi` before any global `pi`
 - `.env` scaffold from `.env.example` (if missing)
 - mount allowlist scaffold at `~/.config/fft_nano/mount-allowlist.json` (if missing)
 - onboarding wizard (`risk gate`, `quickstart|advanced`, `local|remote`, provider/channel/hatch)
@@ -84,11 +90,11 @@ Backups are written to `./backups/` by default.
 Choose runtime at install time:
 
 ```bash
-# default/recommended isolated runtime
-./scripts/onboard-all.sh --runtime docker
+# isolated Docker runtime
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime docker
 
-# unisolated host runtime (advanced)
-./scripts/onboard-all.sh --runtime host
+# host runtime fallback
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime host
 ```
 
 ### All Setup Options
@@ -105,7 +111,7 @@ Choose runtime at install time:
 | `--flow <flow>` | quickstart, advanced, or manual |
 | `--mode <mode>` | local or remote |
 | `--runtime <runtime>` | auto, docker, or host |
-| `--auth-choice <choice>` | openai, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, or skip |
+| `--auth-choice <choice>` | openai, opencode-go, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, or skip |
 | `--model <id>` | Model ID (e.g. gpt-4o-mini, claude-3-5-sonnet-20241022) |
 | `--api-key <token>` | Provider API key |
 | `--remote-url <url>` | Remote gateway URL (remote mode) |
@@ -152,6 +158,7 @@ Recommended provider paths:
 - Anthropic: `PI_API=anthropic`, `PI_MODEL=...`, `ANTHROPIC_API_KEY=...`
 - Gemini: `PI_API=gemini`, `PI_MODEL=...`, `GEMINI_API_KEY=...`
 - OpenRouter: `PI_API=openrouter`, `PI_MODEL=...`, `OPENROUTER_API_KEY=...`
+- OpenCode Go: `FFT_NANO_RUNTIME_PROVIDER_PRESET=opencode-go`, `PI_API=opencode-go`, `PI_MODEL=deepseek-v4-pro`, `OPENCODE_API_KEY=...`
 
 After editing `.env`, apply it by restarting the host:
 
@@ -177,8 +184,13 @@ If you disabled auto-service during setup (`FFT_NANO_AUTO_SERVICE=0`), install/s
 
 ### 4. Attach the TUI
 
-`fft` CLI should already be linked globally by onboarding setup.
-If needed, relink manually:
+`fft` CLI should already be installed by setup as a pinned launcher:
+
+```bash
+~/.local/bin/fft tui
+```
+
+The setup script also adds `~/.local/bin` to your shell PATH, so new terminals can run `fft ...` from any directory. If needed, relink the npm CLI manually:
 
 ```bash
 npm link
@@ -192,7 +204,7 @@ fft tui
 ```
 
 Important: `fft tui` is an attach client. The host process must already be running.
-`fft` auto-detects the repo from your current directory; use `--repo` to target another checkout:
+The pinned launcher created by setup targets the installed checkout from any directory. Use `--repo` to target another checkout:
 
 ```bash
 fft --repo /absolute/path/to/FFT_nano tui
@@ -259,7 +271,7 @@ The `fft` CLI is the primary interface after install. When CLI linking is unavai
 | `--flow <flow>` | quickstart, advanced, or manual |
 | `--mode <mode>` | local or remote |
 | `--runtime <runtime>` | auto, docker, or host |
-| `--auth-choice <choice>` | openai, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, skip |
+| `--auth-choice <choice>` | openai, opencode-go, lm-studio, anthropic, gemini, openrouter, zai, minimax, kimi-coding, ollama, skip |
 | `--model <id>` | Model ID |
 | `--api-key <token>` | Provider API key |
 | `--remote-url <url>` | Remote gateway URL (remote mode) |
@@ -336,6 +348,11 @@ Telegram commands (main/admin subset):
 - `/coder <task>`
 - `/coder-plan <task>`
 - `/tasks [list|due|detail <id>|runs <id> [limit]]`
+
+Model selection note:
+
+- `/models` without a query opens the model provider picker panel directly.
+- `/models <query>` searches and lists models matching the query text.
 
 Tool progress notes:
 
@@ -503,7 +520,7 @@ Alternative: set `TELEGRAM_MAIN_CHAT_ID` and restart.
 Behavior:
 
 - main chat responds to all messages
-- non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@OpenClaw` in core profile)
+- non-main chats require trigger prefix `@<ASSISTANT_NAME>`
 - admin and coder delegation commands are main-chat only
 - main/admin can query or restart host service with `/gateway status` and `/gateway restart`
 
@@ -533,10 +550,11 @@ Delegation behavior is the same in both `start` and `dev` runtime modes.
   - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE=1|0`
   - `FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING=1|0`
 - Optional startup ritual file: `BOOT.md` (enable with `FFT_NANO_WORKSPACE_ENABLE_BOOT_MD=1` or parity config).
-- Heartbeat loop is enabled by default (`30m`) and runs a main-session check using `HEARTBEAT.md`.
-- Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `15m`, `1h`).
+- Heartbeat loop is enabled by default (`4h`) and runs a main-session check using `HEARTBEAT.md`.
+- Override cadence with `FFT_NANO_HEARTBEAT_EVERY` (e.g. `1h`, `4h`).
 - If `HEARTBEAT.md` exists but is effectively empty (headers/comments only), heartbeat runs are skipped.
 - Heartbeat acknowledgements are normalized with token stripping and max-ack gating (`FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, default `300`).
+- OK-only heartbeat runs send `heartbeat okay` by default; set `FFT_NANO_HEARTBEAT_SHOW_OK=0` to make normal heartbeats silent.
 - Optional active-hours gate: `FFT_NANO_HEARTBEAT_ACTIVE_HOURS` (format: `HH:MM-HH:MM` or `Mon-Fri@HH:MM-HH:MM`).
 - Optional parity config file: `config/runtime.parity.json` (override path via `FFT_NANO_PARITY_CONFIG_PATH`).
 

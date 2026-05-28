@@ -48,7 +48,7 @@ Delegation parsing uses `parseDelegationTrigger` from `src/coding-delegation.ts`
 
 Safety gate:
 - Delegation is main-chat-only.
-- Main-chat natural-language substantial coding asks can also auto-route through `isSubstantialCodingTask(...)`.
+- Main-chat natural-language coding autosuggest is disabled by default. It can be re-enabled with `FFT_NANO_CODER_GATE_MODE=autosuggest`, which then uses `isSubstantialCodingTask(...)` plus a second-pass `shouldSuggestCodingEscalation(...)` check.
 
 ## Model Invocation
 
@@ -82,9 +82,9 @@ On failure:
 ## Heartbeat Runs
 
 Heartbeat loop (main chat only):
-- interval from `FFT_NANO_HEARTBEAT_EVERY` (default 30m)
+- interval from `FFT_NANO_HEARTBEAT_EVERY` (default 4h)
 - prompt from `FFT_NANO_HEARTBEAT_PROMPT`
-- suppresses output when result is only `HEARTBEAT_OK`
+- sends `heartbeat okay` for OK-only results when `FFT_NANO_HEARTBEAT_SHOW_OK=1`; otherwise suppresses OK-only output
 
 ## Command Path vs Agent Path
 

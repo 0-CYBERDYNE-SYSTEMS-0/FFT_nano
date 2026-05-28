@@ -6,11 +6,15 @@ import {
   isTelegramPrivateChatJid,
   isTelegramJid,
   normalizeTelegramDraftText,
+  normalizeTelegramPreviewText,
   parseTelegramChatId,
   splitTelegramText,
   splitTelegramTextForHtmlLimit,
 } from '../src/telegram.js';
-import { markdownToTelegramHtml, rebalanceHtmlChunks } from '../src/telegram-format.js';
+import {
+  markdownToTelegramHtml,
+  rebalanceHtmlChunks,
+} from '../src/telegram-format.js';
 
 test('parseTelegramChatId parses valid telegram jid', () => {
   assert.equal(parseTelegramChatId('telegram:12345'), '12345');
@@ -76,7 +80,10 @@ test('rebalanceHtmlChunks closes unclosed tags at chunk boundary', () => {
 test('rebalanceHtmlChunks handles nested tags', () => {
   const chunks = ['<b><i>nested', ' content</i></b>'];
   const balanced = rebalanceHtmlChunks(chunks);
-  assert.deepEqual(balanced, ['<b><i>nested</i></b>', '<b><i> content</i></b>']);
+  assert.deepEqual(balanced, [
+    '<b><i>nested</i></b>',
+    '<b><i> content</i></b>',
+  ]);
 });
 
 test('rebalanceHtmlChunks passes through balanced chunks unchanged', () => {
@@ -111,13 +118,21 @@ test('normalizeTelegramDraftText truncates to Telegram limit with prefix', () =>
   assert.equal(normalized.endsWith('a'), true);
 });
 
+test('normalizeTelegramPreviewText is preview-only truncation helper', () => {
+  const long = 'b'.repeat(5000);
+  assert.equal(normalizeTelegramPreviewText(long).length, 4096);
+  assert.deepEqual(splitTelegramText(long).join(''), long);
+});
+
 test('markdownToTelegramHtml renders fenced code as Telegram pre/code', () => {
   const html = markdownToTelegramHtml('```ts\nconst x = 1;\n```');
   assert.equal(html, '<pre><code>const x = 1;\n</code></pre>');
 });
 
 test('markdownToTelegramHtml escapes unsafe tags while preserving inline code', () => {
-  const html = markdownToTelegramHtml('run `<b>rm -rf</b>` and <script>x</script>');
+  const html = markdownToTelegramHtml(
+    'run `<b>rm -rf</b>` and <script>x</script>',
+  );
   assert.equal(
     html,
     'run <code>&lt;b&gt;rm -rf&lt;/b&gt;</code> and &lt;script&gt;x&lt;/script&gt;',
@@ -152,10 +167,30 @@ test('createTelegramBot uploads video, audio, voice, and animation via Telegram 
       triggerPattern: /@FarmFriend/i,
     });
 
-    await bot.sendVideo('telegram:1', Buffer.from('video'), 'clip.mp4', 'Video');
-    await bot.sendAudio('telegram:1', Buffer.from('audio'), 'song.mp3', 'Audio');
-    await bot.sendVoice('telegram:1', Buffer.from('voice'), 'note.ogg', 'Voice');
-    await bot.sendAnimation('telegram:1', Buffer.from('gif'), 'loop.gif', 'Animation');
+    await bot.sendVideo(
+      'telegram:1',
+      Buffer.from('video'),
+      'clip.mp4',
+      'Video',
+    );
+    await bot.sendAudio(
+      'telegram:1',
+      Buffer.from('audio'),
+      'song.mp3',
+      'Audio',
+    );
+    await bot.sendVoice(
+      'telegram:1',
+      Buffer.from('voice'),
+      'note.ogg',
+      'Voice',
+    );
+    await bot.sendAnimation(
+      'telegram:1',
+      Buffer.from('gif'),
+      'loop.gif',
+      'Animation',
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

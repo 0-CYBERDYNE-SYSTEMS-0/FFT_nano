@@ -13,6 +13,7 @@ function printUsage() {
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
   fft web [--open]
   fft doctor [--json]
+  fft skill-manager <status|run|dry-run|pause|resume|pin|unpin|archive|restore|backup> [skill]
   fft service <install|uninstall|start|stop|restart|status|logs>
 
 Options:
@@ -90,7 +91,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['onboard', 'profile', 'start', 'dev', 'tui', 'web', 'service', 'doctor'].includes(command)) {
+  if (!['onboard', 'profile', 'start', 'dev', 'tui', 'web', 'service', 'doctor', 'skill-manager', 'curator'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -114,6 +115,26 @@ function main() {
 
   if (command === 'doctor') {
     const result = spawnSync('npm', ['run', 'doctor', '--', ...commandArgs], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+  }
+
+  if (command === 'skill-manager') {
+    const result = spawnSync('npm', ['run', 'skill-manager', '--', ...commandArgs], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+  }
+
+  if (command === 'curator') {
+    const result = spawnSync('npm', ['run', 'curator', '--', ...commandArgs], {
       cwd: repoRoot,
       env: process.env,
       stdio: 'inherit',

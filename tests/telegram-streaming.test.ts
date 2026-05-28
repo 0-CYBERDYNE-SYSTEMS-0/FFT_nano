@@ -186,6 +186,36 @@ test('updateTelegramPreview skips initial send when text is below minimum charac
   assert.equal(sent, 1);
 });
 
+test('updateTelegramPreview ignores late preview updates after completion', async () => {
+  const registry = new TelegramPreviewRegistry(60_000);
+  const runKey = getTelegramPreviewRunKey('telegram:1', 'run-complete');
+  registry.noteCompleted(runKey);
+  let sent = 0;
+  let edited = 0;
+  const bot = {
+    sendStreamMessage: async () => {
+      sent++;
+      return 999;
+    },
+    editStreamMessage: async () => {
+      edited++;
+    },
+  };
+
+  const result = await updateTelegramPreview({
+    bot,
+    registry,
+    chatJid: 'telegram:1',
+    requestId: 'run-complete',
+    text: 'This late preview is long enough to pass the debounce threshold',
+  });
+
+  assert.equal(result.sent, false);
+  assert.equal(result.disabled, true);
+  assert.equal(sent, 0);
+  assert.equal(edited, 0);
+});
+
 test('updateTelegramDraftPreview sends native draft updates without using message edits', async () => {
   const registry = new TelegramPreviewRegistry(60_000);
   const drafts: Array<{ draftId: number; text: string }> = [];
@@ -229,6 +259,63 @@ test('updateTelegramDraftPreview sends native draft updates without using messag
       draftId: 321,
       text: 'This is a native Telegram draft preview with enough characters and more',
     },
+  ]);
+});
+
+test('updateTelegramDraftPreview ignores late draft updates after completion', async () => {
+  const registry = new TelegramPreviewRegistry(60_000);
+  const runKey = getTelegramPreviewRunKey('telegram:1', 'run-draft-complete');
+  registry.noteCompleted(runKey);
+  const drafts: Array<{ draftId: number; text: string }> = [];
+  const bot = {
+    sendMessageDraft: async (_chatJid: string, draftId: number, text: string) => {
+      drafts.push({ draftId, text });
+    },
+  };
+
+  const result = await updateTelegramDraftPreview({
+    bot,
+    registry,
+    chatJid: 'telegram:1',
+    requestId: 'run-draft-complete',
+    draftId: 321,
+    text: 'This late native draft preview has enough characters',
+  });
+
+  assert.equal(result.sent, false);
+  assert.equal(result.disabled, true);
+  assert.deepEqual(drafts, []);
+});
+
+test('updateTelegramDraftPreview isolates retry attempts by request id', async () => {
+  const registry = new TelegramPreviewRegistry(60_000);
+  const drafts: Array<{ draftId: number; text: string }> = [];
+  const bot = {
+    sendMessageDraft: async (_chatJid: string, draftId: number, text: string) => {
+      drafts.push({ draftId, text });
+    },
+  };
+
+  await updateTelegramDraftPreview({
+    bot,
+    registry,
+    chatJid: 'telegram:1',
+    requestId: 'run-draft',
+    draftId: 321,
+    text: 'First attempt draft preview with enough characters',
+  });
+  await updateTelegramDraftPreview({
+    bot,
+    registry,
+    chatJid: 'telegram:1',
+    requestId: 'run-draft:retry',
+    draftId: 654,
+    text: 'Retry attempt draft preview with enough characters',
+  });
+
+  assert.deepEqual(drafts, [
+    { draftId: 321, text: 'First attempt draft preview with enough characters' },
+    { draftId: 654, text: 'Retry attempt draft preview with enough characters' },
   ]);
 });
 

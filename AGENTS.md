@@ -80,7 +80,7 @@ Notes:
 - Main workspace bootstrap/context files are auto-seeded if missing:
   - `AGENTS.md`, `SOUL.md`, `USER.md`, `IDENTITY.md`, `PRINCIPLES.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` + `memory/`
 - Heartbeat is enabled by default and reads `HEARTBEAT.md` periodically.
-- Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `30m`).
+- Configure heartbeat cadence with `FFT_NANO_HEARTBEAT_EVERY` (default `4h`).
 - Optional heartbeat tuning: `FFT_NANO_HEARTBEAT_ACK_MAX_CHARS`, `FFT_NANO_HEARTBEAT_ACTIVE_HOURS`.
 
 ## Pi-Native Project Skills
@@ -245,6 +245,28 @@ Do not start unrelated feature work directly in the root checkout.
 - Run `npm run secret-scan` and `npm run release-check` before promoting a release candidate
 - Personal directories (`fft-experience/`, `.factory/`, `data/`, `groups/`) are gitignored
 - A public release must come from the exact tested commit that will be tagged
+
+### Two-Checkout Operating Model (Local)
+
+- Keep one local release/runtime checkout on `main`.
+- Keep a separate local development checkout for day-to-day feature work.
+- Do implementation work in the development checkout, push feature branches to `origin`, and open a PR to `main`.
+- Never push directly to `origin/main`; promotion to `main` happens only through reviewed PRs.
+- After merge, fast-forward the local release/runtime checkout on `main` before runtime/service validation.
+
+### Authoritative Local Workflow (Release-Parity Runtime)
+
+This is the canonical operator workflow and is intentional:
+
+1. Implement and test in the dev checkout/worktree (for example `fft_nano-dev`).
+2. Open PR and merge to `origin/main`.
+3. Fast-forward the local runtime/release checkout on `main`.
+4. Build/restart service from that local `main` checkout.
+
+Implications:
+- Seeing code edits in a dev checkout while the service runs from a separate local `main` checkout is expected.
+- Treat checkout-path differences as context, not as a workflow error, unless the runtime checkout is not on `main` or is not fast-forwarded after merge.
+- Runtime behavior investigation should always start from the active service checkout and its `.env`/logs, then map findings back to the dev checkout for fixes.
 
 ### Worktrees for Development
 

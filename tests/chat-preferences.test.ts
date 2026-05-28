@@ -38,25 +38,31 @@ test('normalizeThinkLevel maps aliases', () => {
 
 test('normalizeTelegramDeliveryMode maps supported values', () => {
   assert.equal(normalizeTelegramDeliveryMode('off'), 'off');
-  assert.equal(normalizeTelegramDeliveryMode('partial'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('block'), 'partial');
+  assert.equal(normalizeTelegramDeliveryMode('stream'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('partial'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('block'), 'stream');
   assert.equal(normalizeTelegramDeliveryMode('draft'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('native'), 'draft');
-  assert.equal(normalizeTelegramDeliveryMode('progress'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('live'), 'partial');
-  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'partial');
+  assert.equal(normalizeTelegramDeliveryMode('progress'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('live'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('append'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('transcript'), 'stream');
   assert.equal(normalizeTelegramDeliveryMode('final'), 'off');
   assert.equal(normalizeTelegramDeliveryMode(''), undefined);
 });
 
 test('parseQueueArgs parses explicit values and reset', () => {
-  assert.deepEqual(parseQueueArgs('mode=followup debounce=2s cap=20 drop=summarize'), {
-    mode: 'followup',
-    debounceMs: 2000,
-    cap: 20,
-    drop: 'summarize',
-    reset: false,
-  });
+  assert.deepEqual(
+    parseQueueArgs('mode=followup debounce=2s cap=20 drop=summarize'),
+    {
+      mode: 'followup',
+      debounceMs: 2000,
+      cap: 20,
+      drop: 'summarize',
+      reset: false,
+    },
+  );
   assert.deepEqual(parseQueueArgs('reset'), { reset: true });
 });
 
@@ -111,7 +117,7 @@ test('updateChatRunPreferences compacts defaults and persists', () => {
   assert.equal(runtime.getSaveCount(), 4);
 });
 
-test('legacy Telegram delivery modes normalize to partial when persisted', () => {
+test('legacy Telegram delivery aliases normalize to durable stream and compact away', () => {
   const runtime = createRuntime();
 
   const next = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
@@ -123,6 +129,53 @@ test('legacy Telegram delivery modes normalize to partial when persisted', () =>
   assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
 });
 
+test('explicit native Telegram draft mode persists because it is not the default', () => {
+  const runtime = createRuntime();
+
+  const next = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
+    prefs.telegramDeliveryMode = normalizeTelegramDeliveryMode('draft');
+    return prefs;
+  });
+
+  assert.equal(next.telegramDeliveryMode, 'draft');
+  assert.equal(
+    runtime.chatRunPreferences['telegram:1']?.telegramDeliveryMode,
+    'draft',
+  );
+});
+
+test('updateChatRunPreferences preserves sessionTitle through compaction', () => {
+  const runtime = createRuntime();
+
+  const titled = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
+    prefs.sessionTitle = '  Farm Ops  ';
+    return prefs;
+  });
+  assert.equal(titled.sessionTitle, 'Farm Ops');
+  assert.equal(
+    runtime.chatRunPreferences['telegram:1']?.sessionTitle,
+    'Farm Ops',
+  );
+
+  const withProvider = updateChatRunPreferences(
+    runtime,
+    'telegram:1',
+    (prefs) => {
+      prefs.provider = 'zai';
+      return prefs;
+    },
+  );
+  assert.equal(withProvider.provider, 'zai');
+  assert.equal(withProvider.sessionTitle, 'Farm Ops');
+
+  updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
+    delete prefs.provider;
+    delete prefs.sessionTitle;
+    return prefs;
+  });
+  assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
+});
+
 test('getEffectiveModelLabel falls back to configured defaults', () => {
   const runtime = createRuntime();
   runtime.chatRunPreferences['telegram:2'] = {
@@ -131,7 +184,10 @@ test('getEffectiveModelLabel falls back to configured defaults', () => {
   };
 
   assert.equal(getEffectiveModelLabel(runtime, 'telegram:2'), 'openai/gpt-5.5');
-  assert.equal(getEffectiveModelLabel(runtime, 'telegram:missing'), 'zai/glm-4.7');
+  assert.equal(
+    getEffectiveModelLabel(runtime, 'telegram:missing'),
+    'zai/glm-4.7',
+  );
 });
 
 test('updateChatUsage aggregates counts and formatUsageText reports totals', () => {
@@ -154,18 +210,30 @@ test('updateChatUsage aggregates counts and formatUsageText reports totals', () 
 
   assert.match(formatUsageText(runtime, 'telegram:1'), /- runs: 2/);
   assert.match(formatUsageText(runtime, 'telegram:1'), /- total_tokens: 15/);
-  assert.match(formatUsageText(runtime, 'telegram:1'), /- last_model: zai\/glm-4.7/);
-  assert.match(formatUsageText(runtime, 'telegram:1', 'all'), /Usage \(all chats\):/);
+  assert.match(
+    formatUsageText(runtime, 'telegram:1'),
+    /- last_model: zai\/glm-4.7/,
+  );
+  assert.match(
+    formatUsageText(runtime, 'telegram:1', 'all'),
+    /Usage \(all chats\):/,
+  );
 });
 
 test('patchTuiSessionPrefs keeps preview reasoning in sync with reasoningLevel', () => {
   const runtime = createRuntime();
 
   patchTuiSessionPrefs(runtime, 'telegram:1', { reasoningLevel: 'stream' });
-  assert.equal(runtime.chatRunPreferences['telegram:1']?.reasoningLevel, 'stream');
+  assert.equal(
+    runtime.chatRunPreferences['telegram:1']?.reasoningLevel,
+    'stream',
+  );
   assert.equal(runtime.chatRunPreferences['telegram:1']?.showReasoning, true);
 
   patchTuiSessionPrefs(runtime, 'telegram:1', { reasoningLevel: 'on' });
   assert.equal(runtime.chatRunPreferences['telegram:1']?.reasoningLevel, 'on');
-  assert.equal(runtime.chatRunPreferences['telegram:1']?.showReasoning, undefined);
+  assert.equal(
+    runtime.chatRunPreferences['telegram:1']?.showReasoning,
+    undefined,
+  );
 });

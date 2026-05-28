@@ -70,6 +70,16 @@ git push origin vX.Y.Z
    - include upgrade steps and known issues
    - publish as a stable release, not a prerelease
 
+6. Publish the curl installer:
+   - upload `scripts/install.sh` to `https://farm-friend.com/fft-nano/install-test.sh`
+   - run the staged installer smoke tests from a clean temp directory and disposable Linux host/container
+   - upload the same tested file to `https://farm-friend.com/fft-nano/install.sh`
+   - verify:
+
+```bash
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | head
+```
+
 ## Release Notes Expectations
 
 Every release should include:

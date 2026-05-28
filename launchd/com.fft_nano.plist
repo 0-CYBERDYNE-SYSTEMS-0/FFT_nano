@@ -21,8 +21,6 @@
         <string>{{HOME}}/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
         <string>{{HOME}}</string>
-        <key>ASSISTANT_NAME</key>
-        <string>OpenClaw</string>
         <key>FFT_NANO_TUI_ENABLED</key>
         <string>1</string>
         <key>FFT_NANO_TUI_PORT</key>

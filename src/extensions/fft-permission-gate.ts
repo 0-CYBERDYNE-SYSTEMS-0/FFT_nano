@@ -23,11 +23,9 @@ export default function (pi: ExtensionAPI) {
       return { block: true, reason: decision.reason };
     }
 
-    const confirmed = await ctx.ui.confirm(
-      decision.title,
-      decision.message,
-      { timeout: 60_000 },
-    );
+    const confirmed = await ctx.ui.confirm(decision.title, decision.message, {
+      timeout: 60_000,
+    });
     if (!confirmed) {
       return {
         block: true,

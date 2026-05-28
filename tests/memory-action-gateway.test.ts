@@ -64,7 +64,10 @@ test('memory_get denies traversal path', async () => {
   );
 
   assert.equal(result.status, 'error');
-  assert.match(result.error || '', /not an allowed memory file/i);
+  assert.equal(
+    result.error,
+    'Path "../secret.md" is not an allowed memory file',
+  );
 });
 
 test('memory_get returns empty document when allowed file is missing', async () => {
@@ -416,7 +419,7 @@ test('memory_write memory_append rejects non-durable target paths', async () => 
       params: {
         intent: 'memory_append',
         payload: {
-          path: 'TODOS.md',
+          path: '../secret.md',
           content: 'should fail',
         },
       },
@@ -429,7 +432,10 @@ test('memory_write memory_append rejects non-durable target paths', async () => 
   );
 
   assert.equal(result.status, 'error');
-  assert.match(result.error || '', /writable durable memory file/i);
+  assert.equal(
+    result.error,
+    'Path "../secret.md" is not an allowed memory file',
+  );
 });
 
 test('memory_write memory_append supports canonical durable targets', async () => {

@@ -29,12 +29,18 @@ RUN apt-get update && apt-get install -y \
     python3-yaml \
     && rm -rf /var/lib/apt/lists/*
 
+# Install ddgs (DuckDuckGo search CLI - no API key required)
+RUN pip3 install --break-system-packages ddgs
+
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and pi (pi-coding-agent) globally
-RUN npm install -g agent-browser @mariozechner/pi-coding-agent
+# Install agent-browser and pi (pi-coding-agent) globally.
+# Keep PI_CODING_AGENT_PACKAGE in sync with package.json/package-lock.json so
+# container runs use the same tested agent runtime as host runs.
+ARG PI_CODING_AGENT_PACKAGE=@mariozechner/pi-coding-agent@0.73.1
+RUN npm install -g agent-browser "${PI_CODING_AGENT_PACKAGE}"
 
 # Create app directory
 WORKDIR /app
@@ -50,6 +56,17 @@ COPY agent-runner/ ./
 
 # Build TypeScript
 RUN npm run build
+
+# Install pi-autoresearch extension
+COPY extensions/ /tmp/extensions/
+RUN npm install -g typescript && \
+    mkdir -p /home/node/.pi/agent/extensions/pi-autoresearch && \
+    cp /tmp/extensions/pi-autoresearch/index.ts /home/node/.pi/agent/extensions/pi-autoresearch/ && \
+    cd /home/node/.pi/agent/extensions/pi-autoresearch && \
+    npx tsc --esModuleInterop --module commonjs --target es2022 --lib es2022 index.ts && \
+    cp /tmp/extensions/pi-autoresearch/template.html /home/node/.pi/agent/extensions/pi-autoresearch/ && \
+    rm /home/node/.pi/agent/extensions/pi-autoresearch/index.ts && \
+    chown -R node:node /home/node/.pi/agent/extensions/
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks

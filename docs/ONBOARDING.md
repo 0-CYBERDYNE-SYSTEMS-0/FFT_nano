@@ -1,13 +1,27 @@
 # Onboarding
 
-`FFT_nano` includes an OpenClaw-style single command onboarding flow that runs:
-backup -> setup -> onboarding wizard -> daemon step -> doctor.
+`FFT_nano` includes a single command onboarding flow that runs:
+backup -> setup -> browser-first onboarding handoff -> daemon step -> doctor.
+
+If provider credentials or `TELEGRAM_BOT_TOKEN` are still missing after setup, `./scripts/onboard-all.sh`
+now launches FFT Control Center as the first-run wizard instead of stopping for manual `.env` edits.
+That wizard is the default place to paste an OpenRouter/provider API key and Telegram bot token before
+Telegram takes over as the main operator interface.
 
 ## Commands
 
 ```bash
+# public installer (latest stable release)
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
+
 # guided wrapper (backup/setup/wizard/service/doctor)
 ./scripts/onboard-all.sh
+
+# guided wrapper with explicit host runtime
+./scripts/onboard-all.sh --runtime host
+
+# public installer with explicit host runtime
+curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime host
 
 # full guided wrapper (same behavior as onboard-all)
 fft onboard
@@ -41,6 +55,17 @@ Config edit note:
 - Use `./scripts/onboard.sh` when you want wizard-only edits without backup/setup/doctor steps.
 
 Interactive mode prompts for flow/mode/provider/channel/hatch and identity values.
+For incomplete first-run installs, the guided wrapper automatically prefers the web hatch and opens FFT Control Center.
+
+Installer environment overrides:
+- `FFT_NANO_INSTALL_DIR=/path/to/install`: install somewhere other than `~/FFT_nano`
+- `FFT_NANO_REF=v1.7.2`: install a specific release tag
+- `FFT_NANO_REF=main`: install current public `main`
+- `FFT_NANO_FORCE=1`: replace a non-empty install directory
+- `FFT_NANO_AUTO_LINK=0`: skip the pinned `~/.local/bin/fft` launcher and global `npm link`
+- `FFT_NANO_USER_BIN_DIR=/path/to/bin`: install the pinned `fft` launcher somewhere other than `~/.local/bin`
+
+The public installer chooses Docker when it is already installed and healthy. If Docker is missing or unhealthy, it uses host runtime and writes the required host-runtime opt-in values before onboarding.
 
 If hatch is `web`, use:
 
@@ -48,6 +73,14 @@ If hatch is `web`, use:
 fft web
 # or ./scripts/web.sh
 ```
+
+Setup installs a pinned `fft` launcher that targets the installed checkout, so `fft web`,
+`fft tui`, and `fft service status` work from any directory in new shells. If your shell
+cannot find `fft`, run `export PATH="$HOME/.local/bin:$PATH"` or open a new terminal.
+
+First-run browser wizard links:
+- OpenRouter signup: `https://openrouter.ai/`
+- Telegram BotFather: `https://t.me/BotFather`
 
 ## Flags
 
@@ -60,7 +93,8 @@ fft web
 - `--force`: rewrite generated `SOUL.md` and `TODOS.md` even if already customized
 - `--flow <quickstart|advanced|manual>`
 - `--mode <local|remote>`
-- `--auth-choice <openai|anthropic|gemini|openrouter|zai|skip>`
+- `--runtime <auto|docker|host>`: runtime preference passed into setup/onboarding
+- `--auth-choice <openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip>`
 - `--model <provider-model>`
 - `--api-key <token>`
 - `--remote-url <url>`
@@ -109,11 +143,24 @@ Runtime gate env toggles:
 
 ## Runtime Modes
 
-- Default runtime is Docker (`CONTAINER_RUNTIME=auto` picks Docker when available).
-- Optional host runtime (no container isolation) requires explicit opt-in:
+- `setup.sh` is the single runtime decision point for guided installs.
+- Shared install/build work runs first. Runtime-specific preparation happens later in setup step 2.
+- Default Docker-first behavior:
+  - `CONTAINER_RUNTIME=auto` means “prefer Docker when it is available and healthy”
+  - `CONTAINER_RUNTIME=docker` is an explicit Docker requirement
+- Host runtime (no container isolation) requires explicit opt-in:
   - `CONTAINER_RUNTIME=host`
   - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
   - in production, also set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
+  - guided setup and runtime use the repo-local `pi` CLI from `node_modules/.bin/pi` when available
+  - `PI_PATH` is the explicit override; global `pi` is only a fallback when the repo-local binary is missing
+  - if the repo-local binary is missing, rerun `npm install`, set `PI_PATH`, or install `@mariozechner/pi-coding-agent` globally
+- First-time guided installs without Docker do not silently switch to host:
+  - interactive runs prompt for `host` or `docker` during `setup.sh`
+  - the prompt defaults to `host` when Docker is unavailable
+  - choosing `host` persists the host runtime keys in `.env`
+  - choosing `docker` writes Docker-first defaults and exits cleanly so you can install/start Docker
+  - non-interactive runs must be explicit: use `--runtime host` or provide Docker
 - If Docker reports `EOF`, `Cannot connect`, or `no space left on device`, run:
 
 ```bash

@@ -58,13 +58,34 @@ export function normalizeTelegramDeliveryMode(
   if (!key) return undefined;
   if (['off', 'final', 'final-only', 'quiet'].includes(key)) return 'off';
   if (
-    ['partial', 'progress', 'live', 'block', 'persistent', 'persist', 'transcript', 'append'].includes(
-      key,
-    )
+    [
+      'stream',
+      'streaming',
+      'message',
+      'messages',
+      'persistent',
+      'persist',
+      'progress',
+      'live',
+      'partial',
+      'block',
+      'append',
+      'transcript',
+    ].includes(key)
   ) {
-    return 'partial';
+    return 'stream';
   }
-  if (['draft', 'native', 'native-draft'].includes(key)) return 'draft';
+  if (
+    [
+      'draft',
+      'native',
+      'native-draft',
+      'ephemeral',
+      'ephemeral-draft',
+    ].includes(key)
+  ) {
+    return 'draft';
+  }
   return undefined;
 }
 
@@ -174,12 +195,18 @@ export function compactChatRunPreferences(
   const next: ChatRunPreferences = {};
   if (prefs.provider?.trim()) next.provider = prefs.provider.trim();
   if (prefs.model?.trim()) next.model = prefs.model.trim();
+  if (prefs.sessionTitle?.trim()) {
+    next.sessionTitle = prefs.sessionTitle.trim().slice(0, 120);
+  }
   if (prefs.thinkLevel && prefs.thinkLevel !== 'off')
     next.thinkLevel = prefs.thinkLevel;
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
     next.reasoningLevel = prefs.reasoningLevel;
   }
-  if (prefs.telegramDeliveryMode && prefs.telegramDeliveryMode !== 'partial') {
+  if (
+    prefs.telegramDeliveryMode === 'off' ||
+    prefs.telegramDeliveryMode === 'draft'
+  ) {
     next.telegramDeliveryMode = prefs.telegramDeliveryMode;
   }
   if (prefs.showReasoning === true) {
@@ -331,6 +358,7 @@ export function formatChatRuntimePreferences(
   chatJid: string,
 ): string[] {
   const prefs = runtime.chatRunPreferences[chatJid] || {};
+  const sessionTitle = (prefs.sessionTitle || '').trim();
   const think = prefs.thinkLevel || 'off';
   const reasoning = prefs.reasoningLevel || 'off';
   const verbose = runtime.getEffectiveVerboseMode
@@ -343,6 +371,7 @@ export function formatChatRuntimePreferences(
   const queueCap = prefs.queueCap || 0;
   const queueDrop = prefs.queueDrop || 'old';
   return [
+    `- chat_title: ${sessionTitle || '(default)'}`,
     `- chat_model: ${getEffectiveModelLabel(runtime, chatJid)}`,
     `- chat_think: ${think}`,
     `- chat_reasoning: ${reasoning}`,

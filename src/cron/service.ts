@@ -6,10 +6,12 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
   PARITY_CONFIG,
   TIMEZONE,
 } from '../config.js';
 import { runContainerAgent, writeTasksSnapshot } from '../pi-runner.js';
+import { runEvaluatorPass } from '../evaluator.js';
 import {
   deleteTask,
   getAllTasks,
@@ -29,6 +31,7 @@ export interface CronServiceDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   requestHeartbeatNow?: (reason?: string) => void;
   runContainerTask?: typeof runContainerAgent;
+  runEvaluatorPass?: typeof runEvaluatorPass;
   runSubagentTask?: (
     type: string,
     groupFolder: string,
@@ -381,6 +384,43 @@ export async function runScheduledTaskV2(
         outputError = output.error || 'Unknown scheduled task error';
       } else {
         outputResult = output.result;
+
+        // Evaluator pass for cron tasks — always runs
+        if (outputResult) {
+          const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
+          const verdict = await evaluateRun({
+            runType: 'cron',
+            originalTask: task.prompt,
+            agentOutput: outputResult,
+            durationMs: Date.now() - startedAt,
+            toolsInvoked: output.toolExecutions?.length ?? 0,
+            group,
+            chatJid: task.chat_jid,
+            isMain,
+            workspaceDir: isMain
+              ? MAIN_WORKSPACE_DIR
+              : path.join(GROUPS_DIR, task.group_folder),
+            startedAtMs: startedAt,
+            abortSignal: abortController.signal,
+          }).catch((err) => {
+            logger.warn(
+              { err, taskId: task.id },
+              'Evaluator pass failed for cron task',
+            );
+            return null;
+          });
+          if (verdict && !verdict.skipped && !verdict.pass) {
+            logger.warn(
+              {
+                taskId: task.id,
+                score: verdict.score,
+                issues: verdict.issues,
+                feedback: verdict.feedback,
+              },
+              'Cron task evaluator flagged issues; suppressing user-visible evaluator details',
+            );
+          }
+        }
       }
     }
   } catch (err) {
