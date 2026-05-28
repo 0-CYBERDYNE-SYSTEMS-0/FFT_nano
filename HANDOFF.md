@@ -30,52 +30,51 @@ What shipped, with file pointers:
 | Bash-guard canonicalization | `src/bash-guard.ts` → `canonicalizeForDetection` | Used by `isDestructiveCommand`. |
 | Tests | `tests/{bash-guard,db-evaluator-verdicts,db-agent-runs-recovery,dispatch-validation}.test.ts` | 15 new. |
 
-## 1.2 ⚠️ Critical gaps — plumbed but NOT yet functional
+## 1.2 Critical gaps — NOW CLOSED ✅
 
-Fix these first or the §2 durability gain is structural-only.
+All three were resolved on branch `feat/durability-resume-and-followups`.
 
-### (a) `worktree_path` is never written → triage always marks runs `dead`
-- `triageActiveAgentRunsOnStartup` (`src/db.ts`) decides recoverable vs dead by
-  checking whether `agent_runs.worktree_path` exists on disk.
-- **Nothing sets `worktree_path`.** `agent_runs` rows are created/updated only by
-  `src/long-run-service.ts` (`createAgentRun` ~L483; `updateAgentRun` L186…L528),
-  and none of those calls pass `worktree_path`.
-- **Result:** every interrupted run currently triages as `failed`/`dead` — same as
-  old behavior in practice. The recoverable path is correct but starved of input.
-- **To finish:** when a long run is backed by an ephemeral worktree (created in
-  `src/coding-orchestrator.ts`; search `worktreePath` / `ephemeral_worktree`),
-  thread that path into `long-run-service.ts` and call
-  `updateAgentRun(runId, { worktree_path })` at run start.
+### (a) `worktree_path` now written at run start ✅
+- `src/long-run-service.ts` gained a `resolveWorkspacePath` dep; `runLongAgentRun`
+  records the run's durable workspace dir as `agent_runs.worktree_path` when it
+  flips to `running`. A long run executes in its group's persistent workspace
+  (not an ephemeral worktree), which survives a restart — so triage now
+  correctly classifies interrupted long runs `recoverable`.
 
-### (b) No resume consumer for recoverable runs
-- `listRecoverableAgentRuns()` exists and is correct, but **nothing calls it.**
-  Interrupted runs are preserved and listed, never re-enqueued.
-- **To finish:** at startup (after `initDatabaseAtPath`, likely `src/app.ts`
-  `main()` or long-run-service init), read `listRecoverableAgentRuns()` and
-  re-dispatch each via `message-dispatch` / `coding-orchestrator`, resuming from
-  the preserved worktree. Add a max-attempts cap to avoid crash loops.
-- This is the single change that turns §2 from B− into a true B.
+### (b) Resume consumer implemented ✅
+- `longRunService.resumeRecoverableRuns()` reads `listRecoverableAgentRuns()` and
+  re-enqueues each as a fresh continuation run with a resume preamble. A per-run
+  `resume_attempts` counter (new `agent_runs` column) caps revivals
+  (`FFT_NANO_LONG_RUN_MAX_RESUMES`, default 2) so a run that crashes the host on
+  every boot is abandoned. The source is marked `recovery_state='resumed'` up
+  front, making startup idempotent. Wired into `app.ts main()` after channels
+  come up (so resumed runs can deliver). New recovery state: `'resumed'`.
 
-### (c) Verdict feed-forward is group-scoped, coding/subagent only
-- `getEvaluatorStats(groupFolder)` is consumed only by `coding-orchestrator.ts`.
-  Chat/cron/heartbeat neither write nor read it (by design — evaluator only runs
-  for coding/subagent). No cross-group learning. Confirm `evaluator_verdicts`
-  actually populates after a real coding run before assuming the loop closes.
+### (c) Verdict feed-forward confirmed wired ✅
+- Verified `recordEvaluatorVerdict` is reached at `coding-orchestrator.ts:1324`
+  for non-skipped verdicts; read back at L1074 via `getEvaluatorStats`. Remains
+  group-scoped, coding/subagent only by design. No code change needed.
 
-## 1.3 Deferred sections (next contract, by priority)
+## 1.3 Follow-up sections — ALL COMPLETE ✅
 
-1. **Resume consumer + `worktree_path` wiring** — §1.2(a)(b). Highest leverage.
-2. **§4a memory injection consistency** — cron + subagent get no memory context.
-   Wire `buildMemoryContext` (`src/memory-retrieval.ts`) into `src/cron/service.ts`
-   and the subagent path. Cheap, no new deps.
-3. **§3 outbox delivery queue** — at-least-once + dedupe for finals/cron. ⚠️ Highest
-   blast radius: dedupe must be right or it double-posts to Telegram. Tests first.
-   Touches `host-events.ts`, `telegram-streaming.ts`, `cron/service.ts`.
-4. **§4b semantic memory** — local embedding index behind `memory-backend.ts`
-   facade; blend with lexical in `mergeAndRankMemoryHits` (`src/memory-search.ts`).
-   Keep lexical fallback. No external API (project rule: no mock/sim).
-5. **§5 skill versioning** — snapshot `SKILL.md` to `.history/` before patch; add
-   rollback. Lowest leverage, do last.
+1. **Resume consumer + `worktree_path` wiring** — §1.2(a)(b). DONE.
+2. **§4a memory injection consistency** — DONE. `shouldBuildRetrievedMemoryContext`
+   (`src/pi-runner.ts`) now returns true for `isScheduledTask`/`isSubagent` too,
+   so cron + subagent runs build memory context like main chat (same env gate).
+3. **§3 outbox delivery queue** — DONE. New `delivery_outbox` table + `src/outbox.ts`
+   (`createOutboxDeliverer`) give at-least-once + dedupe (UNIQUE `dedupe_key`).
+   Cron announces deliver via the outbox (`cron:{id}:{run}` key); startup flush
+   re-attempts entries left undelivered by a crash. Interactive chat streaming was
+   intentionally NOT rerouted (no stable dedupe key → double-post risk).
+4. **§4b semantic memory** — DONE (opt-in). `src/memory-embeddings.ts` re-ranks the
+   top lexical candidates by a blend of normalized lexical score + embedding cosine
+   from a LOCAL Ollama model (`MEMORY_SEMANTIC_ENABLED`, default off). Lexical stays
+   recall + fallback; disabled = byte-identical prior behavior. No external API, no
+   new npm deps. Requires the operator run Ollama with an embed model
+   (`MEMORY_SEMANTIC_MODEL`, default `nomic-embed-text`) to take effect.
+5. **§5 skill versioning** — DONE. `src/skill-history.ts` snapshots `SKILL.md` to
+   `.history/` before every patch (bounded to 10); new `skill_rollback` IPC action
+   restores the prior version (reversible).
 
 ## 1.4 Branch model & workflow (MUST follow)
 
@@ -88,7 +87,7 @@ out in one worktree at a time.**
   force-push blocked (even for admins). This is what the runtime runs.
 - **`~/fft_nano-dev`** — edit/build/test worktree. Work on FEATURE branches here,
   never on `dev`.
-- **`~/fft_nano`** (= `/Users/scrimwiggins/FFT_nano`, case-insensitive FS) —
+- **`~/fft_nano`** (= `/Users/username/FFT_nano`, case-insensitive FS) —
   runtime worktree on `dev`. **Never hand-edit.** Builds + restarts the launchd
   service from merged `dev`.
 
@@ -137,7 +136,10 @@ sqlite3 ~/fft_nano/store/messages.db "PRAGMA table_info(agent_runs);"
 
 1. Read `MISSION_CONTRACT.md`, then Part 1 of this file.
 2. `CLAUDE.md` (repo root) = architecture, message flow, key files.
-3. Start with §1.2(a)+(b) — most valuable unfinished piece, well-scoped.
+3. All §1.2 gaps and §1.3 follow-ups are now implemented + tested on branch
+   `feat/durability-resume-and-followups` (full suite 705 tests, 703 pass / 2
+   skip / 0 fail). Remaining work is deploy + live verification per §1.5, and
+   (optional) enabling semantic memory by running Ollama with an embed model.
 
 ---
 

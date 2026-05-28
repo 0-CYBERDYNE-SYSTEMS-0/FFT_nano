@@ -112,7 +112,10 @@ const MAX_CACHE_ENTRIES = 2000;
 let embedderUnavailable = false;
 
 function postEmbeddingSync(text: string): number[] | null {
-  const payload = JSON.stringify({ model: MEMORY_SEMANTIC_MODEL, prompt: text });
+  const payload = JSON.stringify({
+    model: MEMORY_SEMANTIC_MODEL,
+    prompt: text,
+  });
   const result = spawnSync(
     'curl',
     [
