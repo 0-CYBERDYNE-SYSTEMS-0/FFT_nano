@@ -145,45 +145,78 @@ export function applyTodoMutation(input: {
 
   if (input.intent === 'todo_set_objective') {
     const objective = String(input.payload.objective || '').trim();
-    if (!objective) throw new Error('todo_set_objective requires payload.objective');
-    const next = replaceSectionBody(lines, TODO_SECTION_OBJECTIVE, [`> ${objective}`]);
+    if (!objective)
+      throw new Error('todo_set_objective requires payload.objective');
+    const next = replaceSectionBody(lines, TODO_SECTION_OBJECTIVE, [
+      `> ${objective}`,
+    ]);
     writeTextFile(todosPath, next.join('\n'));
-    return { targetPath: 'TODOS.md', operation: input.intent, message: 'Active objective updated' };
+    return {
+      targetPath: 'TODOS.md',
+      operation: input.intent,
+      message: 'Active objective updated',
+    };
   }
 
   if (input.intent === 'todo_upsert_task') {
     const { line, entryId } = taskLineFromPayload(input.payload);
     const range = findSectionRange(lines, TODO_SECTION_TASKS);
-    const body = range.start === -1 ? [] : lines.slice(range.start + 1, range.end);
+    const body =
+      range.start === -1 ? [] : lines.slice(range.start + 1, range.end);
     const nextBody = body.length === 0 ? ['- [None]'] : body;
-    const index = nextBody.findIndex((entry) => extractEntryId(entry) === entryId);
+    const index = nextBody.findIndex(
+      (entry) => extractEntryId(entry) === entryId,
+    );
     if (index >= 0) nextBody[index] = line;
     else nextBody.push(line);
-    const next = replaceSectionBody(lines, TODO_SECTION_TASKS, cleanupNoneMarkers(nextBody));
+    const next = replaceSectionBody(
+      lines,
+      TODO_SECTION_TASKS,
+      cleanupNoneMarkers(nextBody),
+    );
     writeTextFile(todosPath, next.join('\n'));
-    return { targetPath: 'TODOS.md', operation: input.intent, message: 'Task upserted', entryId };
+    return {
+      targetPath: 'TODOS.md',
+      operation: input.intent,
+      message: 'Task upserted',
+      entryId,
+    };
   }
 
   if (input.intent === 'todo_move_task') {
     const entryId = String(input.payload.entryId || '').trim();
-    const to = String(input.payload.to || '').trim().toLowerCase();
+    const to = String(input.payload.to || '')
+      .trim()
+      .toLowerCase();
     if (!entryId) throw new Error('todo_move_task requires payload.entryId');
     if (to !== 'task_board' && to !== 'blocked') {
-      throw new Error('todo_move_task requires payload.to of task_board or blocked');
+      throw new Error(
+        'todo_move_task requires payload.to of task_board or blocked',
+      );
     }
     const taskRange = findSectionRange(lines, TODO_SECTION_TASKS);
     const blockedRange = findSectionRange(lines, TODO_SECTION_BLOCKED);
     const taskBody =
-      taskRange.start === -1 ? ['- [None]'] : lines.slice(taskRange.start + 1, taskRange.end);
+      taskRange.start === -1
+        ? ['- [None]']
+        : lines.slice(taskRange.start + 1, taskRange.end);
     const blockedBody =
-      blockedRange.start === -1 ? ['- [None]'] : lines.slice(blockedRange.start + 1, blockedRange.end);
-    const taskIdx = taskBody.findIndex((line) => extractEntryId(line) === entryId);
-    const blockedIdx = blockedBody.findIndex((line) => extractEntryId(line) === entryId);
+      blockedRange.start === -1
+        ? ['- [None]']
+        : lines.slice(blockedRange.start + 1, blockedRange.end);
+    const taskIdx = taskBody.findIndex(
+      (line) => extractEntryId(line) === entryId,
+    );
+    const blockedIdx = blockedBody.findIndex(
+      (line) => extractEntryId(line) === entryId,
+    );
     if (taskIdx === -1 && blockedIdx === -1) {
       throw new Error(`todo_move_task could not find entryId=${entryId}`);
     }
     let taskLine =
-      taskIdx >= 0 ? taskBody.splice(taskIdx, 1)[0] : blockedBody.splice(blockedIdx, 1)[0];
+      taskIdx >= 0
+        ? taskBody.splice(taskIdx, 1)[0]
+        : blockedBody.splice(blockedIdx, 1)[0];
     if (to === 'blocked') {
       const text = extractTodoTaskText(taskLine);
       const reason = String(input.payload.reason || 'waiting').trim();
@@ -196,26 +229,54 @@ export function applyTodoMutation(input: {
       taskLine = `- [${checked}] ${text} <!-- id:${entryId} status:${status} -->`;
       taskBody.push(taskLine);
     }
-    let next = replaceSectionBody(lines, TODO_SECTION_TASKS, cleanupNoneMarkers(taskBody));
-    next = replaceSectionBody(next, TODO_SECTION_BLOCKED, cleanupNoneMarkers(blockedBody));
+    let next = replaceSectionBody(
+      lines,
+      TODO_SECTION_TASKS,
+      cleanupNoneMarkers(taskBody),
+    );
+    next = replaceSectionBody(
+      next,
+      TODO_SECTION_BLOCKED,
+      cleanupNoneMarkers(blockedBody),
+    );
     writeTextFile(todosPath, next.join('\n'));
-    return { targetPath: 'TODOS.md', operation: input.intent, message: `Task moved to ${to}`, entryId };
+    return {
+      targetPath: 'TODOS.md',
+      operation: input.intent,
+      message: `Task moved to ${to}`,
+      entryId,
+    };
   }
 
   if (input.intent === 'todo_set_blocked') {
     const text = String(input.payload.task || '').trim();
     const reason = String(input.payload.reason || '').trim();
-    if (!text || !reason) throw new Error('todo_set_blocked requires payload.task and payload.reason');
+    if (!text || !reason)
+      throw new Error(
+        'todo_set_blocked requires payload.task and payload.reason',
+      );
     const entryId = String(input.payload.entryId || slugId(text, 'blocked'));
     const line = `- [${text}] - [${reason}] <!-- id:${entryId} -->`;
     const range = findSectionRange(lines, TODO_SECTION_BLOCKED);
-    const body = range.start === -1 ? ['- [None]'] : lines.slice(range.start + 1, range.end);
+    const body =
+      range.start === -1
+        ? ['- [None]']
+        : lines.slice(range.start + 1, range.end);
     const idx = body.findIndex((entry) => extractEntryId(entry) === entryId);
     if (idx >= 0) body[idx] = line;
     else body.push(line);
-    const next = replaceSectionBody(lines, TODO_SECTION_BLOCKED, cleanupNoneMarkers(body));
+    const next = replaceSectionBody(
+      lines,
+      TODO_SECTION_BLOCKED,
+      cleanupNoneMarkers(body),
+    );
     writeTextFile(todosPath, next.join('\n'));
-    return { targetPath: 'TODOS.md', operation: input.intent, message: 'Blocked item updated', entryId };
+    return {
+      targetPath: 'TODOS.md',
+      operation: input.intent,
+      message: 'Blocked item updated',
+      entryId,
+    };
   }
 
   if (input.intent === 'todo_upsert_subagent') {
@@ -223,17 +284,31 @@ export function applyTodoMutation(input: {
     const task = String(input.payload.task || '').trim();
     const status = String(input.payload.status || '').trim();
     if (!id || !task || !status) {
-      throw new Error('todo_upsert_subagent requires payload.id, payload.task, payload.status');
+      throw new Error(
+        'todo_upsert_subagent requires payload.id, payload.task, payload.status',
+      );
     }
     const line = `- [${id}] - ${task} - ${status}`;
     const range = findSectionRange(lines, TODO_SECTION_SUBAGENTS);
-    const body = range.start === -1 ? ['- [None]'] : lines.slice(range.start + 1, range.end);
+    const body =
+      range.start === -1
+        ? ['- [None]']
+        : lines.slice(range.start + 1, range.end);
     const idx = body.findIndex((entry) => entry.includes(`[${id}]`));
     if (idx >= 0) body[idx] = line;
     else body.push(line);
-    const next = replaceSectionBody(lines, TODO_SECTION_SUBAGENTS, cleanupNoneMarkers(body));
+    const next = replaceSectionBody(
+      lines,
+      TODO_SECTION_SUBAGENTS,
+      cleanupNoneMarkers(body),
+    );
     writeTextFile(todosPath, next.join('\n'));
-    return { targetPath: 'TODOS.md', operation: input.intent, message: 'Sub-agent status updated', entryId: id };
+    return {
+      targetPath: 'TODOS.md',
+      operation: input.intent,
+      message: 'Sub-agent status updated',
+      entryId: id,
+    };
   }
 
   if (input.intent === 'todo_append_log') {
@@ -244,11 +319,19 @@ export function applyTodoMutation(input: {
       new Date(input.recordedAt).toTimeString().slice(0, 5);
     const line = `- [${hhmm}] - ${text}`;
     const range = findSectionRange(lines, TODO_SECTION_LOG);
-    const body = range.start === -1 ? [] : lines.slice(range.start + 1, range.end);
-    const nextBody = [...body.filter((entry) => entry.trim() !== '- [None]'), line].slice(-40);
+    const body =
+      range.start === -1 ? [] : lines.slice(range.start + 1, range.end);
+    const nextBody = [
+      ...body.filter((entry) => entry.trim() !== '- [None]'),
+      line,
+    ].slice(-40);
     const next = replaceSectionBody(lines, TODO_SECTION_LOG, nextBody);
     writeTextFile(todosPath, next.join('\n'));
-    return { targetPath: 'TODOS.md', operation: input.intent, message: 'Mission log appended' };
+    return {
+      targetPath: 'TODOS.md',
+      operation: input.intent,
+      message: 'Mission log appended',
+    };
   }
 
   throw new Error(`Unsupported todo intent: ${input.intent}`);
@@ -260,7 +343,8 @@ export function applyMemoryMutation(input: {
   targetSection?: string;
   payload: Record<string, unknown>;
 }): { targetPath: string; operation: string; message: string } {
-  const relPath = String(input.payload.path || 'MEMORY.md').trim() || 'MEMORY.md';
+  const relPath =
+    String(input.payload.path || 'MEMORY.md').trim() || 'MEMORY.md';
   if (!isAllowedMemoryRelativePath(relPath)) {
     throw new Error(`Path "${relPath}" is not an allowed memory file`);
   }
@@ -268,7 +352,8 @@ export function applyMemoryMutation(input: {
   const absPath = resolveAllowedMemoryFilePath(input.groupFolder, relPath);
   const current = readTextFile(
     absPath,
-    relPath.toLowerCase().startsWith('memory/') || relPath.toLowerCase().startsWith('canonical/')
+    relPath.toLowerCase().startsWith('memory/') ||
+      relPath.toLowerCase().startsWith('canonical/')
       ? `# ${path.basename(relPath, '.md')}\n`
       : '# MEMORY\n',
   );
@@ -279,7 +364,8 @@ export function applyMemoryMutation(input: {
   return {
     targetPath: relPath.replace(/\\/g, '/'),
     operation: input.intent,
-    message: input.intent === 'memory_promote' ? 'Memory promoted' : 'Memory appended',
+    message:
+      input.intent === 'memory_promote' ? 'Memory promoted' : 'Memory appended',
   };
 }
 

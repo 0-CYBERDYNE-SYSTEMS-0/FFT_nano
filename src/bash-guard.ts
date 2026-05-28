@@ -41,15 +41,33 @@ export const DESTRUCTIVE_COMMAND_NAMES: string[] = [
   'shred',
 ];
 
+/**
+ * Canonicalize a command before destructive-pattern matching so that shell
+ * tricks that bypass a naive regex are neutralized: backslash escapes
+ * (`\rm`, `r\m`), quote-splitting (`r"m"`, `'rm'`), line continuations, and
+ * irregular whitespace. The canonical form is used only for detection, so
+ * over-normalization can at most cause an extra confirmation — never a missed
+ * destructive command.
+ */
+export function canonicalizeForDetection(cmd: string): string {
+  return cmd
+    .replace(/\0/g, '') // strip null bytes
+    .replace(/\\\r?\n/g, ' ') // join line continuations
+    .replace(/\\(.)/g, '$1') // collapse shell escapes: \r -> r, "\ " -> space
+    .replace(/['"`]/g, '') // strip quotes used to split a command token
+    .replace(/\s+/g, ' ') // normalize whitespace
+    .trim();
+}
+
 export function isDestructiveCommand(cmd: string): {
   destructive: boolean;
   matched?: string;
 } {
-  const trimmed = cmd.trim();
-  if (!trimmed) return { destructive: false };
+  const canonical = canonicalizeForDetection(cmd);
+  if (!canonical) return { destructive: false };
 
   for (const entry of DESTRUCTIVE_PATTERNS) {
-    if (entry.pattern.test(trimmed)) {
+    if (entry.pattern.test(canonical)) {
       return { destructive: true, matched: entry.description };
     }
   }

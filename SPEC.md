@@ -148,3 +148,79 @@ Both manage active runs, request IDs, abort controllers, typing indicators, TUI 
 | Config sources | 5 (1,896 lines) | 2 (~800 lines) |
 | IPC event kinds | 17 | ~8 |
 | Total core LOC | ~18,274 | ~12,000 |
+
+---
+
+## Future Work: Skill Surface Optimization For Agent Performance
+
+After the host simplification work, the next performance/capability improvement is not adding more tools. It is making the skill and tool surface easier for the agent to route.
+
+**Problem**: Main/admin runs can see both repo runtime skills and personal skills. This is powerful, but it creates overlap:
+- Multiple skills can mean "search the web" or "research this".
+- Browser/page inspection skills overlap with browser automation skills.
+- Personal skills can override repo skills by name, which is useful only when intentional.
+- A large always-visible catalog increases routing hesitation and prompt noise.
+
+**Goal**: Keep maximum capability while making the default choice obvious.
+
+### Recommended skill layers
+
+1. **Core repo skills** — always visible, versioned, small:
+   - `web-search`
+   - `rapid-research`
+   - `agent-browser`
+   - `fft-debug`
+   - `fft-coder-ops`
+   - `fft-telegram-ops`
+   - `skill-ops`
+
+2. **Repo library skills** — available, but surfaced only when relevant:
+   - setup and onboarding skills
+   - farm skills when `FFT_PROFILE=farm`
+   - dashboard skills when dashboard work is requested
+   - autoresearch skills only when explicitly requested
+
+3. **Personal/private skills** — main/admin only:
+   - domain-specific integrations
+   - media/document workflows
+   - writing/design preferences
+   - experimental model/tool integrations
+
+The mounted pi skills directory can remain flat for compatibility, but each skill should carry metadata that lets prompt construction rank it:
+
+```yaml
+priority: core | library | personal | experimental
+scope: global | main-only | farm | web | media | coding
+```
+
+### Web capability routing
+
+Make this hierarchy explicit in the system prompt and/or core web skills:
+
+1. Public URL fetch: use `curl` first.
+2. Quick search: use `ddgs` via `web-search`.
+3. Multi-source synthesis: use `rapid-research`.
+4. Interactive website or web app validation: use `agent-browser`.
+5. Visual web QA: use `agent-browser` screenshots.
+6. Domain-specific recon: use a matching personal/domain skill only after the basic search/browser route is insufficient.
+
+### Duplicate-name policy
+
+Avoid duplicate skill names across repo and personal layers unless the override is deliberate and documented.
+
+Risky examples:
+- repo `agent-browser` plus personal `agent-browser`
+- repo `rapid-research` plus personal `rapid-research`
+
+Recommended alternatives:
+- keep repo `agent-browser`; name personal variants `browser-harness` or `personal-browser-harness`
+- keep repo `rapid-research`; name personal variants `research-briefing` or `domain-research`
+- if overriding is intended, place it under an obvious personal override convention and document why
+
+### Expected benefit
+
+- Faster skill choice.
+- Less prompt noise.
+- Fewer accidental overrides.
+- Better default behavior for web/search/browser tasks.
+- Same maximum capability, but with a smaller always-visible decision surface.

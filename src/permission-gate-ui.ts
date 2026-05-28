@@ -82,9 +82,7 @@ export function createPendingConfirmation(
   return { promise, resolve, reject };
 }
 
-export function getExpiredConfirmation(
-  requestId: string,
-): {
+export function getExpiredConfirmation(requestId: string): {
   chatJid?: string;
   expiredAt: number;
   reason: 'timeout' | 'cancelled';
