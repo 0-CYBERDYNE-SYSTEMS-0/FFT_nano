@@ -755,6 +755,9 @@ function renderBasePrompt(params: {
     lines.push(
       '- Support file: {"type":"skill_action","action":"skill_write_file","requestId":"<id>","params":{"name":"skill-name","filePath":"references/example.md","fileContent":"..."}}',
     );
+    lines.push(
+      '- Rollback (undo a bad patch; restores the previous SKILL.md version): {"type":"skill_action","action":"skill_rollback","requestId":"<id>","params":{"name":"skill-name"}}',
+    );
     lines.push('Wait for status=success before relying on a skill mutation.');
     lines.push('');
     lines.push('## File Delivery IPC');

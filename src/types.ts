@@ -248,6 +248,7 @@ export interface SkillActionRequest {
     | 'skill_write_file'
     | 'skill_archive'
     | 'skill_restore'
+    | 'skill_rollback'
     | 'skill_pin'
     | 'skill_unpin'
     | 'skill_status';
@@ -260,6 +261,7 @@ export interface SkillActionRequest {
     groupFolder?: string;
     includeArchived?: boolean;
     reason?: string;
+    version?: string;
   };
   requestId: string;
 }
