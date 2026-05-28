@@ -83,16 +83,17 @@ export function blendSemanticScores<T>(params: {
     const emb = params.embed(c.text);
     return emb ? cosineSimilarity(params.queryEmbedding!, emb) : null;
   });
-  const anySemantic = sims.some((s) => s !== null);
-  const effectiveWeight = anySemantic ? weight : 0;
 
   return candidates
     .map((c, i) => {
       const sim = sims[i];
-      // Map cosine [-1,1] -> [0,1] so it composes with normalized lexical.
-      const semScore = sim === null ? 0 : (sim + 1) / 2;
-      const score =
-        (1 - effectiveWeight) * normLexical[i] + effectiveWeight * semScore;
+      // A candidate we couldn't embed (budget spent or embedder down) keeps its
+      // pure lexical rank — weight 0 for that item — so it is neither boosted
+      // nor penalized relative to embedded candidates. Only embedded candidates
+      // blend in semantic similarity (cosine [-1,1] mapped to [0,1]).
+      if (sim === null) return { item: c.item, score: normLexical[i] };
+      const semScore = (sim + 1) / 2;
+      const score = (1 - weight) * normLexical[i] + weight * semScore;
       return { item: c.item, score };
     })
     .sort((a, b) => b.score - a.score);
