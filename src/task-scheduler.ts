@@ -3,10 +3,12 @@ import fs from 'fs';
 import {
   ASSISTANT_NAME,
   MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
   SCHEDULER_MODE,
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
 import { runContainerAgent, writeTasksSnapshot } from './pi-runner.js';
+import { runEvaluatorPass } from './evaluator.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -28,6 +30,7 @@ export interface SchedulerDependencies {
   requestHeartbeatNow?: (reason?: string) => void;
   isChatRunActive?: (jid: string) => boolean;
   runTaskAgent?: typeof runContainerAgent;
+  runEvaluatorPass?: typeof runEvaluatorPass;
   scheduleNextTick?: (fn: () => void, delayMs: number) => unknown;
 }
 
@@ -140,6 +143,40 @@ async function runLegacyTask(
       error = output.error || 'Unknown error';
     } else {
       result = output.result;
+
+      // Evaluator pass for scheduled tasks — always runs
+      if (result && group) {
+        const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
+        const verdict = await evaluateRun({
+          runType: 'scheduled',
+          originalTask: task.prompt,
+          agentOutput: result,
+          durationMs: Date.now() - startTime,
+          toolsInvoked: output.toolExecutions?.length ?? 0,
+          group,
+          chatJid: task.chat_jid,
+          isMain,
+          workspaceDir: isMain ? MAIN_WORKSPACE_DIR : groupDir,
+          startedAtMs: startTime,
+        }).catch((err) => {
+          logger.warn(
+            { err, taskId: task.id },
+            'Evaluator pass failed for scheduled task',
+          );
+          return null;
+        });
+        if (verdict && !verdict.skipped && !verdict.pass) {
+          logger.warn(
+            {
+              taskId: task.id,
+              score: verdict.score,
+              issues: verdict.issues,
+              feedback: verdict.feedback,
+            },
+            'Scheduled task evaluator flagged issues; suppressing user-visible evaluator details',
+          );
+        }
+      }
     }
 
     logger.info(

@@ -9,6 +9,10 @@ import {
   getProviderFallbackCandidates,
   runContainerAgent,
 } from '../src/pi-runner.ts';
+import {
+  dispatchLegacyMessageEnvelope,
+  wrapLegacyMessageEnvelope,
+} from '../src/runtime/boundary-ipc.js';
 import type { RegisteredGroup } from '../src/types.ts';
 
 test('getProviderFallbackCandidates skips attempted providers and dedupes order', () => {
@@ -31,6 +35,44 @@ test('getProviderFallbackCandidates preserves forward-only fallback progression'
     }),
     ['zai'],
   );
+});
+
+test('runContainerAgent handles an already aborted signal without throwing', async (t) => {
+  const abortController = new AbortController();
+  abortController.abort(new Error('stop before start'));
+  const groupFolder = `testrun_aborted_${Date.now().toString(36)}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+  const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+  t.after(() => {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+    fs.rmSync(ipcDir, { recursive: true, force: true });
+    fs.rmSync(piDir, { recursive: true, force: true });
+  });
+
+  const group: RegisteredGroup = {
+    name: 'Test Group',
+    folder: groupFolder,
+    trigger: '@FarmFriend',
+    added_at: '2026-03-31T00:00:00.000Z',
+  };
+
+  const output = await runContainerAgent(
+    group,
+    {
+      prompt: 'should not run',
+      groupFolder: group.folder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      requestId: 'req-aborted-before-start',
+      piExecutableOverride: '/bin/false',
+    },
+    abortController.signal,
+  );
+
+  assert.equal(output.status, 'error');
+  assert.equal(output.error, 'Aborted by user');
 });
 
 function writeFakePiExecutable(dir: string): string {
@@ -60,13 +102,95 @@ setTimeout(() => process.exit(0), 10);
   return executablePath;
 }
 
+function writeTimeoutPiExecutable(dir: string): string {
+  const executablePath = path.join(dir, 'timeout-pi.js');
+  fs.writeFileSync(
+    executablePath,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'message_delta', delta: { content: [{ type: 'text', text: 'partial before timeout' }] } }) + '\\n');
+setTimeout(() => process.exit(0), 1000);
+`,
+    'utf8',
+  );
+  fs.chmodSync(executablePath, 0o755);
+  return executablePath;
+}
+
+test(
+  'runContainerAgent writes timeout capture on hard timeout',
+  { timeout: 3000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-timeout-'));
+    const fakePiPath = writeTimeoutPiExecutable(tempDir);
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_timeout_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'timeout',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      requestId: 'req-timeout-capture',
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      suppressPreviewStreaming: true,
+      lifecyclePolicyOverride: {
+        hardTimeoutMs: 100,
+        staleAfterMs: null,
+        toolActiveStaleMs: null,
+        waitStateStaleMs: null,
+        allowFreshSessionFallback: false,
+      },
+    });
+
+    assert.equal(output.status, 'error');
+    assert.equal(output.error, 'Pi runner timed out after 100ms');
+
+    const captureDir = path.join(workspaceDir, 'logs', 'pi-runs');
+    const captures = fs
+      .readdirSync(captureDir)
+      .filter((name) => name.includes('req-timeout-capture-timeout'));
+    assert.equal(captures.length, 1);
+    const payload = JSON.parse(
+      fs.readFileSync(path.join(captureDir, captures[0] as string), 'utf8'),
+    );
+    assert.equal(payload.reason, 'timeout');
+    assert.equal(payload.timeoutMs, 100);
+    assert.equal(typeof payload.stdout, 'string');
+    assert.equal(typeof payload.stderr, 'string');
+  },
+);
+
 test(
   'runContainerAgent retries a stale continued interactive run with a fresh session',
   { timeout: 5000, concurrency: false },
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-stale-'));
     const fakePiPath = writeFakePiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -120,7 +244,9 @@ test(
     assert.equal(output.status, 'success');
     assert.equal(output.result, 'fresh ok');
 
-    const spawnEvents = progressEvents.filter((event) => event.kind === 'spawn');
+    const spawnEvents = progressEvents.filter(
+      (event) => event.kind === 'spawn',
+    );
     assert.equal(spawnEvents.length, 2);
     assert.equal(spawnEvents[0]?.resumed, true);
     assert.equal(spawnEvents[1]?.resumed, false);
@@ -173,7 +299,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-fresh-'));
     const fakePiPath = writeDelayedFreshPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -234,7 +362,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-hung-'));
     const fakePiPath = writeHungFreshPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -284,11 +414,13 @@ test(
 
     const duration = Date.now() - startedAt;
     assert.equal(output.status, 'error');
-    assert.match(output.error || '', /Pi run stalled before producing progress/);
+    assert.match(
+      output.error || '',
+      /Pi run stalled before producing progress/,
+    );
     assert.equal(
       progressEvents.some(
-        (event) =>
-          event.kind === 'stale' && event.retryingFresh === false,
+        (event) => event.kind === 'stale' && event.retryingFresh === false,
       ),
       true,
     );
@@ -374,7 +506,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-slow-tool-'));
     const fakePiPath = writeSlowToolPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -417,24 +551,177 @@ test(
 );
 
 test(
-  'runContainerAgent avoids generic Telegram draft previews before assistant text exists',
+  'runContainerAgent creates an early Telegram draft before assistant text exists',
   { timeout: 5000, concurrency: false },
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-draft-'));
     const fakePiPath = writeToolFirstPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
     const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
     const requestId = `req-draft-${Date.now().toString(36)}`;
     const seenPreviewTexts: string[] = [];
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(
+      group,
+      {
+        prompt: 'reply once',
+        groupFolder,
+        chatJid: 'telegram:test',
+        isMain: true,
+        assistantName: 'FarmFriend',
+        requestId,
+        noContinue: true,
+        workspaceDirOverride: workspaceDir,
+        piExecutableOverride: fakePiPath,
+        lifecyclePolicyOverride: {
+          staleAfterMs: 2500,
+          hardTimeoutMs: 2500,
+        },
+      },
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        if (event.kind === 'delta') {
+          seenPreviewTexts.push(event.text);
+        }
+      },
+    );
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, 'final answer');
+    assert.equal(
+      seenPreviewTexts.some((text) =>
+        text.includes('Working on your reply...'),
+      ),
+      true,
+    );
+    assert.equal(
+      seenPreviewTexts.some((text) => text.includes('final answer')),
+      true,
+    );
+  },
+);
+
+test(
+  'runContainerAgent uses streamed visible text when final assistant message is missing',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-stream-'));
+    const fakePiPath = path.join(tempDir, 'fake-pi-stream.js');
+    fs.writeFileSync(
+      fakePiPath,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'text_delta', delta: 'visible ' }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'text_delta', delta: 'answer' }) + '\\n');
+setTimeout(() => process.exit(0), 10);
+`,
+      'utf8',
+    );
+    fs.chmodSync(fakePiPath, 0o755);
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+
+    const output = await runContainerAgent(group, {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: true,
+      assistantName: 'FarmFriend',
+      requestId: `req-stream-${Date.now().toString(36)}`,
+      noContinue: true,
+      workspaceDirOverride: workspaceDir,
+      piExecutableOverride: fakePiPath,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 2500,
+        hardTimeoutMs: 2500,
+      },
+    });
+
+    assert.equal(output.status, 'success');
+    assert.equal(output.result, 'visible answer');
+    assert.equal(output.visibleAssistantText, 'visible answer');
+  },
+);
+
+test(
+  'runContainerAgent returns forced delegation output without direct chat delivery',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-coder-'));
+    const fakePiPath = path.join(tempDir, 'fake-pi-coder.js');
+    const verdictJson =
+      '{"pass":false,"score":1,"issues":["missing artifact"],"feedback":"retry"}';
+    fs.writeFileSync(
+      fakePiPath,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  type: 'message_end',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'text', text: ${JSON.stringify(verdictJson)} }],
+  },
+}) + '\\n');
+setTimeout(() => process.exit(0), 10);
+`,
+      'utf8',
+    );
+    fs.chmodSync(fakePiPath, 0o755);
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+    const requestId = `req-coder-${Date.now().toString(36)}`;
+    const deliveredTexts: string[] = [];
     const unsubscribe = hostEventBus.subscribe((event) => {
       if (
-        event.kind === 'telegram_preview_requested' &&
+        event.kind === 'chat_delivery_requested' &&
         event.requestId === requestId
       ) {
-        seenPreviewTexts.push(event.text);
+        deliveredTexts.push(event.text);
       }
     });
 
@@ -462,6 +749,8 @@ test(
       assistantName: 'FarmFriend',
       requestId,
       noContinue: true,
+      codingHint: 'force_delegate_execute',
+      suppressPreviewStreaming: true,
       workspaceDirOverride: workspaceDir,
       piExecutableOverride: fakePiPath,
       lifecyclePolicyOverride: {
@@ -471,17 +760,9 @@ test(
     });
 
     assert.equal(output.status, 'success');
-    assert.equal(output.result, 'final answer');
-    assert.equal(
-      seenPreviewTexts.some((text) =>
-        text.includes('Working on your reply...'),
-      ),
-      false,
-    );
-    assert.equal(
-      seenPreviewTexts.some((text) => text.includes('final answer')),
-      true,
-    );
+    assert.equal(output.result, verdictJson);
+    assert.equal(output.streamed, false);
+    assert.deepEqual(deliveredTexts, []);
   },
 );
 
@@ -559,7 +840,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-long-tool-'));
     const fakePiPath = writeLongQuietToolPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -606,9 +889,13 @@ test(
   'runContainerAgent reverts to interactive stale timeout after tool completion',
   { timeout: 10000, concurrency: false },
   async (t) => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-tool-end-hang-'));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-pi-tool-end-hang-'),
+    );
     const fakePiPath = writeToolEndThenHangPiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -631,34 +918,37 @@ test(
 
     let toolEndedAt: number | null = null;
     let firstStaleAt: number | null = null;
-    const output = await runContainerAgent(group, {
-      prompt: 'reply once',
-      groupFolder,
-      chatJid: 'telegram:test',
-      isMain: false,
-      assistantName: 'FarmFriend',
-      requestId: 'req-tool-end-hang-1',
-      noContinue: true,
-      workspaceDirOverride: workspaceDir,
-      piExecutableOverride: fakePiPath,
-      lifecyclePolicyOverride: {
-        staleAfterMs: 220,
-        toolActiveStaleMs: 1200,
-        hardTimeoutMs: 2500,
-        allowFreshSessionFallback: false,
+    const output = await runContainerAgent(
+      group,
+      {
+        prompt: 'reply once',
+        groupFolder,
+        chatJid: 'telegram:test',
+        isMain: false,
+        assistantName: 'FarmFriend',
+        requestId: 'req-tool-end-hang-1',
+        noContinue: true,
+        workspaceDirOverride: workspaceDir,
+        piExecutableOverride: fakePiPath,
+        lifecyclePolicyOverride: {
+          staleAfterMs: 220,
+          toolActiveStaleMs: 1200,
+          hardTimeoutMs: 2500,
+          allowFreshSessionFallback: false,
+        },
       },
-    },
-    undefined,
-    undefined,
-    undefined,
-    (event) => {
-      if (event.kind === 'tool' && event.status === 'ok') {
-        toolEndedAt = event.at;
-      }
-      if (event.kind === 'stale' && firstStaleAt === null) {
-        firstStaleAt = event.at;
-      }
-    });
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        if (event.kind === 'tool' && event.status === 'ok') {
+          toolEndedAt = event.at;
+        }
+        if (event.kind === 'stale' && firstStaleAt === null) {
+          firstStaleAt = event.at;
+        }
+      },
+    );
 
     assert.equal(output.status, 'error');
     assert.ok(toolEndedAt !== null, 'expected tool end progress event');
@@ -671,8 +961,41 @@ test(
   },
 );
 
-function writeRpcPermissionGatePiExecutable(dir: string): string {
+function writeRpcPermissionGatePiExecutable(
+  dir: string,
+  requestMethod: 'confirm' | 'notify' = 'confirm',
+): string {
+  fs.mkdirSync(dir, { recursive: true });
   const executablePath = path.join(dir, 'fake-pi-rpc-permission-gate.js');
+  const request =
+    requestMethod === 'notify'
+      ? `{
+        type: 'extension_ui_request',
+        id: 'pg-1',
+        method: 'notify',
+        title: 'Status',
+        message: 'Working',
+      }`
+      : `{
+        type: 'extension_ui_request',
+        id: 'pg-1',
+        method: 'confirm',
+        title: 'Protected Path',
+        message: 'Allow this edit?',
+        timeout: 1000,
+      }`;
+  const afterRequest =
+    requestMethod === 'notify'
+      ? `process.stdout.write(JSON.stringify({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'rpc notified' }],
+        },
+      }) + '\\n');
+      responded = true;
+      setTimeout(() => process.exit(0), 10);`
+      : '';
   fs.writeFileSync(
     executablePath,
     `#!/usr/bin/env node
@@ -727,14 +1050,8 @@ process.stdin.on('data', (chunk) => {
         command: 'prompt',
         success: true,
       }) + '\\n');
-      process.stdout.write(JSON.stringify({
-        type: 'extension_ui_request',
-        id: 'pg-1',
-        method: 'confirm',
-        title: 'Protected Path',
-        message: 'Allow this edit?',
-        timeout: 1000,
-      }) + '\\n');
+      process.stdout.write(JSON.stringify(${request}) + '\\n');
+      ${afterRequest}
       continue;
     }
     if (message.type === 'extension_ui_response' && message.id === 'pg-1') {
@@ -772,7 +1089,9 @@ test(
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-rpc-ui-'));
     const fakePiPath = writeRpcPermissionGatePiExecutable(tempDir);
-    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-workspace-'));
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
     const groupFolder = `testrun_${Date.now().toString(36)}`;
     const groupDir = path.join(process.cwd(), 'groups', groupFolder);
     const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
@@ -820,5 +1139,106 @@ test(
 
     assert.equal(output.status, 'success');
     assert.equal(output.result, 'rpc allowed');
+  },
+);
+
+test(
+  'runContainerAgent emits wait progress only for blocking extension UI requests',
+  { timeout: 5000, concurrency: false },
+  async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-rpc-ui-'));
+    const blockingPiPath = writeRpcPermissionGatePiExecutable(
+      path.join(tempDir, 'blocking'),
+      'confirm',
+    );
+    const notifyPiPath = writeRpcPermissionGatePiExecutable(
+      path.join(tempDir, 'notify'),
+      'notify',
+    );
+    const workspaceDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'fft-workspace-'),
+    );
+    const groupFolder = `testrun_${Date.now().toString(36)}`;
+    const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+    const ipcDir = path.join(process.cwd(), 'data', 'ipc', groupFolder);
+    const piDir = path.join(process.cwd(), 'data', 'pi', groupFolder);
+
+    t.after(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(groupDir, { recursive: true, force: true });
+      fs.rmSync(ipcDir, { recursive: true, force: true });
+      fs.rmSync(piDir, { recursive: true, force: true });
+    });
+
+    const group: RegisteredGroup = {
+      name: 'Test Group',
+      folder: groupFolder,
+      trigger: '@FarmFriend',
+      added_at: '2026-03-31T00:00:00.000Z',
+    };
+    const baseInput = {
+      prompt: 'reply once',
+      groupFolder,
+      chatJid: 'telegram:test',
+      isMain: false,
+      assistantName: 'FarmFriend',
+      noContinue: true,
+      workspaceDirOverride: workspaceDir,
+      lifecyclePolicyOverride: {
+        staleAfterMs: 300,
+        hardTimeoutMs: 2500,
+      },
+    };
+    const blockingProgress: string[] = [];
+    const blockingOutput = await runContainerAgent(
+      group,
+      {
+        ...baseInput,
+        requestId: 'req-rpc-ui-blocking',
+        piExecutableOverride: blockingPiPath,
+      },
+      undefined,
+      undefined,
+      async (request) => {
+        assert.equal(request.method, 'confirm');
+        return { confirmed: true };
+      },
+      (event) => {
+        blockingProgress.push(event.kind);
+      },
+    );
+
+    const notifyProgress: string[] = [];
+    const notifyOutput = await runContainerAgent(
+      group,
+      {
+        ...baseInput,
+        requestId: 'req-rpc-ui-notify',
+        piExecutableOverride: notifyPiPath,
+      },
+      undefined,
+      undefined,
+      async (request) => {
+        assert.equal(request.method, 'notify');
+        return {};
+      },
+      (event) => {
+        notifyProgress.push(event.kind);
+      },
+    );
+
+    assert.equal(blockingOutput.status, 'success');
+    assert.equal(blockingOutput.result, 'rpc allowed');
+    assert.ok(
+      blockingProgress.includes('wait'),
+      'blocking extension UI should emit wait progress',
+    );
+    assert.equal(notifyOutput.status, 'success');
+    assert.equal(notifyOutput.result, 'rpc notified');
+    assert.ok(
+      !notifyProgress.includes('wait'),
+      'fire-and-forget extension UI should not emit wait progress',
+    );
   },
 );

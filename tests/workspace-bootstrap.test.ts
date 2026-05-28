@@ -30,6 +30,15 @@ test('fresh workspace seeds core files, BOOTSTRAP.md, and state bootstrapSeededA
   assert.ok(fs.existsSync(path.join(workspaceDir, 'TODOS.md')));
   assert.ok(fs.existsSync(path.join(workspaceDir, 'MEMORY.md')));
   assert.ok(fs.existsSync(path.join(workspaceDir, 'BOOTSTRAP.md')));
+  assert.ok(fs.existsSync(path.join(workspaceDir, 'knowledge', 'README.md')));
+  assert.ok(
+    fs.existsSync(
+      path.join(workspaceDir, 'knowledge', 'schema', 'qualia-schema.md'),
+    ),
+  );
+  assert.ok(
+    fs.existsSync(path.join(workspaceDir, 'knowledge', 'wiki', 'index.md')),
+  );
   assert.equal(state.bootstrapSeededAt, '2026-02-17T10:00:00.000Z');
   assert.equal(state.bootstrapGateEligibleAt, '2026-02-17T10:00:00.000Z');
   assert.equal(state.onboardingCompletedAt, undefined);
@@ -49,9 +58,15 @@ test('fresh workspace keeps operational guidance in NANO.md and persona guidance
   assert.match(nanoBody, /Session context order:/);
   assert.match(nanoBody, /Memory policy:/);
   assert.match(nanoBody, /Execution stance:/);
-  assert.doesNotMatch(nanoBody, /You are concise, practical, and technically rigorous\./);
+  assert.doesNotMatch(
+    nanoBody,
+    /You are concise, practical, and technically rigorous\./,
+  );
 
-  assert.match(soulBody, /Tone: concise, practical, technically rigorous|technically rigorous/i);
+  assert.match(
+    soulBody,
+    /Tone: concise, practical, technically rigorous|technically rigorous/i,
+  );
   assert.doesNotMatch(soulBody, /Session context order:/);
   assert.doesNotMatch(soulBody, /Memory policy:/);
 });
@@ -59,8 +74,14 @@ test('fresh workspace keeps operational guidance in NANO.md and persona guidance
 test('legacy/onboarded workspace does not recreate BOOTSTRAP.md and marks onboarding complete', () => {
   const workspaceDir = makeTmpWorkspace();
   fs.mkdirSync(workspaceDir, { recursive: true });
-  fs.writeFileSync(path.join(workspaceDir, 'SOUL.md'), '# SOUL\n\nCustom profile.\n');
-  fs.writeFileSync(path.join(workspaceDir, 'TODOS.md'), '# TODOS.md = MISSION CONTROL: Custom\n');
+  fs.writeFileSync(
+    path.join(workspaceDir, 'SOUL.md'),
+    '# SOUL\n\nCustom profile.\n',
+  );
+  fs.writeFileSync(
+    path.join(workspaceDir, 'TODOS.md'),
+    '# TODOS.md = MISSION CONTROL: Custom\n',
+  );
 
   const state = ensureMainWorkspaceBootstrap({
     workspaceDir,
@@ -99,7 +120,10 @@ test('when onboarding is completed and BOOTSTRAP.md removed, reruns do not recre
 test('legacy bootstrap state without gate marker is pending but not gate-eligible', () => {
   const workspaceDir = makeTmpWorkspace();
   fs.mkdirSync(path.join(workspaceDir, '.fft_nano'), { recursive: true });
-  fs.writeFileSync(path.join(workspaceDir, 'BOOTSTRAP.md'), '# BOOTSTRAP\n\nLegacy pending onboarding.\n');
+  fs.writeFileSync(
+    path.join(workspaceDir, 'BOOTSTRAP.md'),
+    '# BOOTSTRAP\n\nLegacy pending onboarding.\n',
+  );
   fs.writeFileSync(
     path.join(workspaceDir, '.fft_nano', 'workspace-state.json'),
     JSON.stringify(

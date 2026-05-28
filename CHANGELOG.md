@@ -7,6 +7,148 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-25
+
+### Added
+
+- Durable long-running agent runs can persist across process restarts and expose
+  operator controls/status through Telegram command surfaces.
+- Termux installer support for Android-hosted setup paths.
+
+### Fixed
+
+- `/update` now preserves dirty local checkouts by stashing tracked and untracked
+  changes, pulling upstream, reapplying the stash, then rebuilding/restarting.
+- `/update` falls back to `origin/main` when the current branch ref is missing.
+- Telegram delivery timeout recovery now keeps operator feedback and final delivery
+  paths consistent across delayed runs.
+- Durable long-run timeout handling now reports state transitions more clearly and
+  recovers long-running work through the long-run service.
+- Telegram long-run feedback now includes hardened status reporting for runs that
+  continue beyond normal response windows.
+- TUI startup now removes a stale Unix socket before binding.
+
+## [0.3.0] - 2026-05-11
+
+### Fixed
+
+- Release version bump to `0.3.0`.
+
+## [0.2.2] - 2026-05-11
+
+### Added
+
+- `/delivery append` Telegram mode sends progress and final replies as separate
+  messages, avoiding edits or deletes after text has been printed.
+- Setup now installs a pinned `~/.local/bin/fft` launcher and PATH block so `fft tui`,
+  `fft web`, and service commands work from any directory after onboarding.
+
+### Fixed
+
+- Pi JSON parsing now distinguishes tool-use assistant preambles from terminal final
+  answers, preventing "let me research..." text from being delivered as the completed
+  response.
+- Empty terminal assistant turns after tool use now remain empty so the host retry/
+  diagnostic path runs instead of leaking earlier progress text.
+
+## [0.2.0] - 2026-05-10
+
+### Added
+
+- Universal evaluator pass for all long-running agent actions (`src/evaluator.ts`).
+  A threshold-gated second `pi` call independently verifies every qualifying run
+  actually accomplished its task, addressing self-evaluation bias in autonomous operation.
+  - Heartbeat, scheduled, and cron runs: always evaluated (no human watching)
+  - Coding execute runs: blocking evaluation when files are changed; up to 2 refinement
+    passes with targeted feedback before delivering best result
+  - Chat and subagent runs: evaluated when duration ≥45s, tools ≥3, or output ≥1500 chars;
+    non-blocking follow-up sent only when issues are found
+  - `isEvaluatorRun` flag on `ContainerInput` prevents recursive evaluation
+- `RunType` union type added to `src/types.ts` for evaluator context typing.
+
+### Fixed
+
+- Long-horizon stability for multi-day autonomous operation:
+  - `process.on('unhandledRejection')` and `'uncaughtException'` handlers registered
+    at startup so silent async failures surface in logs instead of disappearing
+  - `pruneStaleState()` on a stored, cancellable 6-hour interval caps unbounded Map
+    growth in `activeChatRuns`, `activeCoderRuns`, `telegramSettingsPanelActions`,
+    `telegramSetupInputStates`, `telegramToolProgressRuns`, and `tuiMessageQueue`
+  - `tuiMessageQueue` hard-capped at 50 entries per chat with oldest-drop eviction
+  - Group-sync and heartbeat `setInterval` handles stored and cancelled at shutdown;
+    `unref()` prevents them from blocking process exit
+  - `hostEventBus.subscribe()` return value captured and torn down during shutdown
+  - Parent timeout handle cleared before entering provider fallback loop so a stale
+    parent timer cannot kill the fallback child process
+- `finalizeCompletedRun` now sends a structured diagnostic when result is empty/null/
+  whitespace: `LLM produced no user-visible final response | run=X | provider=Y`.
+  `externallyCompleted` no longer suppresses the diagnostic — it appends
+  `external_delivery=yes` instead.
+- Telegram draft preview now publishes `Working on your reply...` immediately when a
+  tool call starts before any assistant text has been produced.
+
+## [0.1.0] - 2026-04-30
+
+### Reset
+
+- Reset versioning to semver-conventional 0.1.0 starting point.
+- Previous releases v1.0.1 through v1.7.2 have been removed from the release page.
+- All existing code and features are preserved — this is a version label change only.
+
+## [1.7.2] - 2026-04-22
+
+### Added
+
+- `/update` command support across Telegram, TUI, and web control surfaces.
+- Bidirectional Telegram file delivery flow for agent/operator file exchange.
+- Pi autoresearch extension and paired runtime skills for create/finalize workflows.
+
+### Changed
+
+- Skill validator policy now aligns with skill-creator guidance.
+
+## [1.7.1] - 2026-04-21
+
+### Fixed
+
+- Telegram model overrides now validate against available runtime models, and invalid
+  persisted model preferences are cleared automatically.
+- Pi model-list stderr fallback parsing now requires a valid table header, reducing
+  malformed fallback results.
+- Native Telegram draft streaming is now limited to private chats.
+
+### Changed
+
+- Clarified authoritative local development and release workflow guidance for
+  `main` and worktree usage.
+
+## [1.7.0] - 2026-04-19
+
+### Added
+
+- Browser-first onboarding handoff: setup can now complete from a browser session before
+  Telegram registration is required, with automatic handoff into the main-chat flow.
+- Pulse telemetry for `/status`: rich structured output with incident history and live
+  health signals; telemetry buffer is capped to prevent unbounded growth.
+- `/models` now opens the model picker panel directly instead of rendering a text list,
+  with a matching add-model panel flow.
+
+### Fixed
+
+- Telegram main-chat onboarding gap after browser-first handoff — registration is now
+  unblocked correctly at the end of the browser flow.
+- OpenClaw defaults replaced; Telegram main-chat onboarding no longer stalls on
+  provider-specific default values.
+- POSIX-compatible `tr` call in `onboard-all.sh` for Alpine/busybox compatibility.
+- Host runtime installs now bundle the `pi` CLI correctly.
+- Interactive host runtime selection is honored and no longer overridden by the installer.
+- Installer runtime selection flow repaired for edge cases that caused the wrong runtime
+  to be selected silently.
+- Main chat is restored correctly after a coder cancel or resume operation.
+- Fallback aborted coder/subagent runs now classified and reported correctly.
+- Terminal bookend messages guaranteed for all coder run outcomes.
+- Empty-result acknowledgment sent instead of silently dropping delivery.
+
 ## [1.6.1] - 2026-04-08
 
 ### Fixed

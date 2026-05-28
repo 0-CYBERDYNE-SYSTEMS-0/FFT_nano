@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 
 const HEARTBEAT_TOKEN = 'HEARTBEAT_OK';
 const DEFAULT_ACK_MAX_CHARS = 300;
+const HEARTBEAT_OK_TEXT_RE = /^heartbeat\s+(?:ok|okay)[\s.!?]*$/i;
 const DAY_INDEX: Record<string, number> = {
   sun: 0,
   mon: 1,
@@ -102,6 +103,10 @@ export function stripHeartbeatToken(
       .replace(/^[*`~_]+/, '')
       .replace(/[*`~_]+$/, '');
   const normalized = stripMarkup(trimmed);
+
+  if (mode === 'heartbeat' && HEARTBEAT_OK_TEXT_RE.test(normalized)) {
+    return { shouldSkip: true, text: '', didStrip: true };
+  }
 
   const hasToken =
     trimmed.includes(HEARTBEAT_TOKEN) || normalized.includes(HEARTBEAT_TOKEN);

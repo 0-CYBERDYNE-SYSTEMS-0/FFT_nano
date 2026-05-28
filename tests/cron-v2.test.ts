@@ -22,7 +22,11 @@ import type { RegisteredGroup, ScheduledTask } from '../src/types.ts';
 import type { ContainerInput } from '../src/pi-runner.js';
 
 function makeTempDbPath(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-cron-v2-'));
+  const projectTmp = path.join(process.cwd(), 'data', 'test-db-temp');
+  fs.mkdirSync(projectTmp, { recursive: true });
+  const dirName = `fft-test-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const dir = path.join(projectTmp, dirName);
+  fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, 'messages.db');
 }
 
@@ -423,6 +427,60 @@ test('runScheduledTaskV2 with invalid tz falls back to validated host TIMEZONE (
   assert.ok(capturedInput);
   // Invalid tz should fall back to host TIMEZONE (validated by getEffectiveTimezone)
   assert.equal(capturedInput!.effectiveTimezone, TIMEZONE);
+
+  closeDatabase();
+});
+
+test('runScheduledTaskV2 suppresses failed evaluator details from delivered output', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+
+  const task = makeTask({
+    id: 'cron-evaluator-no-leak',
+    schedule_type: 'once',
+    schedule_value: new Date().toISOString(),
+    context_mode: 'isolated',
+    delivery_mode: 'announce',
+    delivery_to: 'telegram:13',
+  });
+  createTask(task);
+
+  const group: RegisteredGroup = {
+    name: 'main',
+    folder: 'main',
+    trigger: '@FarmFriend',
+    added_at: new Date().toISOString(),
+  };
+
+  const sentMessages: string[] = [];
+  const latest = getTaskById(task.id);
+  assert.ok(latest);
+  await runScheduledTaskV2(latest!, {
+    sendMessage: async (_jid, text) => {
+      sentMessages.push(text);
+    },
+    registeredGroups: () => ({ 'telegram:1': group }),
+    runContainerTask: async () => ({
+      status: 'success',
+      result: 'cron operator-safe result',
+    }),
+    runEvaluatorPass: async () => ({
+      pass: false,
+      score: 3,
+      issues: ['internal cron issue'],
+      feedback: 'internal cron feedback',
+      skipped: false,
+    }),
+  });
+
+  const postRun = getTaskById(task.id);
+  assert.equal(postRun?.last_result, 'cron operator-safe result');
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0], /cron operator-safe result/);
+  assert.doesNotMatch(
+    sentMessages[0],
+    /Evaluator|score 3\/10|internal cron issue|internal cron feedback/,
+  );
 
   closeDatabase();
 });

@@ -3,6 +3,10 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import {
+  runEvaluatorPass as defaultRunEvaluatorPass,
+  buildRefinementPrompt,
+} from './evaluator.js';
 
 import type { RegisteredGroup } from './types.js';
 import type {
@@ -16,23 +20,42 @@ import type {
 import { createHostEventId, type HostEvent } from './runtime/host-events.js';
 import { getCoderLearningsForContext } from './coder-learnings.js';
 import { createRunProgressReporter } from './run-progress.js';
+import { resolveGroupFolderPath } from './group-folder.js';
 
-export type CodingWorkerRoute =
-  | 'coder_execute'
-  | 'coder_plan'
-  | 'auto_execute'
-  | 'subagent_execute'
-  | 'subagent_plan';
+export interface CodingRunConfig {
+  toolMode: 'read_only' | 'full';
+  isSubagent: boolean;
+  workspaceMode: 'ephemeral_worktree' | 'read_only';
+}
+
+/**
+ * Derives a legacy route label string from config for display/telemetry purposes.
+ * This is NOT used for control flow - use config fields directly instead.
+ */
+function deriveRouteLabel(config: CodingRunConfig): string {
+  const prefix = config.isSubagent ? 'subagent' : 'coder';
+  const suffix = config.toolMode === 'read_only' ? 'plan' : 'execute';
+  return `${prefix}_${suffix}`;
+}
+
+/**
+ * Derives a human-readable detail string for host events from config.
+ */
+function deriveEventDetail(config: CodingRunConfig): string {
+  const mode = config.toolMode === 'read_only' ? 'plan' : 'execute';
+  return config.isSubagent
+    ? `coding_worker:${mode}:subagent`
+    : `coding_worker:${mode}`;
+}
 
 export interface CodingWorkerRequest {
   requestId: string;
   parentRequestId?: string;
   mode: 'plan' | 'execute';
-  route: CodingWorkerRoute;
+  config: CodingRunConfig;
   originChatJid: string;
   originGroupFolder: string;
   taskText: string;
-  workspaceMode: 'ephemeral_worktree' | 'read_only';
   timeoutSeconds: number;
   allowFanout: boolean;
   sessionContext: string;
@@ -63,6 +86,15 @@ export interface CodingWorkerResult {
   finishedAt: string;
   diffSummary?: string;
   worktreePath?: string;
+  contractPath?: string;
+  qaReportPath?: string;
+  qaVerdict?: {
+    pass: boolean;
+    score: number;
+    issues: string[];
+    feedback: string;
+    refinements: number;
+  };
   error?: string;
   usage?: {
     inputTokens?: number;
@@ -102,7 +134,7 @@ interface ActiveCodingRunState {
   startedAt: number;
   parentRequestId?: string;
   backend?: 'pi';
-  route?: CodingWorkerRoute;
+  config?: CodingRunConfig;
   state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
   worktreePath?: string;
   childRunIds?: string[];
@@ -127,6 +159,7 @@ export interface CodingOrchestratorDeps {
     sourceWorkspaceDir: string;
     signal?: AbortSignal;
   }) => Promise<EphemeralWorktree>;
+  runEvaluatorPass?: typeof defaultRunEvaluatorPass;
 }
 
 function summarizeText(text: string): string {
@@ -181,14 +214,284 @@ function extractTestsRun(commands: string[]): string[] {
   );
 }
 
+interface CoderArtifactManifest {
+  schema: 'fft_nano.coder_artifact.v1';
+  requestId: string;
+  mode: 'plan' | 'execute';
+  // config is optional for backward compatibility with old manifests that used route
+  config?: CodingRunConfig;
+  createdAt: string;
+  taskText: string;
+  workspaceRoot?: string;
+  contractPath?: string;
+  qaReportPath?: string;
+}
+
+/**
+ * Legacy route string from old manifest files.
+ * Used only for backward compatibility when reading old manifests.
+ */
+type LegacyRoute =
+  | 'coder_execute'
+  | 'coder_plan'
+  | 'auto_execute'
+  | 'subagent_execute'
+  | 'subagent_plan';
+
+/**
+ * Checks if a manifest is a legacy format with route instead of config.
+ */
+function isLegacyManifest(
+  manifest: CoderArtifactManifest,
+): manifest is CoderArtifactManifest & { route: LegacyRoute } {
+  return (
+    'route' in manifest &&
+    typeof manifest.route === 'string' &&
+    !('config' in manifest)
+  );
+}
+
+/**
+ * Derives CodingRunConfig from a legacy route string for backward compatibility.
+ */
+function configFromLegacyRoute(route: LegacyRoute): CodingRunConfig {
+  return {
+    toolMode: route.endsWith('_plan') ? 'read_only' : 'full',
+    isSubagent: route.startsWith('subagent_'),
+    workspaceMode: route.endsWith('_plan') ? 'read_only' : 'ephemeral_worktree',
+  };
+}
+
+interface LatestPlanContract {
+  requestId: string;
+  createdAt: string;
+  contractPath: string;
+  text: string;
+}
+
+function getCoderArtifactsDir(request: CodingWorkerRequest): string {
+  return path.join(
+    resolveGroupFolderPath(request.originGroupFolder),
+    'coder-runs',
+    sanitizePathToken(request.requestId),
+  );
+}
+
+function writeCoderArtifact(
+  request: CodingWorkerRequest,
+  filename: string,
+  content: string,
+): string {
+  const dir = getCoderArtifactsDir(request);
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, filename);
+  fs.writeFileSync(
+    filePath,
+    content.endsWith('\n') ? content : `${content}\n`,
+    {
+      encoding: 'utf-8',
+    },
+  );
+  return filePath;
+}
+
+function writeCoderManifest(
+  request: CodingWorkerRequest,
+  manifest: Omit<CoderArtifactManifest, 'schema'>,
+): string {
+  return writeCoderArtifact(
+    request,
+    'manifest.json',
+    JSON.stringify(
+      { schema: 'fft_nano.coder_artifact.v1', ...manifest },
+      null,
+      2,
+    ),
+  );
+}
+
+function readJsonFile<T>(filePath: string): T | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+function findLatestPlanContract(
+  request: CodingWorkerRequest,
+): LatestPlanContract | null {
+  const runsDir = path.join(
+    resolveGroupFolderPath(request.originGroupFolder),
+    'coder-runs',
+  );
+  if (!fs.existsSync(runsDir)) return null;
+  let latest: LatestPlanContract | null = null;
+  const requestWorkspaceRoot = path.resolve(
+    request.workspaceRoot || process.cwd(),
+  );
+
+  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifestPath = path.join(runsDir, entry.name, 'manifest.json');
+    const manifest = readJsonFile<CoderArtifactManifest>(manifestPath);
+    if (!manifest || manifest.mode !== 'plan' || !manifest.contractPath)
+      continue;
+    const manifestWorkspaceRoot = path.resolve(
+      manifest.workspaceRoot || process.cwd(),
+    );
+    if (requestWorkspaceRoot !== manifestWorkspaceRoot) {
+      continue;
+    }
+    if (!fs.existsSync(manifest.contractPath)) continue;
+    const text = fs.readFileSync(manifest.contractPath, 'utf-8');
+    if (!latest || manifest.createdAt > latest.createdAt) {
+      latest = {
+        requestId: manifest.requestId,
+        createdAt: manifest.createdAt,
+        contractPath: manifest.contractPath,
+        text,
+      };
+    }
+  }
+
+  return latest;
+}
+
+function buildPlanContractArtifact(params: {
+  request: CodingWorkerRequest;
+  resultText: string;
+  startedAt: string;
+  finishedAt: string;
+}): string {
+  return [
+    '# Coder Plan Contract',
+    '',
+    '## Metadata',
+    `- request_id: ${params.request.requestId}`,
+    `- route: ${deriveRouteLabel(params.request.config)}`,
+    `- mode: ${params.request.mode}`,
+    `- workspace_root: ${params.request.workspaceRoot || '(default)'}`,
+    `- started_at: ${params.startedAt}`,
+    `- finished_at: ${params.finishedAt}`,
+    '',
+    '## Original Task',
+    params.request.taskText.trim(),
+    '',
+    '## Contract Produced By Plan Run',
+    params.resultText.trim() || '(plan run returned no text)',
+  ].join('\n');
+}
+
+function buildExecutionContract(params: {
+  request: CodingWorkerRequest;
+  latestPlan: LatestPlanContract | null;
+}): string {
+  const lines = [
+    '# Coder Execution Contract',
+    '',
+    '## Current Request',
+    params.request.taskText.trim(),
+    '',
+    '## Done Means',
+    '- Implement the current request in the isolated worktree.',
+    '- Keep edits scoped to the current request.',
+    '- Run focused verification where practical.',
+    '- Report changed files, commands, tests, and any residual risks.',
+    '',
+    '## Evaluator Must Check',
+    '- The final diff satisfies the current request.',
+    '- The worker did not merely describe work that should have been performed.',
+    '- Claimed files, tests, and artifacts are reflected in host-observed outputs.',
+    '- No obvious stubs, TODO-only implementations, or unrelated churn were introduced.',
+  ];
+
+  if (params.latestPlan) {
+    lines.push(
+      '',
+      '## Advisory Plan Context',
+      `Latest same-group plan contract: ${params.latestPlan.contractPath}`,
+      '',
+      params.latestPlan.text.slice(0, 6000),
+    );
+  }
+
+  return lines.join('\n');
+}
+
+function formatQaReport(params: {
+  request: CodingWorkerRequest;
+  contractText: string;
+  verdict: {
+    pass: boolean;
+    score: number;
+    issues: string[];
+    feedback: string;
+    skipped?: boolean;
+    skippedReason?: string;
+  } | null;
+  refinements: number;
+  changedFiles: string[];
+  testsRun: string[];
+  commandsRun: string[];
+  diffSummary: string;
+  startedAt: string;
+  finishedAt: string;
+}): string {
+  const verdict = params.verdict;
+  return [
+    '# Coder QA Report',
+    '',
+    '## Metadata',
+    `- request_id: ${params.request.requestId}`,
+    `- route: ${deriveRouteLabel(params.request.config)}`,
+    `- started_at: ${params.startedAt}`,
+    `- finished_at: ${params.finishedAt}`,
+    `- refinements: ${params.refinements}`,
+    '',
+    '## Verdict',
+    verdict
+      ? `- pass: ${verdict.pass}\n- score: ${verdict.score}\n- skipped: ${verdict.skipped ? 'true' : 'false'}${
+          verdict.skippedReason
+            ? `\n- skipped_reason: ${verdict.skippedReason}`
+            : ''
+        }\n- feedback: ${verdict.feedback || '(none)'}`
+      : '- pass: unknown\n- score: unknown\n- feedback: evaluator did not run',
+    '',
+    '## Issues',
+    verdict?.issues.length
+      ? verdict.issues.map((issue) => `- ${issue}`).join('\n')
+      : '- None reported.',
+    '',
+    '## Host Observed Outputs',
+    `- changed_files: ${params.changedFiles.length ? params.changedFiles.join(', ') : '(none)'}`,
+    `- tests_run: ${params.testsRun.length ? params.testsRun.join(' | ') : '(none)'}`,
+    `- commands_run: ${params.commandsRun.length ? params.commandsRun.join(' | ') : '(none)'}`,
+    `- diff_summary: ${params.diffSummary || '(none)'}`,
+    '',
+    '## Evaluated Contract',
+    params.contractText,
+  ].join('\n');
+}
+
 function formatFinalMessage(params: {
   baseResult: string;
   worktreePath?: string;
   diffSummary?: string;
   changedFiles: string[];
   testsRun: string[];
+  contractPath?: string;
+  qaReportPath?: string;
+  qaVerdict?: CodingWorkerResult['qaVerdict'];
 }): string {
   const lines = [params.baseResult.trim()];
+  if (params.contractPath) lines.push(`Contract: ${params.contractPath}`);
+  if (params.qaReportPath) lines.push(`QA report: ${params.qaReportPath}`);
+  if (params.qaVerdict) {
+    lines.push(
+      `QA verdict: ${params.qaVerdict.pass ? 'pass' : 'fail'} (${params.qaVerdict.score}/10, refinements: ${params.qaVerdict.refinements})`,
+    );
+  }
   if (params.worktreePath) lines.push(`Worktree: ${params.worktreePath}`);
   if (params.diffSummary) lines.push(`Diff: ${params.diffSummary}`);
   if (params.changedFiles.length > 0) {
@@ -205,14 +508,18 @@ function formatFinalMessage(params: {
   return lines.filter(Boolean).join('\n\n');
 }
 
-function buildWorkerPrompt(request: CodingWorkerRequest, learningsContext: string = ''): string {
+function buildWorkerPrompt(
+  request: CodingWorkerRequest,
+  learningsContext: string = '',
+  contractText?: string,
+): string {
   const lines = [
     '[REAL CODING WORKER RUN]',
     'You are the dedicated coding worker for FFT_nano.',
     'This is a host-managed worker run. Do the engineering work directly; do not claim delegation.',
     '',
     '## Worker Contract',
-    `- route: ${request.route}`,
+    `- route: ${deriveRouteLabel(request.config)}`,
     `- mode: ${request.mode}`,
     `- allow_fanout: ${request.allowFanout ? 'true' : 'false'}`,
     `- parent_request_id: ${request.parentRequestId || 'none'}`,
@@ -240,7 +547,8 @@ function buildWorkerPrompt(request: CodingWorkerRequest, learningsContext: strin
     lines.push(
       '',
       '## Plan Mode Rules',
-      'Return a concrete implementation plan.',
+      'Return a durable implementation spec/contract, not just casual advice.',
+      'Include: goal, scope, non-goals, likely files/modules, acceptance criteria, verification plan, risks, and handoff notes.',
       'Do not modify tracked project files in this run.',
       'Use read-only inspection tools only.',
     );
@@ -254,11 +562,17 @@ function buildWorkerPrompt(request: CodingWorkerRequest, learningsContext: strin
     );
   }
 
-  return lines.join('\n');
-}
+  if (contractText) {
+    lines.push(
+      '',
+      '## Host Execution Contract',
+      'Treat this as the source of truth for what the evaluator will grade. Current request instructions override any advisory prior plan context.',
+      '',
+      contractText,
+    );
+  }
 
-function isSubagentRoute(route: CodingWorkerRoute): boolean {
-  return route === 'subagent_execute' || route === 'subagent_plan';
+  return lines.join('\n');
 }
 
 function createWorkerErrorResult(
@@ -511,7 +825,10 @@ export async function createDefaultEphemeralWorktree(params: {
     ];
     await runCommand('rsync', rsyncArgs, { signal: params.signal });
     // Initialize the worktree as a fresh git repo
-    await runCommand('git', ['init'], { cwd: worktreePath, signal: params.signal });
+    await runCommand('git', ['init'], {
+      cwd: worktreePath,
+      signal: params.signal,
+    });
   } else {
     await runCommand(
       'git',
@@ -591,11 +908,15 @@ export async function createDefaultEphemeralWorktree(params: {
  * Computes the worktree base directory path for a given workspace.
  * Useful for calling pruneRetainedWorktrees before creating a worktree.
  */
-export function getWorktreeBaseDir(sourceWorkspaceDir: string): Promise<string> {
-  return runCommand(
-    'git',
-    ['-C', path.resolve(sourceWorkspaceDir), 'rev-parse', '--show-toplevel'],
-  ).then(({ stdout }) => {
+export function getWorktreeBaseDir(
+  sourceWorkspaceDir: string,
+): Promise<string> {
+  return runCommand('git', [
+    '-C',
+    path.resolve(sourceWorkspaceDir),
+    'rev-parse',
+    '--show-toplevel',
+  ]).then(({ stdout }) => {
     const gitTopLevel = stdout.trim();
     if (!gitTopLevel) {
       throw new Error(`Could not resolve git root for ${sourceWorkspaceDir}`);
@@ -610,6 +931,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
 } {
   const createEphemeralWorktree =
     deps.createEphemeralWorktree || createDefaultEphemeralWorktree;
+  const runEvaluatorPass = deps.runEvaluatorPass || defaultRunEvaluatorPass;
 
   async function runTask(
     request: CodingWorkerRequest,
@@ -625,8 +947,10 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       chatJid: request.originChatJid,
       heartbeatMs: Math.max(
         5_000,
-        Number.parseInt(process.env.FFT_NANO_PROGRESS_HEARTBEAT_MS || '30000', 10) ||
-          30_000,
+        Number.parseInt(
+          process.env.FFT_NANO_PROGRESS_HEARTBEAT_MS || '30000',
+          10,
+        ) || 30_000,
       ),
       emit: (event) => deps.publishEvent(event),
     });
@@ -639,7 +963,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       startedAt: Date.now(),
       parentRequestId: request.parentRequestId,
       backend: 'pi',
-      route: request.route,
+      config: request.config,
       state: 'starting',
       childRunIds,
       abortController: request.abortController,
@@ -647,14 +971,15 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
     deps.activeRuns.set(request.requestId, activeRun);
 
     deps.publishEvent({
-      kind: 'run_started',
+      kind: 'run_state',
       id: createHostEventId('coder'),
       createdAt: startedAt,
       source: 'coding-orchestrator',
       runId: request.requestId,
       sessionKey: request.sessionKey,
       chatJid: request.originChatJid,
-      detail: `coding_worker:${request.route}`,
+      phase: 'start',
+      detail: deriveEventDetail(request.config),
     });
 
     const cleanupWorktree = async () => {
@@ -665,6 +990,10 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
 
     try {
       let workspaceDirOverride: string | undefined;
+      let executionContract: string | undefined;
+      let contractPath: string | undefined;
+      let qaReportPath: string | undefined;
+      let qaVerdict: CodingWorkerResult['qaVerdict'];
       if (request.mode === 'execute') {
         // Prune stale worktrees before creating a new one, protecting active runs
         const activeWorktreePaths = new Set<string>();
@@ -690,6 +1019,23 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         });
         workspaceDirOverride = worktree.worktreePath;
         activeRun.worktreePath = worktree.worktreePath;
+
+        const latestPlan = findLatestPlanContract(request);
+        executionContract = buildExecutionContract({ request, latestPlan });
+        contractPath = writeCoderArtifact(
+          request,
+          'EXECUTION_CONTRACT.md',
+          executionContract,
+        );
+        writeCoderManifest(request, {
+          requestId: request.requestId,
+          mode: request.mode,
+          config: request.config,
+          createdAt: startedAt,
+          taskText: request.taskText,
+          workspaceRoot: request.workspaceRoot,
+          contractPath,
+        });
       }
       activeRun.state = 'running';
 
@@ -702,16 +1048,20 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       const output = await deps.runContainerAgent(
         request.group,
         {
-          prompt: buildWorkerPrompt(request, learningsContext),
+          prompt: buildWorkerPrompt(
+            request,
+            learningsContext,
+            executionContract,
+          ),
           groupFolder: request.group.folder,
           chatJid: request.originChatJid,
           isMain: request.group.folder === request.originGroupFolder,
-          isSubagent: isSubagentRoute(request.route),
+          isSubagent: request.config.isSubagent,
           assistantName: request.assistantName,
           requestId: request.requestId,
           codingHint: 'none',
           noContinue: true,
-          toolMode: request.mode === 'plan' ? 'read_only' : 'full',
+          toolMode: request.config.toolMode,
           workspaceDirOverride,
           provider: request.runtimePrefs?.provider,
           model: request.runtimePrefs?.model,
@@ -726,11 +1076,12 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
                 schema: 'fft_nano.coding_worker_request.v1',
                 requestId: request.requestId,
                 parentRequestId: request.parentRequestId || null,
-                route: request.route,
+                route: deriveRouteLabel(request.config),
                 mode: request.mode,
-                workspaceMode: request.workspaceMode,
+                workspaceMode: request.config.workspaceMode,
                 timeoutSeconds: request.timeoutSeconds,
                 allowFanout: request.allowFanout,
+                contractPath: contractPath || null,
               },
               null,
               2,
@@ -768,14 +1119,16 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         activeRun.state = aborted ? 'aborted' : 'failed';
         await cleanupWorktree();
         deps.publishEvent({
-          kind: aborted ? 'run_aborted' : 'run_failed',
+          kind: 'run_state',
           id: createHostEventId('coder'),
           createdAt: new Date().toISOString(),
           source: 'coding-orchestrator',
           runId: request.requestId,
           sessionKey: request.sessionKey,
           chatJid: request.originChatJid,
-          ...(aborted ? { detail: message } : { errorMessage: message }),
+          ...(aborted
+            ? { phase: 'end' as const, detail: message }
+            : { state: 'error' as const, errorMessage: message }),
         });
         return createWorkerErrorResult(
           request,
@@ -789,7 +1142,31 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       const testsRun = extractTestsRun(commandsRun);
       const changedFiles = worktree ? worktree.listChangedFiles() : [];
       const diffSummary = worktree ? worktree.getDiffSummary() : '';
-      const artifacts = worktree ? [worktree.worktreePath] : [];
+      if (request.mode === 'plan') {
+        contractPath = writeCoderArtifact(
+          request,
+          'CODER_PLAN_CONTRACT.md',
+          buildPlanContractArtifact({
+            request,
+            resultText: output.result || '',
+            startedAt,
+            finishedAt: new Date().toISOString(),
+          }),
+        );
+        writeCoderManifest(request, {
+          requestId: request.requestId,
+          mode: request.mode,
+          config: request.config,
+          createdAt: startedAt,
+          taskText: request.taskText,
+          workspaceRoot: request.workspaceRoot,
+          contractPath,
+        });
+      }
+      const artifacts = [
+        ...(worktree ? [worktree.worktreePath] : []),
+        ...(contractPath ? [contractPath] : []),
+      ];
       const baseResult = output.result?.trim() || 'Coding worker completed.';
       const finalMessage = formatFinalMessage({
         baseResult,
@@ -797,6 +1174,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         diffSummary,
         changedFiles,
         testsRun,
+        contractPath,
       });
       const finishedAt = new Date().toISOString();
       const workerResult: CodingWorkerResult = {
@@ -812,23 +1190,166 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
         finishedAt,
         ...(diffSummary ? { diffSummary } : {}),
         ...(worktree ? { worktreePath: worktree.worktreePath } : {}),
+        ...(contractPath ? { contractPath } : {}),
         usage: output.usage,
       };
 
+      // Evaluator pass — blocking with refinement loop for execute runs.
+      // Plan-only runs are skipped (no side effects to verify).
+      if (request.mode === 'execute') {
+        const EVAL_MAX_REFINEMENTS = 2;
+        let refinements = 0;
+        let evalTaskText = executionContract || request.taskText;
+        let evalOutput = output;
+        let evalChangedFiles = changedFiles;
+        let lastVerdict: Awaited<ReturnType<typeof runEvaluatorPass>> | null =
+          null;
+
+        for (
+          let evalAttempt = 0;
+          evalAttempt <= EVAL_MAX_REFINEMENTS;
+          evalAttempt += 1
+        ) {
+          const verdict = await runEvaluatorPass({
+            runType: request.config.isSubagent ? 'subagent' : 'coding',
+            originalTask: evalTaskText,
+            agentOutput: evalOutput.result ?? '',
+            durationMs: Date.now() - new Date(startedAt).getTime(),
+            toolsInvoked: evalOutput.toolExecutions?.length ?? 0,
+            changedFiles: evalChangedFiles,
+            group: request.group,
+            chatJid: request.originChatJid,
+            isMain: request.group.folder === request.originGroupFolder,
+            workspaceDir: workspaceDirOverride,
+            workspaceDirOverride,
+            startedAtMs: new Date(startedAt).getTime(),
+            forceEvaluate: true,
+            abortSignal: request.abortController?.signal,
+          });
+          lastVerdict = verdict;
+
+          if (verdict.skipped || verdict.pass) break;
+          if (refinements >= EVAL_MAX_REFINEMENTS) break;
+
+          // Evaluator found issues — run a refinement pass
+          const refinedPrompt = buildRefinementPrompt(evalTaskText, verdict);
+          const refinedOutput = await deps.runContainerAgent(
+            request.group,
+            {
+              prompt: buildWorkerPrompt(
+                { ...request, taskText: refinedPrompt },
+                learningsContext,
+                executionContract,
+              ),
+              groupFolder: request.group.folder,
+              chatJid: request.originChatJid,
+              isMain: request.group.folder === request.originGroupFolder,
+              isSubagent: request.config.isSubagent,
+              assistantName: request.assistantName,
+              requestId: request.requestId,
+              codingHint: 'none',
+              noContinue: true,
+              toolMode: 'full',
+              workspaceDirOverride,
+              provider: request.runtimePrefs?.provider,
+              model: request.runtimePrefs?.model,
+            },
+            request.abortController?.signal,
+          );
+
+          if (refinedOutput.status === 'success' && refinedOutput.result) {
+            refinements += 1;
+            evalOutput = refinedOutput;
+            evalChangedFiles = worktree
+              ? worktree.listChangedFiles()
+              : evalChangedFiles;
+            evalTaskText = refinedPrompt;
+          } else {
+            // Refinement failed — keep best result and stop
+            break;
+          }
+        }
+
+        // Rebuild final result from potentially-refined output
+        const finalCommandsRun = extractCommands(evalOutput.toolExecutions);
+        const finalTestsRun = extractTestsRun(finalCommandsRun);
+        const finalChangedFiles = evalChangedFiles;
+        const finalBase = evalOutput.result?.trim() || baseResult;
+        const finalDiff = worktree ? worktree.getDiffSummary() : diffSummary;
+        if (lastVerdict) {
+          qaVerdict = {
+            pass: lastVerdict.pass,
+            score: lastVerdict.score,
+            issues: lastVerdict.issues,
+            feedback: lastVerdict.feedback,
+            refinements,
+          };
+          qaReportPath = writeCoderArtifact(
+            request,
+            'CODER_QA_REPORT.md',
+            formatQaReport({
+              request,
+              contractText: executionContract || request.taskText,
+              verdict: lastVerdict,
+              refinements,
+              changedFiles: finalChangedFiles,
+              testsRun: finalTestsRun,
+              commandsRun: finalCommandsRun,
+              diffSummary: finalDiff,
+              startedAt,
+              finishedAt: new Date().toISOString(),
+            }),
+          );
+          writeCoderManifest(request, {
+            requestId: request.requestId,
+            mode: request.mode,
+            config: request.config,
+            createdAt: startedAt,
+            taskText: request.taskText,
+            workspaceRoot: request.workspaceRoot,
+            contractPath,
+            qaReportPath,
+          });
+        }
+        const refinedFinalMessage = formatFinalMessage({
+          baseResult: finalBase,
+          worktreePath: worktree?.worktreePath,
+          diffSummary: finalDiff,
+          changedFiles: finalChangedFiles,
+          testsRun: finalTestsRun,
+          contractPath,
+          qaReportPath,
+          qaVerdict,
+        });
+        workerResult.finalMessage = refinedFinalMessage;
+        workerResult.changedFiles = finalChangedFiles;
+        workerResult.commandsRun = finalCommandsRun;
+        workerResult.testsRun = finalTestsRun;
+        workerResult.summary = summarizeText(finalBase);
+        if (qaReportPath) workerResult.qaReportPath = qaReportPath;
+        if (qaVerdict) workerResult.qaVerdict = qaVerdict;
+        if (qaReportPath) {
+          workerResult.artifacts = Array.from(
+            new Set([...workerResult.artifacts, qaReportPath]),
+          );
+        }
+      }
+
       activeRun.state = 'completed';
       deps.publishEvent({
-        kind: 'run_finished',
+        kind: 'run_state',
         id: createHostEventId('coder'),
         createdAt: finishedAt,
         source: 'coding-orchestrator',
         runId: request.requestId,
         sessionKey: request.sessionKey,
         chatJid: request.originChatJid,
-        detail: `coding_worker:${request.route}`,
+        phase: 'end',
+        detail: deriveEventDetail(request.config),
       });
       return {
         ok: true,
-        result: finalMessage,
+        result: workerResult.finalMessage,
         streamed: false,
         usage: output.usage,
         workerResult,
@@ -839,14 +1360,16 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       activeRun.state = aborted ? 'aborted' : 'failed';
       await cleanupWorktree();
       deps.publishEvent({
-        kind: aborted ? 'run_aborted' : 'run_failed',
+        kind: 'run_state',
         id: createHostEventId('coder'),
         createdAt: new Date().toISOString(),
         source: 'coding-orchestrator',
         runId: request.requestId,
         sessionKey: request.sessionKey,
         chatJid: request.originChatJid,
-        ...(aborted ? { detail: message } : { errorMessage: message }),
+        ...(aborted
+          ? { phase: 'end' as const, detail: message }
+          : { state: 'error' as const, errorMessage: message }),
       });
       return createWorkerErrorResult(
         request,

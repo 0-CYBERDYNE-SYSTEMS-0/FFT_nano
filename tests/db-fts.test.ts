@@ -13,7 +13,10 @@ import {
 } from '../src/db.js';
 
 test('FTS migration rebuild indexes existing transcript rows', () => {
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-db-fts-'));
+  const projectTmp = path.join(process.cwd(), 'data', 'test-db-temp');
+  fs.mkdirSync(projectTmp, { recursive: true });
+  const tmpRoot = path.join(projectTmp, `fft-db-fts-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  fs.mkdirSync(tmpRoot, { recursive: true });
   const dbPath = path.join(tmpRoot, 'messages.db');
 
   try {

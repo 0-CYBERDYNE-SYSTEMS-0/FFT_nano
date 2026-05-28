@@ -1,6 +1,7 @@
 import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { pruneStaleState } from './app-state.js';
 
 export interface AppRuntimeDeps {
   state: {
@@ -29,6 +30,7 @@ export interface AppRuntimeDeps {
     farmStateEnabled?: boolean;
     profileDetection?: unknown;
     whatsappEnabled?: boolean;
+    onboardingMode?: boolean;
     mainWorkspaceDir?: string;
   };
   createTelegramBot: (params: {
@@ -41,6 +43,7 @@ export interface AppRuntimeDeps {
   handleTelegramCallbackQuery: (event: any) => Promise<void>;
   handleTelegramSetupInput: (event: any) => Promise<boolean>;
   handleTelegramCommand: (event: any) => Promise<boolean>;
+  handleTelegramUnknownGroup?: (event: any) => Promise<void>;
   storeChatMetadata: (
     chatJid: string,
     timestamp: string,
@@ -116,6 +119,25 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
   registerShutdownHandlers: () => void;
   main: () => Promise<void>;
 } {
+  const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
+  let pruneTimer: ReturnType<typeof setInterval> | null = null;
+  let groupSyncTimer: ReturnType<typeof setInterval> | null = null;
+
+  function startPruneLoop(): void {
+    pruneTimer = setInterval(() => {
+      const result = pruneStaleState();
+      deps.logger.info?.(result, 'Stale state pruned');
+    }, PRUNE_INTERVAL_MS);
+    pruneTimer.unref?.();
+  }
+
+  function stopPruneLoop(): void {
+    if (pruneTimer !== null) {
+      clearInterval(pruneTimer);
+      pruneTimer = null;
+    }
+  }
+
   async function startTelegram(): Promise<void> {
     if (!deps.constants.telegramBotToken) return;
     if (deps.state.telegramBot) return;
@@ -130,7 +152,11 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.state.telegramBot.startPolling(async (event: any) => {
       try {
         deps.logger.debug?.(
-          { kind: event.kind, chatJid: event.chatJid, contentLength: event.content?.length },
+          {
+            kind: event.kind,
+            chatJid: event.chatJid,
+            contentLength: event.content?.length,
+          },
           'Telegram event received from polling',
         );
 
@@ -141,12 +167,19 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
 
         const m = event;
         deps.storeChatMetadata(m.chatJid, m.timestamp, m.chatName);
-        const didRegister = deps.maybeRegisterTelegramChat(m.chatJid, m.chatName);
+        const didRegister = deps.maybeRegisterTelegramChat(
+          m.chatJid,
+          m.chatName,
+        );
         if (didRegister && deps.isMainChat(m.chatJid)) {
           await deps.refreshTelegramCommandMenus();
         }
         if (await deps.handleTelegramSetupInput(m)) return;
         if (await deps.handleTelegramCommand(m)) return;
+        if (!deps.state.registeredGroups[m.chatJid]) {
+          await deps.handleTelegramUnknownGroup?.(m);
+          return;
+        }
         if (deps.state.registeredGroups[m.chatJid]) {
           const finalContent = m.media
             ? await deps.persistTelegramMedia(m)
@@ -170,7 +203,9 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     });
 
     deps.logger.info?.('Telegram polling started');
-    void deps.refreshTelegramCommandMenus();
+    // Await the initial menu refresh so failures surface as startup errors,
+    // not silently swallowed unhandled promise rejections.
+    await deps.refreshTelegramCommandMenus();
   }
 
   async function connectWhatsApp(): Promise<void> {
@@ -254,7 +289,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
           );
         if (!deps.state.groupSyncTimerStarted) {
           deps.state.groupSyncTimerStarted = true;
-          setInterval(
+          groupSyncTimer = setInterval(
             () => {
               deps
                 .syncGroupMetadata?.()
@@ -264,6 +299,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
             },
             deps.constants.groupSyncIntervalMs || 24 * 60 * 60 * 1000,
           );
+          groupSyncTimer.unref?.();
         }
         deps.startSchedulerLoop?.({
           sendMessage: deps.sendMessage,
@@ -433,6 +469,10 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
   function stopFarmServicesForShutdown(signal: string): void {
     if (deps.state.shuttingDown) return;
     deps.state.shuttingDown = true;
+    if (groupSyncTimer !== null) {
+      clearInterval(groupSyncTimer);
+      groupSyncTimer = null;
+    }
     deps.logger.info?.({ signal }, 'Shutting down FFT_nano services');
     if (deps.constants.featureFarm && deps.constants.farmStateEnabled) {
       deps.stopFarmStateCollector?.();
@@ -443,6 +483,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     signal: string,
     exitCode: number,
   ): Promise<void> {
+    stopPruneLoop();
     stopFarmServicesForShutdown(signal);
     await deps.stopWebControlCenterService?.();
     await deps.stopTuiGatewayService?.();
@@ -456,10 +497,30 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     process.on('SIGTERM', () => {
       void shutdownAndExit('SIGTERM', 0);
     });
+    process.on('unhandledRejection', (reason, promise) => {
+      deps.logger.error?.(
+        {
+          reason:
+            reason instanceof Error
+              ? { message: reason.message, stack: reason.stack }
+              : reason,
+          promise: String(promise),
+        },
+        'Unhandled promise rejection — promise was not caught',
+      );
+    });
+    process.on('uncaughtException', (err, origin) => {
+      deps.logger.fatal?.(
+        { err: { message: err.message, stack: err.stack }, origin },
+        'Uncaught exception — process will exit',
+      );
+      process.exit(1);
+    });
   }
 
   async function main(): Promise<void> {
     registerShutdownHandlers();
+    startPruneLoop();
     if (
       deps.constants.heartbeatActiveHoursRaw?.trim() &&
       deps.isWithinHeartbeatActiveHoursInvalid
@@ -493,6 +554,13 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     );
     if (deps.constants.featureFarm && deps.constants.farmStateEnabled) {
       deps.startFarmStateCollector?.();
+    }
+    if (deps.constants.onboardingMode) {
+      deps.logger.info?.(
+        'Running in onboarding-only mode (web/TUI enabled, channels deferred)',
+      );
+      deps.maybeRunBootMdOnce?.();
+      return;
     }
     const telegramEnabled = !!deps.constants.telegramBotToken;
     const farmOnlyMode =

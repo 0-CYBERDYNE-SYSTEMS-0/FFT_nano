@@ -7,6 +7,7 @@ export type RuntimeProviderPreset =
   | 'anthropic'
   | 'gemini'
   | 'openrouter'
+  | 'opencode-go'
   | 'zai'
   | 'minimax'
   | 'kimi-coding'
@@ -72,6 +73,13 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     apiKeyEnv: 'OPENROUTER_API_KEY',
   },
   {
+    id: 'opencode-go',
+    label: 'OpenCode Go',
+    piApi: 'opencode-go',
+    defaultModel: 'deepseek-v4-pro',
+    apiKeyEnv: 'OPENCODE_API_KEY',
+  },
+  {
     id: 'zai',
     label: 'ZAI',
     piApi: 'zai',
@@ -89,7 +97,7 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     id: 'kimi-coding',
     label: 'Kimi Coding',
     piApi: 'kimi-coding',
-    defaultModel: 'kimi-k2-thinking',
+    defaultModel: 'kimi-k2.6',
     apiKeyEnv: 'KIMI_API_KEY',
   },
   {

@@ -1,6 +1,6 @@
 {
   "name": "fft_nano",
-  "version": "1.6.1",
+  "version": "0.3.1",
   "description": "FFT_nano: autonomous AI coworker that runs on your farm's hardware, learns your operation, and texts you updates. No subscriptions. MIT licensed.",
   "keywords": [
     "autonomous-agents",
@@ -55,8 +55,11 @@
     "restore:state": "bash scripts/restore-state.sh",
     "auth": "tsx src/whatsapp-auth.ts",
     "doctor": "tsx src/doctor.ts",
+    "curator": "tsx src/skill-curator-cli.ts",
+    "skill-manager": "tsx src/skill-manager-cli.ts",
     "farm:doctor": "bash scripts/farm-doctor.sh",
     "validate:skills": "tsx scripts/validate-pi-skills.ts",
+    "validate:personal-skills": "tsx scripts/validate-personal-pi-skills.ts",
     "secret-scan": "bash scripts/secret-scan.sh",
     "pack-check": "bash scripts/check-pack-contents.sh",
     "release-check": "bash scripts/release-check.sh",
@@ -66,6 +69,7 @@
     "format:check": "prettier --check \"src/**/*.ts\""
   },
   "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.73.1",
     "@mariozechner/pi-tui": "^0.53.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.8.0",

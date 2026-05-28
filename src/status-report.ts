@@ -1,3 +1,5 @@
+import { isInternalEvaluatorVerdictText } from './runtime/boundary-ipc.js';
+
 export type StatusIncidentKind = 'stale' | 'timeout' | 'failed';
 
 export interface StatusIncident {
@@ -55,6 +57,7 @@ export interface CreateStatusTelemetryParams {
 
 export interface FormatStatusReportParams {
   assistantName: string;
+  version: string;
   runtime: string;
   serviceStartedAt: string;
   incidentWindowLabel: string;
@@ -70,10 +73,28 @@ export interface FormatStatusReportParams {
     paused: number;
     completed: number;
   };
+  knowledge?: {
+    ready: boolean;
+    rawCaptures: number;
+    wikiDocs: number;
+    lastProgressUpdateAt?: string | null;
+    nightlyTaskStatus?: string;
+    nightlyTaskNextRun?: string | null;
+  };
   activeChatRuns: Array<{
     requestId: string;
     chatJid: string;
     startedAt: number;
+  }>;
+  activeLongRuns?: Array<{
+    id: string;
+    chatJid: string;
+    status: 'queued' | 'running';
+    createdAt: number;
+    startedAt?: number | null;
+    lastProgressAt?: number | null;
+    phase?: string | null;
+    detail?: string | null;
   }>;
   activeCoderRuns: Array<{
     requestId: string;
@@ -83,16 +104,16 @@ export interface FormatStatusReportParams {
     startedAt: number;
     parentRequestId?: string;
     backend?: 'pi';
-    route?:
-      | 'coder_execute'
-      | 'coder_plan'
-      | 'auto_execute'
-      | 'subagent_execute'
-      | 'subagent_plan';
+    config?: {
+      toolMode: 'read_only' | 'full';
+      isSubagent: boolean;
+      workspaceMode: 'ephemeral_worktree' | 'read_only';
+    };
     state?: 'starting' | 'running' | 'completed' | 'failed' | 'aborted';
     worktreePath?: string;
   }>;
   telemetry: StatusTelemetrySnapshot;
+  agentRunning: boolean;
   chatRuntimePreferenceLines?: string[];
   chatUsage?: {
     runs: number;
@@ -102,9 +123,11 @@ export interface FormatStatusReportParams {
     requestId: string;
     startedAt: number;
   } | null;
+  coderGateMode?: 'explicit' | 'autosuggest';
 }
 
-const TIMEOUT_PATTERN = /timed out|timeout|etimedout|stale_no_progress|retry exhausted/i;
+const TIMEOUT_PATTERN =
+  /timed out|timeout|etimedout|stale_no_progress|retry exhausted/i;
 const USER_ABORT_PATTERN = /aborted by user/i;
 
 export function isUserAbortedErrorMessage(message?: string): boolean {
@@ -154,6 +177,19 @@ function classifyFailureKind(message: string): StatusIncidentKind {
   return TIMEOUT_PATTERN.test(message) ? 'timeout' : 'failed';
 }
 
+function formatIncidentDetailForStatus(detail: string): string {
+  if (isInternalEvaluatorVerdictText(detail)) return 'verification_failed';
+  if (/verification_failed/i.test(detail)) return 'verification_failed';
+  if (
+    /\bscore\s+\d+\/10\b/i.test(detail) &&
+    /\bissues?\b/i.test(detail) &&
+    /\bfeedback\b/i.test(detail)
+  ) {
+    return 'verification_failed';
+  }
+  return detail;
+}
+
 function uniquePushIncidents(
   target: StatusIncident[],
   candidate: StatusIncident,
@@ -196,6 +232,7 @@ export function createStatusTelemetry(
 
   function addIncident(incident: StatusIncident): void {
     uniquePushIncidents(incidents, incident);
+    prune(incident.createdAtMs);
   }
 
   return {
@@ -244,7 +281,9 @@ export function createStatusTelemetry(
     },
     getSnapshot(nowMs = Date.now()) {
       prune(nowMs);
-      const sorted = [...incidents].sort((a, b) => b.createdAtMs - a.createdAtMs);
+      const sorted = [...incidents].sort(
+        (a, b) => b.createdAtMs - a.createdAtMs,
+      );
       return {
         incidents: sorted.slice(0, params.maxIncidents),
         progressByRunId: new Map(progressByRunId),
@@ -277,10 +316,11 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
   const incidents = params.telemetry.incidents;
   const runProgressByRunId = params.telemetry.progressByRunId;
 
-  const subagentRuns = params.activeCoderRuns.filter((run) =>
-    (run.route || '').startsWith('subagent_'),
+  const subagentRuns = params.activeCoderRuns.filter(
+    (run) => run.config?.isSubagent === true,
   ).length;
   const coderRuns = params.activeCoderRuns.length - subagentRuns;
+  const activeLongRuns = params.activeLongRuns || [];
 
   const stuckRuns = params.activeCoderRuns.filter((run) => {
     const snapshot = runProgressByRunId.get(run.requestId);
@@ -293,11 +333,22 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
   const lines: string[] = [
     `${params.assistantName} pulse: ${severity}`,
     `- uptime: ${formatDurationShort(uptimeMs)}`,
+    `- version: ${params.version}`,
     `- runtime: ${params.runtime}`,
-    `- active_runs: agent=${params.activeChatRuns.length} coder=${coderRuns} subagent=${subagentRuns}`,
+    ...(params.coderGateMode
+      ? [`- coder_gate_mode: ${params.coderGateMode}`]
+      : []),
+    `- agent_running: ${params.agentRunning ? 'working' : 'idle'}`,
+    `- active_runs: agent=${params.activeChatRuns.length + activeLongRuns.length} coder=${coderRuns} subagent=${subagentRuns}`,
     `- channels: telegram=${params.telegramEnabled ? 'yes' : 'no'} whatsapp=${params.whatsappEnabled ? 'yes' : 'no'} connected=${params.whatsappConnected ? 'yes' : 'no'}`,
     `- groups: registered=${params.registeredGroupCount} main=${params.mainGroupName || 'none'}`,
     `- tasks: active=${params.tasks.active} paused=${params.tasks.paused} completed=${params.tasks.completed}`,
+    ...(params.knowledge
+      ? [
+          `- knowledge: ready=${params.knowledge.ready ? 'yes' : 'no'} wiki_docs=${params.knowledge.wikiDocs} raw_captures=${params.knowledge.rawCaptures} task=${params.knowledge.nightlyTaskStatus || 'missing'}`,
+          `- knowledge_progress: last_update=${params.knowledge.lastProgressUpdateAt || 'n/a'} next_task_run=${params.knowledge.nightlyTaskNextRun || 'n/a'}`,
+        ]
+      : []),
     `- health_${params.incidentWindowLabel}: incidents=${incidents.length} (${summarizeIncidentCounts(incidents)})`,
   ];
 
@@ -338,19 +389,45 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
     }
   }
 
+  lines.push('', 'Active long runs:');
+  if (activeLongRuns.length === 0) {
+    lines.push('- none');
+  } else {
+    for (const run of activeLongRuns.sort(
+      (a, b) => a.createdAt - b.createdAt,
+    )) {
+      const phase = run.phase
+        ? `${run.phase}${run.detail ? `(${run.detail})` : ''}`
+        : 'n/a';
+      const ageBase = run.startedAt || run.createdAt;
+      const lastProgress = run.lastProgressAt
+        ? `${formatDurationShort(nowMs - run.lastProgressAt)} ago`
+        : 'none';
+      lines.push(
+        `- id=${run.id} status=${run.status} phase=${phase} age=${formatAgeSeconds(nowMs, ageBase)} last_progress=${lastProgress} chat=${run.chatJid}`,
+      );
+    }
+  }
+
   lines.push('', `Recent incidents (${params.incidentWindowLabel}):`);
   if (incidents.length === 0) {
     lines.push('- none');
   } else {
     for (const incident of incidents) {
       const age = formatDurationShort(nowMs - incident.createdAtMs);
+      const detail = incident.detail
+        ? formatIncidentDetailForStatus(incident.detail)
+        : '';
       lines.push(
-        `- ${age} ago kind=${incident.kind} run=${incident.runId}${incident.chatJid ? ` chat=${incident.chatJid}` : ''}${incident.detail ? ` detail=${incident.detail}` : ''}`,
+        `- ${age} ago kind=${incident.kind} run=${incident.runId}${incident.chatJid ? ` chat=${incident.chatJid}` : ''}${detail ? ` detail=${detail}` : ''}`,
       );
     }
   }
 
-  if (params.chatRuntimePreferenceLines && params.chatRuntimePreferenceLines.length > 0) {
+  if (
+    params.chatRuntimePreferenceLines &&
+    params.chatRuntimePreferenceLines.length > 0
+  ) {
     lines.push('', 'Chat context:');
     lines.push(...params.chatRuntimePreferenceLines);
     if (params.chatUsage) {

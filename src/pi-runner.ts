@@ -19,9 +19,7 @@ import {
   PARITY_CONFIG,
   TIMEZONE,
 } from './config.js';
-import {
-  getEffectiveTimezone,
-} from './time-context.js';
+import { getEffectiveTimezone } from './time-context.js';
 import {
   assertValidGroupFolder,
   resolveGroupFolderPath,
@@ -35,7 +33,8 @@ import {
   syncProjectPiSkillsToGroupPiHome,
   type SkillSyncResult,
 } from './pi-skills.js';
-import { normalizeTelegramDraftText } from './telegram.js';
+import { noteSkillCatalogUse } from './skill-lifecycle.js';
+import { normalizeTelegramPreviewText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
@@ -58,13 +57,12 @@ import {
   extractToolDeltaFromPiEvent,
 } from './pi-stream-parser.js';
 import { getPiApiKeyOverride } from './provider-auth.js';
+import { ensureOpenCodeGoModels } from './opencode-go-models.js';
+import { ensureLocalProviderModels } from './local-provider-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox } from './sandbox.js';
 import type { RegisteredGroup } from './types.js';
-import { hostEventBus } from './app-state.js';
-import { createHostEventId } from './runtime/host-events.js';
-
 export interface ContainerInput {
   prompt: string;
   groupFolder: string;
@@ -90,6 +88,7 @@ export interface ContainerInput {
   noContinue?: boolean;
   toolMode?: 'default' | 'read_only' | 'full';
   workspaceDirOverride?: string;
+  sandboxAllowedPathsOverride?: string[];
   piExecutableOverride?: string;
   showReasoning?: boolean;
   skipPromptPreflight?: boolean;
@@ -104,6 +103,8 @@ export interface ContainerInput {
   effectiveTimezone?: string;
   // Internal guardrail for provider fallback sequencing.
   attemptedProviders?: string[];
+  // Marks this as an evaluator run — prevents recursive evaluation.
+  isEvaluatorRun?: boolean;
 }
 
 export interface ContainerOutput {
@@ -111,6 +112,7 @@ export interface ContainerOutput {
   result: string | null;
   error?: string;
   streamed?: boolean;
+  visibleAssistantText?: string;
   toolExecutions?: PiToolExecution[];
   usage?: {
     inputTokens?: number;
@@ -152,10 +154,16 @@ export type ContainerProgressEvent =
   | {
       kind: 'assistant';
       at: number;
+      text?: string;
     }
   | {
       kind: 'thinking';
       at: number;
+    }
+  | {
+      kind: 'delta';
+      at: number;
+      text: string;
     }
   | {
       kind: 'wait';
@@ -305,7 +313,8 @@ function resolvePiRunLifecyclePolicy(params: {
     allowFreshSessionFallback: boolean;
   }) => ({
     hardTimeoutMs:
-      params.input.lifecyclePolicyOverride?.hardTimeoutMs ?? policy.hardTimeoutMs,
+      params.input.lifecyclePolicyOverride?.hardTimeoutMs ??
+      policy.hardTimeoutMs,
     staleAfterMs:
       params.input.lifecyclePolicyOverride?.staleAfterMs ?? policy.staleAfterMs,
     toolActiveStaleMs:
@@ -336,7 +345,10 @@ function resolvePiRunLifecyclePolicy(params: {
 
   const interactive = isInteractivePiRun(params);
   if (!interactive) {
-    const configuredTimeout = Math.max(params.groupTimeoutMs, CONTAINER_TIMEOUT);
+    const configuredTimeout = Math.max(
+      params.groupTimeoutMs,
+      CONTAINER_TIMEOUT,
+    );
     return applyOverride({
       hardTimeoutMs: Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000),
       staleAfterMs: null,
@@ -364,13 +376,19 @@ function resolvePiRunLifecyclePolicy(params: {
   );
   const toolActiveStaleMs = parseRuntimeMs(
     process.env.FFT_NANO_INTERACTIVE_TOOL_STALE_MS,
-    Math.min(Math.max(100, hardTimeoutMs - 100), Math.max(staleAfterMs, 5 * 60 * 1000)),
+    Math.min(
+      Math.max(100, hardTimeoutMs - 100),
+      Math.max(staleAfterMs, 5 * 60 * 1000),
+    ),
     100,
     Math.max(100, hardTimeoutMs - 100),
   );
   const waitStateStaleMs = parseRuntimeMs(
     process.env.FFT_NANO_INTERACTIVE_WAIT_STALE_MS,
-    Math.min(Math.max(100, hardTimeoutMs - 100), Math.max(staleAfterMs, 3 * 60 * 1000)),
+    Math.min(
+      Math.max(100, hardTimeoutMs - 100),
+      Math.max(staleAfterMs, 3 * 60 * 1000),
+    ),
     100,
     Math.max(100, hardTimeoutMs - 100),
   );
@@ -442,10 +460,13 @@ export function collectRuntimeSecrets(
     'PI_API',
     'FFT_NANO_RUNTIME_PROVIDER_PRESET',
     'OPENAI_API_KEY',
+    'OPENCODE_API_KEY',
     'OPENAI_BASE_URL',
     'ANTHROPIC_API_KEY',
     'GEMINI_API_KEY',
     'OPENROUTER_API_KEY',
+    'OPENCODE_API_KEY',
+    'OPENCODE_API_KEY_FALLBACK',
     'GROQ_API_KEY',
     'ZAI_API_KEY',
     'MINIMAX_API_KEY',
@@ -482,6 +503,13 @@ export function collectRuntimeSecrets(
   const merged: Record<string, string> = { ...fromDotEnv, ...fromProcess };
   if (merged.PI_BASE_URL && !merged.OPENAI_BASE_URL) {
     merged.OPENAI_BASE_URL = merged.PI_BASE_URL;
+  }
+  if (
+    merged.PI_API?.trim().toLowerCase() === 'opencode-go' &&
+    merged.PI_API_KEY &&
+    !merged.OPENCODE_API_KEY
+  ) {
+    merged.OPENCODE_API_KEY = merged.PI_API_KEY;
   }
 
   merged.TZ = TIMEZONE;
@@ -528,6 +556,27 @@ function ensureGroupDirs(
 ): void {
   fs.mkdirSync(wp.groupDir, { recursive: true });
   fs.mkdirSync(wp.piHomeDir, { recursive: true });
+  const modelSeed = ensureOpenCodeGoModels(wp.piAgentDir);
+  if (!modelSeed.ok) {
+    logger.warn(
+      { path: modelSeed.path, error: modelSeed.error },
+      'Failed to seed OpenCode Go models',
+    );
+  } else if (modelSeed.changed) {
+    logger.debug({ path: modelSeed.path }, 'Seeded OpenCode Go models');
+  }
+  const localModelSeed = ensureLocalProviderModels(wp.piAgentDir);
+  if (!localModelSeed.ok) {
+    logger.warn(
+      { path: localModelSeed.path, errors: localModelSeed.errors },
+      'Failed to refresh local provider models',
+    );
+  } else if (localModelSeed.changed) {
+    logger.debug(
+      { path: localModelSeed.path, discovered: localModelSeed.discovered },
+      'Refreshed local provider models',
+    );
+  }
   fs.mkdirSync(path.join(wp.ipcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(wp.ipcDir, 'actions'), { recursive: true });
@@ -553,6 +602,88 @@ function resolvePerRequestPromptManifestPath(
     '-',
   );
   return path.join(groupDir, 'logs', 'system-prompts', `${safeId}.json`);
+}
+
+function sanitizeRunLogId(requestId: string | undefined): string {
+  return (requestId || `run-${Date.now()}`).replace(/[^a-zA-Z0-9._-]+/g, '-');
+}
+
+const RAW_RUN_CAPTURE_MAX_CHARS = 80_000;
+
+function redactRunCaptureText(value: string): string {
+  return value
+    .replace(
+      /\b([A-Za-z0-9_-]*(?:api[_-]?key|token|secret|password|authorization)[A-Za-z0-9_-]*)\b\s*[:=]\s*["']?([^"'\s,}]+)/gi,
+      '$1=[REDACTED]',
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /\b(?:sk|zai|ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_=-]{12,}\b/g,
+      '[REDACTED]',
+    );
+}
+
+function truncateRunCaptureText(value: string): {
+  text: string;
+  truncated: boolean;
+} {
+  const redacted = redactRunCaptureText(value);
+  if (redacted.length <= RAW_RUN_CAPTURE_MAX_CHARS) {
+    return { text: redacted, truncated: false };
+  }
+  return {
+    text: redacted.slice(-RAW_RUN_CAPTURE_MAX_CHARS),
+    truncated: true,
+  };
+}
+
+function writeRawRunCapture(params: {
+  groupDir: string;
+  requestId?: string;
+  reason: 'error' | 'empty_final' | 'timeout';
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  stdoutTruncated?: boolean;
+  provider?: string;
+  model?: string;
+  timeoutMs?: number;
+}): void {
+  try {
+    const outDir = path.join(params.groupDir, 'logs', 'pi-runs');
+    fs.mkdirSync(outDir, { recursive: true });
+    const now = new Date().toISOString();
+    const stdout = truncateRunCaptureText(params.stdout);
+    const stderr = truncateRunCaptureText(params.stderr);
+    const fileName = `${now.replace(/[:.]/g, '-')}-${sanitizeRunLogId(
+      params.requestId,
+    )}-${params.reason}.json`;
+    const payload = {
+      capturedAt: now,
+      requestId: params.requestId || null,
+      reason: params.reason,
+      code: params.code,
+      provider: params.provider || null,
+      model: params.model || null,
+      timeoutMs: params.timeoutMs || null,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      truncated: {
+        stdout: stdout.truncated || params.stdoutTruncated === true,
+        stderr: stderr.truncated,
+      },
+    };
+    fs.writeFileSync(
+      path.join(outDir, fileName),
+      `${JSON.stringify(payload, null, 2)}\n`,
+      'utf-8',
+    );
+  } catch (err) {
+    logger.warn(
+      { requestId: params.requestId, err },
+      'Failed to write raw Pi run capture',
+    );
+  }
 }
 
 function isOverflowStyleError(stderr: string): boolean {
@@ -594,15 +725,32 @@ function syncSkills(
   return skillSync;
 }
 
-function resolveExtensionPath(): string | null {
-  const candidates = [
-    path.resolve(process.cwd(), 'src', 'extensions', 'fft-permission-gate.ts'),
-    path.resolve(process.cwd(), 'dist', 'extensions', 'fft-permission-gate.js'),
+function resolveExtensionPaths(): string[] {
+  const extensions = [
+    ['fft-permission-gate', 'fft-permission-gate.ts', 'fft-permission-gate.js'],
+    [
+      'deepseek-v4-flash-compaction',
+      'deepseek-v4-flash-compaction.ts',
+      'deepseek-v4-flash-compaction.js',
+    ],
+    ['pi-autoresearch', 'pi-autoresearch/index.ts', 'pi-autoresearch/index.js'],
   ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+  const found: string[] = [];
+  for (const [, srcName, distName] of extensions) {
+    const srcPath = path.resolve(process.cwd(), 'src', 'extensions', srcName);
+    const distPath = path.resolve(
+      process.cwd(),
+      'dist',
+      'extensions',
+      distName,
+    );
+    if (fs.existsSync(srcPath)) {
+      found.push(srcPath);
+    } else if (fs.existsSync(distPath)) {
+      found.push(distPath);
+    }
   }
-  return null;
+  return found;
 }
 
 type PiTransportMode = 'json' | 'rpc';
@@ -629,12 +777,14 @@ function buildPiArgs(params: {
   const args: string[] = ['--mode', transportMode];
   if (useContinue) args.push('-c');
 
-  const extensionPath = resolveExtensionPath();
-  if (extensionPath) {
-    args.push('--extension', extensionPath);
+  const extensionPaths = resolveExtensionPaths();
+  if (extensionPaths.length > 0) {
+    for (const ext of extensionPaths) {
+      args.push('--extension', ext);
+    }
   } else {
     logger.warn(
-      'Permission gate extension not found at src/extensions/ or dist/extensions/. Destructive commands will NOT be blocked at runtime.',
+      'No extensions found at src/extensions/ or dist/extensions/. Destructive commands will NOT be blocked at runtime.',
     );
   }
 
@@ -665,7 +815,7 @@ function buildPiArgs(params: {
         : 'read,bash,edit,write,grep,find,ls',
     );
   } else {
-    args.push('--tools', 'read,bash,edit,write,grep,find,ls');
+    args.push('--tools', 'read,bash,edit,write,grep,find,ls,agent');
   }
 
   if (transportMode === 'json') {
@@ -714,15 +864,16 @@ function classifyRunError(stderr: string, code: number | null): RunErrorClass {
   }
 
   // Explicit rate limit
-  if (/429|rate\s*limit|too\s*many\s*requests/i.test(stderr)) return 'rate_limit';
+  if (/429|rate\s*limit|too\s*many\s*requests/i.test(stderr))
+    return 'rate_limit';
 
   // Timeout / failover codes
-  if (/408|502|503|504|ETIMEDOUT|ECONNRESET|ECONNABORTED/i.test(stderr)) return 'timeout';
+  if (/408|502|503|504|ETIMEDOUT|ECONNRESET|ECONNABORTED/i.test(stderr))
+    return 'timeout';
 
   // Hard failures — never retry
-  if (
-    /context\s*(length|size)\s*exceeded|overflow|token\s*limit/i.test(stderr)
-  ) return 'non_retryable';
+  if (/context\s*(length|size)\s*exceeded|overflow|token\s*limit/i.test(stderr))
+    return 'non_retryable';
   if (/401|403|invalid.*api.*key|auth|unauthorized/i.test(stderr))
     return 'non_retryable';
   if (/SIGKILL|killed/i.test(stderr)) return 'non_retryable';
@@ -776,6 +927,9 @@ export async function runContainerAgent(
   const startTime = Date.now();
   const projectRoot = process.cwd();
   const codingHint = normalizeCodingHint(input.codingHint);
+  let extendHardTimeoutForWait:
+    | ((requestTimeoutMs: number | undefined) => void)
+    | null = null;
 
   let groupDir: string;
   try {
@@ -824,15 +978,21 @@ export async function runContainerAgent(
   const promptStatePath = resolvePromptRuntimeStatePath(wp.piHomeDir);
   let promptState = readPromptRuntimeState(promptStatePath);
 
-  const skillCatalog = buildSkillCatalogEntries(skillSync.sourceDirs, {
+  const mountedSkillsDir = path.join(wp.piHomeDir, 'skills');
+  const skillCatalog = buildSkillCatalogEntries([mountedSkillsDir], {
     maxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
   });
+  noteSkillCatalogUse(
+    mountedSkillsDir,
+    skillCatalog.map((entry) => entry.name),
+  );
 
   const baseInput = {
     groupFolder: input.groupFolder,
     chatJid: input.chatJid,
     isMain,
     isScheduledTask: input.isScheduledTask,
+    isEvaluatorRun: input.isEvaluatorRun,
     assistantName: input.assistantName,
     provider: input.provider,
     model: input.model,
@@ -1073,14 +1233,54 @@ export async function runContainerAgent(
 
   // Hoisted reference so timeout/abort handlers can kill the active child process.
   let activeChild: import('child_process').ChildProcess | null = null;
+  let runFinalized = false;
+  let activeChildSnapshot: {
+    stdout: string;
+    stderr: string;
+    stdoutTruncated?: boolean;
+  } = {
+    stdout: '',
+    stderr: '',
+    stdoutTruncated: false,
+  };
+  let settleActiveLocal:
+    | ((value: {
+        code: number | null;
+        stdout: string;
+        stderr: string;
+        streamedDraft: boolean;
+        visibleAssistantText?: string;
+        stdoutTruncated?: boolean;
+        retryFresh?: boolean;
+      }) => void)
+    | null = null;
 
   const killActiveChild = () => {
-    if (!activeChild || activeChild.killed) return;
-    activeChild.kill('SIGTERM');
+    if (!activeChild) return;
     const ref = activeChild;
-    setTimeout(() => {
-      if (!ref.killed) ref.kill('SIGKILL');
+    if (ref.exitCode !== null || ref.signalCode !== null) return;
+    const signal = (sig: NodeJS.Signals) => {
+      if (ref.pid && process.platform !== 'win32') {
+        try {
+          process.kill(-ref.pid, sig);
+          return;
+        } catch {
+          // Fall back to signaling the direct child below.
+        }
+      }
+      ref.kill(sig);
+    };
+    signal('SIGTERM');
+    ref.stdin?.destroy();
+    ref.stdout?.destroy();
+    ref.stderr?.destroy();
+    ref.unref();
+    const forceKillTimer = setTimeout(() => {
+      if (ref.exitCode === null && ref.signalCode === null) {
+        signal('SIGKILL');
+      }
     }, 5_000);
+    forceKillTimer.unref?.();
   };
 
   const STDERR_MAX_SIZE = 1_048_576; // 1 MB
@@ -1091,7 +1291,7 @@ export async function runContainerAgent(
       status: 'error',
       result: null,
       error:
-        'pi binary not found on PATH and no repo-local fallback exists. Set PI_PATH or install pi globally.',
+        'pi binary not found. Run npm install for the repo-local pi, set PI_PATH, or install pi globally.',
     };
   }
 
@@ -1113,6 +1313,8 @@ export async function runContainerAgent(
       stdout: string;
       stderr: string;
       streamedDraft: boolean;
+      visibleAssistantText?: string;
+      stdoutTruncated?: boolean;
       retryFresh?: boolean;
     }>((resolve) => {
       let localSettled = false;
@@ -1158,9 +1360,14 @@ export async function runContainerAgent(
         ...(input.isSubagent ? { FFT_NANO_SUBAGENT: '1' } : {}),
       };
 
+      const sandboxAllowedPaths =
+        input.sandboxAllowedPathsOverride &&
+        input.sandboxAllowedPathsOverride.length > 0
+          ? input.sandboxAllowedPathsOverride
+          : [wp.groupDir, wp.piHomeDir, wp.ipcDir];
       const sandboxed = wrapWithSandbox(piExecutable, piArgs, {
         cwd: wp.groupDir,
-        allowedPaths: [wp.groupDir, wp.piHomeDir, wp.ipcDir],
+        allowedPaths: sandboxAllowedPaths,
         env: env as Record<string, string>,
       });
 
@@ -1168,6 +1375,7 @@ export async function runContainerAgent(
         cwd: wp.groupDir,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
       });
       const closeRpcInput = () => {
         if (
@@ -1192,6 +1400,11 @@ export async function runContainerAgent(
         );
       }
       activeChild = child;
+      activeChildSnapshot = {
+        stdout: '',
+        stderr: '',
+        stdoutTruncated: false,
+      };
       onProgressEvent?.({
         kind: 'spawn',
         at: Date.now(),
@@ -1241,23 +1454,14 @@ export async function runContainerAgent(
       let lastDraftSentAt = 0;
       let lastDraftText = '';
       const publishDraftPreview = (text: string, force = false) => {
+        if (runFinalized || localSettled) return;
         if (!canStreamTelegramDraft) return;
-        const normalized = normalizeTelegramDraftText(text);
+        const normalized = normalizeTelegramPreviewText(text);
         if (!normalized) return;
         const now = Date.now();
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
         if (normalized === lastDraftText) return;
-        const requestId = (input.requestId || '').trim();
-        if (!requestId) return;
-        hostEventBus.publish({
-          kind: 'telegram_preview_requested',
-          id: createHostEventId('preview'),
-          createdAt: new Date(now).toISOString(),
-          source: 'pi-runner',
-          chatJid: input.chatJid,
-          requestId,
-          text: normalized,
-        });
+        onProgressEvent?.({ kind: 'delta', at: now, text: normalized });
         streamedDraft = true;
         lastDraftSentAt = now;
         lastDraftText = normalized;
@@ -1267,14 +1471,23 @@ export async function runContainerAgent(
         stdout: string;
         stderr: string;
         streamedDraft: boolean;
+        visibleAssistantText?: string;
+        stdoutTruncated?: boolean;
         retryFresh?: boolean;
       }) => {
         if (localSettled) return;
         localSettled = true;
         if (ticker) clearInterval(ticker);
         if (staleTimer) clearTimeout(staleTimer);
+        activeChildSnapshot = {
+          stdout: value.stdout,
+          stderr: value.stderr,
+          stdoutTruncated: value.stdoutTruncated,
+        };
+        if (settleActiveLocal === settleLocal) settleActiveLocal = null;
         resolve(value);
       };
+      settleActiveLocal = settleLocal;
 
       const armStaleTimer = (
         delayMs: number | null = lifecyclePolicy.staleAfterMs,
@@ -1282,6 +1495,7 @@ export async function runContainerAgent(
         if (!delayMs) return;
         if (staleTimer) clearTimeout(staleTimer);
         staleTimer = setTimeout(() => {
+          if (runFinalized || localSettled) return;
           const now = Date.now();
           const retryFresh =
             useContinue &&
@@ -1315,6 +1529,8 @@ export async function runContainerAgent(
                 ? 'FFT_NANO_STALE_RETRY_AFTER_PROGRESS'
                 : 'Pi run stalled before producing progress',
             streamedDraft,
+            visibleAssistantText: assistantSoFar.trim() || undefined,
+            stdoutTruncated,
             retryFresh,
           });
         }, delayMs);
@@ -1322,7 +1538,7 @@ export async function runContainerAgent(
 
       const noteProgress = (
         event:
-          | { kind: 'assistant'; at: number }
+          | { kind: 'assistant'; at: number; text?: string }
           | { kind: 'thinking'; at: number }
           | {
               kind: 'tool';
@@ -1331,6 +1547,7 @@ export async function runContainerAgent(
               status: 'start' | 'ok' | 'error';
             },
       ) => {
+        if (runFinalized || localSettled) return;
         sawMeaningfulProgress = true;
         onProgressEvent?.(event);
         if (event.kind === 'tool') {
@@ -1352,6 +1569,7 @@ export async function runContainerAgent(
       };
 
       const noteActivity = (event?: { kind: 'stdout'; at: number }) => {
+        if (runFinalized || localSettled) return;
         if (event) onProgressEvent?.(event);
         armStaleTimer(
           sawToolActivity
@@ -1361,6 +1579,7 @@ export async function runContainerAgent(
       };
 
       const noteWaitState = (delayMs?: number, meaningful = true) => {
+        if (runFinalized || localSettled) return;
         if (meaningful) sawMeaningfulProgress = true;
         armStaleTimer(
           delayMs ??
@@ -1370,6 +1589,7 @@ export async function runContainerAgent(
       };
 
       const maybeSendDraft = (force = false) => {
+        if (runFinalized || localSettled) return;
         if (!assistantSoFar) return;
         let previewText = assistantSoFar;
         if (input.showReasoning && thinkingSoFar) {
@@ -1386,7 +1606,12 @@ export async function runContainerAgent(
         requestId: string,
         response: ExtensionUIResponse,
       ) => {
-        if (!child.stdin || child.stdin.destroyed || child.stdin.writableEnded) {
+        if (runFinalized || localSettled) return;
+        if (
+          !child.stdin ||
+          child.stdin.destroyed ||
+          child.stdin.writableEnded
+        ) {
           logger.warn(
             { requestId, group: group.name },
             'Cannot send extension UI response because pi stdin is unavailable',
@@ -1405,6 +1630,7 @@ export async function runContainerAgent(
       const handleExtensionUIRequest = async (
         request: ExtensionUIRequest,
       ): Promise<void> => {
+        if (runFinalized || localSettled) return;
         logger.info(
           {
             requestId: request.id,
@@ -1414,20 +1640,6 @@ export async function runContainerAgent(
           },
           'Extension UI request from pi',
         );
-        onProgressEvent?.({
-          kind: 'wait',
-          at: Date.now(),
-          reason: 'extension_ui',
-        });
-        noteWaitState(
-          Math.max(
-            lifecyclePolicy.waitStateStaleMs ??
-              lifecyclePolicy.staleAfterMs ??
-              0,
-            (request.timeout ?? 60_000) + 1_000,
-          ),
-        );
-
         const fireAndForgetMethods = new Set([
           'notify',
           'setStatus',
@@ -1436,12 +1648,34 @@ export async function runContainerAgent(
           'set_editor_text',
         ]);
         if (fireAndForgetMethods.has(request.method)) {
+          // Reset the stale timer without marking meaningful progress — UI decorations
+          // are not evidence the LLM responded to anything.
+          noteActivity();
           return;
+        }
+
+        onProgressEvent?.({
+          kind: 'wait',
+          at: Date.now(),
+          reason: 'extension_ui',
+        });
+
+        const waitBudgetMs = Math.max(
+          lifecyclePolicy.waitStateStaleMs ?? lifecyclePolicy.staleAfterMs ?? 0,
+          (request.timeout ?? 60_000) + 1_000,
+        );
+        noteWaitState(waitBudgetMs, request.method !== 'confirm');
+        if (request.method === 'confirm') {
+          extendHardTimeoutForWait?.(request.timeout);
         }
 
         if (!onExtensionUIRequest) {
           logger.warn(
-            { requestId: request.id, method: request.method, group: group.name },
+            {
+              requestId: request.id,
+              method: request.method,
+              group: group.name,
+            },
             'No extension UI handler registered, auto-denying',
           );
           if (request.method === 'confirm') {
@@ -1457,7 +1691,12 @@ export async function runContainerAgent(
           sendExtensionUIResponse(request.id, response);
         } catch (err) {
           logger.error(
-            { requestId: request.id, method: request.method, err, group: group.name },
+            {
+              requestId: request.id,
+              method: request.method,
+              err,
+              group: group.name,
+            },
             'Extension UI handler failed, auto-denying',
           );
           if (request.method === 'confirm') {
@@ -1469,6 +1708,7 @@ export async function runContainerAgent(
       };
 
       const processStdoutLine = (line: string) => {
+        if (runFinalized || localSettled) return;
         const trimmed = line.trim();
         if (!trimmed) return;
         try {
@@ -1488,7 +1728,9 @@ export async function runContainerAgent(
             typeof parsed.id === 'string' &&
             typeof parsed.method === 'string'
           ) {
-            void handleExtensionUIRequest(parsed as unknown as ExtensionUIRequest);
+            void handleExtensionUIRequest(
+              parsed as unknown as ExtensionUIRequest,
+            );
             return;
           }
           if (
@@ -1548,6 +1790,11 @@ export async function runContainerAgent(
               toolName: toolDelta.toolName,
               status: toolDelta.status,
             });
+            // When a tool starts before any assistant text exists, emit a
+            // placeholder draft so the user sees activity immediately.
+            if (toolDelta.status === 'start' && !assistantSoFar) {
+              publishDraftPreview('Working on your reply...', false);
+            }
           }
           if (input.showReasoning) {
             const thinkingDelta = extractThinkingDeltaFromPiEvent(event);
@@ -1561,7 +1808,11 @@ export async function runContainerAgent(
           if (delta) {
             if (delta.kind === 'append') assistantSoFar += delta.text;
             else assistantSoFar = delta.text;
-            noteProgress({ kind: 'assistant', at: Date.now() });
+            noteProgress({
+              kind: 'assistant',
+              at: Date.now(),
+              text: assistantSoFar,
+            });
             maybeSendDraft(false);
           }
         } catch {
@@ -1575,6 +1826,7 @@ export async function runContainerAgent(
       armStaleTimer(initialStaleDelayMs);
 
       child.stdout.on('data', (d: Buffer) => {
+        if (runFinalized || localSettled) return;
         const chunk = d.toString();
         noteActivity({ kind: 'stdout', at: Date.now() });
         if (!stdoutTruncated) {
@@ -1586,6 +1838,7 @@ export async function runContainerAgent(
             stdout += chunk;
           }
         }
+        activeChildSnapshot = { stdout, stderr, stdoutTruncated };
         lineBuffer += chunk;
         while (true) {
           const newlineIdx = lineBuffer.indexOf('\n');
@@ -1597,35 +1850,63 @@ export async function runContainerAgent(
       });
 
       child.stderr.on('data', (d: Buffer) => {
+        if (runFinalized || localSettled) return;
         if (stderr.length < STDERR_MAX_SIZE) {
           const chunk = d.toString();
           stderr += chunk.slice(0, STDERR_MAX_SIZE - stderr.length);
         }
+        activeChildSnapshot = { stdout, stderr, stdoutTruncated };
       });
 
       child.on('close', (code) => {
-        if (localSettled) return;
+        if (runFinalized || localSettled) return;
         // When stale timer kills the child via SIGTERM, the close event fires
         // synchronously BEFORE the stale callback finishes calling settleLocal.
         // staleKillInProgress flag tells us the stale timer already fired.
         if (!staleKillInProgress) {
           if (lineBuffer.trim()) processStdoutLine(lineBuffer);
           maybeSendDraft(true);
-          settleLocal({ code, stdout, stderr, streamedDraft });
+          settleLocal({
+            code,
+            stdout,
+            stderr,
+            streamedDraft,
+            visibleAssistantText: assistantSoFar.trim() || undefined,
+            stdoutTruncated,
+          });
         }
       });
 
       child.on('error', (err) => {
-        settleLocal({ code: 1, stdout, stderr: String(err), streamedDraft });
+        if (runFinalized || localSettled) return;
+        settleLocal({
+          code: 1,
+          stdout,
+          stderr: String(err),
+          streamedDraft,
+          visibleAssistantText: assistantSoFar.trim() || undefined,
+          stdoutTruncated,
+        });
       });
     });
 
   return new Promise((resolve) => {
     let settled = false;
+    let timeoutHandle: NodeJS.Timeout | null = null;
     const finish = (output: ContainerOutput) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutHandle);
+      runFinalized = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      settleActiveLocal?.({
+        code: null,
+        stdout: activeChildSnapshot.stdout,
+        stderr: activeChildSnapshot.stderr,
+        streamedDraft: false,
+        stdoutTruncated: activeChildSnapshot.stdoutTruncated,
+      });
+      settleActiveLocal = null;
+      extendHardTimeoutForWait = null;
       resolve(output);
     };
 
@@ -1635,17 +1916,46 @@ export async function runContainerAgent(
     }
 
     const timeoutMs = lifecyclePolicy.hardTimeoutMs;
-    const timeoutHandle = setTimeout(() => {
-      killActiveChild();
-      finish({
-        status: 'error',
-        result: null,
-        error: `Pi runner timed out after ${timeoutMs}ms`,
-      });
-    }, timeoutMs);
+    const armHardTimeout = (delayMs = timeoutMs) => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      timeoutHandle = setTimeout(() => {
+        killActiveChild();
+        writeRawRunCapture({
+          groupDir: wp.groupDir,
+          requestId: input.requestId,
+          reason: 'timeout',
+          code: null,
+          stdout: activeChildSnapshot.stdout,
+          stderr: activeChildSnapshot.stderr,
+          stdoutTruncated: activeChildSnapshot.stdoutTruncated,
+          provider: input.provider,
+          model: input.model,
+          timeoutMs,
+        });
+        finish({
+          status: 'error',
+          result: null,
+          error: `Pi runner timed out after ${timeoutMs}ms`,
+        });
+      }, delayMs);
+    };
+    extendHardTimeoutForWait = (requestTimeoutMs) => {
+      const waitMs = Math.max(0, requestTimeoutMs ?? 60_000);
+      const graceMs = Math.min(Math.max(waitMs + 5_000, 30_000), 125_000);
+      logger.info(
+        {
+          group: group.name,
+          requestId: input.requestId,
+          graceMs,
+        },
+        'Extending Pi runner hard timeout for permission wait',
+      );
+      armHardTimeout(graceMs);
+    };
+    armHardTimeout();
 
     const onAbort = () => {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       killActiveChild();
       finish({ status: 'error', result: null, error: 'Aborted by user' });
     };
@@ -1663,8 +1973,10 @@ export async function runContainerAgent(
         let didFreshRetry = false;
 
         while (attempt < FFT_NANO_MAX_RETRIES) {
+          if (settled) return;
           const useContinue = attempt === 0 && !effectiveInputNoContinue;
           lastRes = await runPi(useContinue);
+          if (settled) return;
 
           if (lastRes.code === 0) break; // success
 
@@ -1672,7 +1984,8 @@ export async function runContainerAgent(
 
           // Hard fail — do not retry
           if (errClass === 'non_retryable') {
-            finalError = lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
+            finalError =
+              lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
             break;
           }
 
@@ -1689,23 +2002,29 @@ export async function runContainerAgent(
               at: retryAt,
               reason: 'stale_no_progress',
             });
+            // Give the fresh attempt its own full budget — the stale attempt already
+            // consumed most of the original ceiling and would starve this retry.
+            armHardTimeout();
             lastRes = await runPi(false);
             if (lastRes.code === 0) break;
-            finalError = lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
+            finalError =
+              lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
             break;
           }
 
           // If we already did a fresh retry, no more retries — exit
           if (didFreshRetry) {
             exhausted = true;
-            finalError = lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
+            finalError =
+              lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
             break;
           }
 
           attempt++;
           if (attempt >= FFT_NANO_MAX_RETRIES) {
             exhausted = true;
-            finalError = lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
+            finalError =
+              lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
             break;
           }
 
@@ -1723,6 +2042,7 @@ export async function runContainerAgent(
           });
 
           await sleep(delayMs);
+          if (settled) return;
         }
 
         // If all retries exhausted, try provider fallback chain
@@ -1731,11 +2051,13 @@ export async function runContainerAgent(
           FFT_NANO_PROVIDER_FALLBACK_ENABLED &&
           FFT_NANO_PROVIDER_FALLBACK_ORDER.length > 0
         ) {
+          // Stop the parent timer — each recursive fallback call gets its own
+          // fresh timeout, preventing the parent clock from killing the fallback child.
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
+
           const primaryProvider =
-            input.provider ||
-            secrets.PI_API ||
-            process.env.PI_API ||
-            '';
+            input.provider || secrets.PI_API || process.env.PI_API || '';
           const fallbackProviders = getProviderFallbackCandidates({
             primaryProvider,
             configuredOrder: FFT_NANO_PROVIDER_FALLBACK_ORDER,
@@ -1769,8 +2091,9 @@ export async function runContainerAgent(
             );
 
             if (fallbackResult.status === 'success') {
-              clearTimeout(timeoutHandle);
-              if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
+              if (timeoutHandle) clearTimeout(timeoutHandle);
+              if (abortSignal)
+                abortSignal.removeEventListener('abort', onAbort);
               if (settled) return;
               finish(fallbackResult);
               return;
@@ -1780,13 +2103,24 @@ export async function runContainerAgent(
           }
         }
 
-        clearTimeout(timeoutHandle);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
         if (settled) return;
 
         const duration = Date.now() - startTime;
 
         if (lastRes && lastRes.code !== 0) {
+          writeRawRunCapture({
+            groupDir: wp.groupDir,
+            requestId: input.requestId,
+            reason: 'error',
+            code: lastRes.code,
+            stdout: lastRes.stdout,
+            stderr: lastRes.stderr,
+            stdoutTruncated: lastRes.stdoutTruncated,
+            provider: input.provider,
+            model: input.model,
+          });
           const failedState: PromptRuntimeState = {
             ...readPromptRuntimeState(promptStatePath),
             lastPreflightDecision: preflightDecision,
@@ -1806,73 +2140,73 @@ export async function runContainerAgent(
           }
 
           logger.error(
-            { group: group.name, code: lastRes.code, duration, stderr: lastRes.stderr.slice(-500) },
+            {
+              group: group.name,
+              code: lastRes.code,
+              duration,
+              stderr: lastRes.stderr.slice(-500),
+            },
             'Pi exited with error',
           );
           finish({
             status: 'error',
             result: null,
-            error: finalError || lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`,
+            error:
+              finalError ||
+              lastRes.stderr.trim() ||
+              `pi exited with code ${lastRes.code}`,
           });
           return;
         }
 
         // Success path (lastRes.code === 0)
-        const parsed = parsePiJsonOutput({
-          stdout: lastRes!.stdout,
-          provider: input.provider,
-          model: input.model,
-        });
-        const result = isTelegramChatJid(input.chatJid)
+        let parsed: ReturnType<typeof parsePiJsonOutput>;
+        try {
+          parsed = parsePiJsonOutput({
+            stdout: lastRes!.stdout,
+            provider: input.provider,
+            model: input.model,
+          });
+        } catch (err) {
+          writeRawRunCapture({
+            groupDir: wp.groupDir,
+            requestId: input.requestId,
+            reason: 'error',
+            code: lastRes!.code,
+            stdout: lastRes!.stdout,
+            stderr: lastRes!.stderr,
+            stdoutTruncated: lastRes!.stdoutTruncated,
+            provider: input.provider,
+            model: input.model,
+          });
+          throw err;
+        }
+        const parsedResult = parsed.result.trim()
           ? parsed.result
-          : appendToolVerboseSection(parsed.result, input.verboseMode, parsed.toolExecutions);
+          : lastRes!.visibleAssistantText || '';
+        const result = isTelegramChatJid(input.chatJid)
+          ? parsedResult
+          : appendToolVerboseSection(
+              parsedResult,
+              input.verboseMode,
+              parsed.toolExecutions,
+            );
+        if (!parsedResult.trim()) {
+          writeRawRunCapture({
+            groupDir: wp.groupDir,
+            requestId: input.requestId,
+            reason: 'empty_final',
+            code: lastRes!.code,
+            stdout: lastRes!.stdout,
+            stderr: lastRes!.stderr,
+            stdoutTruncated: lastRes!.stdoutTruncated,
+            provider: input.provider,
+            model: input.model,
+          });
+        }
 
         let finalResult: string | null = result;
         let finalStreamed = lastRes!.streamedDraft;
-
-        if (isForceDelegateHint(codingHint) && !input.isScheduledTask) {
-          const outDir = path.join(wp.groupDir, 'coder_runs');
-          fs.mkdirSync(outDir, { recursive: true });
-          const rid = input.requestId || `coder_${Date.now()}`;
-          const maxInline = isTelegramChatJid(input.chatJid) ? 8000 : 3000;
-          let sent = false;
-
-          if (result.length <= maxInline) {
-            hostEventBus.publish({
-              kind: 'chat_delivery_requested',
-              id: createHostEventId('deliver'),
-              createdAt: new Date().toISOString(),
-              source: 'pi-runner',
-              chatJid: input.chatJid,
-              text: result,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
-            });
-            sent = true;
-          } else {
-            const filePath = path.join(outDir, `${rid}.md`);
-            try {
-              fs.writeFileSync(filePath, result);
-            } catch {
-              /* ignore */
-            }
-            const preview = result.slice(0, Math.min(1200, result.length));
-            hostEventBus.publish({
-              kind: 'chat_delivery_requested',
-              id: createHostEventId('deliver'),
-              createdAt: new Date().toISOString(),
-              source: 'pi-runner',
-              chatJid: input.chatJid,
-              text: `${rid}: output saved to ${filePath}\n\nPreview:\n${preview}\n\n(Ask me to paste the rest if needed.)`,
-              ...(input.requestId ? { requestId: input.requestId } : {}),
-            });
-            sent = true;
-          }
-
-          if (sent) {
-            finalResult = null;
-            finalStreamed = true;
-          }
-        }
 
         logger.info(
           { group: group.name, duration, hasResult: !!finalResult },
@@ -1894,6 +2228,7 @@ export async function runContainerAgent(
           status: 'success',
           result: finalResult,
           streamed: finalStreamed,
+          visibleAssistantText: lastRes!.visibleAssistantText,
           toolExecutions: parsed.toolExecutions,
           usage: parsed.usage,
           promptSummary: {
@@ -1905,7 +2240,7 @@ export async function runContainerAgent(
           },
         });
       } catch (err) {
-        clearTimeout(timeoutHandle);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
         const error = err instanceof Error ? err.message : String(err);
         logger.error({ group: group.name, error }, 'Pi runner error');

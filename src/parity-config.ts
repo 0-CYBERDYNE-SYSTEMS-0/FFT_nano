@@ -62,6 +62,31 @@ export interface CronParityConfig {
   deterministicTopOfHourStagger: CronDeterministicStaggerConfig;
 }
 
+export interface SkillSelfImproveConfig {
+  enabled: boolean;
+  turnInterval: number;
+  toolInterval: number;
+}
+
+export interface SkillManagerBackupConfig {
+  enabled: boolean;
+  keep: number;
+}
+
+export interface SkillManagerParityConfig {
+  enabled: boolean;
+  intervalHours: number;
+  minIdleHours: number;
+  staleAfterDays: number;
+  archiveAfterDays: number;
+  backup: SkillManagerBackupConfig;
+}
+
+export interface SkillsParityConfig {
+  selfImprove: SkillSelfImproveConfig;
+  curator: SkillManagerParityConfig;
+}
+
 export interface WorkspaceParityConfig {
   skipBootstrap: boolean;
   enforceBootstrapGate: boolean;
@@ -91,12 +116,13 @@ export interface ParityConfig {
   memory: MemoryParityConfig;
   heartbeat: HeartbeatParityConfig;
   cron: CronParityConfig;
+  skills: SkillsParityConfig;
   workspace: WorkspaceParityConfig;
   doctor: DoctorParityConfig;
   prompt: PromptParityConfig;
 }
 
-const DEFAULT_PARITY_CONFIG: ParityConfig = {
+const DEFAULTS: ParityConfig = {
   memory: {
     backend: 'lexical',
     missingFileBehavior: 'empty',
@@ -111,7 +137,7 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
   },
   heartbeat: {
     enabled: true,
-    every: '30m',
+    every: '4h',
     prompt:
       'Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.',
     target: 'main',
@@ -121,17 +147,21 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
     ackMaxChars: 300,
     activeHours: null,
     activeHoursRaw: null,
-    visibility: {
-      showOk: false,
-      showAlerts: true,
-      useIndicator: true,
-    },
+    visibility: { showOk: true, showAlerts: true, useIndicator: true },
   },
   cron: {
     isolatedDefaultDelivery: 'announce',
-    deterministicTopOfHourStagger: {
-      enabled: false,
-      maxMs: 5 * 60_000,
+    deterministicTopOfHourStagger: { enabled: false, maxMs: 5 * 60_000 },
+  },
+  skills: {
+    selfImprove: { enabled: true, turnInterval: 10, toolInterval: 10 },
+    curator: {
+      enabled: true,
+      intervalHours: 168,
+      minIdleHours: 2,
+      staleAfterDays: 30,
+      archiveAfterDays: 90,
+      backup: { enabled: true, keep: 5 },
     },
   },
   workspace: {
@@ -142,28 +172,25 @@ const DEFAULT_PARITY_CONFIG: ParityConfig = {
     bootstrapTotalMaxChars: 150_000,
     enableBootMd: false,
   },
-  doctor: {
-    enabled: true,
-  },
+  doctor: { enabled: true },
   prompt: {
     cacheEnabled: true,
     persistLatestManifest: true,
     manifestPerRequestInDebugOnly: true,
     preflightRebaseEnabled: true,
-    softTokenThreshold: 48_000,
-    hardTokenThreshold: 64_000,
-    skillCatalogMaxChars: 6_000,
-    recentConversationMaxMessages: 8,
-    recentConversationMaxChars: 4_000,
+    softTokenThreshold: 120_000,
+    hardTokenThreshold: 160_000,
+    skillCatalogMaxChars: 20_000,
+    recentConversationMaxMessages: 50,
+    recentConversationMaxChars: 16_000,
   },
 };
 
 function envBool(value: string | undefined, fallback: boolean): boolean {
   if (typeof value !== 'string') return fallback;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return fallback;
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  const v = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+  if (['0', 'false', 'no', 'off'].includes(v)) return false;
   return fallback;
 }
 
@@ -178,28 +205,8 @@ function envInt(
   return Math.min(max, Math.max(min, parsed));
 }
 
-function resolveDefaultParityConfigPath(): string {
-  const home = process.env.HOME || os.homedir();
-  const userPath = path.join(
-    home,
-    '.config',
-    'fft_nano',
-    'runtime.parity.json',
-  );
-  const repoPath = path.join(process.cwd(), 'config', 'runtime.parity.json');
-  if (fs.existsSync(userPath)) return userPath;
-  return repoPath;
-}
-
-function readJsonIfExists(filePath: string): Partial<ParityConfig> {
-  try {
-    if (!fs.existsSync(filePath)) return {};
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<ParityConfig>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
+function clamp(value: unknown, fallback: number, min: number): number {
+  return Math.max(min, Number(value) || fallback);
 }
 
 function sanitizeHeartbeatTarget(
@@ -207,16 +214,9 @@ function sanitizeHeartbeatTarget(
   fallback: HeartbeatTargetMode,
 ): HeartbeatTargetMode {
   if (typeof value !== 'string') return fallback;
-  const normalized = value.trim().toLowerCase();
-  if (
-    normalized === 'main' ||
-    normalized === 'last' ||
-    normalized === 'none' ||
-    normalized === 'telegram' ||
-    normalized === 'whatsapp' ||
-    normalized === 'chat'
-  ) {
-    return normalized;
+  const v = value.trim().toLowerCase();
+  if (v === 'main' || v === 'last' || v === 'none' || v === 'telegram' || v === 'whatsapp' || v === 'chat') {
+    return v;
   }
   return fallback;
 }
@@ -229,305 +229,172 @@ function sanitizeMissingBehavior(
   return fallback;
 }
 
-function sanitizeBackend(
-  value: unknown,
-  fallback: MemoryBackendKind,
-): MemoryBackendKind {
+function sanitizeBackend(value: unknown, fallback: MemoryBackendKind): MemoryBackendKind {
   if (value === 'lexical') return value;
   return fallback;
 }
 
-function mergeParityConfig(fileConfig: Partial<ParityConfig>): ParityConfig {
+function resolveDefaultParityConfigPath(): string {
+  const home = process.env.HOME || os.homedir();
+  const userPath = path.join(home, '.config', 'fft_nano', 'runtime.parity.json');
+  const repoPath = path.join(process.cwd(), 'config', 'runtime.parity.json');
+  if (fs.existsSync(userPath)) return userPath;
+  return repoPath;
+}
+
+function readJsonIfExists(filePath: string): Partial<ParityConfig> {
+  try {
+    if (!fs.existsSync(filePath)) return {};
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<ParityConfig>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function mergeParityConfig(file: Partial<ParityConfig>): ParityConfig {
+  const D = DEFAULTS;
+  const f = file;
   const merged: ParityConfig = {
     memory: {
-      ...DEFAULT_PARITY_CONFIG.memory,
-      ...(fileConfig.memory || {}),
-      flushBeforeCompaction: {
-        ...DEFAULT_PARITY_CONFIG.memory.flushBeforeCompaction,
-        ...(fileConfig.memory?.flushBeforeCompaction || {}),
-      },
+      ...D.memory,
+      ...f.memory,
+      flushBeforeCompaction: { ...D.memory.flushBeforeCompaction, ...f.memory?.flushBeforeCompaction },
     },
     heartbeat: {
-      ...DEFAULT_PARITY_CONFIG.heartbeat,
-      ...(fileConfig.heartbeat || {}),
+      ...D.heartbeat,
+      ...f.heartbeat,
       activeHours:
-        fileConfig.heartbeat?.activeHours === null
+        f.heartbeat?.activeHours === null
           ? null
-          : fileConfig.heartbeat?.activeHours
-            ? {
-                ...DEFAULT_PARITY_CONFIG.heartbeat.activeHours,
-                ...fileConfig.heartbeat.activeHours,
-              }
-            : DEFAULT_PARITY_CONFIG.heartbeat.activeHours,
-      visibility: {
-        ...DEFAULT_PARITY_CONFIG.heartbeat.visibility,
-        ...(fileConfig.heartbeat?.visibility || {}),
-      },
+          : f.heartbeat?.activeHours
+            ? { ...D.heartbeat.activeHours, ...f.heartbeat.activeHours }
+            : D.heartbeat.activeHours,
+      visibility: { ...D.heartbeat.visibility, ...f.heartbeat?.visibility },
     },
     cron: {
-      ...DEFAULT_PARITY_CONFIG.cron,
-      ...(fileConfig.cron || {}),
-      deterministicTopOfHourStagger: {
-        ...DEFAULT_PARITY_CONFIG.cron.deterministicTopOfHourStagger,
-        ...(fileConfig.cron?.deterministicTopOfHourStagger || {}),
+      ...D.cron,
+      ...f.cron,
+      deterministicTopOfHourStagger: { ...D.cron.deterministicTopOfHourStagger, ...f.cron?.deterministicTopOfHourStagger },
+    },
+    skills: {
+      selfImprove: { ...D.skills.selfImprove, ...f.skills?.selfImprove },
+      curator: {
+        ...D.skills.curator,
+        ...f.skills?.curator,
+        backup: { ...D.skills.curator.backup, ...f.skills?.curator?.backup },
       },
     },
-    workspace: {
-      ...DEFAULT_PARITY_CONFIG.workspace,
-      ...(fileConfig.workspace || {}),
-    },
-    doctor: {
-      ...DEFAULT_PARITY_CONFIG.doctor,
-      ...(fileConfig.doctor || {}),
-    },
-    prompt: {
-      ...DEFAULT_PARITY_CONFIG.prompt,
-      ...(fileConfig.prompt || {}),
-    },
+    workspace: { ...D.workspace, ...f.workspace },
+    doctor: { ...D.doctor, ...f.doctor },
+    prompt: { ...D.prompt, ...f.prompt },
   };
 
   merged.memory.backend = sanitizeBackend(merged.memory.backend, 'lexical');
-  merged.memory.missingFileBehavior = sanitizeMissingBehavior(
-    merged.memory.missingFileBehavior,
-    'empty',
+  merged.memory.missingFileBehavior = sanitizeMissingBehavior(merged.memory.missingFileBehavior, 'empty');
+  merged.heartbeat.target = sanitizeHeartbeatTarget(merged.heartbeat.target, 'main');
+  merged.memory.flushBeforeCompaction.softThresholdTokens = clamp(merged.memory.flushBeforeCompaction.softThresholdTokens, 4000, 1);
+  merged.heartbeat.ackMaxChars = clamp(merged.heartbeat.ackMaxChars, 300, 0);
+  merged.cron.deterministicTopOfHourStagger.maxMs = clamp(merged.cron.deterministicTopOfHourStagger.maxMs, 300000, 0);
+  merged.skills.selfImprove.turnInterval = clamp(merged.skills.selfImprove.turnInterval, 10, 1);
+  merged.skills.selfImprove.toolInterval = clamp(merged.skills.selfImprove.toolInterval, 10, 1);
+  merged.skills.curator.intervalHours = clamp(merged.skills.curator.intervalHours, 168, 1);
+  merged.skills.curator.minIdleHours = clamp(merged.skills.curator.minIdleHours, 2, 0);
+  merged.skills.curator.staleAfterDays = clamp(merged.skills.curator.staleAfterDays, 30, 1);
+  merged.skills.curator.archiveAfterDays = Math.max(
+    merged.skills.curator.staleAfterDays,
+    clamp(merged.skills.curator.archiveAfterDays, 90, 1),
   );
-  merged.heartbeat.target = sanitizeHeartbeatTarget(
-    merged.heartbeat.target,
-    'main',
-  );
-  merged.memory.flushBeforeCompaction.softThresholdTokens = Math.max(
-    1,
-    Number(merged.memory.flushBeforeCompaction.softThresholdTokens) || 4000,
-  );
-  merged.heartbeat.ackMaxChars = Math.max(
-    0,
-    Number(merged.heartbeat.ackMaxChars) || 300,
-  );
-  merged.cron.deterministicTopOfHourStagger.maxMs = Math.max(
-    0,
-    Number(merged.cron.deterministicTopOfHourStagger.maxMs) || 300000,
-  );
-  merged.workspace.bootstrapMaxChars = Math.max(
-    1000,
-    Number(merged.workspace.bootstrapMaxChars) || 20000,
-  );
+  merged.skills.curator.backup.keep = clamp(merged.skills.curator.backup.keep, 5, 1);
+  merged.workspace.bootstrapMaxChars = clamp(merged.workspace.bootstrapMaxChars, 20000, 1000);
   merged.workspace.bootstrapTotalMaxChars = Math.max(
     merged.workspace.bootstrapMaxChars,
-    Number(merged.workspace.bootstrapTotalMaxChars) || 150000,
+    clamp(merged.workspace.bootstrapTotalMaxChars, 150000, 1000),
   );
-  merged.prompt.softTokenThreshold = Math.max(
-    1,
-    Number(merged.prompt.softTokenThreshold) || 48_000,
-  );
+  merged.prompt.softTokenThreshold = clamp(merged.prompt.softTokenThreshold, 120_000, 1);
   merged.prompt.hardTokenThreshold = Math.max(
     merged.prompt.softTokenThreshold,
-    Number(merged.prompt.hardTokenThreshold) || 64_000,
+    clamp(merged.prompt.hardTokenThreshold, 160_000, 1),
   );
-  merged.prompt.skillCatalogMaxChars = Math.max(
-    500,
-    Number(merged.prompt.skillCatalogMaxChars) || 6_000,
-  );
-  merged.prompt.recentConversationMaxMessages = Math.max(
-    1,
-    Number(merged.prompt.recentConversationMaxMessages) || 8,
-  );
-  merged.prompt.recentConversationMaxChars = Math.max(
-    200,
-    Number(merged.prompt.recentConversationMaxChars) || 4_000,
-  );
+  merged.prompt.skillCatalogMaxChars = clamp(merged.prompt.skillCatalogMaxChars, 20_000, 500);
+  merged.prompt.recentConversationMaxMessages = clamp(merged.prompt.recentConversationMaxMessages, 8, 1);
+  merged.prompt.recentConversationMaxChars = clamp(merged.prompt.recentConversationMaxChars, 4_000, 200);
 
   return merged;
 }
 
 function applyEnvOverrides(config: ParityConfig): ParityConfig {
-  const next: ParityConfig = JSON.parse(JSON.stringify(config)) as ParityConfig;
+  const c: ParityConfig = JSON.parse(JSON.stringify(config)) as ParityConfig;
+  const e = process.env;
 
-  const backend = process.env.FFT_NANO_MEMORY_BACKEND;
-  if (backend)
-    next.memory.backend = sanitizeBackend(
-      backend.trim().toLowerCase(),
-      next.memory.backend,
-    );
+  const backend = e.FFT_NANO_MEMORY_BACKEND;
+  if (backend) c.memory.backend = sanitizeBackend(backend.trim().toLowerCase(), c.memory.backend);
 
-  const missing = process.env.FFT_NANO_MEMORY_GET_MISSING;
-  if (missing) {
-    next.memory.missingFileBehavior = sanitizeMissingBehavior(
-      missing.trim().toLowerCase(),
-      next.memory.missingFileBehavior,
-    );
-  }
-  next.memory.flushBeforeCompaction.enabled = envBool(
-    process.env.FFT_NANO_MEMORY_FLUSH_ENABLED,
-    next.memory.flushBeforeCompaction.enabled,
-  );
-  next.memory.flushBeforeCompaction.softThresholdTokens = envInt(
-    process.env.FFT_NANO_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS,
-    next.memory.flushBeforeCompaction.softThresholdTokens,
-    1,
-    2_000_000,
-  );
-  if (process.env.FFT_NANO_MEMORY_FLUSH_SYSTEM_PROMPT?.trim()) {
-    next.memory.flushBeforeCompaction.systemPrompt =
-      process.env.FFT_NANO_MEMORY_FLUSH_SYSTEM_PROMPT.trim();
-  }
-  if (process.env.FFT_NANO_MEMORY_FLUSH_PROMPT?.trim()) {
-    next.memory.flushBeforeCompaction.prompt =
-      process.env.FFT_NANO_MEMORY_FLUSH_PROMPT.trim();
-  }
+  const missing = e.FFT_NANO_MEMORY_GET_MISSING;
+  if (missing) c.memory.missingFileBehavior = sanitizeMissingBehavior(missing.trim().toLowerCase(), c.memory.missingFileBehavior);
 
-  next.heartbeat.enabled = envBool(
-    process.env.FFT_NANO_HEARTBEAT_ENABLED,
-    next.heartbeat.enabled,
-  );
-  if (process.env.FFT_NANO_HEARTBEAT_EVERY?.trim()) {
-    next.heartbeat.every = process.env.FFT_NANO_HEARTBEAT_EVERY.trim();
-  }
-  if (process.env.FFT_NANO_HEARTBEAT_PROMPT?.trim()) {
-    next.heartbeat.prompt = process.env.FFT_NANO_HEARTBEAT_PROMPT.trim();
-  }
-  if (process.env.FFT_NANO_HEARTBEAT_TARGET?.trim()) {
-    next.heartbeat.target = sanitizeHeartbeatTarget(
-      process.env.FFT_NANO_HEARTBEAT_TARGET.trim().toLowerCase(),
-      next.heartbeat.target,
-    );
-  }
-  next.heartbeat.to =
-    process.env.FFT_NANO_HEARTBEAT_TO?.trim() || next.heartbeat.to;
-  next.heartbeat.accountId =
-    process.env.FFT_NANO_HEARTBEAT_ACCOUNT_ID?.trim() ||
-    next.heartbeat.accountId;
-  next.heartbeat.includeReasoning = envBool(
-    process.env.FFT_NANO_HEARTBEAT_INCLUDE_REASONING,
-    next.heartbeat.includeReasoning,
-  );
-  next.heartbeat.ackMaxChars = envInt(
-    process.env.FFT_NANO_HEARTBEAT_ACK_MAX_CHARS,
-    next.heartbeat.ackMaxChars,
-    0,
-    4000,
-  );
-  next.heartbeat.visibility.showOk = envBool(
-    process.env.FFT_NANO_HEARTBEAT_SHOW_OK,
-    next.heartbeat.visibility.showOk,
-  );
-  next.heartbeat.visibility.showAlerts = envBool(
-    process.env.FFT_NANO_HEARTBEAT_SHOW_ALERTS,
-    next.heartbeat.visibility.showAlerts,
-  );
-  next.heartbeat.visibility.useIndicator = envBool(
-    process.env.FFT_NANO_HEARTBEAT_USE_INDICATOR,
-    next.heartbeat.visibility.useIndicator,
-  );
+  c.memory.flushBeforeCompaction.enabled = envBool(e.FFT_NANO_MEMORY_FLUSH_ENABLED, c.memory.flushBeforeCompaction.enabled);
+  c.memory.flushBeforeCompaction.softThresholdTokens = envInt(e.FFT_NANO_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS, c.memory.flushBeforeCompaction.softThresholdTokens, 1, 2_000_000);
+  if (e.FFT_NANO_MEMORY_FLUSH_SYSTEM_PROMPT?.trim()) c.memory.flushBeforeCompaction.systemPrompt = e.FFT_NANO_MEMORY_FLUSH_SYSTEM_PROMPT.trim();
+  if (e.FFT_NANO_MEMORY_FLUSH_PROMPT?.trim()) c.memory.flushBeforeCompaction.prompt = e.FFT_NANO_MEMORY_FLUSH_PROMPT.trim();
 
-  const activeRaw = process.env.FFT_NANO_HEARTBEAT_ACTIVE_HOURS;
-  if (typeof activeRaw === 'string') {
-    next.heartbeat.activeHoursRaw = activeRaw.trim() || null;
+  c.heartbeat.enabled = envBool(e.FFT_NANO_HEARTBEAT_ENABLED, c.heartbeat.enabled);
+  if (e.FFT_NANO_HEARTBEAT_EVERY?.trim()) c.heartbeat.every = e.FFT_NANO_HEARTBEAT_EVERY.trim();
+  if (e.FFT_NANO_HEARTBEAT_PROMPT?.trim()) c.heartbeat.prompt = e.FFT_NANO_HEARTBEAT_PROMPT.trim();
+  if (e.FFT_NANO_HEARTBEAT_TARGET?.trim()) c.heartbeat.target = sanitizeHeartbeatTarget(e.FFT_NANO_HEARTBEAT_TARGET.trim().toLowerCase(), c.heartbeat.target);
+  c.heartbeat.to = e.FFT_NANO_HEARTBEAT_TO?.trim() || c.heartbeat.to;
+  c.heartbeat.accountId = e.FFT_NANO_HEARTBEAT_ACCOUNT_ID?.trim() || c.heartbeat.accountId;
+  c.heartbeat.includeReasoning = envBool(e.FFT_NANO_HEARTBEAT_INCLUDE_REASONING, c.heartbeat.includeReasoning);
+  c.heartbeat.ackMaxChars = envInt(e.FFT_NANO_HEARTBEAT_ACK_MAX_CHARS, c.heartbeat.ackMaxChars, 0, 4000);
+  c.heartbeat.visibility.showOk = envBool(e.FFT_NANO_HEARTBEAT_SHOW_OK, c.heartbeat.visibility.showOk);
+  c.heartbeat.visibility.showAlerts = envBool(e.FFT_NANO_HEARTBEAT_SHOW_ALERTS, c.heartbeat.visibility.showAlerts);
+  c.heartbeat.visibility.useIndicator = envBool(e.FFT_NANO_HEARTBEAT_USE_INDICATOR, c.heartbeat.visibility.useIndicator);
+
+  const activeRaw = e.FFT_NANO_HEARTBEAT_ACTIVE_HOURS;
+  if (typeof activeRaw === 'string') c.heartbeat.activeHoursRaw = activeRaw.trim() || null;
+
+  if (e.FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY?.trim()) {
+    const mode = e.FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY.trim().toLowerCase();
+    if (mode === 'none' || mode === 'announce') c.cron.isolatedDefaultDelivery = mode;
   }
+  c.cron.deterministicTopOfHourStagger.enabled = envBool(e.FFT_NANO_CRON_DETERMINISTIC_STAGGER, c.cron.deterministicTopOfHourStagger.enabled);
+  c.cron.deterministicTopOfHourStagger.maxMs = envInt(e.FFT_NANO_CRON_DETERMINISTIC_STAGGER_MAX_MS, c.cron.deterministicTopOfHourStagger.maxMs, 0, 3_600_000);
 
-  if (process.env.FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY?.trim()) {
-    const mode =
-      process.env.FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY.trim().toLowerCase();
-    if (mode === 'none' || mode === 'announce') {
-      next.cron.isolatedDefaultDelivery = mode;
-    }
-  }
-  next.cron.deterministicTopOfHourStagger.enabled = envBool(
-    process.env.FFT_NANO_CRON_DETERMINISTIC_STAGGER,
-    next.cron.deterministicTopOfHourStagger.enabled,
-  );
-  next.cron.deterministicTopOfHourStagger.maxMs = envInt(
-    process.env.FFT_NANO_CRON_DETERMINISTIC_STAGGER_MAX_MS,
-    next.cron.deterministicTopOfHourStagger.maxMs,
-    0,
-    3_600_000,
-  );
+  c.skills.selfImprove.enabled = envBool(e.FFT_NANO_SKILL_SELF_IMPROVE_ENABLED, c.skills.selfImprove.enabled);
+  c.skills.selfImprove.turnInterval = envInt(e.FFT_NANO_SKILL_SELF_IMPROVE_TURN_INTERVAL, c.skills.selfImprove.turnInterval, 1, 10_000);
+  c.skills.selfImprove.toolInterval = envInt(e.FFT_NANO_SKILL_SELF_IMPROVE_TOOL_INTERVAL, c.skills.selfImprove.toolInterval, 1, 10_000);
+  c.skills.curator.enabled = envBool(e.FFT_NANO_SKILL_CURATOR_ENABLED, c.skills.curator.enabled);
+  c.skills.curator.intervalHours = envInt(e.FFT_NANO_SKILL_CURATOR_INTERVAL_HOURS, c.skills.curator.intervalHours, 1, 100_000);
+  c.skills.curator.minIdleHours = envInt(e.FFT_NANO_SKILL_CURATOR_MIN_IDLE_HOURS, c.skills.curator.minIdleHours, 0, 100_000);
+  c.skills.curator.staleAfterDays = envInt(e.FFT_NANO_SKILL_CURATOR_STALE_AFTER_DAYS, c.skills.curator.staleAfterDays, 1, 100_000);
+  c.skills.curator.archiveAfterDays = envInt(e.FFT_NANO_SKILL_CURATOR_ARCHIVE_AFTER_DAYS, c.skills.curator.archiveAfterDays, c.skills.curator.staleAfterDays, 100_000);
+  c.skills.curator.backup.enabled = envBool(e.FFT_NANO_SKILL_CURATOR_BACKUP_ENABLED, c.skills.curator.backup.enabled);
+  c.skills.curator.backup.keep = envInt(e.FFT_NANO_SKILL_CURATOR_BACKUP_KEEP, c.skills.curator.backup.keep, 1, 1000);
 
-  next.workspace.skipBootstrap = envBool(
-    process.env.FFT_NANO_WORKSPACE_SKIP_BOOTSTRAP,
-    next.workspace.skipBootstrap,
-  );
-  next.workspace.enforceBootstrapGate = envBool(
-    process.env.FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE,
-    next.workspace.enforceBootstrapGate,
-  );
-  next.workspace.enforceBootstrapGateForExisting = envBool(
-    process.env.FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING,
-    next.workspace.enforceBootstrapGateForExisting,
-  );
-  next.workspace.bootstrapMaxChars = envInt(
-    process.env.FFT_NANO_WORKSPACE_BOOT_MAX_CHARS,
-    next.workspace.bootstrapMaxChars,
-    1000,
-    200000,
-  );
-  next.workspace.bootstrapTotalMaxChars = envInt(
-    process.env.FFT_NANO_WORKSPACE_BOOT_TOTAL_MAX_CHARS,
-    next.workspace.bootstrapTotalMaxChars,
-    next.workspace.bootstrapMaxChars,
-    500000,
-  );
-  next.workspace.enableBootMd = envBool(
-    process.env.FFT_NANO_WORKSPACE_ENABLE_BOOT_MD,
-    next.workspace.enableBootMd,
-  );
+  c.workspace.skipBootstrap = envBool(e.FFT_NANO_WORKSPACE_SKIP_BOOTSTRAP, c.workspace.skipBootstrap);
+  c.workspace.enforceBootstrapGate = envBool(e.FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE, c.workspace.enforceBootstrapGate);
+  c.workspace.enforceBootstrapGateForExisting = envBool(e.FFT_NANO_WORKSPACE_ENFORCE_BOOTSTRAP_GATE_EXISTING, c.workspace.enforceBootstrapGateForExisting);
+  c.workspace.bootstrapMaxChars = envInt(e.FFT_NANO_WORKSPACE_BOOT_MAX_CHARS, c.workspace.bootstrapMaxChars, 1000, 200000);
+  c.workspace.bootstrapTotalMaxChars = envInt(e.FFT_NANO_WORKSPACE_BOOT_TOTAL_MAX_CHARS, c.workspace.bootstrapTotalMaxChars, c.workspace.bootstrapMaxChars, 500000);
+  c.workspace.enableBootMd = envBool(e.FFT_NANO_WORKSPACE_ENABLE_BOOT_MD, c.workspace.enableBootMd);
 
-  next.doctor.enabled = envBool(
-    process.env.FFT_NANO_DOCTOR_ENABLED,
-    next.doctor.enabled,
-  );
-  next.prompt.cacheEnabled = envBool(
-    process.env.FFT_NANO_PROMPT_CACHE_ENABLED,
-    next.prompt.cacheEnabled,
-  );
-  next.prompt.persistLatestManifest = envBool(
-    process.env.FFT_NANO_PROMPT_PERSIST_LATEST_MANIFEST,
-    next.prompt.persistLatestManifest,
-  );
-  next.prompt.manifestPerRequestInDebugOnly = envBool(
-    process.env.FFT_NANO_PROMPT_MANIFEST_DEBUG_ONLY,
-    next.prompt.manifestPerRequestInDebugOnly,
-  );
-  next.prompt.preflightRebaseEnabled = envBool(
-    process.env.FFT_NANO_PROMPT_PREFLIGHT_REBASE_ENABLED,
-    next.prompt.preflightRebaseEnabled,
-  );
-  next.prompt.softTokenThreshold = envInt(
-    process.env.FFT_NANO_PROMPT_SOFT_TOKEN_THRESHOLD,
-    next.prompt.softTokenThreshold,
-    1,
-    2_000_000,
-  );
-  next.prompt.hardTokenThreshold = envInt(
-    process.env.FFT_NANO_PROMPT_HARD_TOKEN_THRESHOLD,
-    next.prompt.hardTokenThreshold,
-    next.prompt.softTokenThreshold,
-    2_000_000,
-  );
-  next.prompt.skillCatalogMaxChars = envInt(
-    process.env.FFT_NANO_SKILL_CATALOG_MAX_CHARS,
-    next.prompt.skillCatalogMaxChars,
-    500,
-    200_000,
-  );
-  next.prompt.recentConversationMaxMessages = envInt(
-    process.env.FFT_NANO_PROMPT_RECENT_CONVERSATION_MAX_MESSAGES,
-    next.prompt.recentConversationMaxMessages,
-    1,
-    100,
-  );
-  next.prompt.recentConversationMaxChars = envInt(
-    process.env.FFT_NANO_PROMPT_RECENT_CONVERSATION_MAX_CHARS,
-    next.prompt.recentConversationMaxChars,
-    200,
-    200_000,
-  );
-  return next;
+  c.doctor.enabled = envBool(e.FFT_NANO_DOCTOR_ENABLED, c.doctor.enabled);
+  c.prompt.cacheEnabled = envBool(e.FFT_NANO_PROMPT_CACHE_ENABLED, c.prompt.cacheEnabled);
+  c.prompt.persistLatestManifest = envBool(e.FFT_NANO_PROMPT_PERSIST_LATEST_MANIFEST, c.prompt.persistLatestManifest);
+  c.prompt.manifestPerRequestInDebugOnly = envBool(e.FFT_NANO_PROMPT_MANIFEST_DEBUG_ONLY, c.prompt.manifestPerRequestInDebugOnly);
+  c.prompt.preflightRebaseEnabled = envBool(e.FFT_NANO_PROMPT_PREFLIGHT_REBASE_ENABLED, c.prompt.preflightRebaseEnabled);
+  c.prompt.softTokenThreshold = envInt(e.FFT_NANO_PROMPT_SOFT_TOKEN_THRESHOLD, c.prompt.softTokenThreshold, 1, 2_000_000);
+  c.prompt.hardTokenThreshold = envInt(e.FFT_NANO_PROMPT_HARD_TOKEN_THRESHOLD, c.prompt.hardTokenThreshold, c.prompt.softTokenThreshold, 2_000_000);
+  c.prompt.skillCatalogMaxChars = envInt(e.FFT_NANO_SKILL_CATALOG_MAX_CHARS, c.prompt.skillCatalogMaxChars, 500, 200_000);
+  c.prompt.recentConversationMaxMessages = envInt(e.FFT_NANO_PROMPT_RECENT_CONVERSATION_MAX_MESSAGES, c.prompt.recentConversationMaxMessages, 1, 100);
+  c.prompt.recentConversationMaxChars = envInt(e.FFT_NANO_PROMPT_RECENT_CONVERSATION_MAX_CHARS, c.prompt.recentConversationMaxChars, 200, 200_000);
+
+  return c;
 }
 
 export const PARITY_CONFIG_PATH = path.resolve(
   process.env.FFT_NANO_PARITY_CONFIG_PATH || resolveDefaultParityConfigPath(),
 );
-const configFromFile = readJsonIfExists(PARITY_CONFIG_PATH);
 export const PARITY_CONFIG: ParityConfig = applyEnvOverrides(
-  mergeParityConfig(configFromFile),
+  mergeParityConfig(readJsonIfExists(PARITY_CONFIG_PATH)),
 );

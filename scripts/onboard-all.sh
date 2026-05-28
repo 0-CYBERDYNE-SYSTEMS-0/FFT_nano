@@ -18,7 +18,7 @@ Options:
   --flow <flow>             quickstart|advanced|manual
   --mode <mode>             local|remote
   --runtime <runtime>       auto|docker|host
-  --auth-choice <choice>    openai|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip
+  --auth-choice <choice>    openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip
   --model <id>              Model id/provider model
   --api-key <token>         Provider API key for selected auth choice
   --remote-url <url>        Remote gateway URL (remote mode)
@@ -44,6 +44,10 @@ Options:
 
 This is the one-command onboarding flow:
   backup -> setup -> onboarding wizard -> service step -> doctor
+
+Runtime note:
+  setup.sh is the single runtime decision point. If Docker is unavailable and
+  runtime is unresolved, setup prompts for host or docker during step 2.
 USAGE
 }
 
@@ -259,6 +263,35 @@ read_env_value() {
   printf '%s' "$value"
 }
 
+upsert_env_value() {
+  local key="$1"
+  local value="${2-}"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  local replaced=0
+  if [[ -f .env ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" != *"="* ]] || [[ -z "${line//[[:space:]]/}" ]]; then
+        printf '%s\n' "$line" >>"$tmp_file"
+        continue
+      fi
+      local current_key="${line%%=*}"
+      current_key="${current_key#"${current_key%%[![:space:]]*}"}"
+      current_key="${current_key%"${current_key##*[![:space:]]}"}"
+      if [[ "$current_key" == "$key" ]]; then
+        printf '%s=%s\n' "$key" "$value" >>"$tmp_file"
+        replaced=1
+      else
+        printf '%s\n' "$line" >>"$tmp_file"
+      fi
+    done < .env
+  fi
+  if [[ "$replaced" -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$value" >>"$tmp_file"
+  fi
+  mv "$tmp_file" .env
+}
+
 is_placeholder() {
   local value="${1:-}"
   [[ -z "$value" || "$value" == "replace-me" || "$value" == "..." ]]
@@ -268,9 +301,11 @@ provider_env_key() {
   local provider="$1"
   case "$provider" in
     openai) printf '%s' "OPENAI_API_KEY" ;;
+    opencode-go) printf '%s' "OPENCODE_API_KEY" ;;
     anthropic) printf '%s' "ANTHROPIC_API_KEY" ;;
     gemini) printf '%s' "GEMINI_API_KEY" ;;
     openrouter) printf '%s' "OPENROUTER_API_KEY" ;;
+    opencode-go) printf '%s' "OPENCODE_API_KEY" ;;
     zai) printf '%s' "ZAI_API_KEY" ;;
     *) printf '' ;;
   esac
@@ -344,6 +379,33 @@ is_env_configured() {
     return 1
   fi
   return 0
+}
+
+launch_first_run_web_handoff() {
+  say "[3/5] Launching first-run onboarding wizard..."
+  upsert_env_value FFT_NANO_ONBOARDING_MODE 1
+  if is_placeholder "$(read_env_value WHATSAPP_ENABLED)"; then
+    upsert_env_value WHATSAPP_ENABLED 0
+  fi
+  say "      starting host in onboarding-only mode..."
+  ./scripts/service.sh install
+  ./scripts/service.sh restart
+  sleep 1
+  if ./scripts/web.sh --open; then
+    :
+  else
+    ./scripts/web.sh
+  fi
+  say ""
+  say "Continue setup in FFT CONTROL CENTER."
+  say "Enter your provider/API key and Telegram bot token there."
+  say "When you save, the host will restart with your Telegram bot active."
+  say ""
+  say "After restart, complete Telegram setup (required before the bot answers messages):"
+  say "  1. DM your bot: /id              (get your numeric chat ID)"
+  say "  2. DM your bot: /main <secret>   (bind this DM as the main chat)"
+  say "  TUI fallback: ./scripts/start.sh tui"
+  exit 0
 }
 
 is_service_running() {
@@ -476,7 +538,7 @@ render_completion_handoff() {
   print_numbered_list "Optional next:" "${optional_next[@]}"
 }
 
-say "FFT_nano onboard (OpenClaw-style single command)"
+say "FFT_nano onboard (single command)"
 say "Root: $ROOT_DIR"
 say "Workspace: $WORKSPACE_DIR"
 say ""
@@ -503,17 +565,21 @@ if [[ "$SKIP_SETUP" -eq 0 ]]; then
     # Runtime choice in onboarding is explicit user opt-in for host mode.
     setup_env+=(FFT_NANO_ALLOW_HOST_RUNTIME=1)
   fi
-  env "${setup_env[@]}" ./scripts/setup.sh "${setup_args[@]}"
+  if [[ -n "$RUNTIME_ARG" ]]; then
+    env "${setup_env[@]}" ./scripts/setup.sh "${setup_args[@]}"
+  else
+    env "${setup_env[@]}" ./scripts/setup.sh
+  fi
+  persisted_runtime="$(read_env_value CONTAINER_RUNTIME)"
+  if ! is_placeholder "$persisted_runtime"; then
+    RUNTIME_ARG="$(normalize_runtime "$persisted_runtime")"
+  fi
 else
   say "[2/5] Skipping setup (--skip-setup)"
 fi
 
 if ! is_env_configured; then
-  say "[env] .env appears incomplete (provider/model/key/telegram token)."
-  say "Edit .env now, then continue."
-  if [[ -t 0 ]]; then
-    read -r -p "Press Enter to continue after updating .env, or Ctrl+C to abort... " _
-  fi
+  launch_first_run_web_handoff
 fi
 
 say "[3/5] Running onboarding..."
@@ -595,7 +661,7 @@ fi
 
 if [[ -z "$INSTALL_DAEMON" ]] && [[ -t 0 ]]; then
   read -r -p "Install/start host service now? [Y/n]: " install_choice
-  install_choice="${install_choice,,}"
+  install_choice="$(printf '%s' "$install_choice" | tr '[:upper:]' '[:lower:]')"
   if [[ -z "$install_choice" || "$install_choice" == "y" || "$install_choice" == "yes" ]]; then
     INSTALL_DAEMON="1"
   else

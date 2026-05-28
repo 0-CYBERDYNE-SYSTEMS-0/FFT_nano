@@ -35,7 +35,7 @@ export interface SkillCatalogEntry {
   description: string;
   allowedTools: string[];
   whenToUse: string;
-  source: 'project' | 'external';
+  source: 'project' | 'external' | 'agent' | 'unmanaged';
 }
 
 export interface SystemPromptInput {
@@ -44,6 +44,7 @@ export interface SystemPromptInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   isHeartbeatTask?: boolean;
+  isEvaluatorRun?: boolean;
   assistantName?: string;
   provider?: string;
   model?: string;
@@ -120,10 +121,10 @@ interface BuildSystemPromptOptions {
   cachedBaseLayer?: CachedBaseLayer | null;
 }
 
-const DEFAULT_FILE_MAX_CHARS = 12_000;
-const DEFAULT_TOTAL_MAX_CHARS = 48_000;
+const DEFAULT_FILE_MAX_CHARS = 24_000;
+const DEFAULT_TOTAL_MAX_CHARS = 96_000;
 const DEFAULT_MEMORY_CONTEXT_MAX_CHARS = 20_000;
-const DEFAULT_SKILL_CATALOG_MAX_CHARS = 6_000;
+const DEFAULT_SKILL_CATALOG_MAX_CHARS = 20_000;
 
 const MAIN_ALWAYS_INJECTED_FILES = [
   'NANO.md',
@@ -143,13 +144,17 @@ function resolveDurableMemoryFallbackPath(params: {
 }): { label: string; path: string } | null {
   if (params.readFileIfExists(params.primaryPath) !== null) {
     return {
-      label: params.primaryPath.endsWith('/MEMORY.md') ? 'MEMORY.md' : 'memory.md',
+      label: params.primaryPath.endsWith('/MEMORY.md')
+        ? 'MEMORY.md'
+        : 'memory.md',
       path: params.primaryPath,
     };
   }
   if (params.readFileIfExists(params.legacyPath) !== null) {
     return {
-      label: params.legacyPath.endsWith('/MEMORY.md') ? 'MEMORY.md' : 'memory.md',
+      label: params.legacyPath.endsWith('/MEMORY.md')
+        ? 'MEMORY.md'
+        : 'memory.md',
       path: params.legacyPath,
     };
   }
@@ -554,6 +559,7 @@ function buildBaseCacheKey(params: {
   codingHint: CodingHint;
   canDelegateToCoder: boolean;
   autoDelegationEnabled: boolean;
+  isEvaluatorRun: boolean;
   contextEntries: ContextEntry[];
   skillCatalogText: string;
 }): string {
@@ -564,6 +570,7 @@ function buildBaseCacheKey(params: {
     codingHint: params.codingHint,
     canDelegateToCoder: params.canDelegateToCoder,
     autoDelegationEnabled: params.autoDelegationEnabled,
+    isEvaluatorRun: params.isEvaluatorRun,
     skillCatalogHash: hashString(params.skillCatalogText),
     contextEntries: params.contextEntries.map((entry) => ({
       path: entry.path,
@@ -585,6 +592,7 @@ function renderBasePrompt(params: {
   forcedDelegateMode: 'execute' | 'plan' | null;
   canDelegateToCoder: boolean;
   autoDelegationEnabled: boolean;
+  isEvaluatorRun: boolean;
 }): string {
   const lines: string[] = [];
   lines.push(
@@ -672,46 +680,125 @@ function renderBasePrompt(params: {
     lines.push('');
   }
 
-  lines.push('## Messaging IPC');
+  if (!params.isEvaluatorRun) {
+    lines.push('## Messaging IPC');
+    lines.push(
+      `To proactively message current chat, write JSON into ${params.paths.ipcDir}/messages/*.json:`,
+    );
+    lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
+    lines.push(
+      'For run progress without adding a separate chat message, write: {"type":"run_progress","chatJid":"<jid>","requestId":"<current request_id>","text":"Run status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
+    );
+    lines.push('Write atomically (temp file then rename).');
+    lines.push('');
+    lines.push('## Scheduler IPC');
+    lines.push(
+      `Read the task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
+    );
+    lines.push('Task management is handled internally by the host scheduler.');
+    lines.push('- {"type":"pause_task","taskId":"..."}');
+    lines.push('- {"type":"resume_task","taskId":"..."}');
+    lines.push('- {"type":"cancel_task","taskId":"..."}');
+    lines.push('- Main-only: {"type":"refresh_groups"}');
+    lines.push(
+      `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${params.assistantName}"}`,
+    );
+    lines.push(
+      `Read task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
+    );
+    lines.push('');
+    lines.push('## Memory Action IPC');
+    lines.push(
+      `Write memory action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
+    );
+    lines.push(
+      '- In non-main/shared runs, group/global MEMORY.md falls back into the prompt when present. Use memory_search or memory_get for broader recall.',
+    );
+    lines.push(
+      '- Search: {"type":"memory_action","action":"memory_search","requestId":"<id>","params":{"query":"...","topK":8,"sources":"all"}}',
+    );
+    lines.push(
+      '- Get: {"type":"memory_action","action":"memory_get","requestId":"<id>","params":{"path":"MEMORY.md"}}',
+    );
+    lines.push(
+      '- Write: {"type":"memory_action","action":"memory_write","requestId":"<id>","params":{"intent":"todo_upsert_task","payload":{"entryId":"T1","text":"...","status":"PENDING"}}}',
+    );
+    lines.push(
+      'For writes, wait for status=success before reporting completion to the user.',
+    );
+    lines.push('');
+    lines.push('## Skill Action IPC');
+    lines.push(
+      `Write skill action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
+    );
+    lines.push(
+      '- Skills should stay organized without operator effort. Use skill_list/skill_view to inspect available procedural knowledge before repeating a workflow.',
+    );
+    lines.push(
+      '- Create or patch a skill only when a reusable workflow, pitfall, or farm operation pattern should be remembered procedurally.',
+    );
+    lines.push(
+      '- Mutations are host-gated to agent-created runtime skills; repo and personal source skills may be read and reported but not destructively curated.',
+    );
+    lines.push(
+      '- List: {"type":"skill_action","action":"skill_list","requestId":"<id>","params":{"includeArchived":false}}',
+    );
+    lines.push(
+      '- View: {"type":"skill_action","action":"skill_view","requestId":"<id>","params":{"name":"skill-name"}}',
+    );
+    lines.push(
+      '- Create: {"type":"skill_action","action":"skill_create","requestId":"<id>","params":{"name":"short-skill-name","description":"When to use...","content":"---\\nname: short-skill-name\\ndescription: ...\\n---\\n\\n# ..."}}',
+    );
+    lines.push(
+      '- Patch: {"type":"skill_action","action":"skill_patch","requestId":"<id>","params":{"name":"skill-name","content":"complete replacement SKILL.md"}}',
+    );
+    lines.push(
+      '- Support file: {"type":"skill_action","action":"skill_write_file","requestId":"<id>","params":{"name":"skill-name","filePath":"references/example.md","fileContent":"..."}}',
+    );
+    lines.push('Wait for status=success before relying on a skill mutation.');
+    lines.push('');
+    lines.push('## File Delivery IPC');
+    lines.push(
+      `To send files/images back to the Telegram chat, write delivery requests into ${params.paths.ipcDir}/deliver_files/*.json:`,
+    );
+    lines.push('```json');
+    lines.push('{');
+    lines.push('  "type":"farm_action",');
+    lines.push('  "action":"deliver_file",');
+    lines.push('  "requestId":"<unique-id>",');
+    lines.push('  "params":{');
+    lines.push('    "filePath":"path/to/file.jpg",');
+    lines.push('    "caption":"Optional caption text",');
+    lines.push('    "kind":"photo"');
+    lines.push('  }');
+    lines.push('}');
+    lines.push('```');
+    lines.push('- filePath: absolute path or path relative to group workspace');
+    lines.push(
+      '- kind: "photo"|"document"|"video"|"audio" (auto-detected from extension if omitted)',
+    );
+    lines.push("- chatJid: optional, defaults to the group's registered chat");
+    lines.push('- Write atomically (temp file then rename).');
+    lines.push('');
+  }
+  lines.push('## Completion Gate');
   lines.push(
-    `To proactively message current chat, write JSON into ${params.paths.ipcDir}/messages/*.json:`,
+    'Before declaring completion, verify side effects succeeded (files exist, IPC writes were processed, and delivery/action requests produced result files).',
   );
-  lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
-  lines.push('Write atomically (temp file then rename).');
+  lines.push(
+    `For deliver_file requests, confirm ${params.paths.ipcDir}/action_results/<requestId>.json exists and has status=success before reporting delivered.`,
+  );
+  lines.push(
+    'A new inbound message does not automatically cancel unresolved work; only treat prior work as dropped when the user explicitly cancels or completion is confirmed.',
+  );
   lines.push('');
-  lines.push('## Scheduler IPC');
+  lines.push('## Reasoning And Delivery Safety');
   lines.push(
-    `To manage tasks, write JSON into ${params.paths.ipcDir}/tasks/*.json with one of:`,
+    'If think_level is low, stay concise in output but still perform the same completion checks before claiming limitations or success.',
   );
   lines.push(
-    '- v2: {"type":"schedule_task","prompt":"...","schedule":{"kind":"cron|every|at",...},"session_target":"main|isolated","wake_mode":"next-heartbeat|now","delivery":{"mode":"none|announce|webhook","to":"<jid?>","webhookUrl":"https://..."},"timeout_seconds":120,"stagger_ms":2500,"delete_after_run":false,"context_mode":"group|isolated","groupFolder":"<folder>"}',
+    'If output may stream in partial chunks, do not treat truncated visible output as task completion; finish the underlying work first.',
   );
-  lines.push(
-    '- {"type":"schedule_task","prompt":"...","schedule_type":"cron|interval|once","schedule_value":"...","context_mode":"group|isolated","groupFolder":"<folder>"}',
-  );
-  lines.push('- legacy payloads remain supported for backward compatibility.');
-  lines.push('- {"type":"pause_task","taskId":"..."}');
-  lines.push('- {"type":"resume_task","taskId":"..."}');
-  lines.push('- {"type":"cancel_task","taskId":"..."}');
-  lines.push('- Main-only: {"type":"refresh_groups"}');
-  lines.push(
-    `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${params.assistantName}"}`,
-  );
-  lines.push(
-    `Read task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
-  );
-  lines.push('');
-  lines.push('## Memory Action IPC');
-  lines.push(
-    `Write memory action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
-  );
-  lines.push(
-    '- In non-main/shared runs, group/global MEMORY.md falls back into the prompt when present. Use memory_search or memory_get for broader recall.',
-  );
-  lines.push('- Search: {"type":"memory_action","action":"memory_search","requestId":"<id>","params":{"query":"...","topK":8,"sources":"all"}}');
-  lines.push('- Get: {"type":"memory_action","action":"memory_get","requestId":"<id>","params":{"path":"MEMORY.md"}}');
-  lines.push('- Write: {"type":"memory_action","action":"memory_write","requestId":"<id>","params":{"intent":"todo_upsert_task","payload":{"entryId":"T1","text":"...","status":"PENDING"}}}');
-  lines.push('For writes, wait for status=success before reporting completion to the user.');
   lines.push('');
   lines.push('## Output Style');
   lines.push(
@@ -829,7 +916,7 @@ function renderOverlayPrompt(params: {
     );
     if (params.input.reasoningLevel === 'stream') {
       lines.push(
-        `For long tasks, proactively send concise progress updates via ${params.paths.ipcDir}/messages.`,
+        `For long tasks, proactively send concise run_progress updates via ${params.paths.ipcDir}/messages.`,
       );
     }
     lines.push('');
@@ -873,12 +960,15 @@ export function buildSystemPrompt(
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
   const now = options.now?.() ?? new Date();
   const rawTimezone =
-    options.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    options.timezone ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    'UTC';
   const timezone = resolveEffectiveTimezone(rawTimezone);
   const isHeartbeatRun =
     input.isHeartbeatTask === true ||
     (input.requestId || '').startsWith('heartbeat-');
-  const includeHeartbeatContext = input.isScheduledTask === true || isHeartbeatRun;
+  const includeHeartbeatContext =
+    input.isScheduledTask === true || isHeartbeatRun;
 
   const forcedDelegateMode = getForcedDelegateMode(input.codingHint);
   const autoDelegationEnabled =
@@ -895,13 +985,13 @@ export function buildSystemPrompt(
   const contextState = input.isMain
     ? buildMainContextEntries({
         readFileIfExists,
-      includeHeartbeat: includeHeartbeatContext,
-      fileMaxChars,
-      totalMaxChars,
-      groupDir: paths.groupDir,
-      now,
-      timezone,
-    })
+        includeHeartbeat: includeHeartbeatContext,
+        fileMaxChars,
+        totalMaxChars,
+        groupDir: paths.groupDir,
+        now,
+        timezone,
+      })
     : buildNonMainContextEntries({
         readFileIfExists,
         includeHeartbeat: includeHeartbeatContext,
@@ -923,6 +1013,7 @@ export function buildSystemPrompt(
     codingHint: input.codingHint,
     canDelegateToCoder,
     autoDelegationEnabled,
+    isEvaluatorRun: input.isEvaluatorRun === true,
     contextEntries: contextState.entries,
     skillCatalogText: skillCatalog.text,
   });
@@ -941,6 +1032,7 @@ export function buildSystemPrompt(
         forcedDelegateMode,
         canDelegateToCoder,
         autoDelegationEnabled,
+        isEvaluatorRun: input.isEvaluatorRun === true,
       });
   const overlayContent = renderOverlayPrompt({
     input,

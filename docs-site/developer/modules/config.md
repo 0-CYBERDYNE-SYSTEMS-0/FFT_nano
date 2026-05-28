@@ -34,7 +34,7 @@ export const TRIGGER_PATTERN: RegExp;
 ## Important Defaults
 
 - `ASSISTANT_NAME` default is profile-aware:
-  - `OpenClaw` in `core`
+  - `fft_nano` in `core`
   - `FarmFriend` in `farm`
 - `MAIN_WORKSPACE_DIR`: `~/nano` (expandable via `FFT_NANO_MAIN_WORKSPACE_DIR`)
 - `CONTAINER_IMAGE`: `fft-nano-agent:latest`

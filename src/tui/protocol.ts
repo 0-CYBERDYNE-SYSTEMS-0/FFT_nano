@@ -73,7 +73,11 @@ export type AgentEventPayload =
           | 'retry_fresh'
           | 'retry_delay'
           | 'retry_provider_switch'
-          | 'stale';
+          | 'stale'
+          | 'finalizing'
+          | 'completed'
+          | 'failed'
+          | 'aborted';
         text: string;
         detail?: string;
         attempt?: number;

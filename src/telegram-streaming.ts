@@ -1,4 +1,4 @@
-import { normalizeTelegramDraftText, type TelegramBot } from './telegram.js';
+import { normalizeTelegramPreviewText, type TelegramBot } from './telegram.js';
 import { logger } from './logger.js';
 
 export interface TelegramMessagePreviewState {
@@ -49,6 +49,22 @@ export function resolveTelegramStreamCompletionState(params: {
     };
   }
   return { effectiveStreamed: false, messagePreviewState: null };
+}
+
+const RUN_STATUS_PREVIEW_PREFIXES = [
+  'Agent status:',
+  'Coder status:',
+  'Skill manager status:',
+  'Librarian status:',
+  'Run status:',
+  'Working on your reply',
+];
+
+export function isTelegramRunStatusPreviewText(text: string): boolean {
+  const trimmed = text.trim();
+  return RUN_STATUS_PREVIEW_PREFIXES.some((prefix) =>
+    trimmed.startsWith(prefix),
+  );
 }
 
 const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
@@ -119,14 +135,15 @@ class BaseTelegramStreamRegistry {
 
   appendToolTrail(runKey: string, entry: string): void {
     const trail = this.toolTrails.get(runKey) || [];
+    if (trail[trail.length - 1] === entry) return;
     trail.push(entry);
-    this.toolTrails.set(runKey, trail);
+    this.toolTrails.set(runKey, trail.slice(-8));
   }
 
   getToolTrailFooter(runKey: string): string | undefined {
     const trail = this.toolTrails.get(runKey);
     if (!trail || trail.length === 0) return undefined;
-    return trail.join(' → ');
+    return `Tools: ${trail.join(' → ')}`;
   }
 
   clearToolTrail(runKey: string): void {
@@ -205,6 +222,10 @@ class BaseTelegramStreamRegistry {
     this.completedRuns.set(runKey, now);
   }
 
+  isCompleted(runKey: string): boolean {
+    return this.completedRuns.has(runKey);
+  }
+
   consumeCompleted(runKey: string): boolean {
     const had = this.completedRuns.has(runKey);
     if (had) this.completedRuns.delete(runKey);
@@ -261,13 +282,16 @@ export async function updateTelegramPreview(params: {
 }> {
   const runKey = getTelegramPreviewRunKey(params.chatJid, params.requestId);
   params.registry.prune();
+  if (params.registry.isCompleted(runKey)) {
+    return { runKey, sent: false, disabled: true };
+  }
   if (params.registry.isDisabled(runKey)) {
     return { runKey, sent: false, disabled: true };
   }
 
   try {
     const now = Date.now();
-    const baseText = normalizeTelegramDraftText(params.text);
+    const baseText = normalizeTelegramPreviewText(params.text);
     const nextText = params.toolTrailFooter
       ? `${baseText}\n\n${params.toolTrailFooter}`
       : baseText;
@@ -355,13 +379,16 @@ export async function updateTelegramDraftPreview(params: {
 }> {
   const runKey = getTelegramPreviewRunKey(params.chatJid, params.requestId);
   params.registry.prune();
+  if (params.registry.isCompleted(runKey)) {
+    return { runKey, sent: false, disabled: true };
+  }
   if (params.registry.isDisabled(runKey)) {
     return { runKey, sent: false, disabled: true };
   }
 
   try {
     const now = Date.now();
-    const baseText = normalizeTelegramDraftText(params.text);
+    const baseText = normalizeTelegramPreviewText(params.text);
     const nextText = params.toolTrailFooter
       ? `${baseText}\n\n${params.toolTrailFooter}`
       : baseText;

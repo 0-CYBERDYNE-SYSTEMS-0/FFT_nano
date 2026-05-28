@@ -254,6 +254,7 @@ interface TelegramFileInfo {
 export interface TelegramInlineKeyboardButton {
   text: string;
   callbackData: string;
+  style?: 'danger' | 'success' | 'primary';
 }
 
 export type TelegramInlineKeyboard = TelegramInlineKeyboardButton[][];
@@ -516,7 +517,7 @@ export function splitTelegramTextForHtmlLimit(
   return output;
 }
 
-export function normalizeTelegramDraftText(text: string): string {
+export function normalizeTelegramPreviewText(text: string): string {
   const normalized = text.replace(/\r\n/g, '\n');
   if (!normalized) return '.';
   if (normalized.length <= TELEGRAM_MAX_MESSAGE_LEN) return normalized;
@@ -526,6 +527,8 @@ export function normalizeTelegramDraftText(text: string): string {
   );
   return `${TELEGRAM_DRAFT_PREFIX}${normalized.slice(-suffixLen)}`;
 }
+
+export const normalizeTelegramDraftText = normalizeTelegramPreviewText;
 
 export interface TelegramDraftOptions {
   messageThreadId?: number;
@@ -644,7 +647,9 @@ function buildCommandScopePayload(
 }
 
 function buildReplyMarkup(keyboard: TelegramInlineKeyboard): {
-  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+  inline_keyboard: Array<
+    Array<{ text: string; callback_data: string; style?: string }>
+  >;
 } {
   const inlineKeyboard = keyboard.map((row) =>
     row.map((button) => {
@@ -661,6 +666,7 @@ function buildReplyMarkup(keyboard: TelegramInlineKeyboard): {
       return {
         text: button.text,
         callback_data: button.callbackData,
+        ...(button.style ? { style: button.style } : {}),
       };
     }),
   );
@@ -1183,7 +1189,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     await apiPostWithRetry('sendMessageDraft', {
       chat_id: chatId,
       draft_id: draftId,
-      text: normalizeTelegramDraftText(text),
+      text: normalizeTelegramPreviewText(text),
       ...(typeof opts.messageThreadId === 'number' &&
       Number.isFinite(opts.messageThreadId)
         ? { message_thread_id: Math.trunc(opts.messageThreadId) }
@@ -1204,7 +1210,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       'sendMessage',
       {
         chat_id: chatId,
-        text: normalizeTelegramDraftText(text),
+        text: normalizeTelegramPreviewText(text),
         disable_web_page_preview: true,
         ...(typeof opts.messageThreadId === 'number' &&
         Number.isFinite(opts.messageThreadId)
@@ -1238,7 +1244,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       await apiPostWithRetry('editMessageText', {
         chat_id: chatId,
         message_id: messageId,
-        text: normalizeTelegramDraftText(text),
+        text: normalizeTelegramPreviewText(text),
         disable_web_page_preview: true,
         ...(typeof opts.messageThreadId === 'number' &&
         Number.isFinite(opts.messageThreadId)
@@ -1295,7 +1301,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       await apiPostWithRetry('editMessageText', {
         chat_id: chatId,
         message_id: messageId,
-        text: normalizeTelegramDraftText(text),
+        text: normalizeTelegramPreviewText(text),
         disable_web_page_preview: true,
         reply_markup: buildReplyMarkup(keyboard),
       });

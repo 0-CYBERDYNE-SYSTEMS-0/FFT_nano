@@ -76,7 +76,7 @@ if [[ "$telegram_only" -eq 1 ]]; then
   export WHATSAPP_ENABLED=0
 fi
 
-# OpenClaw-style attached TUI gateway defaults.
+# Attached TUI gateway defaults.
 # Allow explicit override (including disabling with 0/false/no).
 export FFT_NANO_TUI_ENABLED="${FFT_NANO_TUI_ENABLED:-1}"
 export FFT_NANO_TUI_HOST="${FFT_NANO_TUI_HOST:-127.0.0.1}"

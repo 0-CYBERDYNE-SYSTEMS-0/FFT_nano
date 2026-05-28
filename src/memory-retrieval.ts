@@ -269,7 +269,9 @@ function formatSnippet(rank: number, chunk: MemoryChunk): string {
   return `[${rank}] (${chunk.source}:${chunk.path}) ${snippet}`;
 }
 
-function getPreferredMemoryChunks(baseDir: string): Array<{ path: string; text: string }> {
+function getPreferredMemoryChunks(
+  baseDir: string,
+): Array<{ path: string; text: string }> {
   const collected: Array<{ path: string; text: string }> = [];
   const canonicalDir = path.join(baseDir, 'canonical');
 
@@ -393,17 +395,18 @@ export function buildMemoryContext(
   const scored = allChunks.map((chunk) => {
     const lexical = lexicalScore(queryTokens, queryText, chunk.text);
     const sourceBonus = chunk.source === 'group' ? 0.05 : 0;
-    const pathBonus = chunk.path === 'canonical/_hot.md'
-      ? 0.5
-      : chunk.path === 'canonical/constraints.md'
-        ? 0.35
-        : chunk.path === 'canonical/commitments.md'
-          ? 0.3
-          : chunk.path.startsWith('canonical/')
-            ? 0.18
-            : chunk.path.startsWith('memory/')
-              ? 0.08
-              : 0;
+    const pathBonus =
+      chunk.path === 'canonical/_hot.md'
+        ? 0.5
+        : chunk.path === 'canonical/constraints.md'
+          ? 0.35
+          : chunk.path === 'canonical/commitments.md'
+            ? 0.3
+            : chunk.path.startsWith('canonical/')
+              ? 0.18
+              : chunk.path.startsWith('memory/')
+                ? 0.08
+                : 0;
     const tieBreaker = 1 / (chunk.index + 1) / 1000;
     const score = lexical + sourceBonus + pathBonus + tieBreaker;
     return { chunk, score, lexical };
@@ -448,7 +451,9 @@ export function buildMemoryContext(
       const reserve = `[${nextRank}] (${scored[i].chunk.source}) `.length;
       const remaining = budgetForSnippets - reserve;
       if (remaining > 40) {
-        const snippet = rankedChunks[i].chunk.text.slice(0, remaining - 3).trim();
+        const snippet = rankedChunks[i].chunk.text
+          .slice(0, remaining - 3)
+          .trim();
         const clipped = `[${nextRank}] (${rankedChunks[i].chunk.source}) ${snippet}...`;
         selected.push(clipped);
         usedChars = clipped.length;

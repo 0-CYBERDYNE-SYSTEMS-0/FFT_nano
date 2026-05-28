@@ -12,9 +12,14 @@ data/
 logs/
 tmp-ipc/
 backups/
+.vix/
 
 # Runtime-generated group folders (keep template groups in repo)
 groups/telegram-*/
+groups/test-*/
+groups/testrun_*/
+groups/testrun_aborted_*/
+groups/**/coder-runs/
 groups/**/logs/
 groups/main/*
 !groups/main/.gitkeep
@@ -22,6 +27,7 @@ groups/main/*
 # Secrets
 *.keys.json
 .env
+env2.md
 
 # Personal and optional skills (keep only core install skills in git)
 skills/runtime/applescript-automation/
@@ -79,3 +85,6 @@ agents-sdk-docs
 # Dev orchestration (orchestrator/droid infrastructure - local only)
 .factory/
 fft-experience/
+
+# Claude Code planning artifacts (local only)
+docs/superpowers/

@@ -16,7 +16,12 @@ Primary files:
 - exact alias phrase `use coding agent`
 - exact alias phrase `use your coding agent skill`
 
-`isSubstantialCodingTask(text)` is the host-side heuristic for auto-routing substantial main-chat software-engineering asks to the execute worker.
+`isSubstantialCodingTask(text)` is the host-side heuristic used by autosuggest mode.
+`shouldSuggestCodingEscalation(text)` is a second-pass objective reevaluation that only allows autosuggest when the ask clearly describes a coding project.
+
+Gate mode is controlled by `FFT_NANO_CODER_GATE_MODE`:
+- `explicit` (default): only explicit `/coder*` commands trigger coder flow.
+- `autosuggest`: natural-language coder suggestion is enabled, but requires both heuristic passes.
 
 ## Main-Only Constraint
 

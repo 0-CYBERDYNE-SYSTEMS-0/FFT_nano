@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto';
-
+import { existsSync, unlinkSync } from 'fs';
+import { Socket, createServer } from 'net';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { logger } from '../logger.js';
+import type { UpdateCommandStartResult } from '../update-command.js';
 
 import type {
   AgentEventPayload,
@@ -42,6 +44,7 @@ export interface SessionHistoryMessage {
 export interface TuiGatewayServer {
   port: number;
   host: string;
+  socketPath?: string;
   close: () => Promise<void>;
 }
 
@@ -81,6 +84,7 @@ export interface TuiGatewayAdapters {
   serviceGateway: (params: {
     action: 'status' | 'restart' | 'doctor';
   }) => Promise<{ ok: boolean; text: string }> | { ok: boolean; text: string };
+  hostUpdate: () => UpdateCommandStartResult;
 }
 
 const DEFAULT_PORT = Number(process.env.FFT_NANO_TUI_PORT || 28989);
@@ -90,6 +94,7 @@ export interface TuiGatewayOptions {
   port?: number;
   host?: string;
   authToken?: string;
+  socketPath?: string;
 }
 
 function normalizeThinkLevel(raw: unknown): ThinkLevel | undefined {
@@ -191,6 +196,41 @@ function parseMessage(data: WebSocket.RawData): GatewayRequestFrame | null {
   }
 }
 
+export async function isUnixSocketAcceptingConnections(
+  socketPath: string,
+): Promise<boolean> {
+  if (!existsSync(socketPath)) return false;
+
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    let settled = false;
+
+    const finish = (accepting: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(accepting);
+    };
+
+    socket.setTimeout(250, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    socket.connect(socketPath);
+  });
+}
+
+export async function removeStaleUnixSocket(socketPath: string): Promise<void> {
+  if (!(await isUnixSocketAcceptingConnections(socketPath))) {
+    try {
+      unlinkSync(socketPath);
+      logger.warn({ socketPath }, 'Removed stale TUI local socket');
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
+    }
+  }
+}
+
 export async function startTuiGatewayServer(
   adapters: TuiGatewayAdapters,
   eventHub: HostEventSubscriber<HostEventOrLegacyTuiEvent>,
@@ -200,6 +240,7 @@ export async function startTuiGatewayServer(
     typeof options === 'number' ? { port: options } : options;
   const host = resolvedOptions.host || DEFAULT_HOST;
   const port = resolvedOptions.port ?? DEFAULT_PORT;
+  const socketPath = resolvedOptions.socketPath;
   const authToken = (resolvedOptions.authToken || '').trim();
   const authRequired = authToken.length > 0;
 
@@ -211,6 +252,344 @@ export async function startTuiGatewayServer(
   });
 
   logger.info({ host, port, authRequired }, 'TUI gateway server listening');
+
+  // Helper to handle incoming message frames
+  function handleMessage(
+    ws: WebSocket,
+    frame: GatewayRequestFrame,
+    isLocal = false,
+  ): void {
+    const params = (frame.params || {}) as Record<string, unknown>;
+    const sessionKey = getSessionKey(params);
+    const chatJid = adapters.resolveChatJid(sessionKey);
+    // Local connections skip auth check; WebSocket connections check auth
+    const isAuthenticated =
+      isLocal || !authRequired || authenticatedClients.has(ws);
+
+    if (frame.method !== 'connect' && !isAuthenticated) {
+      sendFrame(
+        ws,
+        failure(
+          frame.id,
+          'Unauthorized: send connect with a valid gateway token first.',
+        ),
+      );
+      return;
+    }
+
+    switch (frame.method) {
+      case 'connect': {
+        if (authRequired) {
+          const providedToken = asText(params.token).trim();
+          if (providedToken !== authToken) {
+            sendFrame(
+              ws,
+              failure(frame.id, 'Unauthorized: invalid gateway token.'),
+            );
+            setTimeout(() => {
+              try {
+                ws.close(4401, 'Unauthorized');
+              } catch {
+                // ignore close errors
+              }
+            }, 10);
+            break;
+          }
+          authenticatedClients.add(ws);
+        }
+
+        sendFrame(
+          ws,
+          response(frame.id, {
+            ok: true,
+            protocol: 'fft_nano.tui.v2',
+            serverTime: new Date().toISOString(),
+            defaultSessionKey: 'main',
+            authRequired,
+          }),
+        );
+        break;
+      }
+
+      case 'status': {
+        const status = adapters.getStatus();
+        sendFrame(
+          ws,
+          response(frame.id, {
+            runtime: status.runtime,
+            connectedClients: clients.size,
+            sessions: status.sessions,
+            activeRuns: status.activeRuns,
+          }),
+        );
+        break;
+      }
+
+      case 'sessions.list': {
+        const sessions = adapters.listSessions();
+        sendFrame(
+          ws,
+          response(frame.id, {
+            sessions,
+            defaultSessionKey: 'main',
+          }),
+        );
+        break;
+      }
+
+      case 'chat.history': {
+        if (!chatJid) {
+          sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
+          break;
+        }
+        const limitRaw = Number(params.limit || 120);
+        const limit = Number.isFinite(limitRaw)
+          ? Math.max(1, Math.min(400, Math.floor(limitRaw)))
+          : 120;
+        void adapters
+          .getHistory(chatJid, limit)
+          .then((history) => {
+            sendFrame(
+              ws,
+              response(frame.id, {
+                sessionKey: adapters.getSessionKeyForChat(chatJid),
+                messages: history,
+              }),
+            );
+          })
+          .catch((err) => {
+            sendFrame(
+              ws,
+              failure(
+                frame.id,
+                err instanceof Error ? err.message : String(err),
+              ),
+            );
+          });
+        break;
+      }
+
+      case 'sessions.patch': {
+        if (!chatJid) {
+          sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
+          break;
+        }
+        const provider = asText(params.provider).trim();
+        const model = asText(params.model).trim();
+        const thinkLevel = normalizeThinkLevel(params.thinkLevel);
+        const reasoningLevel = normalizeReasoningLevel(params.reasoningLevel);
+        const verboseMode = normalizeVerboseMode(params.verboseMode);
+
+        const patch: SessionPrefs = {};
+        if (provider || params.provider === '')
+          patch.provider = provider || undefined;
+        if (model || params.model === '') patch.model = model || undefined;
+        if (thinkLevel) patch.thinkLevel = thinkLevel;
+        if (reasoningLevel) patch.reasoningLevel = reasoningLevel;
+        if (verboseMode) patch.verboseMode = verboseMode;
+
+        const next = adapters.patchSessionPrefs(chatJid, patch);
+        sendFrame(
+          ws,
+          response(frame.id, {
+            ok: true,
+            key: adapters.getSessionKeyForChat(chatJid),
+            ...next,
+          }),
+        );
+        break;
+      }
+
+      case 'sessions.reset': {
+        if (!chatJid) {
+          sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
+          break;
+        }
+        const reason = asText(params.reason).trim() || 'reset';
+        const result = adapters.resetSession(chatJid, reason);
+        sendFrame(
+          ws,
+          response(frame.id, {
+            ok: result.ok,
+            key: adapters.getSessionKeyForChat(chatJid),
+            reason: result.reason,
+          }),
+        );
+        break;
+      }
+
+      case 'chat.abort': {
+        if (!chatJid) {
+          sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
+          break;
+        }
+        const runId = asText(params.runId).trim();
+        if (!runId) {
+          sendFrame(ws, failure(frame.id, 'Missing runId.'));
+          break;
+        }
+        void adapters
+          .abortChat({ chatJid, runId })
+          .then((result) => {
+            sendFrame(
+              ws,
+              response(frame.id, { ok: true, aborted: result.aborted }),
+            );
+          })
+          .catch((err) => {
+            sendFrame(
+              ws,
+              failure(
+                frame.id,
+                err instanceof Error ? err.message : String(err),
+              ),
+            );
+          });
+        break;
+      }
+
+      case 'chat.send': {
+        if (!chatJid) {
+          sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
+          break;
+        }
+        const text = asText(params.message).trim();
+        if (!text) {
+          sendFrame(ws, failure(frame.id, 'Message cannot be empty.'));
+          break;
+        }
+
+        const runId = asText(params.runId).trim() || randomUUID();
+        const deliver = asBoolean(params.deliver, false);
+        void adapters
+          .sendChat({
+            chatJid,
+            sessionKey: adapters.getSessionKeyForChat(chatJid),
+            message: text,
+            runId,
+            deliver,
+          })
+          .then((result) => {
+            sendFrame(ws, response(frame.id, { ok: true, ...result }));
+          })
+          .catch((err) => {
+            sendFrame(
+              ws,
+              failure(
+                frame.id,
+                err instanceof Error ? err.message : String(err),
+              ),
+            );
+          });
+        break;
+      }
+
+      case 'gateway.service': {
+        const actionRaw = asText(params.action).trim().toLowerCase();
+        const action =
+          actionRaw === 'restart'
+            ? 'restart'
+            : actionRaw === 'doctor'
+              ? 'doctor'
+              : actionRaw === 'status'
+                ? 'status'
+                : null;
+        if (!action) {
+          sendFrame(
+            ws,
+            failure(
+              frame.id,
+              'action must be "status", "restart", or "doctor"',
+            ),
+          );
+          break;
+        }
+
+        void Promise.resolve(adapters.serviceGateway({ action }))
+          .then((result) => {
+            sendFrame(ws, response(frame.id, result));
+          })
+          .catch((err) => {
+            sendFrame(
+              ws,
+              failure(
+                frame.id,
+                err instanceof Error ? err.message : String(err),
+              ),
+            );
+          });
+        break;
+      }
+
+      case 'host.update': {
+        void Promise.resolve(adapters.hostUpdate())
+          .then((result) => {
+            sendFrame(ws, response(frame.id, result));
+          })
+          .catch((err) => {
+            sendFrame(
+              ws,
+              failure(
+                frame.id,
+                err instanceof Error ? err.message : String(err),
+              ),
+            );
+          });
+        break;
+      }
+
+      default:
+        sendFrame(ws, failure(frame.id, `Unknown method: ${frame.method}`));
+    }
+  }
+
+  // Local mode: Unix socket server for direct TUI connections
+  let localServer: ReturnType<typeof createServer> | undefined;
+  if (socketPath) {
+    await removeStaleUnixSocket(socketPath);
+
+    localServer = createServer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const localWss = new WebSocketServer({ server: localServer as any });
+
+    localWss.on('connection', (ws) => {
+      clients.add(ws);
+      authenticatedClients.add(ws); // Local connections are inherently authenticated
+
+      ws.on('close', () => {
+        clients.delete(ws);
+        authenticatedClients.delete(ws);
+      });
+
+      ws.on('message', (payload) => {
+        const frame = parseMessage(payload);
+        if (!frame) {
+          sendFrame(
+            ws,
+            failure(
+              'unknown',
+              'Invalid request frame. Expected JSON with id/method.',
+            ),
+          );
+          return;
+        }
+        handleMessage(ws, frame, true);
+      });
+    });
+
+    // Wait for local server to be ready before returning
+    await new Promise<void>((resolve, reject) => {
+      localServer!.on('listening', () => {
+        logger.info({ socketPath }, 'TUI local socket server listening');
+        resolve();
+      });
+      localServer!.on('error', (err) => {
+        logger.error({ err, socketPath }, 'TUI local socket server error');
+        reject(err);
+      });
+      localServer!.listen(socketPath);
+    });
+  }
 
   const unsubscribe = eventHub.subscribe((event) => {
     const recipients = authRequired
@@ -243,270 +622,7 @@ export async function startTuiGatewayServer(
         );
         return;
       }
-
-      const params = (frame.params || {}) as Record<string, unknown>;
-      const sessionKey = getSessionKey(params);
-      const chatJid = adapters.resolveChatJid(sessionKey);
-      const isAuthenticated = !authRequired || authenticatedClients.has(ws);
-
-      if (frame.method !== 'connect' && !isAuthenticated) {
-        sendFrame(
-          ws,
-          failure(
-            frame.id,
-            'Unauthorized: send connect with a valid gateway token first.',
-          ),
-        );
-        return;
-      }
-
-      switch (frame.method) {
-        case 'connect': {
-          if (authRequired) {
-            const providedToken = asText(params.token).trim();
-            if (providedToken !== authToken) {
-              sendFrame(
-                ws,
-                failure(frame.id, 'Unauthorized: invalid gateway token.'),
-              );
-              setTimeout(() => {
-                try {
-                  ws.close(4401, 'Unauthorized');
-                } catch {
-                  // ignore close errors
-                }
-              }, 10);
-              break;
-            }
-            authenticatedClients.add(ws);
-          }
-
-          sendFrame(
-            ws,
-            response(frame.id, {
-              ok: true,
-              protocol: 'fft_nano.tui.v2',
-              serverTime: new Date().toISOString(),
-              defaultSessionKey: 'main',
-              authRequired,
-            }),
-          );
-          break;
-        }
-
-        case 'status': {
-          const status = adapters.getStatus();
-          sendFrame(
-            ws,
-            response(frame.id, {
-              runtime: status.runtime,
-              connectedClients: clients.size,
-              sessions: status.sessions,
-              activeRuns: status.activeRuns,
-            }),
-          );
-          break;
-        }
-
-        case 'sessions.list': {
-          const sessions = adapters.listSessions();
-          sendFrame(
-            ws,
-            response(frame.id, {
-              sessions,
-              defaultSessionKey: 'main',
-            }),
-          );
-          break;
-        }
-
-        case 'chat.history': {
-          if (!chatJid) {
-            sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
-            break;
-          }
-          const limitRaw = Number(params.limit || 120);
-          const limit = Number.isFinite(limitRaw)
-            ? Math.max(1, Math.min(400, Math.floor(limitRaw)))
-            : 120;
-          void adapters
-            .getHistory(chatJid, limit)
-            .then((history) => {
-              sendFrame(
-                ws,
-                response(frame.id, {
-                  sessionKey: adapters.getSessionKeyForChat(chatJid),
-                  messages: history,
-                }),
-              );
-            })
-            .catch((err) => {
-              sendFrame(
-                ws,
-                failure(
-                  frame.id,
-                  err instanceof Error ? err.message : String(err),
-                ),
-              );
-            });
-          break;
-        }
-
-        case 'sessions.patch': {
-          if (!chatJid) {
-            sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
-            break;
-          }
-          const provider = asText(params.provider).trim();
-          const model = asText(params.model).trim();
-          const thinkLevel = normalizeThinkLevel(params.thinkLevel);
-          const reasoningLevel = normalizeReasoningLevel(params.reasoningLevel);
-          const verboseMode = normalizeVerboseMode(params.verboseMode);
-
-          const patch: SessionPrefs = {};
-          if (provider || params.provider === '')
-            patch.provider = provider || undefined;
-          if (model || params.model === '') patch.model = model || undefined;
-          if (thinkLevel) patch.thinkLevel = thinkLevel;
-          if (reasoningLevel) patch.reasoningLevel = reasoningLevel;
-          if (verboseMode) patch.verboseMode = verboseMode;
-
-          const next = adapters.patchSessionPrefs(chatJid, patch);
-          sendFrame(
-            ws,
-            response(frame.id, {
-              ok: true,
-              key: adapters.getSessionKeyForChat(chatJid),
-              ...next,
-            }),
-          );
-          break;
-        }
-
-        case 'sessions.reset': {
-          if (!chatJid) {
-            sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
-            break;
-          }
-          const reason = asText(params.reason).trim() || 'reset';
-          const result = adapters.resetSession(chatJid, reason);
-          sendFrame(
-            ws,
-            response(frame.id, {
-              ok: result.ok,
-              key: adapters.getSessionKeyForChat(chatJid),
-              reason: result.reason,
-            }),
-          );
-          break;
-        }
-
-        case 'chat.abort': {
-          if (!chatJid) {
-            sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
-            break;
-          }
-          const runId = asText(params.runId).trim();
-          if (!runId) {
-            sendFrame(ws, failure(frame.id, 'Missing runId.'));
-            break;
-          }
-          void adapters
-            .abortChat({ chatJid, runId })
-            .then((result) => {
-              sendFrame(
-                ws,
-                response(frame.id, { ok: true, aborted: result.aborted }),
-              );
-            })
-            .catch((err) => {
-              sendFrame(
-                ws,
-                failure(
-                  frame.id,
-                  err instanceof Error ? err.message : String(err),
-                ),
-              );
-            });
-          break;
-        }
-
-        case 'chat.send': {
-          if (!chatJid) {
-            sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
-            break;
-          }
-          const text = asText(params.message).trim();
-          if (!text) {
-            sendFrame(ws, failure(frame.id, 'Message cannot be empty.'));
-            break;
-          }
-
-          const runId = asText(params.runId).trim() || randomUUID();
-          const deliver = asBoolean(params.deliver, false);
-          void adapters
-            .sendChat({
-              chatJid,
-              sessionKey: adapters.getSessionKeyForChat(chatJid),
-              message: text,
-              runId,
-              deliver,
-            })
-            .then((result) => {
-              sendFrame(ws, response(frame.id, { ok: true, ...result }));
-            })
-            .catch((err) => {
-              sendFrame(
-                ws,
-                failure(
-                  frame.id,
-                  err instanceof Error ? err.message : String(err),
-                ),
-              );
-            });
-          break;
-        }
-
-        case 'gateway.service': {
-          const actionRaw = asText(params.action).trim().toLowerCase();
-          const action =
-            actionRaw === 'restart'
-              ? 'restart'
-              : actionRaw === 'doctor'
-                ? 'doctor'
-                : actionRaw === 'status'
-                  ? 'status'
-                  : null;
-          if (!action) {
-            sendFrame(
-              ws,
-              failure(
-                frame.id,
-                'action must be "status", "restart", or "doctor"',
-              ),
-            );
-            break;
-          }
-
-          void Promise.resolve(adapters.serviceGateway({ action }))
-            .then((result) => {
-              sendFrame(ws, response(frame.id, result));
-            })
-            .catch((err) => {
-              sendFrame(
-                ws,
-                failure(
-                  frame.id,
-                  err instanceof Error ? err.message : String(err),
-                ),
-              );
-            });
-          break;
-        }
-
-        default:
-          sendFrame(ws, failure(frame.id, `Unknown method: ${frame.method}`));
-      }
+      handleMessage(ws, frame, false);
     });
   });
 
@@ -522,11 +638,17 @@ export async function startTuiGatewayServer(
     await new Promise<void>((resolve) => {
       wss.close(() => resolve());
     });
+    if (localServer) {
+      await new Promise<void>((resolve) => {
+        localServer!.close(() => resolve());
+      });
+    }
   }
 
   return {
     port,
     host,
+    socketPath,
     close,
   };
 }

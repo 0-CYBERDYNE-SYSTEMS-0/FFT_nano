@@ -238,6 +238,32 @@ export interface MemoryActionRequest {
   requestId: string;
 }
 
+export interface SkillActionRequest {
+  type: 'skill_action';
+  action:
+    | 'skill_list'
+    | 'skill_view'
+    | 'skill_create'
+    | 'skill_patch'
+    | 'skill_write_file'
+    | 'skill_archive'
+    | 'skill_restore'
+    | 'skill_pin'
+    | 'skill_unpin'
+    | 'skill_status';
+  params: {
+    name?: string;
+    content?: string;
+    filePath?: string;
+    fileContent?: string;
+    description?: string;
+    groupFolder?: string;
+    includeArchived?: boolean;
+    reason?: string;
+  };
+  requestId: string;
+}
+
 export interface MemorySearchHit {
   source: 'memory_doc' | 'session_transcript';
   score: number;
@@ -271,3 +297,46 @@ export interface MemoryActionResult {
   error?: string;
   executedAt: string;
 }
+
+/**
+ * File delivery request for sending files back to Telegram chat.
+ * The agent writes this to <ipcDir>/deliver_files/*.json and the host
+ * processes it and sends the file via Telegram.
+ */
+export type FileDeliveryKind = 'photo' | 'document' | 'video' | 'audio';
+
+export interface FileDeliveryRequest {
+  type: 'farm_action';
+  action: 'deliver_file';
+  requestId: string;
+  params: {
+    /** Path to file, absolute or relative to group workspace */
+    filePath: string;
+    /** Optional caption to include with the file */
+    caption?: string;
+    /** File kind hint (auto-detected from extension if omitted) */
+    kind?: FileDeliveryKind;
+    /** Override target chatJid (defaults to the group's registered chat) */
+    chatJid?: string;
+  };
+}
+
+export interface FileDeliveryResult {
+  requestId: string;
+  status: 'success' | 'error';
+  result?: {
+    kind: FileDeliveryKind;
+    sizeBytes: number;
+    deliveredTo: string;
+  };
+  error?: string;
+  executedAt: string;
+}
+
+export type RunType =
+  | 'chat'
+  | 'coding'
+  | 'scheduled'
+  | 'cron'
+  | 'heartbeat'
+  | 'subagent';

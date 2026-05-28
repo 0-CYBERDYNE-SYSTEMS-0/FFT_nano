@@ -143,8 +143,10 @@ export function shouldUseTelegramPreviewToolTrail(params: {
   verboseMode: VerboseMode;
 }): boolean {
   return (
-    params.deliveryMode === 'draft' &&
-    (params.verboseMode === 'all' || params.verboseMode === 'verbose')
+    params.deliveryMode !== 'off' &&
+    (params.verboseMode === 'new' ||
+      params.verboseMode === 'all' ||
+      params.verboseMode === 'verbose')
   );
 }
 
@@ -153,18 +155,20 @@ export function shouldUseStandaloneTelegramToolProgress(params: {
   verboseMode: VerboseMode;
 }): boolean {
   return (
-    params.deliveryMode === 'partial' &&
+    params.deliveryMode !== 'off' &&
     (params.verboseMode === 'all' || params.verboseMode === 'verbose')
   );
 }
 
 export function buildTelegramPreviewToolTrailEntry(
   event: TelegramToolProgressEvent,
-  mode: Extract<VerboseMode, 'all' | 'verbose'>,
+  mode: Extract<VerboseMode, 'new' | 'all' | 'verbose'>,
+  lastToolName?: string,
 ): string | null {
   if (event.status !== 'start') return null;
+  if (mode === 'new' && event.toolName === lastToolName) return null;
   const emoji = getTelegramToolEmoji(event.toolName);
-  if (mode === 'all') {
+  if (mode === 'new' || mode === 'all') {
     return `${emoji} ${event.toolName}`;
   }
   const preview = extractToolProgressPreview(event.args);
@@ -217,14 +221,13 @@ export function enqueueTelegramToolProgressMessage(params: {
 
       const text = buildTelegramToolProgressMessage(run.lines);
       if (!run.messageId) {
-        run.messageId = await params.bot.sendStreamMessage(params.chatJid, text);
+        run.messageId = await params.bot.sendStreamMessage(
+          params.chatJid,
+          text,
+        );
         return;
       }
-      await params.bot.editStreamMessage(
-        params.chatJid,
-        run.messageId,
-        text,
-      );
+      await params.bot.editStreamMessage(params.chatJid, run.messageId, text);
     });
 
   params.runs.set(key, run);
