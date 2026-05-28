@@ -5,6 +5,11 @@ import YAML from 'yaml';
 import { z } from 'zod';
 
 import { defaultBackupPath, writeTextFileAtomic } from './atomic-write.js';
+import {
+  listSkillHistory,
+  rollbackSkillFile,
+  snapshotSkillFile,
+} from './skill-history.js';
 import { DATA_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
 import {
   assertValidGroupFolder,
@@ -108,6 +113,7 @@ const skillActionSchema = z.object({
     'skill_write_file',
     'skill_archive',
     'skill_restore',
+    'skill_rollback',
     'skill_pin',
     'skill_unpin',
     'skill_status',
@@ -122,6 +128,7 @@ const skillActionSchema = z.object({
       groupFolder: z.string().optional(),
       includeArchived: z.boolean().optional(),
       reason: z.string().optional(),
+      version: z.string().optional(),
     })
     .default({}),
 });
@@ -616,6 +623,7 @@ function createSkill(params: {
     description,
     body,
   });
+  snapshotSkillFile(path.join(dir, 'SKILL.md'));
   writeTextFileAtomic(path.join(dir, 'SKILL.md'), normalized, {
     backupPath: defaultBackupPath(path.join(dir, 'SKILL.md')),
   });
@@ -669,6 +677,9 @@ function patchSkill(params: {
     body: parsed.body || params.content,
   });
   const target = path.join(dir, 'SKILL.md');
+  // Version the prior SKILL.md before overwriting so a bad self-patch can be
+  // rolled back.
+  snapshotSkillFile(target);
   writeTextFileAtomic(target, normalized, {
     backupPath: defaultBackupPath(target),
   });
@@ -691,6 +702,7 @@ function writeSkillFile(params: {
   const target = path.join(dir, rel);
   assertInside(target, dir);
   fs.mkdirSync(path.dirname(target), { recursive: true });
+  snapshotSkillFile(target);
   writeTextFileAtomic(target, params.fileContent, {
     backupPath: defaultBackupPath(target),
   });
@@ -739,6 +751,36 @@ function restoreSkill(skillsDir: string, name: string): SkillReportEntry {
   saveSkillUsage(skillsDir, usage);
   return buildSkillReport(skillsDir).find(
     (entry) => entry.name === parsedName,
+  )!;
+}
+
+function rollbackSkill(params: {
+  skillsDir: string;
+  name: string;
+  filePath?: string;
+  version?: string;
+}): SkillReportEntry {
+  const name = skillNameSchema.parse(params.name);
+  assertMutableAgentSkill(params.skillsDir, name);
+  const dir = skillDir(params.skillsDir, name);
+  if (!fs.existsSync(dir)) throw new Error(`Skill "${name}" does not exist`);
+  const rel = params.filePath
+    ? assertSafeRelativeFilePath(params.filePath)
+    : 'SKILL.md';
+  const target = path.join(dir, rel);
+  assertInside(target, dir);
+  const restored = rollbackSkillFile(target, { version: params.version });
+  if (!restored) {
+    const available = listSkillHistory(target).length;
+    throw new Error(
+      params.version
+        ? `No history version "${params.version}" for ${name}/${rel}`
+        : `No prior versions to roll back for ${name}/${rel} (${available} snapshots)`,
+    );
+  }
+  bumpUsage(params.skillsDir, name, 'patch');
+  return buildSkillReport(params.skillsDir).find(
+    (entry) => entry.name === name,
   )!;
 }
 
@@ -1038,6 +1080,14 @@ export async function executeSkillAction(
         case 'skill_restore':
           if (!name) throw new Error('skill_restore requires params.name');
           return restoreSkill(skillsDir, name);
+        case 'skill_rollback':
+          if (!name) throw new Error('skill_rollback requires params.name');
+          return rollbackSkill({
+            skillsDir,
+            name,
+            filePath: parsed.params.filePath,
+            version: parsed.params.version,
+          });
         case 'skill_pin':
           if (!name) throw new Error('skill_pin requires params.name');
           return setPinned(skillsDir, name, true);
