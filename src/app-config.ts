@@ -302,6 +302,16 @@ export const MEMORY_SEMANTIC_CANDIDATES = envInt(
   4,
   128,
 );
+// Hard wall-clock budget (ms) for blocking embed calls per query. The embedder
+// runs synchronously on the message path, so this bounds how long a single
+// retrieval can stall the host even with a reachable-but-slow Ollama; once
+// spent, remaining candidates fall back to lexical-only scoring.
+export const MEMORY_SEMANTIC_QUERY_BUDGET_MS = envInt(
+  process.env.MEMORY_SEMANTIC_QUERY_BUDGET_MS,
+  1500,
+  100,
+  30000,
+);
 export const OLLAMA_BASE_URL = (
   process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
 ).trim();

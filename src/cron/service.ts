@@ -537,6 +537,15 @@ export async function runCronSchedulerTick(
         writeCronStoreSnapshot(folder);
       }
     }
+    // Re-attempt any deliveries left pending by a transient channel outage so
+    // the outbox self-heals within a running session, not only at restart.
+    if (deps.outbox) {
+      try {
+        await deps.outbox.flushPending();
+      } catch (err) {
+        logger.warn({ err }, 'Outbox flush on cron tick failed');
+      }
+    }
   } catch (err) {
     logger.error({ err }, 'Error in cron v2 scheduler tick');
   } finally {
