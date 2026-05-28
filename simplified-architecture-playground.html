@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FFT_nano Simplified Architecture</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #121821;
+    --panel-2: #192231;
+    --line: #2b3747;
+    --text: #e7edf5;
+    --muted: #91a0b5;
+    --edge: #7aa2ff;
+    --inbound: #e35d6a;
+    --host: #59a7ff;
+    --pipeline: #58d68d;
+    --runtime: #c78cff;
+    --services: #f2b84b;
+    --state: #f08f5f;
+    --ops: #8f9daf;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: 0; }
+  .subhead { color: var(--muted); font-size: 12px; }
+  .toolbar { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button.active { border-color: var(--edge); color: white; background: #23395f; }
+
+  main { display: grid; grid-template-columns: minmax(760px, 1fr) 330px; flex: 1; min-height: 0; }
+  #canvas { overflow: auto; padding: 18px; }
+  svg { display: block; min-width: 1220px; width: 100%; height: auto; }
+
+  aside {
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+    padding: 18px;
+    overflow: auto;
+  }
+
+  aside h2 { margin: 0 0 4px; font-size: 15px; }
+  aside .file { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; margin-bottom: 10px; }
+  aside .badge { display: inline-block; border-radius: 999px; padding: 3px 8px; font-size: 11px; margin-bottom: 14px; }
+  aside p { color: #c9d5e4; font-size: 13px; line-height: 1.5; margin: 0 0 14px; }
+  aside ul { margin: 0; padding-left: 18px; color: #c9d5e4; font-size: 13px; line-height: 1.55; }
+
+  .node { cursor: pointer; }
+  .node rect { stroke-width: 1.4; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.22)); }
+  .node:hover rect, .node.active rect { stroke: white; stroke-width: 2.2; }
+  .node.dim { opacity: 0.18; }
+  .node text { pointer-events: none; }
+  .title { fill: var(--text); font-size: 12px; font-weight: 700; }
+  .meta { fill: #acb8ca; font-size: 9.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .tag { fill: #dce7f5; font-size: 9px; font-weight: 650; }
+
+  .lane-title { fill: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
+  .lane { fill: rgba(255,255,255,0.018); stroke: var(--line); stroke-dasharray: 7 6; }
+  .edge { fill: none; stroke: var(--edge); stroke-width: 2; marker-end: url(#arrow); opacity: 0.82; }
+  .edge.dim { opacity: 0.08; }
+  .edge-label { fill: var(--muted); font-size: 9.5px; }
+
+  .legend {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 10px 18px;
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .dot { width: 9px; height: 9px; display: inline-block; border-radius: 50%; margin-right: 5px; }
+
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+    header { align-items: flex-start; flex-direction: column; }
+    .toolbar { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>FFT_nano Simplified Architecture</h1>
+    <div class="subhead">Post-PR #100 host split, pipeline dispatch, event consolidation, and streaming cleanup</div>
+  </div>
+  <div class="toolbar">
+    <button class="active" data-view="all">All</button>
+    <button data-view="chat">Chat Run</button>
+    <button data-view="coder">Coder Run</button>
+    <button data-view="events">Events</button>
+    <button data-view="state">State</button>
+  </div>
+</header>
+
+<main>
+  <section id="canvas" aria-label="Architecture diagram">
+    <svg viewBox="0 0 1220 820" role="img" aria-labelledby="diagramTitle">
+      <title id="diagramTitle">Simplified FFT_nano architecture diagram</title>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+          <polygon points="0 0, 8 3.5, 0 7" fill="var(--edge)"></polygon>
+        </marker>
+      </defs>
+
+      <rect class="lane" x="30" y="45" width="1160" height="118" rx="10"></rect>
+      <text class="lane-title" x="48" y="68">1. Channels and operator surfaces</text>
+      <rect class="lane" x="30" y="190" width="1160" height="136" rx="10"></rect>
+      <text class="lane-title" x="48" y="213">2. Thin host orchestration</text>
+      <rect class="lane" x="30" y="355" width="1160" height="150" rx="10"></rect>
+      <text class="lane-title" x="48" y="378">3. Pipeline dispatch and run execution</text>
+      <rect class="lane" x="30" y="535" width="1160" height="130" rx="10"></rect>
+      <text class="lane-title" x="48" y="558">4. Agent runtime, streaming, and event projection</text>
+      <rect class="lane" x="30" y="692" width="1160" height="95" rx="10"></rect>
+      <text class="lane-title" x="48" y="715">5. State, memory, skills, and long-running services</text>
+
+      <g id="edges"></g>
+      <g id="nodes"></g>
+    </svg>
+  </section>
+
+  <aside id="details">
+    <h2>Simplified host shape</h2>
+    <div class="file">click a node</div>
+    <span class="badge" style="background: rgba(89,167,255,0.2); color: var(--host);">overview</span>
+    <p>The old host surface was a large mixed implementation. The new shape keeps index.ts as the wiring layer and moves concrete behavior into focused modules.</p>
+    <ul>
+      <li>Inbound channels normalize messages and callbacks.</li>
+      <li>The host chooses a run route and delegates.</li>
+      <li>Pipeline dispatch owns chat, coder, subagent, cron, and scheduled run flow.</li>
+      <li>Agent runtime streams progress through adapters and consolidated host events.</li>
+      <li>Persistence, memory, skills, and service loops sit behind clear boundaries.</li>
+    </ul>
+  </aside>
+</main>
+
+<div class="legend">
+  <span><span class="dot" style="background: var(--inbound);"></span>Channels</span>
+  <span><span class="dot" style="background: var(--host);"></span>Host wiring</span>
+  <span><span class="dot" style="background: var(--pipeline);"></span>Pipelines</span>
+  <span><span class="dot" style="background: var(--runtime);"></span>Runtime and events</span>
+  <span><span class="dot" style="background: var(--services);"></span>Services</span>
+  <span><span class="dot" style="background: var(--state);"></span>State</span>
+</div>
+
+<script>
+const colors = {
+  inbound: '#e35d6a',
+  host: '#59a7ff',
+  pipeline: '#58d68d',
+  runtime: '#c78cff',
+  services: '#f2b84b',
+  state: '#f08f5f',
+  ops: '#8f9daf'
+};
+
+const nodes = [
+  { id: 'telegram', label: 'Telegram', file: 'src/telegram.ts', type: 'inbound', x: 70, y: 92, w: 135, h: 52, views: ['chat'], desc: 'Main user-facing channel. Polling delivers messages and callback queries into the host. Delivery helpers now live outside index.ts.' },
+  { id: 'whatsapp', label: 'WhatsApp', file: 'src/index.ts integration', type: 'inbound', x: 230, y: 92, w: 135, h: 52, views: ['chat'], desc: 'Optional channel. Still shares the same host routing and agent execution path once messages are normalized.' },
+  { id: 'tui', label: 'TUI Gateway', file: 'src/tui-coordination.ts', type: 'inbound', x: 390, y: 92, w: 135, h: 52, views: ['events'], desc: 'Operator surface backed by gateway adapters. Receives projected run_state and run_progress host events.' },
+  { id: 'web', label: 'Control Center', file: 'src/web-control-center.ts', type: 'inbound', x: 550, y: 92, w: 135, h: 52, views: ['state'], desc: 'HTTP control surface for status, settings, files, tasks, memory, and provider/runtime state.' },
+  { id: 'scheduler', label: 'Scheduler', file: 'src/heartbeat-service.ts / cron', type: 'services', x: 710, y: 92, w: 135, h: 52, views: ['state'], desc: 'Heartbeat and cron enter the same runtime path without embedding their logic in index.ts.' },
+
+  { id: 'index', label: 'index.ts', file: 'src/index.ts', type: 'host', x: 120, y: 244, w: 145, h: 58, views: ['chat','coder','events','state'], desc: 'Now primarily wires modules, initializes services, starts channels, and builds dependency objects. The concrete Telegram, state, skill, update, TUI, web, and agent code moved out.' },
+  { id: 'telegram-mods', label: 'Telegram Modules', file: 'telegram-delivery / settings / group-mgmt', type: 'host', x: 315, y: 244, w: 178, h: 58, views: ['chat'], desc: 'Focused modules for delivery, settings panels, runtime controls, group approval, media persistence, status text, knowledge commands, and callback handling.' },
+  { id: 'host-coord', label: 'Host Coordination', file: 'src/host-coordination.ts', type: 'host', x: 542, y: 244, w: 165, h: 58, views: ['events'], desc: 'Processes host events, watches IPC namespaces, handles task/action/file transfer requests, and bridges runtime output to delivery/status surfaces.' },
+  { id: 'agent-runner', label: 'Agent Runner', file: 'src/agent-runner.ts', type: 'host', x: 755, y: 244, w: 150, h: 58, views: ['chat','coder'], desc: 'Owns direct agent calls, coding task delegation, compaction runs, continuity ledger, and runner dependency initialization.' },
+  { id: 'prefs', label: 'Preferences', file: 'src/chat-preferences.ts', type: 'state', x: 945, y: 244, w: 145, h: 58, views: ['state'], desc: 'Per-chat runtime preferences such as model, reasoning, delivery, queue, continuation, verbose, and usage stats.' },
+
+  { id: 'dispatch', label: 'Message Dispatch', file: 'src/pipeline/message-dispatch-pipeline.ts', type: 'pipeline', x: 150, y: 420, w: 175, h: 58, views: ['chat','coder'], desc: 'Canonical dispatcher implementation now lives under src/pipeline. The old src/message-dispatch.ts is a compatibility re-export.' },
+  { id: 'chat-pipeline', label: 'Chat Pipeline', file: 'src/pipeline/chat-pipeline.ts', type: 'pipeline', x: 390, y: 420, w: 150, h: 58, views: ['chat'], desc: 'Direct chat execution path. Prepares run state, calls the agent, and finalizes delivery.' },
+  { id: 'coder-pipeline', label: 'Coder Pipeline', file: 'src/pipeline/coding-pipeline.ts', type: 'pipeline', x: 590, y: 420, w: 150, h: 58, views: ['coder'], desc: 'Explicit coder/subagent execution path. Keeps plan and execute modes separate while sharing dispatch bookkeeping.' },
+  { id: 'cron-pipeline', label: 'Cron Pipeline', file: 'src/pipeline/cron-pipeline.ts', type: 'pipeline', x: 790, y: 420, w: 150, h: 58, views: ['state'], desc: 'Scheduled and cron runs use the same pipeline contract instead of bespoke host code.' },
+
+  { id: 'pi-runner', label: 'Pi Runner', file: 'src/pi-runner.ts', type: 'runtime', x: 110, y: 590, w: 145, h: 54, views: ['chat','coder'], desc: 'Runs the isolated or host pi process, parses runtime events, handles extension UI requests, and now avoids false approval wait progress for nonblocking UI events.' },
+  { id: 'streaming', label: 'Streaming Adapter', file: 'src/streaming/*', type: 'runtime', x: 305, y: 590, w: 160, h: 54, views: ['events'], desc: 'StreamConsumer plus platform adapters handle preview/draft/final delivery without hardwiring Telegram logic into the runner.' },
+  { id: 'events', label: 'Host Events', file: 'src/runtime/host-events.ts', type: 'runtime', x: 520, y: 590, w: 145, h: 54, views: ['events'], desc: 'Consolidated event vocabulary: chat_delivery_requested, ipc_request, ipc_result, file_transfer, run_state, host_error, tool_progress, and run_progress.' },
+  { id: 'long-run', label: 'Long Runs', file: 'src/long-run-service.ts', type: 'runtime', x: 715, y: 590, w: 145, h: 54, views: ['chat','events'], desc: 'Durable long-run tracking remains available internally when a run needs longer timeout, recovery, or status reporting.' },
+
+  { id: 'db', label: 'SQLite Store', file: 'src/db.ts', type: 'state', x: 90, y: 738, w: 145, h: 50, views: ['state'], desc: 'Chat metadata, messages, tasks, task runs, and run records persist here.' },
+  { id: 'state', label: 'App State', file: 'src/state-persistence.ts / app-state.ts', type: 'state', x: 285, y: 738, w: 155, h: 50, views: ['state'], desc: 'Load/save, group registration, metadata sync, migrations, and shared runtime state are separated from host bootstrap.' },
+  { id: 'memory', label: 'Memory Actions', file: 'memory-action-*', type: 'state', x: 490, y: 738, w: 155, h: 50, views: ['state','chat'], desc: 'Memory action gateway is split into validation, IO, and orchestration modules.' },
+  { id: 'skills', label: 'Skill Service', file: 'src/skill-service.ts', type: 'services', x: 700, y: 738, w: 145, h: 50, views: ['state','coder'], desc: 'Skill manager, librarian, and self-improvement flows are out of index.ts and behind a service boundary.' },
+  { id: 'updates', label: 'Update Service', file: 'src/update-service.ts', type: 'services', x: 895, y: 738, w: 145, h: 50, views: ['state'], desc: 'Pending update notifications and update loop orchestration are isolated from host startup.' }
+];
+
+const edges = [
+  ['telegram', 'index', 'inbound message', ['chat']],
+  ['whatsapp', 'index', 'normalized message', ['chat']],
+  ['tui', 'host-coord', 'gateway adapters', ['events']],
+  ['web', 'prefs', 'settings/status API', ['state']],
+  ['scheduler', 'cron-pipeline', 'scheduled run', ['state']],
+  ['index', 'telegram-mods', 'delegates delivery/settings', ['chat']],
+  ['index', 'host-coord', 'event deps', ['events']],
+  ['index', 'agent-runner', 'runner deps', ['chat','coder']],
+  ['index', 'dispatch', 'process message', ['chat','coder']],
+  ['prefs', 'dispatch', 'runtime prefs', ['state']],
+  ['dispatch', 'chat-pipeline', 'route: chat', ['chat']],
+  ['dispatch', 'coder-pipeline', 'route: coder/subagent', ['coder']],
+  ['dispatch', 'cron-pipeline', 'route: cron/scheduled', ['state']],
+  ['chat-pipeline', 'agent-runner', 'runAgent', ['chat']],
+  ['coder-pipeline', 'agent-runner', 'runCodingTask', ['coder']],
+  ['agent-runner', 'pi-runner', 'container/host run', ['chat','coder']],
+  ['pi-runner', 'streaming', 'deltas/progress', ['events','chat']],
+  ['pi-runner', 'events', 'runtime events', ['events']],
+  ['events', 'host-coord', 'processHostEvent', ['events']],
+  ['host-coord', 'telegram-mods', 'deliver/status', ['chat','events']],
+  ['host-coord', 'tui', 'projected frames', ['events']],
+  ['dispatch', 'long-run', 'durable route', ['chat']],
+  ['dispatch', 'db', 'messages/runs', ['state','chat']],
+  ['agent-runner', 'memory', 'context/actions', ['chat']],
+  ['index', 'state', 'load/save groups', ['state']],
+  ['index', 'skills', 'skill commands', ['coder','state']],
+  ['index', 'updates', 'update loop', ['state']]
+];
+
+const detail = document.getElementById('details');
+const nodeLayer = document.getElementById('nodes');
+const edgeLayer = document.getElementById('edges');
+let activeView = 'all';
+let selected = null;
+
+function nodeColor(type) {
+  return colors[type] || colors.ops;
+}
+
+function nodeById(id) {
+  return nodes.find(n => n.id === id);
+}
+
+function visibleFor(itemViews) {
+  return activeView === 'all' || itemViews.includes(activeView);
+}
+
+function drawEdges() {
+  edgeLayer.innerHTML = '';
+  edges.forEach((edge, i) => {
+    const [fromId, toId, label, views] = edge;
+    const from = nodeById(fromId);
+    const to = nodeById(toId);
+    if (!from || !to) return;
+    const x1 = from.x + from.w;
+    const y1 = from.y + from.h / 2;
+    const x2 = to.x;
+    const y2 = to.y + to.h / 2;
+    const mid = Math.max(35, Math.abs(x2 - x1) / 2);
+    const d = `M ${x1} ${y1} C ${x1 + mid} ${y1}, ${x2 - mid} ${y2}, ${x2} ${y2}`;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('class', 'edge' + (visibleFor(views) ? '' : ' dim'));
+    path.setAttribute('d', d);
+    path.setAttribute('id', `edge-${i}`);
+    edgeLayer.appendChild(path);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('class', 'edge-label' + (visibleFor(views) ? '' : ' dim'));
+    text.setAttribute('x', (x1 + x2) / 2 - 34);
+    text.setAttribute('y', (y1 + y2) / 2 - 8);
+    text.textContent = label;
+    if (!visibleFor(views)) text.style.opacity = '0.08';
+    edgeLayer.appendChild(text);
+  });
+}
+
+function drawNodes() {
+  nodeLayer.innerHTML = '';
+  nodes.forEach(n => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'node' + (visibleFor(n.views) ? '' : ' dim') + (selected === n.id ? ' active' : ''));
+    g.setAttribute('data-id', n.id);
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', n.x);
+    rect.setAttribute('y', n.y);
+    rect.setAttribute('width', n.w);
+    rect.setAttribute('height', n.h);
+    rect.setAttribute('rx', 8);
+    rect.setAttribute('fill', '#151f2c');
+    rect.setAttribute('stroke', nodeColor(n.type));
+    g.appendChild(rect);
+
+    const top = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    top.setAttribute('x', n.x);
+    top.setAttribute('y', n.y);
+    top.setAttribute('width', 5);
+    top.setAttribute('height', n.h);
+    top.setAttribute('rx', 4);
+    top.setAttribute('fill', nodeColor(n.type));
+    g.appendChild(top);
+
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    title.setAttribute('class', 'title');
+    title.setAttribute('x', n.x + 15);
+    title.setAttribute('y', n.y + 22);
+    title.textContent = n.label;
+    g.appendChild(title);
+
+    const meta = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    meta.setAttribute('class', 'meta');
+    meta.setAttribute('x', n.x + 15);
+    meta.setAttribute('y', n.y + 39);
+    meta.textContent = n.file.length > 26 ? n.file.slice(0, 25) + '...' : n.file;
+    g.appendChild(meta);
+
+    g.addEventListener('click', () => selectNode(n.id));
+    nodeLayer.appendChild(g);
+  });
+}
+
+function selectNode(id) {
+  selected = id;
+  const n = nodeById(id);
+  if (!n) return;
+  detail.innerHTML = `
+    <h2>${n.label}</h2>
+    <div class="file">${n.file}</div>
+    <span class="badge" style="background: ${nodeColor(n.type)}24; color: ${nodeColor(n.type)};">${n.type}</span>
+    <p>${n.desc}</p>
+    <ul>
+      ${edges.filter(e => e[1] === id).map(e => `<li>from ${nodeById(e[0]).label}: ${e[2]}</li>`).join('')}
+      ${edges.filter(e => e[0] === id).map(e => `<li>to ${nodeById(e[1]).label}: ${e[2]}</li>`).join('')}
+    </ul>
+  `;
+  drawNodes();
+}
+
+function setView(view) {
+  activeView = view;
+  document.querySelectorAll('button[data-view]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === view);
+  });
+  drawEdges();
+  drawNodes();
+}
+
+document.querySelectorAll('button[data-view]').forEach(btn => {
+  btn.addEventListener('click', () => setView(btn.dataset.view));
+});
+
+drawEdges();
+drawNodes();
+</script>
+</body>
+</html>
