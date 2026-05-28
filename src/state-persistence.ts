@@ -8,9 +8,7 @@ import {
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
 } from './config.js';
-import {
-  AvailableGroup,
-} from './pi-runner.js';
+import { AvailableGroup } from './pi-runner.js';
 import { RegisteredGroup } from './types.js';
 import { loadJson, saveJson } from './utils.js';
 import { logger } from './logger.js';

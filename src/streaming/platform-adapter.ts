@@ -5,11 +5,7 @@ export interface SendResult {
 }
 
 export interface PlatformAdapter {
-  send(
-    chatId: string,
-    content: string,
-    replyTo?: string,
-  ): Promise<SendResult>;
+  send(chatId: string, content: string, replyTo?: string): Promise<SendResult>;
 
   editMessage(
     chatId: string,

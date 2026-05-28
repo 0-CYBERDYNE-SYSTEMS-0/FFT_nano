@@ -195,10 +195,7 @@ export interface TelegramCommandDeps {
     chatJid: string,
     instructions: string,
   ) => Promise<string>;
-  handleLongRunCommand?: (
-    chatJid: string,
-    content: string,
-  ) => Promise<boolean>;
+  handleLongRunCommand?: (chatJid: string, content: string) => Promise<boolean>;
   parseTelegramChatId: (chatJid: string) => string | null;
   parseTelegramTargetJid: (value: string) => string | null;
   normalizeTelegramCommandToken: (token: string) => string | null;

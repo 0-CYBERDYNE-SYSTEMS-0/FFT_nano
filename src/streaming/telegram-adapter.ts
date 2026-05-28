@@ -1,9 +1,7 @@
 import type { TelegramBot } from '../telegram.js';
 import type { PlatformAdapter, SendResult } from './platform-adapter.js';
 
-export function createTelegramAdapter(
-  bot: TelegramBot,
-): PlatformAdapter {
+export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
   return {
     async send(chatId, content, _replyTo?) {
       try {

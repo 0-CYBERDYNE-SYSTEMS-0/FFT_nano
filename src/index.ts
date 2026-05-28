@@ -573,7 +573,6 @@ const STATUS_STUCK_WARNING_SECONDS = 120;
 
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
 
-
 const statusTelemetry = createStatusTelemetry({
   incidentWindowMs: STATUS_INCIDENT_WINDOW_MS,
   maxIncidents: 3,
@@ -735,7 +734,6 @@ function buildTelegramGroupsPanel(chatJid: string): {
   });
 }
 
-
 function isCoderDelegationCommand(content: string): boolean {
   return isCoderDelegationCommandImpl(content);
 }
@@ -750,7 +748,6 @@ function buildOnboardingInterviewPrompt(params: {
 }): string {
   return buildOnboardingInterviewPromptImpl(params);
 }
-
 
 async function maybeRunBootMdOnce(): Promise<void> {
   if (state.bootRunInFlight) return;
@@ -1145,7 +1142,10 @@ async function createCoderProject(params: { slug: string }): Promise<{
   projectLabel: string;
   isGitRepo: boolean;
 }> {
-  return tsCreateCoderProject({ slug: params.slug, mainWorkspaceDir: MAIN_WORKSPACE_DIR });
+  return tsCreateCoderProject({
+    slug: params.slug,
+    mainWorkspaceDir: MAIN_WORKSPACE_DIR,
+  });
 }
 
 function truncateButtonLabel(text: string, max = 28): string {
@@ -1153,7 +1153,9 @@ function truncateButtonLabel(text: string, max = 28): string {
 }
 
 function formatTelegramSettingsPanelSummary(chatJid: string): string[] {
-  return tsFormatTelegramSettingsPanelSummary(chatJid, { getEffectiveModelLabel });
+  return tsFormatTelegramSettingsPanelSummary(chatJid, {
+    getEffectiveModelLabel,
+  });
 }
 
 function buildTelegramSettingsHomePanel(chatJid: string): {
@@ -1185,7 +1187,9 @@ function buildTelegramProviderModelPanel(
   provider: string,
   page = 0,
 ): { text: string; keyboard: TelegramInlineKeyboard } {
-  return tsBuildTelegramProviderModelPanel(chatJid, provider, page, { getEffectiveModelLabel });
+  return tsBuildTelegramProviderModelPanel(chatJid, provider, page, {
+    getEffectiveModelLabel,
+  });
 }
 
 function buildThinkPanel(chatJid: string): {
@@ -1273,7 +1277,6 @@ function formatTaskRunsText(taskId: string, limit = 10): string {
 function formatTasksText(mode: 'list' | 'due' = 'list'): string {
   return tdFormatTasksText(mode);
 }
-
 
 function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
   return tsBuildAdminPanelKeyboard();
@@ -1775,7 +1778,16 @@ async function runAgent(
   } = {},
   abortSignal?: AbortSignal,
 ) {
-  return runAgentImpl(group, prompt, chatJid, codingHint, requestId, runtimePrefs, options, abortSignal);
+  return runAgentImpl(
+    group,
+    prompt,
+    chatJid,
+    codingHint,
+    requestId,
+    runtimePrefs,
+    options,
+    abortSignal,
+  );
 }
 
 function createTuiGatewayAdapters(): TuiGatewayAdapters {
@@ -1890,13 +1902,17 @@ async function sendMessage(jid: string, text: string): Promise<boolean> {
   return tdSendMessage(jid, text);
 }
 
-
 function queueTelegramToolProgressReaction(
   chatJid: string,
   requestId: string,
   event: { toolName: string; status: 'start' | 'ok' | 'error' },
 ): void {
-  tdQueueTelegramToolProgressReaction(chatJid, requestId, event, getTelegramHostStreamKey);
+  tdQueueTelegramToolProgressReaction(
+    chatJid,
+    requestId,
+    event,
+    getTelegramHostStreamKey,
+  );
 }
 
 function queueTelegramToolProgressUpdate(
@@ -1912,7 +1928,14 @@ function queueTelegramToolProgressUpdate(
     error?: string;
   },
 ): void {
-  tdQueueTelegramToolProgressUpdate(chatJid, requestId, deliveryMode, mode, event, getTelegramHostStreamKey);
+  tdQueueTelegramToolProgressUpdate(
+    chatJid,
+    requestId,
+    deliveryMode,
+    mode,
+    event,
+    getTelegramHostStreamKey,
+  );
 }
 
 async function finalizeTelegramToolProgress(
@@ -1977,10 +2000,7 @@ function consumeTelegramHostCompletedRun(
   return hcConsumeHostCompletedRun(chatJid, requestId);
 }
 
-function consumeTelegramHostStreamState(
-  chatJid: string,
-  requestId: string,
-) {
+function consumeTelegramHostStreamState(chatJid: string, requestId: string) {
   return hcConsumeHostStreamState(chatJid, requestId);
 }
 
@@ -2022,7 +2042,12 @@ async function processTaskIpc(
   sourceGroup: string,
   isMain: boolean,
 ): Promise<void> {
-  return hcProcessTaskIpc(data, sourceGroup, isMain, buildHostCoordinationDeps());
+  return hcProcessTaskIpc(
+    data,
+    sourceGroup,
+    isMain,
+    buildHostCoordinationDeps(),
+  );
 }
 
 async function connectWhatsApp(): Promise<void> {
@@ -2032,7 +2057,6 @@ async function connectWhatsApp(): Promise<void> {
 async function startMessageLoop(): Promise<void> {
   await appRuntime.startMessageLoop();
 }
-
 
 function ensureContainerSystemRunning(): void {
   appRuntime.ensureContainerSystemRunning();

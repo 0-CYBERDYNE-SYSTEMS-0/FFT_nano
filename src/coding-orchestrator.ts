@@ -19,6 +19,11 @@ import type {
 } from './pi-runner.js';
 import { createHostEventId, type HostEvent } from './runtime/host-events.js';
 import { getCoderLearningsForContext } from './coder-learnings.js';
+import {
+  recordEvaluatorVerdict,
+  getEvaluatorStats,
+  type EvaluatorStats,
+} from './db.js';
 import { createRunProgressReporter } from './run-progress.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 
@@ -506,6 +511,26 @@ function formatFinalMessage(params: {
     lines.push(`Tests: ${params.testsRun.join(' | ')}`);
   }
   return lines.filter(Boolean).join('\n\n');
+}
+
+/**
+ * Format prior evaluator outcomes into a short context block. Returns '' when
+ * there is no history, so it adds nothing visible to fresh workspaces.
+ */
+function formatEvaluatorStatsContext(stats: EvaluatorStats): string {
+  if (stats.total === 0) return '';
+  const pct = Math.round(stats.passRate * 100);
+  const lines = [
+    '## Prior Evaluator Outcomes (this workspace)',
+    `Recent coding/subagent runs passed evaluation ${stats.passes}/${stats.total} (${pct}%).`,
+  ];
+  if (stats.recentIssues.length > 0) {
+    lines.push('Recurring issues to avoid repeating:');
+    for (const issue of stats.recentIssues) {
+      lines.push(`- ${issue}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 function buildWorkerPrompt(
@@ -1040,10 +1065,18 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       activeRun.state = 'running';
 
       // Fetch coder learnings from MEMORY.md to prepend to context
-      const learningsContext = await getCoderLearningsForContext(
+      const baseLearningsContext = await getCoderLearningsForContext(
         request.originGroupFolder,
         5, // maxEntries
       );
+      // Close the loop: prepend prior evaluator outcomes for this workspace so
+      // the next run is aware of how recent runs scored and what recurred.
+      const evalStatsContext = formatEvaluatorStatsContext(
+        getEvaluatorStats(request.originGroupFolder, 20),
+      );
+      const learningsContext = [evalStatsContext, baseLearningsContext]
+        .filter(Boolean)
+        .join('\n\n');
 
       const output = await deps.runContainerAgent(
         request.group,
@@ -1284,6 +1317,24 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
             feedback: lastVerdict.feedback,
             refinements,
           };
+          // Persist the verdict so the scoring feeds future runs (closes the
+          // self-improvement loop). Skipped verdicts carry no signal.
+          if (!lastVerdict.skipped) {
+            try {
+              recordEvaluatorVerdict({
+                requestId: request.requestId,
+                groupFolder: request.originGroupFolder,
+                chatJid: request.originChatJid,
+                runType: request.config.isSubagent ? 'subagent' : 'coding',
+                pass: lastVerdict.pass,
+                score: lastVerdict.score,
+                issues: lastVerdict.issues,
+                refinements,
+              });
+            } catch {
+              /* verdict persistence is best-effort */
+            }
+          }
           qaReportPath = writeCoderArtifact(
             request,
             'CODER_QA_REPORT.md',

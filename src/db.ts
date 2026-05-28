@@ -103,6 +103,20 @@ export function initDatabaseAtPath(dbPath: string): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_runs_chat_created ON agent_runs(chat_jid, created_at);
     CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+
+    CREATE TABLE IF NOT EXISTS evaluator_verdicts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id TEXT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT,
+      run_type TEXT NOT NULL,
+      pass INTEGER NOT NULL,
+      score INTEGER NOT NULL,
+      issues TEXT,
+      refinements INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_eval_verdicts_group ON evaluator_verdicts(group_folder, created_at);
   `);
 
   // Add sender_name column if it doesn't exist (migration for existing DBs)
@@ -143,6 +157,21 @@ export function initDatabaseAtPath(dbPath: string): void {
     /* column already exists */
   }
 
+  // Durability + self-improvement columns on agent_runs (migration for existing DBs)
+  const agentRunMigrations = [
+    `ALTER TABLE agent_runs ADD COLUMN recovery_state TEXT`,
+    `ALTER TABLE agent_runs ADD COLUMN worktree_path TEXT`,
+    `ALTER TABLE agent_runs ADD COLUMN evaluator_score INTEGER`,
+    `ALTER TABLE agent_runs ADD COLUMN evaluator_pass INTEGER`,
+  ];
+  for (const migration of agentRunMigrations) {
+    try {
+      db.exec(migration);
+    } catch {
+      /* column already exists */
+    }
+  }
+
   const hadMessagesFts = !!db
     .prepare(
       `SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='messages_fts'`,
@@ -181,7 +210,7 @@ export function initDatabaseAtPath(dbPath: string): void {
     db.exec(`INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')`);
   }
 
-  markActiveAgentRunsFailedOnStartup();
+  triageActiveAgentRunsOnStartup();
 }
 
 export function closeDatabase(): void {
@@ -725,7 +754,10 @@ export type AgentRunStatus =
   | 'running'
   | 'completed'
   | 'failed'
-  | 'aborted';
+  | 'aborted'
+  | 'interrupted';
+
+export type AgentRunRecoveryState = 'recoverable' | 'dead';
 
 export interface AgentRunRecord {
   id: string;
@@ -742,6 +774,10 @@ export interface AgentRunRecord {
   current_detail: string | null;
   result: string | null;
   error: string | null;
+  recovery_state: AgentRunRecoveryState | null;
+  worktree_path: string | null;
+  evaluator_score: number | null;
+  evaluator_pass: number | null;
 }
 
 export function createAgentRun(input: {
@@ -808,7 +844,9 @@ export function listActiveAgentRuns(chatJid?: string): AgentRunRecord[] {
       ORDER BY created_at ASC
     `;
   const statement = db.prepare(sql);
-  return (chatJid ? statement.all(chatJid) : statement.all()) as AgentRunRecord[];
+  return (
+    chatJid ? statement.all(chatJid) : statement.all()
+  ) as AgentRunRecord[];
 }
 
 export function updateAgentRun(
@@ -822,6 +860,10 @@ export function updateAgentRun(
     current_detail: string | null;
     result: string | null;
     error: string | null;
+    recovery_state: AgentRunRecoveryState | null;
+    worktree_path: string | null;
+    evaluator_score: number | null;
+    evaluator_pass: number | null;
   }>,
 ): void {
   const fields: string[] = [];
@@ -837,18 +879,167 @@ export function updateAgentRun(
   );
 }
 
-export function markActiveAgentRunsFailedOnStartup(): number {
+/**
+ * On host restart, triage runs that were in flight instead of blindly failing
+ * them. A run whose worktree still exists on disk is marked `interrupted` +
+ * `recoverable` and its worktree is preserved so work can be resumed; a run
+ * with no surviving worktree is marked `failed` + `dead`. The dead-path error
+ * string is kept stable (`host_restarted_before_completion`) so downstream
+ * consumers and existing behavior are unaffected.
+ */
+export function triageActiveAgentRunsOnStartup(): {
+  recoverable: number;
+  dead: number;
+} {
   const now = new Date().toISOString();
-  const result = db
+  const inFlight = db
     .prepare(
-      `
-      UPDATE agent_runs
-      SET status = 'failed',
-          finished_at = ?,
-          error = 'host_restarted_before_completion'
-      WHERE kind = 'agent_long' AND status IN ('queued', 'running')
-    `,
+      `SELECT id, worktree_path FROM agent_runs
+       WHERE kind = 'agent_long' AND status IN ('queued', 'running')`,
     )
-    .run(now);
-  return result.changes;
+    .all() as Array<{ id: string; worktree_path: string | null }>;
+
+  const markRecoverable = db.prepare(
+    `UPDATE agent_runs
+     SET status = 'interrupted', recovery_state = 'recoverable',
+         finished_at = ?, error = 'host_restarted_mid_run'
+     WHERE id = ?`,
+  );
+  const markDead = db.prepare(
+    `UPDATE agent_runs
+     SET status = 'failed', recovery_state = 'dead',
+         finished_at = ?, error = 'host_restarted_before_completion'
+     WHERE id = ?`,
+  );
+
+  let recoverable = 0;
+  let dead = 0;
+  for (const run of inFlight) {
+    const hasWorktree = !!run.worktree_path && fs.existsSync(run.worktree_path);
+    if (hasWorktree) {
+      markRecoverable.run(now, run.id);
+      recoverable += 1;
+    } else {
+      markDead.run(now, run.id);
+      dead += 1;
+    }
+  }
+  return { recoverable, dead };
+}
+
+/**
+ * List runs that were interrupted by a restart but whose workspace survives,
+ * so an operator or a resume consumer can pick them back up.
+ */
+export function listRecoverableAgentRuns(chatJid?: string): AgentRunRecord[] {
+  const sql = chatJid
+    ? `SELECT * FROM agent_runs
+       WHERE chat_jid = ? AND kind = 'agent_long'
+         AND status = 'interrupted' AND recovery_state = 'recoverable'
+       ORDER BY created_at ASC`
+    : `SELECT * FROM agent_runs
+       WHERE kind = 'agent_long'
+         AND status = 'interrupted' AND recovery_state = 'recoverable'
+       ORDER BY created_at ASC`;
+  const statement = db.prepare(sql);
+  return (
+    chatJid ? statement.all(chatJid) : statement.all()
+  ) as AgentRunRecord[];
+}
+
+// ---------------------------------------------------------------------------
+// Evaluator verdict persistence (closes the self-improvement feedback loop)
+// ---------------------------------------------------------------------------
+
+export interface EvaluatorVerdictInput {
+  requestId?: string;
+  groupFolder: string;
+  chatJid?: string;
+  runType: string;
+  pass: boolean;
+  score: number;
+  issues: string[];
+  refinements?: number;
+}
+
+export interface EvaluatorStats {
+  total: number;
+  passes: number;
+  passRate: number;
+  recentIssues: string[];
+}
+
+/**
+ * Persist an evaluator verdict so the scoring the system already pays for is
+ * no longer discarded. Recorded verdicts feed `getEvaluatorStats`, which the
+ * coding orchestrator prepends to future runs as learned context.
+ */
+export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
+  if (!db) return;
+  db.prepare(
+    `INSERT INTO evaluator_verdicts (
+       request_id, group_folder, chat_jid, run_type, pass, score, issues, refinements, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    input.requestId ?? null,
+    input.groupFolder,
+    input.chatJid ?? null,
+    input.runType,
+    input.pass ? 1 : 0,
+    Math.round(input.score),
+    JSON.stringify(input.issues ?? []),
+    input.refinements ?? 0,
+    new Date().toISOString(),
+  );
+}
+
+/**
+ * Rolling pass-rate and the most recent recurring issues for a group, used to
+ * give the next run awareness of how prior runs in the same workspace fared.
+ */
+export function getEvaluatorStats(
+  groupFolder: string,
+  limit = 20,
+): EvaluatorStats {
+  if (!db) return { total: 0, passes: 0, passRate: 0, recentIssues: [] };
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(100, Math.floor(limit)))
+    : 20;
+  const rows = db
+    .prepare(
+      `SELECT pass, issues FROM evaluator_verdicts
+       WHERE group_folder = ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(groupFolder, safeLimit) as Array<{
+    pass: number;
+    issues: string | null;
+  }>;
+
+  const total = rows.length;
+  const passes = rows.filter((r) => r.pass === 1).length;
+  const recentIssues: string[] = [];
+  for (const row of rows) {
+    if (recentIssues.length >= 5) break;
+    if (!row.issues) continue;
+    try {
+      const parsed = JSON.parse(row.issues) as unknown[];
+      for (const issue of parsed) {
+        if (typeof issue === 'string' && !recentIssues.includes(issue)) {
+          recentIssues.push(issue);
+          if (recentIssues.length >= 5) break;
+        }
+      }
+    } catch {
+      /* ignore malformed issues json */
+    }
+  }
+
+  return {
+    total,
+    passes,
+    passRate: total > 0 ? passes / total : 0,
+    recentIssues,
+  };
 }

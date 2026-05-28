@@ -85,7 +85,11 @@ export class StreamConsumer {
 
     const nextText = this.appendToolTrailFooter(text);
 
-    if (!this.messageId && !this.draftMode && nextText.length < MIN_PREVIEW_CHARS) {
+    if (
+      !this.messageId &&
+      !this.draftMode &&
+      nextText.length < MIN_PREVIEW_CHARS
+    ) {
       return;
     }
 
@@ -112,7 +116,10 @@ export class StreamConsumer {
         return;
 
       case 'thinking':
-        this.emitStatusText('thinking', `${this.label} status: Reasoning about the task.`);
+        this.emitStatusText(
+          'thinking',
+          `${this.label} status: Reasoning about the task.`,
+        );
         this.startHeartbeat('thinking');
         return;
 
@@ -139,7 +146,10 @@ export class StreamConsumer {
         return;
 
       case 'retry_fresh':
-        this.emitStatusText('retry_fresh', `${this.label} status: Retrying with a fresh session.`);
+        this.emitStatusText(
+          'retry_fresh',
+          `${this.label} status: Retrying with a fresh session.`,
+        );
         this.clearHeartbeat();
         return;
 
@@ -297,7 +307,12 @@ export class StreamConsumer {
   private handleToolTrail(event: ToolProgressEvent): void {
     const { deliveryMode, verboseMode } = this.config;
     if (deliveryMode === 'off') return;
-    if (verboseMode !== 'new' && verboseMode !== 'all' && verboseMode !== 'verbose') return;
+    if (
+      verboseMode !== 'new' &&
+      verboseMode !== 'all' &&
+      verboseMode !== 'verbose'
+    )
+      return;
 
     const entry = formatToolTrailEntry(event, verboseMode, this.lastToolName);
     if (event.status === 'start') this.lastToolName = event.toolName;
@@ -320,7 +335,9 @@ export class StreamConsumer {
 
     this.toolProgressLines.push(line);
     if (this.toolProgressLines.length > MAX_TOOL_PROGRESS_LINES) {
-      this.toolProgressLines = this.toolProgressLines.slice(-MAX_TOOL_PROGRESS_LINES);
+      this.toolProgressLines = this.toolProgressLines.slice(
+        -MAX_TOOL_PROGRESS_LINES,
+      );
     }
 
     const text = formatToolProgressMessage(this.toolProgressLines);
