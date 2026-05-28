@@ -63,3 +63,35 @@ delivery/cron/skill subsystems; deferred to keep this pass green and surgical.
 **Overall: C+ (2.5) → B+ (≈3.2).** UX unchanged — no new commands, surfaces, or
 message formats. Deferred (§3 outbox, §4 semantic memory, §5 skill versioning)
 remain documented follow-ups requiring deeper subsystem integration.
+
+## Finalization
+
+- **Workflow honored:** implemented in dev checkout (`fft_nano-dev`) → branch
+  `feat/agent-durability-upgrade` → rebased clean onto `origin/main` (0 behind)
+  → PR to protected `main`. No direct pushes to `main`.
+- **PR:** [#102](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/pull/102)
+  — base `main`, head `feat/agent-durability-upgrade`.
+- **Gates at submission:** typecheck clean · 683 pass / 0 fail · release-check +
+  secret-scan green.
+- **Restore floor:** revert target `af557a1`; release tags / `release/0.3.1`
+  remain the rollback floor independent of this branch.
+
+### Post-merge verification checklist (runtime checkout `~/fft_nano`)
+
+After PR #102 merges and `main` is fast-forwarded into the runtime checkout:
+1. Confirm `agent_runs` gains `recovery_state` / `worktree_path` and the
+   `evaluator_verdicts` table is created on the live `messages.db` (additive,
+   nullable migrations — low risk).
+2. Confirm `evaluator_verdicts` populates after a coding/subagent run.
+3. Confirm restart triage marks a worktree-backed run `interrupted`/`recoverable`
+   rather than `failed`.
+
+### Next pass (separate contract, not this one)
+
+- Wire a **resume consumer** for `listRecoverableAgentRuns` (finishes §2: B− → B).
+- **§4a** cron/subagent memory-injection consistency (cheap, no embedding model).
+- Then **§3** outbox (dedupe-first), **§4b** semantic memory, **§5** skill
+  versioning — largest blast radius, reviewed independently.
+
+**Contract status: CLOSED** for the scoped pass (§1, §2, §6, §7). Acceptance
+gate met; awaiting PR #102 review/merge.
