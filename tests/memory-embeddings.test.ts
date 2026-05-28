@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   blendSemanticScores,
   cosineSimilarity,
+  createBudgetedEmbedder,
   minMaxNormalize,
 } from '../src/memory-embeddings.js';
 
@@ -78,6 +79,26 @@ test('semantic similarity can override lexical when weighted fully', () => {
     ranked.map((r) => r.item),
     ['b', 'a'],
   );
+});
+
+test('budgeted embedder stops calling once the time budget is spent', () => {
+  let calls = 0;
+  const slowEmbed = (_text: string): number[] => {
+    calls += 1;
+    const end = Date.now() + 15; // busy-wait ~15ms (>> 5ms budget)
+    while (Date.now() < end) {
+      /* spin */
+    }
+    return [1, 0];
+  };
+  const budgeted = createBudgetedEmbedder(slowEmbed, 5);
+  const first = budgeted('one'); // spent 0 < 5 -> runs, then spent ~15ms
+  const second = budgeted('two'); // spent >= 5 -> short-circuits to null
+  const third = budgeted('three');
+  assert.deepEqual(first, [1, 0]);
+  assert.equal(second, null);
+  assert.equal(third, null);
+  assert.equal(calls, 1); // only the first call actually invoked the embedder
 });
 
 test('blend mixes both signals at intermediate weight', () => {

@@ -5,7 +5,7 @@ import { searchMessagesByFts, type TranscriptSearchRow } from './db.js';
 import {
   SEMANTIC_CANDIDATE_LIMIT,
   blendSemanticScores,
-  embedTextLocal,
+  createBudgetedEmbedder,
   isSemanticMemoryEnabled,
 } from './memory-embeddings.js';
 import {
@@ -354,14 +354,17 @@ export function searchDocumentMemory(input: {
   if (isSemanticMemoryEnabled() && scored.length > 1) {
     const pool = scored.slice(0, SEMANTIC_CANDIDATE_LIMIT);
     const maxLex = pool.reduce((m, p) => Math.max(m, p.score), 0) || 1;
+    // One budget shared across the query embed + all candidate embeds, so a
+    // slow embedder bounds total blocking time rather than stalling per chunk.
+    const budgetedEmbed = createBudgetedEmbedder();
     const blended = blendSemanticScores({
       candidates: pool.map((p) => ({
         item: p,
         lexicalScore: p.score,
         text: p.chunk.text,
       })),
-      queryEmbedding: embedTextLocal(queryText),
-      embed: embedTextLocal,
+      queryEmbedding: budgetedEmbed(queryText),
+      embed: budgetedEmbed,
     });
     return blended
       .slice(0, topK)

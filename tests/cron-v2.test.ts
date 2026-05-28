@@ -13,6 +13,7 @@ import {
   computeErrorBackoffMs,
   getTaskDeliveryMode,
   resolveTaskNextRun,
+  runCronSchedulerTick,
   runScheduledTaskV2,
   shouldTriggerWakeNow,
 } from '../src/cron/service.ts';
@@ -306,6 +307,31 @@ test('runScheduledTaskV2 routes announce through the outbox and survives a deliv
   assert.equal(getDeliveryByDedupeKey(pending[0].dedupe_key)?.status, 'delivered');
 
   closeDatabase();
+});
+
+test('runCronSchedulerTick re-flushes the delivery outbox each tick', async () => {
+  const dbPath = makeTempDbPath();
+  initDatabaseAtPath(dbPath);
+  try {
+    let flushes = 0;
+    const outbox = {
+      deliver: async () => true,
+      flushPending: async () => {
+        flushes += 1;
+        return { delivered: 0, stillPending: 0 };
+      },
+    };
+    // No due tasks; the tick should still flush the outbox so transient
+    // outages self-heal without a restart.
+    await runCronSchedulerTick({
+      sendMessage: async () => true,
+      registeredGroups: () => ({}),
+      outbox,
+    });
+    assert.equal(flushes, 1);
+  } finally {
+    closeDatabase();
+  }
 });
 
 test('runScheduledTaskV2 keeps recurring tasks active when group is missing', async () => {

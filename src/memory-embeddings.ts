@@ -4,6 +4,7 @@ import {
   MEMORY_SEMANTIC_CANDIDATES,
   MEMORY_SEMANTIC_ENABLED,
   MEMORY_SEMANTIC_MODEL,
+  MEMORY_SEMANTIC_QUERY_BUDGET_MS,
   MEMORY_SEMANTIC_WEIGHT,
   OLLAMA_BASE_URL,
 } from './config.js';
@@ -169,6 +170,27 @@ export function embedTextLocal(text: string): number[] | null {
   }
   embedCache.set(key, embedding);
   return embedding;
+}
+
+/**
+ * Wrap an embedder with a per-query wall-clock budget. Once the cumulative time
+ * spent in embed calls exceeds `budgetMs`, further calls short-circuit to null
+ * (those candidates fall back to lexical-only scoring) — bounding how long a
+ * single synchronous retrieval can block the host with a slow embedder. Cache
+ * hits cost ~0ms, so the cache is still fully used within the budget.
+ */
+export function createBudgetedEmbedder(
+  embed: (text: string) => number[] | null = embedTextLocal,
+  budgetMs: number = MEMORY_SEMANTIC_QUERY_BUDGET_MS,
+): (text: string) => number[] | null {
+  let spent = 0;
+  return (text: string) => {
+    if (spent >= budgetMs) return null;
+    const start = Date.now();
+    const result = embed(text);
+    spent += Date.now() - start;
+    return result;
+  };
 }
 
 /** Test seam: reset the in-process embedder cache and availability latch. */
