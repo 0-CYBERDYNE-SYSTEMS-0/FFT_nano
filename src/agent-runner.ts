@@ -4,7 +4,11 @@ import {
   MAIN_WORKSPACE_DIR,
   PARITY_CONFIG,
 } from './config.js';
-import { runContainerAgent, type ContainerInput, type ContainerProgressEvent } from './pi-runner.js';
+import {
+  runContainerAgent,
+  type ContainerInput,
+  type ContainerProgressEvent,
+} from './pi-runner.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import {
   createCodingOrchestrator,
@@ -101,7 +105,8 @@ export function initAgentRunner(deps: AgentRunnerDeps): void {
 }
 
 function getDeps(): AgentRunnerDeps {
-  if (!_deps) throw new Error('AgentRunner not initialized — call initAgentRunner first');
+  if (!_deps)
+    throw new Error('AgentRunner not initialized — call initAgentRunner first');
   return _deps;
 }
 
@@ -165,7 +170,9 @@ interface ContinuityLedgerEntry {
 
 const continuityLedger = new Map<string, ContinuityLedgerEntry>();
 
-export function getContinuityLedgerEntry(chatJid: string): ContinuityLedgerEntry {
+export function getContinuityLedgerEntry(
+  chatJid: string,
+): ContinuityLedgerEntry {
   const existing = continuityLedger.get(chatJid);
   if (existing) return existing;
   const created: ContinuityLedgerEntry = {
@@ -284,7 +291,9 @@ export function buildUnresolvedWorkSummary(chatJid: string): string | null {
 let codingOrchestrator: ReturnType<typeof createCodingOrchestrator> | null =
   null;
 
-export function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
+export function getCodingOrchestrator(): ReturnType<
+  typeof createCodingOrchestrator
+> {
   const deps = getDeps();
   if (!codingOrchestrator) {
     codingOrchestrator = createCodingOrchestrator({
@@ -303,7 +312,8 @@ export function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestra
           abortSignal,
           onRuntimeEvent,
           onExtensionUIRequest ||
-            ((request) => deps.handlePermissionGateRequest(input.chatJid, request)),
+            ((request) =>
+              deps.handlePermissionGateRequest(input.chatJid, request)),
           onProgressEvent,
         ),
       publishEvent: (event) => {

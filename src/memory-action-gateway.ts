@@ -45,7 +45,12 @@ function applyMemoryWrite(input: {
     intent === 'todo_upsert_subagent' ||
     intent === 'todo_append_log'
   ) {
-    return applyTodoMutation({ groupFolder: input.groupFolder, intent, payload, recordedAt });
+    return applyTodoMutation({
+      groupFolder: input.groupFolder,
+      intent,
+      payload,
+      recordedAt,
+    });
   }
 
   if (intent === 'memory_append' || intent === 'memory_promote') {

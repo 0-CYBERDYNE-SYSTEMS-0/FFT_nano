@@ -53,15 +53,10 @@ import {
   getTaskRunLogs,
   listActiveAgentRuns,
 } from './db.js';
-import {
-  APP_VERSION,
-  SERVICE_STARTED_AT,
-} from './app-state.js';
+import { APP_VERSION, SERVICE_STARTED_AT } from './app-state.js';
 import { GIT_INFO } from './state-persistence.js';
 import { getContainerRuntime } from './container-runtime.js';
-import {
-  formatStatusReport,
-} from './status-report.js';
+import { formatStatusReport } from './status-report.js';
 import {
   readKnowledgeWikiStatus,
   formatKnowledgeWikiStatusText,
@@ -73,12 +68,8 @@ import {
   KNOWLEDGE_NIGHTLY_TASK_ID,
 } from './knowledge-wiki-task.js';
 import { ensureKnowledgeRuntimeSetup } from './telegram-group-mgmt.js';
-import {
-  findMainTelegramChatJid,
-} from './telegram-group-mgmt.js';
-import {
-  resolveTelegramStreamCompletionState,
-} from './telegram-streaming.js';
+import { findMainTelegramChatJid } from './telegram-group-mgmt.js';
+import { resolveTelegramStreamCompletionState } from './telegram-streaming.js';
 import {
   parsePermissionGateCallback,
   createPendingConfirmation,
@@ -422,7 +413,9 @@ export function sanitizeFileName(value: string): string {
   return base.slice(0, 80) || 'file';
 }
 
-export function defaultExtensionForMedia(message: TelegramInboundMessage): string {
+export function defaultExtensionForMedia(
+  message: TelegramInboundMessage,
+): string {
   switch (message.media?.type) {
     case 'photo':
       return '.jpg';
@@ -686,7 +679,10 @@ export interface FormatStatusDeps {
   whatsappEnabled: boolean;
 }
 
-export function formatStatusText(chatJid: string | undefined, deps: FormatStatusDeps): string {
+export function formatStatusText(
+  chatJid: string | undefined,
+  deps: FormatStatusDeps,
+): string {
   const runtime = getContainerRuntime();
   const version = [
     APP_VERSION || 'unknown',
@@ -779,7 +775,8 @@ export function formatStatusText(chatJid: string | undefined, deps: FormatStatus
     agentRunning,
     ...(chatJid
       ? {
-          chatRuntimePreferenceLines: deps.formatChatRuntimePreferences(chatJid),
+          chatRuntimePreferenceLines:
+            deps.formatChatRuntimePreferences(chatJid),
           chatUsage: state.chatUsageStats[chatJid]
             ? {
                 runs: state.chatUsageStats[chatJid].runs,
@@ -863,7 +860,9 @@ export function formatTasksText(mode: 'list' | 'due' = 'list'): string {
 
 // --- Gateway service command ---
 
-export function runGatewayServiceCommand(action: 'status' | 'restart' | 'doctor'): {
+export function runGatewayServiceCommand(
+  action: 'status' | 'restart' | 'doctor',
+): {
   ok: boolean;
   text: string;
 } {
@@ -1097,7 +1096,9 @@ export async function handleTelegramCallbackQuery(
   q: TelegramInboundCallbackQuery,
   deps: {
     telegramCommandHandlers: {
-      handleTelegramCallbackQuery: (q: TelegramInboundCallbackQuery) => Promise<void>;
+      handleTelegramCallbackQuery: (
+        q: TelegramInboundCallbackQuery,
+      ) => Promise<void>;
     };
   },
 ): Promise<void> {

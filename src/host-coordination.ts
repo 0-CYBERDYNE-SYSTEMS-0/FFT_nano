@@ -1,7 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
+import {
+  DATA_DIR,
+  IPC_POLL_INTERVAL,
+  MAIN_GROUP_FOLDER,
+  MAIN_WORKSPACE_DIR,
+} from './config.js';
 import { logger } from './logger.js';
 import {
   state,
@@ -16,10 +21,7 @@ import {
   updateTelegramDraftPreview,
   updateTelegramPreview,
 } from './telegram-streaming.js';
-import {
-  deriveTelegramDraftId,
-  type AvailableGroup,
-} from './pi-runner.js';
+import { deriveTelegramDraftId, type AvailableGroup } from './pi-runner.js';
 import type { RegisteredGroup } from './types.js';
 import { isTelegramJid } from './telegram.js';
 import {
@@ -38,15 +40,15 @@ import {
 import { attachActionRequestAudit } from './action-result-audit.js';
 import { executeFarmAction } from './farm-action-gateway.js';
 import { executeMemoryAction } from './memory-action-gateway.js';
-import {
-  executeSkillAction,
-} from './skill-lifecycle.js';
+import { executeSkillAction } from './skill-lifecycle.js';
 import { writeJsonFileAtomic } from './atomic-write.js';
-import {
-  FEATURE_FARM,
-} from './config.js';
+import { FEATURE_FARM } from './config.js';
 import type { StatusTelemetry } from './status-report.js';
-import type { FarmActionRequest, MemoryActionRequest, SkillActionRequest } from './types.js';
+import type {
+  FarmActionRequest,
+  MemoryActionRequest,
+  SkillActionRequest,
+} from './types.js';
 import type { CronV2Schedule } from './cron/types.js';
 import {
   resolveCronExecutionPlan,
@@ -66,7 +68,10 @@ export interface HostCoordinationDeps {
     text: string,
     opts?: { prefixWhatsApp?: boolean },
   ) => Promise<boolean>;
-  noteDeliveryPending: (chatJid: string | null | undefined, requestId: string) => void;
+  noteDeliveryPending: (
+    chatJid: string | null | undefined,
+    requestId: string,
+  ) => void;
   noteDeliverySettled: (params: {
     chatJid: string | null | undefined;
     requestId: string;
@@ -82,7 +87,10 @@ export interface HostCoordinationDeps {
 
 // ── Telegram stream state helpers ──────────────────────────────────────────
 
-export function getTelegramHostStreamKey(chatJid: string, requestId: string): string {
+export function getTelegramHostStreamKey(
+  chatJid: string,
+  requestId: string,
+): string {
   return getTelegramPreviewRunKey(chatJid, requestId);
 }
 
@@ -295,13 +303,13 @@ export async function processHostEvent(
       return;
     case 'ipc_request':
       if (event.requestKind === 'task') {
-      await processTaskIpc(
-        event.request as Parameters<typeof processTaskIpc>[0],
-        event.sourceGroup,
-        event.isMain,
-        deps,
-      );
-      return;
+        await processTaskIpc(
+          event.request as Parameters<typeof processTaskIpc>[0],
+          event.sourceGroup,
+          event.isMain,
+          deps,
+        );
+        return;
       }
       const result =
         event.request.type === 'farm_action'
@@ -482,17 +490,17 @@ export async function processHostEvent(
       return;
     case 'file_transfer':
       if (event.phase === 'requested') {
-      logger.info(
-        {
-          sourceGroup: event.sourceGroup,
-          requestId: event.requestId,
-          filePath: event.filePath,
-          mediaKind: event.mediaKind,
-          chatJid: event.chatJid,
-        },
-        'File delivery requested via IPC',
-      );
-      return;
+        logger.info(
+          {
+            sourceGroup: event.sourceGroup,
+            requestId: event.requestId,
+            filePath: event.filePath,
+            mediaKind: event.mediaKind,
+            chatJid: event.chatJid,
+          },
+          'File delivery requested via IPC',
+        );
+        return;
       }
       if (event.success) {
         logger.info(
@@ -818,12 +826,15 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
                 trackedRequestId ||
                 parsedRequestId ||
                 `invalid-${path.basename(file, '.json')}`;
-              writeJsonFileAtomic(path.join(resultDir, `${resultRequestId}.json`), {
-                requestId: resultRequestId,
-                status: 'error',
-                error: errorMessage,
-                executedAt: new Date().toISOString(),
-              });
+              writeJsonFileAtomic(
+                path.join(resultDir, `${resultRequestId}.json`),
+                {
+                  requestId: resultRequestId,
+                  status: 'error',
+                  error: errorMessage,
+                  executedAt: new Date().toISOString(),
+                },
+              );
               const errorDir = path.join(ipcBaseDir, 'errors');
               fs.mkdirSync(errorDir, { recursive: true });
               const baseErrorPath = path.join(

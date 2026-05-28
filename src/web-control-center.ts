@@ -49,10 +49,7 @@ import {
 import { KNOWLEDGE_NIGHTLY_TASK_ID } from './knowledge-wiki-task.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { computeTaskNextRun } from './task-schedule.js';
-import {
-  resolveGroupFolderPath,
-  resolveGroupIpcPath,
-} from './group-folder.js';
+import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import {
   startWebControlCenterServer,
   type WebControlCenterAdapters,
@@ -72,7 +69,9 @@ import type { SessionPrefs as TuiSessionPrefs } from './tui/gateway-server.js';
 
 export interface WebControlCenterDeps {
   getRuntimeConfigEnv: () => Record<string, string | undefined>;
-  persistRuntimeConfigUpdates: (updates: Record<string, string | undefined>) => void;
+  persistRuntimeConfigUpdates: (
+    updates: Record<string, string | undefined>,
+  ) => void;
   ensureWebOnboardingAdminSecret: (
     updates: Record<string, string | undefined>,
     source: Record<string, string | undefined>,
@@ -94,7 +93,9 @@ export interface WebControlCenterDeps {
     telegramBotToken?: string;
     whatsappEnabled?: boolean;
   }) => { ok: boolean; requiresRestart: boolean; adminSecret?: string };
-  loadPiModels: () => { ok: true; entries: PiModelEntry[] } | { ok: false; text: string };
+  loadPiModels: () =>
+    | { ok: true; entries: PiModelEntry[] }
+    | { ok: false; text: string };
   resolveChatJidForSessionKey: (sessionKey: string) => string | null;
   getTuiSessionPrefs: (chatJid: string) => TuiSessionPrefs;
   buildTuiSessionList: () => TuiSessionSummary[];
@@ -206,7 +207,9 @@ export function applyControlCenterRuntimeSettings(
   },
   deps: Pick<
     WebControlCenterDeps,
-    'getRuntimeConfigEnv' | 'persistRuntimeConfigUpdates' | 'ensureWebOnboardingAdminSecret'
+    | 'getRuntimeConfigEnv'
+    | 'persistRuntimeConfigUpdates'
+    | 'ensureWebOnboardingAdminSecret'
   >,
 ): { ok: boolean; requiresRestart: boolean; adminSecret?: string } {
   const currentEnv = deps.getRuntimeConfigEnv();
@@ -282,11 +285,14 @@ export function buildControlCenterSystemPromptPreview(
   },
   deps: Pick<
     WebControlCenterDeps,
-    'resolveChatJidForSessionKey' | 'getTuiSessionPrefs' | 'getSessionKeyForChat'
+    | 'resolveChatJidForSessionKey'
+    | 'getTuiSessionPrefs'
+    | 'getSessionKeyForChat'
   >,
 ) {
   const sessionKey = (payload.sessionKey || 'main').trim() || 'main';
-  const chatJid = deps.resolveChatJidForSessionKey(sessionKey) || findMainChatJidFromState();
+  const chatJid =
+    deps.resolveChatJidForSessionKey(sessionKey) || findMainChatJidFromState();
   if (!chatJid) throw new Error(`Unknown session: ${sessionKey}`);
   const group = state.registeredGroups[chatJid];
   const groupFolder = group?.folder || MAIN_GROUP_FOLDER;
@@ -487,7 +493,8 @@ export function createWebControlCenterAdapters(
       authRequired: FFT_NANO_TUI_AUTH_TOKEN.length > 0,
     }),
     getOnboardingStatus: () => deps.buildOnboardingStatus(),
-    applyOnboardingConfig: async (payload) => deps.applyWebOnboardingConfig(payload),
+    applyOnboardingConfig: async (payload) =>
+      deps.applyWebOnboardingConfig(payload),
     hostUpdate: () =>
       startDetachedUpdateCommand({
         cwd: process.cwd(),

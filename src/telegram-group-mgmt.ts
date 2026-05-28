@@ -21,9 +21,7 @@ import {
 import type { TelegramInlineKeyboard } from './telegram.js';
 import { state } from './app-state.js';
 import type { TelegramSettingsPanelAction } from './app-state.js';
-import {
-  ensureKnowledgeWikiScaffold,
-} from './knowledge-wiki.js';
+import { ensureKnowledgeWikiScaffold } from './knowledge-wiki.js';
 import { ensureKnowledgeNightlyTask } from './knowledge-wiki-task.js';
 import {
   ensureMainWorkspaceBootstrap,
