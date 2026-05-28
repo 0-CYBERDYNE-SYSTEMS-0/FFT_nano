@@ -84,7 +84,7 @@ export function buildOnboardingStatus() {
   );
   const configComplete = snapshot.apiKeyConfigured && telegramBotConfigured;
   return {
-    active: !!(process.env.FFT_NANO_ONBOARDING_MODE) || !configComplete,
+    active: !!process.env.FFT_NANO_ONBOARDING_MODE || !configComplete,
     providerPreset: snapshot.providerPreset,
     model: snapshot.model,
     apiKeyConfigured: snapshot.apiKeyConfigured,
@@ -267,7 +267,10 @@ export function loadPiModels(
   return { ok: true, entries };
 }
 
-export function runPiListModels(searchText: string): { ok: boolean; text: string } {
+export function runPiListModels(searchText: string): {
+  ok: boolean;
+  text: string;
+} {
   const loaded = loadPiModels(true);
   if (!loaded.ok) {
     return { ok: false, text: loaded.text };
@@ -425,7 +428,8 @@ export function sanitizeRunPreferencesModelOverride(
   }
 
   const effectiveProvider =
-    rawProvider || parseProviderFromModelLabel(deps.getEffectiveModelLabel(chatJid));
+    rawProvider ||
+    parseProviderFromModelLabel(deps.getEffectiveModelLabel(chatJid));
   if (!effectiveProvider) {
     return { runPreferences: nextPrefs };
   }
@@ -1526,7 +1530,10 @@ export function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
 export interface ResolvePanelDeps {
   getEffectiveModelLabel: (jid: string) => string;
   formatActiveSubagentsText: () => string;
-  buildTelegramGroupsPanel: (chatJid: string) => { text: string; keyboard: TelegramInlineKeyboard };
+  buildTelegramGroupsPanel: (chatJid: string) => {
+    text: string;
+    keyboard: TelegramInlineKeyboard;
+  };
 }
 
 export function resolveTelegramSettingsPanel(
@@ -1815,22 +1822,28 @@ export async function prepareCoderTarget(
           ...resolved.candidates.map((candidate) => [
             {
               text: truncateButtonLabel(candidate.projectLabel),
-              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
-                kind: 'coder-select-project',
-                mode: params.mode,
-                taskText: resolved.taskText,
-                projectPath: candidate.workspaceRoot,
-                projectLabel: candidate.projectLabel,
-                isGitRepo: candidate.isGitRepo,
-              }),
+              callbackData: registerTelegramSettingsPanelAction(
+                params.chatJid,
+                {
+                  kind: 'coder-select-project',
+                  mode: params.mode,
+                  taskText: resolved.taskText,
+                  projectPath: candidate.workspaceRoot,
+                  projectLabel: candidate.projectLabel,
+                  isGitRepo: candidate.isGitRepo,
+                },
+              ),
             },
           ]),
           [
             {
               text: 'Cancel',
-              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
-                kind: 'coder-cancel',
-              }),
+              callbackData: registerTelegramSettingsPanelAction(
+                params.chatJid,
+                {
+                  kind: 'coder-cancel',
+                },
+              ),
             },
           ],
         ],
@@ -1858,19 +1871,25 @@ export async function prepareCoderTarget(
           [
             {
               text: `Create ${truncateButtonLabel(resolved.suggestedSlug)}`,
-              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
-                kind: 'coder-create-project',
-                mode: params.mode,
-                taskText: resolved.taskText,
-                slug: resolved.suggestedSlug,
-                projectLabel: resolved.projectHint,
-              }),
+              callbackData: registerTelegramSettingsPanelAction(
+                params.chatJid,
+                {
+                  kind: 'coder-create-project',
+                  mode: params.mode,
+                  taskText: resolved.taskText,
+                  slug: resolved.suggestedSlug,
+                  projectLabel: resolved.projectHint,
+                },
+              ),
             },
             {
               text: 'Cancel',
-              callbackData: registerTelegramSettingsPanelAction(params.chatJid, {
-                kind: 'coder-cancel',
-              }),
+              callbackData: registerTelegramSettingsPanelAction(
+                params.chatJid,
+                {
+                  kind: 'coder-cancel',
+                },
+              ),
             },
           ],
         ],
@@ -1886,9 +1905,10 @@ export async function prepareCoderTarget(
   return { status: 'handled' };
 }
 
-export async function createCoderProject(
-  params: { slug: string; mainWorkspaceDir: string },
-): Promise<{
+export async function createCoderProject(params: {
+  slug: string;
+  mainWorkspaceDir: string;
+}): Promise<{
   workspaceRoot: string;
   projectLabel: string;
   isGitRepo: boolean;

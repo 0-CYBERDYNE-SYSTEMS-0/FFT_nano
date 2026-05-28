@@ -20,10 +20,7 @@ import {
   type TuiGatewayAdapters,
 } from './tui/gateway-server.js';
 import type { TuiSessionSummary } from './tui/protocol.js';
-import {
-  createHostEventId,
-  HostEventBus,
-} from './runtime/host-events.js';
+import { createHostEventId, HostEventBus } from './runtime/host-events.js';
 import {
   state,
   activeChatRunsById,
@@ -35,13 +32,19 @@ export interface TuiCoordinationDeps {
   isMainChat: (chatJid: string) => boolean;
   findMainChatJid: () => string | null;
   getTuiSessionPrefs: (chatJid: string) => TuiSessionPrefs;
-  patchTuiSessionPrefs: (chatJid: string, patch: TuiSessionPrefs) => TuiSessionPrefs;
+  patchTuiSessionPrefs: (
+    chatJid: string,
+    patch: TuiSessionPrefs,
+  ) => TuiSessionPrefs;
   runDirectSessionTurn: (params: {
     chatJid: string;
     text: string;
     runId: string;
     deliver: boolean;
-  }) => Promise<{ runId: string; status: 'started' | 'queued' | 'already_running' }>;
+  }) => Promise<{
+    runId: string;
+    status: 'started' | 'queued' | 'already_running';
+  }>;
   runGatewayServiceCommand: (action: 'status' | 'restart' | 'doctor') => {
     ok: boolean;
     text: string;

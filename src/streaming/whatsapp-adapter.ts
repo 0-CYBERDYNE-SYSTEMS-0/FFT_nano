@@ -7,9 +7,7 @@ interface WhatsAppSocket {
   ): Promise<{ key?: { id?: string } }>;
 }
 
-export function createWhatsAppAdapter(
-  sock: WhatsAppSocket,
-): PlatformAdapter {
+export function createWhatsAppAdapter(sock: WhatsAppSocket): PlatformAdapter {
   return {
     async send(chatId, content, _replyTo?) {
       try {
@@ -26,7 +24,11 @@ export function createWhatsAppAdapter(
     },
 
     async editMessage(_chatId, messageId, _content, _finalize?) {
-      return { success: false, messageId, error: 'WhatsApp does not support message editing' };
+      return {
+        success: false,
+        messageId,
+        error: 'WhatsApp does not support message editing',
+      };
     },
 
     async deleteMessage(_chatId, _messageId) {

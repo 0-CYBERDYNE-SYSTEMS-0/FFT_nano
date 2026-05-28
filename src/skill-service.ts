@@ -336,7 +336,10 @@ export async function handleSkillManagerCommand(params: {
   if (!skillName) {
     return 'Usage: /skill-manager status|dry-run|run|pause|resume|pin <skill>|unpin <skill>|archive <skill>|restore <skill>|backup';
   }
-  const actionMap: Record<string, 'skill_pin' | 'skill_unpin' | 'skill_archive' | 'skill_restore'> = {
+  const actionMap: Record<
+    string,
+    'skill_pin' | 'skill_unpin' | 'skill_archive' | 'skill_restore'
+  > = {
     pin: 'skill_pin',
     unpin: 'skill_unpin',
     archive: 'skill_archive',
@@ -369,7 +372,9 @@ export async function handleSkillManagerCommand(params: {
 
 export interface LibrarianDeps {
   resolveKnowledgeRuntimeSnapshot: () => {
-    status: ReturnType<typeof import('./knowledge-wiki.js').readKnowledgeWikiStatus>;
+    status: ReturnType<
+      typeof import('./knowledge-wiki.js').readKnowledgeWikiStatus
+    >;
     nightlyTaskStatus: string;
     nightlyTaskNextRun: string | null;
   };
