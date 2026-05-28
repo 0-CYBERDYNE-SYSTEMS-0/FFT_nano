@@ -280,6 +280,33 @@ export const MEMORY_CONTEXT_CHAR_BUDGET = envInt(
   50000,
 );
 
+// Semantic memory: opt-in re-ranking of lexical candidates by embedding
+// similarity from a LOCAL Ollama embedding model. Default off so the live
+// service is unchanged; when on but the embedder is unavailable, retrieval
+// falls back to pure lexical (no behavior change, no external API).
+export const MEMORY_SEMANTIC_ENABLED = envFlag(
+  process.env.MEMORY_SEMANTIC_ENABLED,
+  false,
+);
+export const MEMORY_SEMANTIC_MODEL = (
+  process.env.MEMORY_SEMANTIC_MODEL || 'nomic-embed-text'
+).trim();
+export const MEMORY_SEMANTIC_WEIGHT =
+  (() => {
+    const parsed = Number.parseFloat(process.env.MEMORY_SEMANTIC_WEIGHT || '');
+    if (!Number.isFinite(parsed)) return 0.5;
+    return Math.min(1, Math.max(0, parsed));
+  })();
+export const MEMORY_SEMANTIC_CANDIDATES = envInt(
+  process.env.MEMORY_SEMANTIC_CANDIDATES,
+  24,
+  4,
+  128,
+);
+export const OLLAMA_BASE_URL = (
+  process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+).trim();
+
 export const FFT_NANO_WEB_ACCESS_MODE = parseWebAccessMode(
   process.env.FFT_NANO_WEB_ACCESS_MODE,
 );
