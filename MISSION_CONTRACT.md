@@ -76,15 +76,34 @@ remain documented follow-ups requiring deeper subsystem integration.
 - **Restore floor:** revert target `af557a1`; release tags / `release/0.3.1`
   remain the rollback floor independent of this branch.
 
-### Post-merge verification checklist (runtime checkout `~/fft_nano`)
+### Branch model (finalized this session)
 
-After PR #102 merges and `main` is fast-forwarded into the runtime checkout:
-1. Confirm `agent_runs` gains `recovery_state` / `worktree_path` and the
-   `evaluator_verdicts` table is created on the live `messages.db` (additive,
-   nullable migrations — low risk).
-2. Confirm `evaluator_verdicts` populates after a coding/subagent run.
-3. Confirm restart triage marks a worktree-backed run `interrupted`/`recoverable`
-   rather than `failed`.
+The repo now runs the two-track model the operator wants:
+- **`origin/main`** — blessed/release-only. PR-gated, no force-push. Moves only
+  when `dev` is merged in and a release is tagged. Rollback floor.
+- **`origin/dev`** — active integration line. Direct (non-PR) pushes allowed,
+  force-push blocked. The runtime checkout `~/fft_nano` runs from `dev`.
+- **`~/fft_nano-dev`** — edit/build/test worktree (feature branches only; never
+  runs the live service). **`~/fft_nano`** — runtime worktree on `dev`, never
+  hand-edited; it builds + restarts the launchd service from merged `dev`.
+
+PR #102 was retargeted from `main` → `dev` and merged there (`aa09b97`), so the
+durability work ships on the line we actually run, leaving `main` untouched
+until a future blessing.
+
+### LIVE verification (completed 2026-05-28)
+
+Deployed to `~/fft_nano` on `dev` and restarted `com.fft_nano` (PID 30425 →
+34339). Verified against the **production** `store/messages.db`:
+1. ✅ `evaluator_verdicts` table + `idx_eval_verdicts_group` created.
+2. ✅ `agent_runs` gained `recovery_state`, `worktree_path`, `evaluator_score`,
+   `evaluator_pass`.
+3. ✅ Service startup clean (Telegram polling, cron v2, heartbeat all up; no
+   errors; triage ran with no in-flight runs to recover — expected).
+
+Still to observe in normal operation (not blockers): `evaluator_verdicts`
+populating after a real coding/subagent run, and triage marking a worktree-backed
+run `interrupted`/`recoverable` on a future restart.
 
 ### Next pass (separate contract, not this one)
 
@@ -93,5 +112,5 @@ After PR #102 merges and `main` is fast-forwarded into the runtime checkout:
 - Then **§3** outbox (dedupe-first), **§4b** semantic memory, **§5** skill
   versioning — largest blast radius, reviewed independently.
 
-**Contract status: CLOSED** for the scoped pass (§1, §2, §6, §7). Acceptance
-gate met; awaiting PR #102 review/merge.
+**Contract status: COMPLETE.** Scoped pass (§1, §2, §6, §7) implemented, gated,
+merged to `dev`, deployed, and verified live on the running service.
