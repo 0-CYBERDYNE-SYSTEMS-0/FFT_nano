@@ -291,12 +291,11 @@ export const MEMORY_SEMANTIC_ENABLED = envFlag(
 export const MEMORY_SEMANTIC_MODEL = (
   process.env.MEMORY_SEMANTIC_MODEL || 'nomic-embed-text'
 ).trim();
-export const MEMORY_SEMANTIC_WEIGHT =
-  (() => {
-    const parsed = Number.parseFloat(process.env.MEMORY_SEMANTIC_WEIGHT || '');
-    if (!Number.isFinite(parsed)) return 0.5;
-    return Math.min(1, Math.max(0, parsed));
-  })();
+export const MEMORY_SEMANTIC_WEIGHT = (() => {
+  const parsed = Number.parseFloat(process.env.MEMORY_SEMANTIC_WEIGHT || '');
+  if (!Number.isFinite(parsed)) return 0.5;
+  return Math.min(1, Math.max(0, parsed));
+})();
 export const MEMORY_SEMANTIC_CANDIDATES = envInt(
   process.env.MEMORY_SEMANTIC_CANDIDATES,
   24,

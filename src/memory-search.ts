@@ -365,7 +365,9 @@ export function searchDocumentMemory(input: {
     });
     return blended
       .slice(0, topK)
-      .map(({ item, score }) => toHit({ chunk: item.chunk, score: score * maxLex }));
+      .map(({ item, score }) =>
+        toHit({ chunk: item.chunk, score: score * maxLex }),
+      );
   }
 
   return scored.slice(0, topK).map(toHit);

@@ -105,12 +105,24 @@ Still to observe in normal operation (not blockers): `evaluator_verdicts`
 populating after a real coding/subagent run, and triage marking a worktree-backed
 run `interrupted`/`recoverable` on a future restart.
 
-### Next pass (separate contract, not this one)
+### Next pass — COMPLETE (branch `feat/durability-resume-and-followups`)
 
-- Wire a **resume consumer** for `listRecoverableAgentRuns` (finishes §2: B− → B).
-- **§4a** cron/subagent memory-injection consistency (cheap, no embedding model).
-- Then **§3** outbox (dedupe-first), **§4b** semantic memory, **§5** skill
-  versioning — largest blast radius, reviewed independently.
+All follow-ups that were deferred from the scoped pass are now implemented and
+tested (full suite 705: 703 pass / 2 skip / 0 fail; typecheck + format +
+release-check + secret-scan green):
 
-**Contract status: COMPLETE.** Scoped pass (§1, §2, §6, §7) implemented, gated,
-merged to `dev`, deployed, and verified live on the running service.
+- ✅ **Resume consumer** for `listRecoverableAgentRuns` (finishes §2: B− → B) —
+  `worktree_path` recorded at run start; `resumeRecoverableRuns()` re-enqueues
+  with a `resume_attempts` cap; wired into `app.ts main()`.
+- ✅ **§4a** cron/subagent memory-injection consistency — central gate in
+  `shouldBuildRetrievedMemoryContext` now covers `isScheduledTask`/`isSubagent`.
+- ✅ **§3** outbox (dedupe-first) — `delivery_outbox` table + `src/outbox.ts`;
+  cron announces route through it; startup flush re-attempts after a crash.
+- ✅ **§4b** semantic memory (opt-in) — `src/memory-embeddings.ts` blends lexical
+  + local Ollama embedding cosine; default off, lexical fallback, no new deps.
+- ✅ **§5** skill versioning — `src/skill-history.ts` snapshots `SKILL.md` to
+  `.history/` before patch; new `skill_rollback` IPC action.
+
+**Contract status: COMPLETE.** Scoped pass (§1, §2, §6, §7) shipped + verified
+live; all deferred follow-ups (resume, §3, §4a, §4b, §5) implemented + gated on
+the follow-up branch, pending deploy + live verification.
