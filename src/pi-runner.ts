@@ -235,8 +235,19 @@ export interface ExtensionUIResponse {
 
 export function shouldBuildRetrievedMemoryContext(input: {
   isMain: boolean;
+  isScheduledTask?: boolean;
+  isSubagent?: boolean;
 }): boolean {
-  return MEMORY_RETRIEVAL_GATE_ENABLED && input.isMain;
+  // Memory retrieval was previously main-chat only, leaving cron tasks and
+  // subagents to run blind. Extend it to those paths so memory injection is
+  // consistent across the surfaces that benefit from prior context, still
+  // behind the same env gate.
+  return (
+    MEMORY_RETRIEVAL_GATE_ENABLED &&
+    (input.isMain ||
+      input.isScheduledTask === true ||
+      input.isSubagent === true)
+  );
 }
 
 type CodingHint =

@@ -1330,6 +1330,10 @@ function formatActiveSubagentsText(): string {
 
 const longRunService = createLongRunService({
   getGroupForChat: (chatJid) => state.registeredGroups[chatJid],
+  resolveWorkspacePath: (group) =>
+    group.folder === MAIN_GROUP_FOLDER
+      ? MAIN_WORKSPACE_DIR
+      : resolveGroupFolderPath(group.folder),
   isMainChat,
   getSessionKeyForChat,
   sendMessage,
@@ -1735,6 +1739,7 @@ const appRuntime = createAppRuntime({
     }),
   maybeRunBootMdOnce,
   getContainerRuntime,
+  resumeRecoverableLongRuns: () => longRunService.resumeRecoverableRuns(),
 });
 
 async function startTelegram(): Promise<void> {
