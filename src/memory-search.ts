@@ -3,6 +3,12 @@ import path from 'path';
 
 import { searchMessagesByFts, type TranscriptSearchRow } from './db.js';
 import {
+  SEMANTIC_CANDIDATE_LIMIT,
+  blendSemanticScores,
+  embedTextLocal,
+  isSemanticMemoryEnabled,
+} from './memory-embeddings.js';
+import {
   isAllowedMemoryRelativePath,
   isCanonicalScaffoldContent,
   resolveAllowedMemoryFilePath,
@@ -325,14 +331,44 @@ export function searchDocumentMemory(input: {
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, topK).map(({ chunk, score }) => ({
+
+  const toHit = ({
+    chunk,
+    score,
+  }: {
+    chunk: DocumentChunk;
+    score: number;
+  }): MemorySearchHit => ({
     source: 'memory_doc',
     score,
     groupFolder: chunk.groupFolder,
     title: chunk.relPath,
     path: chunk.relPath,
     snippet: chunk.text.replace(/\n{3,}/g, '\n\n').trim(),
-  }));
+  });
+
+  // Optional semantic re-rank of the top lexical candidates. Lexical stays the
+  // recall layer (and the fallback); embeddings only re-order within the pool.
+  // Scores are rescaled back onto the lexical magnitude so cross-source merge
+  // (docs vs transcripts) stays comparable.
+  if (isSemanticMemoryEnabled() && scored.length > 1) {
+    const pool = scored.slice(0, SEMANTIC_CANDIDATE_LIMIT);
+    const maxLex = pool.reduce((m, p) => Math.max(m, p.score), 0) || 1;
+    const blended = blendSemanticScores({
+      candidates: pool.map((p) => ({
+        item: p,
+        lexicalScore: p.score,
+        text: p.chunk.text,
+      })),
+      queryEmbedding: embedTextLocal(queryText),
+      embed: embedTextLocal,
+    });
+    return blended
+      .slice(0, topK)
+      .map(({ item, score }) => toHit({ chunk: item.chunk, score: score * maxLex }));
+  }
+
+  return scored.slice(0, topK).map(toHit);
 }
 
 function toTranscriptHit(

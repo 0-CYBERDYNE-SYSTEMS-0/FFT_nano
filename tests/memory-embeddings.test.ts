@@ -1,0 +1,104 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  blendSemanticScores,
+  cosineSimilarity,
+  minMaxNormalize,
+} from '../src/memory-embeddings.js';
+
+test('cosineSimilarity handles identical, orthogonal, and degenerate vectors', () => {
+  assert.equal(cosineSimilarity([1, 0], [1, 0]), 1);
+  assert.equal(cosineSimilarity([1, 0], [0, 1]), 0);
+  assert.ok(Math.abs(cosineSimilarity([1, 1], [1, 0]) - Math.SQRT1_2) < 1e-9);
+  // Mismatched length and zero vectors are safe (no NaN).
+  assert.equal(cosineSimilarity([1, 2, 3], [1, 2]), 0);
+  assert.equal(cosineSimilarity([0, 0], [1, 1]), 0);
+});
+
+test('minMaxNormalize maps to [0,1] and handles all-equal input', () => {
+  assert.deepEqual(minMaxNormalize([0, 5, 10]), [0, 0.5, 1]);
+  assert.deepEqual(minMaxNormalize([3, 3, 3]), [1, 1, 1]);
+  assert.deepEqual(minMaxNormalize([]), []);
+});
+
+test('blend falls back to lexical order when no query embedding', () => {
+  const candidates = [
+    { item: 'a', lexicalScore: 3, text: 'alpha' },
+    { item: 'b', lexicalScore: 1, text: 'bravo' },
+    { item: 'c', lexicalScore: 2, text: 'charlie' },
+  ];
+  const ranked = blendSemanticScores({
+    candidates,
+    queryEmbedding: null,
+    embed: () => null,
+    weight: 0.5,
+  });
+  assert.deepEqual(
+    ranked.map((r) => r.item),
+    ['a', 'c', 'b'],
+  );
+});
+
+test('blend falls back to lexical order when the embedder yields nothing', () => {
+  const candidates = [
+    { item: 'a', lexicalScore: 3, text: 'alpha' },
+    { item: 'b', lexicalScore: 1, text: 'bravo' },
+  ];
+  const ranked = blendSemanticScores({
+    candidates,
+    queryEmbedding: [1, 0],
+    embed: () => null, // embedder down for every chunk
+    weight: 1,
+  });
+  assert.deepEqual(
+    ranked.map((r) => r.item),
+    ['a', 'b'],
+  );
+});
+
+test('semantic similarity can override lexical when weighted fully', () => {
+  // 'b' has weaker lexical overlap but is semantically aligned with the query.
+  const queryEmbedding = [1, 0];
+  const embeddings: Record<string, number[]> = {
+    alpha: [0, 1], // orthogonal to query
+    bravo: [1, 0], // identical to query
+  };
+  const candidates = [
+    { item: 'a', lexicalScore: 3, text: 'alpha' },
+    { item: 'b', lexicalScore: 1, text: 'bravo' },
+  ];
+  const ranked = blendSemanticScores({
+    candidates,
+    queryEmbedding,
+    embed: (text) => embeddings[text] ?? null,
+    weight: 1,
+  });
+  assert.deepEqual(
+    ranked.map((r) => r.item),
+    ['b', 'a'],
+  );
+});
+
+test('blend mixes both signals at intermediate weight', () => {
+  const queryEmbedding = [1, 0];
+  const embeddings: Record<string, number[]> = {
+    alpha: [0, 1],
+    bravo: [1, 0],
+  };
+  const candidates = [
+    { item: 'a', lexicalScore: 1, text: 'alpha' },
+    { item: 'b', lexicalScore: 0, text: 'bravo' },
+  ];
+  // normLex: a=1, b=0. sem(mapped): a=0.5, b=1. weight 0.5 ->
+  // a = .5*1 + .5*.5 = .75 ; b = .5*0 + .5*1 = .5 -> a wins.
+  const ranked = blendSemanticScores({
+    candidates,
+    queryEmbedding,
+    embed: (text) => embeddings[text] ?? null,
+    weight: 0.5,
+  });
+  assert.equal(ranked[0].item, 'a');
+  assert.ok(Math.abs(ranked[0].score - 0.75) < 1e-9);
+  assert.ok(Math.abs(ranked[1].score - 0.5) < 1e-9);
+});
