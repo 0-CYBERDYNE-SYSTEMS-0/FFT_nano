@@ -362,6 +362,7 @@ import {
 } from './skill-service.js';
 import { createTelegramCommandHandlers } from './telegram-commands.js';
 import { createLongRunService } from './long-run-service.js';
+import { createOutboxDeliverer } from './outbox.js';
 import {
   getSessionKeyForChat as tuiGetSessionKeyForChat,
   resolveChatJidForSessionKey as tuiResolveChatJidForSessionKey,
@@ -1363,6 +1364,11 @@ const longRunService = createLongRunService({
   logger,
 });
 
+// Durable at-least-once delivery for non-interactive outputs (cron announces).
+// Shares the delivery_outbox table, so the startup flush and the cron path see
+// the same pending entries.
+const outboxDeliverer = createOutboxDeliverer({ sendMessage, logger });
+
 function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
   return getCodingOrchestratorImpl();
 }
@@ -1698,7 +1704,8 @@ const appRuntime = createAppRuntime({
   sendMessage,
   maybeRegisterWhatsAppMainChat,
   syncGroupMetadata,
-  startSchedulerLoop,
+  startSchedulerLoop: (schedulerDeps) =>
+    startSchedulerLoop({ ...schedulerDeps, outbox: outboxDeliverer }),
   startIpcWatcher,
   startMessageLoop: () => appRuntime.startMessageLoop(),
   requestHeartbeatNow,
@@ -1740,6 +1747,7 @@ const appRuntime = createAppRuntime({
   maybeRunBootMdOnce,
   getContainerRuntime,
   resumeRecoverableLongRuns: () => longRunService.resumeRecoverableRuns(),
+  flushDeliveryOutbox: () => outboxDeliverer.flushPending(),
 });
 
 async function startTelegram(): Promise<void> {

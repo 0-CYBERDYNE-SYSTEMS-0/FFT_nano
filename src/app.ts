@@ -111,6 +111,10 @@ export interface AppRuntimeDeps {
     resumed: number;
     abandoned: number;
   }>;
+  flushDeliveryOutbox?: () => Promise<{
+    delivered: number;
+    stillPending: number;
+  }>;
 }
 
 export function createAppRuntime(deps: AppRuntimeDeps): {
@@ -605,6 +609,18 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       deps.startHeartbeatLoop?.();
     } else {
       deps.logger.info?.('WhatsApp disabled (WHATSAPP_ENABLED=0)');
+    }
+    // Re-attempt any outbox entries left undelivered by a prior crash now that
+    // delivery channels are up (at-least-once for cron announces).
+    if (deps.flushDeliveryOutbox) {
+      try {
+        const flushed = await deps.flushDeliveryOutbox();
+        if (flushed.delivered > 0 || flushed.stillPending > 0) {
+          deps.logger.info?.(flushed, 'Flushed pending delivery outbox');
+        }
+      } catch (err) {
+        deps.logger.warn?.({ err }, 'Delivery outbox flush failed');
+      }
     }
     // Resume long runs preserved by startup triage now that state is loaded and
     // delivery channels are up, so resumed runs can stream/deliver normally.
