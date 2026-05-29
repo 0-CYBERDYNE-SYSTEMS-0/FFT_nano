@@ -24,8 +24,18 @@ Telegram/WhatsApp → message-dispatch.ts → pi-runner.ts (spawns pi subprocess
 - **Cron service** (`src/cron/service.ts`): Drives scheduled tasks via SQLite, calls `runContainerAgent` and `runEvaluatorPass` directly.
 - **Coding orchestrator** (`src/coding-orchestrator.ts`): Manages plan/execute worker routing for coding tasks; uses ephemeral worktrees and evaluator refinement loops.
 - **Permission gate** (`src/permission-gate-policy.ts`): Blocks destructive bash commands for subagents or headless runs; `bash-guard.ts` classifies commands.
-- **Memory subsystem**: Lexical search across transcript + document stores; `memory-backend.ts` is the unified facade; `memory-paths.ts` owns directory layout.
+- **Memory subsystem**: Lexical search across transcript + document stores; `memory-backend.ts` is the unified facade; `memory-paths.ts` owns directory layout. Optional **semantic re-rank** (`memory-embeddings.ts`) blends a local Ollama embedding cosine with the lexical score — off by default, lexical fallback always.
 - **TUI** (`src/tui/`): Separate gateway server/client pair bridging the terminal UI to the host event bus over WebSocket.
+
+### Durability & Self-Improvement
+
+These subsystems close the agent's reliability/learning loops. All are additive and degrade safely.
+
+- **Long-run durability** (`src/long-run-service.ts` + `agent_runs` table): a long run records its durable workspace as `worktree_path` at start. On restart, `triageActiveAgentRunsOnStartup` (`db.ts`) marks in-flight runs `interrupted`/`recoverable`; `resumeRecoverableRuns()` re-enqueues them at boot with a `resume_attempts` cap (`FFT_NANO_LONG_RUN_MAX_RESUMES`, default 2). Wired in `app.ts main()` after channels are up.
+- **Delivery outbox** (`src/outbox.ts` + `delivery_outbox` table): at-least-once delivery with a UNIQUE `dedupe_key` so a re-emitted final never double-posts. Cron announces deliver through it (`cron:{id}:{run}` key); `flushPending()` runs at startup and on every cron tick so transient outages self-heal. Interactive chat streaming is intentionally NOT routed through it (no stable dedupe key).
+- **Self-improvement loop** (`evaluator.ts` → `evaluator_verdicts` table → `coding-orchestrator.ts`): evaluator verdicts are persisted; `getEvaluatorStats(group)` feeds the rolling pass-rate + recurring issues into each subsequent coding/subagent run. Group-scoped, coding/subagent only.
+- **Memory injection consistency**: `shouldBuildRetrievedMemoryContext` (`pi-runner.ts`) builds retrieved-memory context for main chat **and** cron (`isScheduledTask`) and subagent (`isSubagent`) runs.
+- **Skill versioning** (`src/skill-history.ts`): every skill mutation snapshots `SKILL.md` to `.history/` (bounded to 10) before overwriting; the `skill_rollback` IPC action restores the prior version reversibly.
 
 ### State Access Pattern
 
@@ -37,15 +47,14 @@ import { state, activeChatRuns, hostEventBus } from './app-state.js';
 
 ## Development Workflow (Authoritative)
 
-Use a two-checkout model:
+Two-track, two-worktree model. **The two worktrees share one `.git`; a branch can be checked out in only one at a time.**
 
-1. Implement in the dev checkout/worktree (e.g. `fft_nano-dev`).
-2. Merge via PR to `origin/main`.
-3. Fast-forward the runtime/release checkout on `main`.
-4. Build and restart the installed launchd service from that `main` checkout.
+- **`origin/dev`** — active integration line; the runtime runs from it. Direct fast-forward pushes allowed; force-push blocked.
+- **`origin/main`** — blessed/release-only. PR-gated; moves only when `dev` is merged in + a release tagged. Rollback floor.
+- **`~/fft_nano-dev`** — edit/build/test worktree. Work on FEATURE branches here, never on `dev`.
+- **`~/fft_nano`** (= `/Users/username/FFT_nano`, case-insensitive FS) — runtime worktree on `dev`; **never hand-edit**. Builds + restarts the launchd service.
 
-- Dev-checkout path and service-checkout path being different is expected.
-- Runtime debugging starts from the active service checkout (`.env`, logs, launchd state); fixes land in the dev checkout and are promoted via PR.
+**Ship loop:** feature branch in `fft_nano-dev` → push → fast-forward `origin/dev` (`git push origin <feat>:dev`) → in `~/fft_nano`: `git pull --ff-only origin dev` → `npm run build` → `launchctl kickstart -k gui/$(id -u)/com.fft_nano` → verify new PID + clean `logs/fft_nano.log`. **The service runs `dist/`, so a build is mandatory after every pull.** Live DB: `~/fft_nano/store/messages.db`. Promote `dev → main` only via PR + release tag.
 
 ## Build & Test
 
@@ -81,30 +90,30 @@ GitHub Actions:
 
 | File | Role |
 |---|---|
-| `src/index.ts` | Remaining orchestrator logic (~5700 lines, still being decomposed) |
+| `src/index.ts` | Orchestrator wiring (~2,100 lines): constructs services (`longRunService`, `outboxDeliverer`, scheduler, `appRuntime`) and `*Deps` objects |
+| `src/app.ts` | `main()`, startup/shutdown, `connectWhatsApp`; boot-time outbox flush + long-run resume |
 | `src/app-state.ts` | All global mutable state, type definitions, `hostEventBus` singleton |
-| `src/app.ts` | `main()`, startup, shutdown, `connectWhatsApp` |
-| `src/message-dispatch.ts` | `processMessage`, `runDirectSessionTurn`, queue logic |
+| `src/message-dispatch.ts` | Thin re-export; canonical dispatch lives in `src/pipeline/message-dispatch-pipeline.ts` (`processMessage`, `runDirectSessionTurn`) |
 | `src/telegram-commands.ts` | Telegram command handling, settings panels, callback queries |
-| `src/pi-runner.ts` | Agent subprocess spawning, snapshots, runtime event emission |
+| `src/pi-runner.ts` | Agent subprocess spawning, runtime event emission, memory-context gate |
+| `src/agent-runner.ts` | `runAgent()` — workspace resolution, host-context, run lifecycle |
 | `src/telegram-streaming.ts` | Visible Telegram preview registry and completion state |
 | `src/runtime/host-events.ts` | `HostEventBus` — typed EventEmitter hub for host-local delivery |
 | `src/runtime/boundary-ipc.ts` | Cross-boundary envelope parsing, evaluator verdict leak guard |
-| `src/evaluator.ts` | Post-run quality scoring; `shouldEvaluate()` threshold guard |
-| `src/coding-orchestrator.ts` | Plan/execute worker routing for coding tasks |
-| `src/cron/service.ts` | Scheduled task execution engine |
-| `src/permission-gate-policy.ts` | Tool permission decisions for subagents/headless runs |
-| `src/memory-backend.ts` | Unified memory search/retrieval facade |
-| `src/config.ts` | All configuration constants and env var defaults |
+| `src/evaluator.ts` | Post-run quality scoring; verdict persistence |
+| `src/coding-orchestrator.ts` | Plan/execute worker routing; ephemeral worktrees; verdict feed-forward |
+| `src/long-run-service.ts` | Durable `agent_runs`; restart triage + `resumeRecoverableRuns()` |
+| `src/outbox.ts` | At-least-once delivery deliverer (dedupe + retry) over `delivery_outbox` |
+| `src/cron/service.ts` + `src/task-scheduler.ts` | Scheduled task engine; scheduler injects the outbox deliverer |
+| `src/memory-backend.ts` / `src/memory-search.ts` / `src/memory-embeddings.ts` | Memory facade / lexical search / opt-in semantic re-rank |
+| `src/skill-lifecycle.ts` / `src/skill-history.ts` | Skill IPC actions / `.history` versioning + rollback |
+| `src/permission-gate-policy.ts` / `src/bash-guard.ts` | Tool permission decisions / destructive-command classification |
+| `src/db.ts` | SQLite schema + queries; idempotent `ALTER TABLE` migrations at startup |
+| `src/config.ts` → `src/app-config.ts` | Config constants + env defaults (`config.ts` re-exports `app-config.ts`) |
 
-## Active Refactoring
+## Status
 
-4-phase decomposition of `index.ts` is in progress:
-
-- **Phase 1** (DONE): Extract `app-state`, `chat-preferences`, `telegram-streaming`, `telegram-commands`, `message-dispatch`, `app`.
-- **Phase 2** (IN PROGRESS): Replace file-based IPC with EventEmitter for host-local delivery. Cross-boundary sandbox IPC files remain.
-- **Phase 3** (IN PROGRESS): Consolidate draft streaming to one path via `TelegramPreviewRegistry`; `telegram-draft-ipc.ts` pending cleanup.
-- **Phase 4** (IN PROGRESS): Collapse completion resolver to use preview/completed registry state; shared message-dispatch helper pending.
+The `index.ts` decomposition (8,030 → ~2,100 lines) and the host-local EventEmitter delivery migration are complete; extracted modules use a `*Deps` injection pattern (`buildXDeps()` in `index.ts`, thin wrappers delegate). The Agent Durability & Self-Improvement pass (resume, outbox, evaluator feedback, cron/subagent memory, semantic memory, skill versioning) shipped and runs live on `dev` — see `MISSION_CONTRACT.md` / `HANDOFF.md`.
 
 ## Conventions
 
@@ -113,3 +122,4 @@ GitHub Actions:
 - `src/skills/` and `skills/` contain pi skill manifests; validate with `npm run validate:skills`.
 - `config/runtime.parity.json` controls parity feature flags (`PARITY_CONFIG`).
 - Git hooks in `hooks/` (pre-commit, pre-push) — do not bypass with `--no-verify`.
+- Semantic memory is opt-in: `MEMORY_SEMANTIC_ENABLED=1` plus a local Ollama (`OLLAMA_BASE_URL`, default `http://localhost:11434`) running `MEMORY_SEMANTIC_MODEL` (default `nomic-embed-text`). Tunables: `MEMORY_SEMANTIC_WEIGHT`, `MEMORY_SEMANTIC_CANDIDATES`, `MEMORY_SEMANTIC_QUERY_BUDGET_MS`. Absent/disabled → pure lexical.
