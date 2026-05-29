@@ -1014,8 +1014,10 @@ export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
 }
 
 /**
- * Rolling pass-rate and the most recent recurring issues for a group, used to
- * give the next run awareness of how prior runs in the same workspace fared.
+ * Rolling pass-rate and the top recurring issues for a group, used to give the
+ * next run awareness of how prior runs in the same workspace fared. Issues are
+ * ranked by a recency- and failure-weighted score with decay (see below), not
+ * pure recency, so stale one-offs drop out and persistent failures rise.
  */
 export function getEvaluatorStats(
   groupFolder: string,
@@ -1039,22 +1041,43 @@ export function getEvaluatorStats(
 
   const total = rows.length;
   const passes = rows.filter((r) => r.pass === 1).length;
-  const recentIssues: string[] = [];
-  for (const row of rows) {
-    if (recentIssues.length >= 5) break;
-    if (!row.issues) continue;
+
+  // Reliability-weighted recurring issues (rows are newest-first). Each
+  // occurrence is scored by recency (newer verdicts count more, via geometric
+  // decay) and by whether the verdict failed — an issue noted on a run that
+  // failed is a far stronger "avoid this" signal than one noted on a run that
+  // passed anyway. Issues whose accumulated score decays below the floor (old
+  // one-offs, stale passing-run notes that never recurred and never correlated
+  // with failure) are dropped rather than surfaced, so one bad lesson can't
+  // poison every future run indefinitely.
+  const RECENCY_DECAY = 0.85;
+  const PASSING_WEIGHT = 0.25;
+  const MIN_ISSUE_SCORE = 0.15;
+  const issueScores = new Map<string, number>();
+  rows.forEach((row, idx) => {
+    if (!row.issues) return;
+    let parsed: unknown[];
     try {
-      const parsed = JSON.parse(row.issues) as unknown[];
-      for (const issue of parsed) {
-        if (typeof issue === 'string' && !recentIssues.includes(issue)) {
-          recentIssues.push(issue);
-          if (recentIssues.length >= 5) break;
-        }
-      }
+      parsed = JSON.parse(row.issues) as unknown[];
     } catch {
-      /* ignore malformed issues json */
+      return; // ignore malformed issues json
     }
-  }
+    const weight =
+      Math.pow(RECENCY_DECAY, idx) * (row.pass === 0 ? 1 : PASSING_WEIGHT);
+    const seenInRow = new Set<string>();
+    for (const issue of parsed) {
+      if (typeof issue !== 'string') continue;
+      if (seenInRow.has(issue)) continue; // count an issue once per verdict
+      seenInRow.add(issue);
+      issueScores.set(issue, (issueScores.get(issue) ?? 0) + weight);
+    }
+  });
+
+  const recentIssues = [...issueScores.entries()]
+    .filter(([, score]) => score >= MIN_ISSUE_SCORE)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([issue]) => issue);
 
   return {
     total,

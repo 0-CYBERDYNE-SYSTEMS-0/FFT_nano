@@ -13,11 +13,17 @@ import {
   getCoderLearningsForContextSync,
   writeCoderLearningsToMemory,
   writeCoderLearningsToMemorySync,
+  parseReflectionResponse,
+  createFallbackEntry,
+  isEmptyEntry,
+  hasRunEvidence,
   type CoderLearningsEntry,
   type CodingWorkerResult,
 } from '../src/coder-learnings.js';
 
-const makeEntry = (overrides: Partial<CoderLearningsEntry> = {}): CoderLearningsEntry => ({
+const makeEntry = (
+  overrides: Partial<CoderLearningsEntry> = {},
+): CoderLearningsEntry => ({
   date: '2026-04-04',
   whatWorked: [],
   whatDidnt: [],
@@ -70,7 +76,9 @@ Patterns:
   const entries = parseCoderLearnings(content);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].date, '2026-04-04');
-  assert.deepEqual(entries[0].whatWorked, ['Used a helper function to parse dates']);
+  assert.deepEqual(entries[0].whatWorked, [
+    'Used a helper function to parse dates',
+  ]);
   assert.deepEqual(entries[0].whatDidnt, ['Overcomplicated the regex']);
   assert.deepEqual(entries[0].patterns, ['Keep parsing logic simple']);
 });
@@ -299,8 +307,14 @@ test('pruneCoderLearnings handles maxEntries of 0', () => {
 });
 
 test('pruneCoderLearnings handles null/undefined entries', () => {
-  assert.deepEqual(pruneCoderLearnings(null as unknown as CoderLearningsEntry[], 5), []);
-  assert.deepEqual(pruneCoderLearnings(undefined as unknown as CoderLearningsEntry[], 5), []);
+  assert.deepEqual(
+    pruneCoderLearnings(null as unknown as CoderLearningsEntry[], 5),
+    [],
+  );
+  assert.deepEqual(
+    pruneCoderLearnings(undefined as unknown as CoderLearningsEntry[], 5),
+    [],
+  );
 });
 
 test('roundtrip: parse -> format -> parse preserves content', () => {
@@ -359,9 +373,10 @@ test('reflectOnCoderRun returns fallback for success when no API key', async () 
 
   const entry = await reflectOnCoderRun(successResult, 'Add a new feature');
 
-  // Without API key, should return fallback with basic info
+  // Grounding: when the LLM reflection is unavailable, a successful run yields
+  // NO lesson rather than a fabricated "task completed" note.
   assert.equal(entry.date, new Date().toISOString().slice(0, 10));
-  assert.ok(entry.whatWorked.length > 0 || entry.patterns.length > 0);
+  assert.ok(isEmptyEntry(entry));
 });
 
 test('reflectOnCoderRun returns fallback for error when no API key', async () => {
@@ -384,6 +399,94 @@ test('reflectOnCoderRun returns fallback for error when no API key', async () =>
   // Without API key, should return fallback with error info
   assert.equal(entry.date, new Date().toISOString().slice(0, 10));
   assert.ok(entry.whatDidnt.length > 0);
+});
+
+function makeResult(
+  over: Partial<CodingWorkerResult> = {},
+): CodingWorkerResult {
+  return {
+    status: 'success',
+    summary: 'did a thing',
+    finalMessage: 'did a thing',
+    changedFiles: [],
+    commandsRun: [],
+    testsRun: [],
+    artifacts: [],
+    childRunIds: [],
+    startedAt: '2026-04-04T10:00:00Z',
+    finishedAt: '2026-04-04T10:01:00Z',
+    ...over,
+  };
+}
+
+test('parseReflectionResponse extracts real sections', () => {
+  const response = `What worked:
+- Reused the existing parser
+- Added a focused test
+
+What didn't:
+- First regex over-matched
+
+Patterns:
+- Validate before writing`;
+  const entry = parseReflectionResponse(response);
+  assert.equal(entry.whatWorked.length, 2);
+  assert.equal(entry.whatDidnt.length, 1);
+  assert.equal(entry.patterns.length, 1);
+});
+
+test('parseReflectionResponse does NOT fabricate lessons for unparseable output', () => {
+  const entry = parseReflectionResponse('prose with no structured sections');
+  assert.ok(
+    isEmptyEntry(entry),
+    'unparseable reflection must yield an empty entry',
+  );
+});
+
+test('isEmptyEntry distinguishes blank from grounded entries', () => {
+  assert.ok(
+    isEmptyEntry({ date: 'd', whatWorked: [], whatDidnt: [], patterns: [] }),
+  );
+  assert.ok(
+    !isEmptyEntry({
+      date: 'd',
+      whatWorked: ['x'],
+      whatDidnt: [],
+      patterns: [],
+    }),
+  );
+});
+
+test('hasRunEvidence requires a citable signal', () => {
+  // Success run that observably did nothing → no evidence.
+  assert.ok(!hasRunEvidence(makeResult()));
+  // Success run with real outputs → evidence.
+  assert.ok(hasRunEvidence(makeResult({ changedFiles: ['a.ts'] })));
+  assert.ok(hasRunEvidence(makeResult({ testsRun: ['npm test'] })));
+  // Errors are always citable.
+  assert.ok(hasRunEvidence(makeResult({ status: 'error', error: 'boom' })));
+});
+
+test('createFallbackEntry grounds errors and drops empty successes', () => {
+  // A successful run with no reflection must NOT fabricate a lesson.
+  assert.ok(isEmptyEntry(createFallbackEntry(makeResult(), 'no api key')));
+
+  // An error is a real signal — record it.
+  const failure = createFallbackEntry(
+    makeResult({ status: 'error', error: 'TypeError: x is undefined' }),
+    'llm failed',
+  );
+  assert.ok(!isEmptyEntry(failure));
+  assert.equal(failure.whatDidnt.length, 1);
+  assert.ok(failure.whatDidnt[0].includes('TypeError'));
+});
+
+test('writeCoderLearningsToMemorySync refuses to persist empty entries', () => {
+  const ok = writeCoderLearningsToMemorySync(
+    { date: '2026-04-04', whatWorked: [], whatDidnt: [], patterns: [] },
+    'some-nonexistent-group',
+  );
+  assert.equal(ok, false);
 });
 
 test('getCoderLearningsForContext returns empty string when MEMORY.md does not exist', async () => {
@@ -431,7 +534,10 @@ test('writeCoderLearningsToMemory writes entry to new MEMORY.md', async () => {
 });
 
 test('writeCoderLearningsToMemorySync creates Coder Learnings section', () => {
-  const testDir = path.join(os.tmpdir(), `coder-learnings-test-${Date.now()}-sync`);
+  const testDir = path.join(
+    os.tmpdir(),
+    `coder-learnings-test-${Date.now()}-sync`,
+  );
   const groupDir = path.join(testDir, 'global');
   fs.mkdirSync(groupDir, { recursive: true });
 
@@ -464,7 +570,10 @@ test('writeCoderLearningsToMemory handles missing group folder gracefully', asyn
   });
 
   // This should not throw even if group folder doesn't exist
-  const result = await writeCoderLearningsToMemory(entry, 'nonexistent-group-that-does-not-exist');
+  const result = await writeCoderLearningsToMemory(
+    entry,
+    'nonexistent-group-that-does-not-exist',
+  );
   // Result should be false because the group folder doesn't exist
   assert.equal(result, false);
 });
@@ -478,7 +587,10 @@ test('writeCoderLearningsToMemorySync handles errors gracefully', () => {
   });
 
   // With an invalid group folder path, should return false
-  const result = writeCoderLearningsToMemorySync(entry, 'nonexistent-group-xyz');
+  const result = writeCoderLearningsToMemorySync(
+    entry,
+    'nonexistent-group-xyz',
+  );
   assert.equal(result, false);
 });
 
