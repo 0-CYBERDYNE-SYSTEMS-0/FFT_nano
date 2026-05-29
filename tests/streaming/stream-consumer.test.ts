@@ -119,6 +119,66 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('delivery mode append sends durable blocks without editing', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-append',
+      adapter,
+      deliveryMode: 'append',
+      verboseMode: 'off',
+    });
+
+    await consumer.onDelta(
+      'First durable preview block with enough text to send',
+    );
+    await flush();
+    await consumer.onDelta(
+      'First durable preview block with enough text to send and a second retained block',
+    );
+    await flush();
+
+    assert.deepEqual(adapter.sent, [
+      {
+        chatId: 'telegram:1',
+        content: 'First durable preview block with enough text to send',
+      },
+      {
+        chatId: 'telegram:1',
+        content: 'and a second retained block',
+      },
+    ]);
+    assert.equal(adapter.edits.length, 0);
+    assert.equal(adapter.drafts.length, 0);
+
+    const result = await consumer.finish('Final answer delivered separately');
+    assert.equal(result.previewState, null);
+  });
+
+  test('delivery mode append diffs rapid queued snapshots after prior sends finish', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-append-queued',
+      adapter,
+      deliveryMode: 'append',
+      verboseMode: 'off',
+    });
+
+    await consumer.onDelta('Queued durable block with enough initial text');
+    await consumer.onDelta(
+      'Queued durable block with enough initial text plus later text',
+    );
+    await flush();
+
+    assert.deepEqual(
+      adapter.sent.map((message) => message.content),
+      ['Queued durable block with enough initial text', 'plus later text'],
+    );
+    assert.equal(adapter.edits.length, 0);
+    consumer.stop();
+  });
+
   test('delivery mode draft sends native drafts instead of durable preview messages', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({

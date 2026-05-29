@@ -320,7 +320,6 @@ import {
   startIpcWatcher as hcStartIpcWatcher,
   type HostCoordinationDeps,
 } from './host-coordination.js';
-import { isActionfulChatTask } from './evaluator.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,

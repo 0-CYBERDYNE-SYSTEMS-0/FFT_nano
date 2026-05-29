@@ -17,7 +17,6 @@ import {
 import { appendCompactionSummaryToMemory } from './memory-maintenance.js';
 import { resolveCompactionMemoryRelativePath } from './memory-maintenance.js';
 import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
-import { isActionfulChatTask } from './evaluator.js';
 import { getAllTasks } from './db.js';
 import { writeTasksSnapshot, writeGroupsSnapshot } from './pi-runner.js';
 import { getAvailableGroups } from './state-persistence.js';
@@ -546,9 +545,6 @@ export async function runAgent(
   const workspaceDir = isMain
     ? MAIN_WORKSPACE_DIR
     : resolveGroupFolderPath(group.folder);
-  const shouldBlockForChatEvaluation =
-    !options.isHeartbeatTask && isActionfulChatTask(prompt);
-
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
   writeTasksSnapshot(
@@ -634,8 +630,7 @@ export async function runAgent(
       noContinue: runtimePrefs.nextRunNoContinue === true,
       suppressPreviewStreaming:
         options.suppressPreviewStreaming === true ||
-        runtimePrefs.telegramDeliveryMode === 'off' ||
-        shouldBlockForChatEvaluation,
+        runtimePrefs.telegramDeliveryMode === 'off',
       lifecyclePolicyOverride: options.lifecyclePolicyOverride,
       showReasoning:
         runtimePrefs.showReasoning === true ||

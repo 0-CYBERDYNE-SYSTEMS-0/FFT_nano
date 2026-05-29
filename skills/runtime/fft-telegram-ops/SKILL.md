@@ -67,9 +67,10 @@ Main/admin chat only:
 - Main chat responds to all messages.
 - Non-main chats require trigger prefix `@<ASSISTANT_NAME>` (default `@FarmFriend`).
 - Coder delegation is rejected in non-main chats.
-- `/delivery [stream|off|draft]` controls Telegram text preview behavior for the current chat. It is not cron delivery.
+- `/delivery [stream|append|off|draft]` controls Telegram text preview behavior for the current chat. It is not cron delivery.
 - `/text_delivery` is an alias for `/delivery`.
 - `stream` is the default durable preview message/edit mode.
+- `append` sends durable in-flight update blocks that remain in chat; the final answer is sent separately.
 - `off` disables preview streaming and sends only the final answer.
 - `draft` uses Telegram native `sendMessageDraft` for ephemeral in-flight previews; the final answer is still sent as a normal durable message.
 

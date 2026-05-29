@@ -67,7 +67,7 @@ function createAdapter(): PlatformAdapter & {
 }
 
 test('Telegram /delivery modes propagate through dispatch, StreamConsumer, and final delivery', async () => {
-  for (const mode of ['stream', 'draft', 'off'] as const) {
+  for (const mode of ['stream', 'append', 'draft', 'off'] as const) {
     const state = {
       registeredGroups: {
         'telegram:1': {
@@ -313,6 +313,12 @@ test('Telegram /delivery modes propagate through dispatch, StreamConsumer, and f
       assert.deepEqual(finalizedPreviews, [
         { messageId: 1, text: 'Final answer from agent' },
       ]);
+    } else if (mode === 'append') {
+      assert.equal(adapter.sent.length, 2);
+      assert.equal(adapter.edits.length, 0);
+      assert.equal(adapter.drafts.length, 0);
+      assert.deepEqual(finalizedPreviews, []);
+      assert.deepEqual(finalSends, ['Final answer from agent']);
     } else if (mode === 'draft') {
       assert.equal(adapter.sent.length, 0);
       assert.equal(adapter.edits.length, 0);

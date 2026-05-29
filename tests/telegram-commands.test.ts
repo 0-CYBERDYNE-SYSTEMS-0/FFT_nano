@@ -95,13 +95,13 @@ function createBaseDeps(): TelegramCommandDeps {
           off: 'off',
           stream: 'stream',
           partial: 'stream',
-          block: 'stream',
+          block: 'append',
           draft: 'draft',
           native: 'draft',
           progress: 'stream',
           live: 'stream',
-          persistent: 'stream',
-          append: 'stream',
+          persistent: 'append',
+          append: 'append',
           final: 'off',
         }) as Record<string, string>
       )[value.trim().toLowerCase()] ?? null,
@@ -781,13 +781,13 @@ test('handleTelegramCommand normalizes delivery aliases to canonical persisted v
       off: 'off',
       stream: 'stream',
       partial: 'stream',
-      block: 'stream',
+      block: 'append',
       draft: 'draft',
       native: 'draft',
       progress: 'stream',
       live: 'stream',
-      persistent: 'stream',
-      append: 'stream',
+      persistent: 'append',
+      append: 'append',
       final: 'off',
     })[value];
 
@@ -824,7 +824,7 @@ test('handleTelegramCommand accepts the native Telegram draft delivery mode', as
   assert.match(deps.sent[0]?.text || '', /Delivery mode set to draft/i);
 });
 
-test('handleTelegramCommand maps append delivery mode to durable stream', async () => {
+test('handleTelegramCommand maps append delivery mode to durable blocks', async () => {
   const updates: Array<Record<string, any>> = [];
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
@@ -841,8 +841,8 @@ test('handleTelegramCommand maps append delivery mode to durable stream', async 
   });
 
   assert.equal(handled, true);
-  assert.deepEqual(updates, [{ telegramDeliveryMode: 'stream' }]);
-  assert.match(deps.sent[0]?.text || '', /Delivery mode set to stream/i);
+  assert.deepEqual(updates, [{ telegramDeliveryMode: 'append' }]);
+  assert.match(deps.sent[0]?.text || '', /Delivery mode set to append/i);
 });
 
 test('handleTelegramCommand reports canonical delivery modes in help text', async () => {

@@ -1331,13 +1331,14 @@ export function buildDeliveryPanel(chatJid: string): {
 } {
   const current =
     state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'stream';
-  const modes: TelegramDeliveryMode[] = ['stream', 'off', 'draft'];
+  const modes: TelegramDeliveryMode[] = ['stream', 'append', 'off', 'draft'];
   return {
     text: [
       'Select Telegram text delivery mode:',
       `Current: ${current}`,
       '',
       'stream: durable streaming message (default)',
+      'append: durable update blocks that remain in chat',
       'off: no preview — final answer only',
       'draft: native Telegram draft preview (ephemeral)',
     ].join('\n'),

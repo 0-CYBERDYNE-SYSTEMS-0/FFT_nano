@@ -14,6 +14,7 @@ const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
 const MAX_FAILURES_BEFORE_DISABLE = 4;
 const DISABLE_TTL_MS = 120_000;
 const MIN_PREVIEW_CHARS = 20;
+const MAX_APPEND_BLOCK_CHARS = 3_900;
 const MAX_TOOL_TRAIL_LENGTH = 8;
 const MAX_TOOL_PROGRESS_LINES = 12;
 
@@ -81,6 +82,8 @@ export class StreamConsumer {
 
   private draftId: number | null = null;
   private draftMode = false;
+  private appendMode = false;
+  private appendSourceText = '';
 
   private readonly label: string;
   private readonly heartbeatMs: number;
@@ -88,6 +91,7 @@ export class StreamConsumer {
   constructor(private readonly config: StreamConsumerConfig) {
     this.label = config.label || 'Agent';
     this.heartbeatMs = config.heartbeatMs ?? 15_000;
+    this.appendMode = config.deliveryMode === 'append';
     this.draftMode =
       config.deliveryMode === 'draft' &&
       typeof config.adapter.sendDraft === 'function' &&
@@ -104,6 +108,17 @@ export class StreamConsumer {
     if (this.isBackedOff()) return;
 
     const nextText = this.appendToolTrailFooter(text);
+
+    if (this.appendMode) {
+      this.editChain = this.editChain
+        .catch(() => {})
+        .then(() => {
+          const appendText = this.extractAppendText(nextText);
+          if (!appendText) return;
+          return this.sendAppendBlock(appendText, nextText);
+        });
+      return;
+    }
 
     const hasExistingDraft = this.draftMode && this.lastText.length > 0;
     if (
@@ -244,6 +259,11 @@ export class StreamConsumer {
     this.completed = true;
     this.clearHeartbeat();
 
+    if (this.appendMode) {
+      await this.editChain.catch(() => {});
+      return { previewState: null, completed: true };
+    }
+
     if (finalText && this.messageId) {
       await this.editChain.catch(() => {});
       const result = await this.config.adapter.editMessage(
@@ -282,6 +302,7 @@ export class StreamConsumer {
   }
 
   getPreviewState(): PreviewState | null {
+    if (this.appendMode) return null;
     if (!this.messageId) return null;
     return { messageId: this.messageId, lastText: this.lastText };
   }
@@ -372,6 +393,14 @@ export class StreamConsumer {
       .catch(() => {})
       .then(async () => {
         const { adapter, chatId } = this.config;
+        if (this.appendMode) {
+          const text = formatToolProgressMessage([line]);
+          const result = await adapter.send(chatId, text);
+          if (!result.success) this.recordFailure();
+          else this.clearFailures();
+          return;
+        }
+
         if (this.draftMode && this.draftId !== null) {
           await this.sendOrEdit(text);
           return;
@@ -389,6 +418,62 @@ export class StreamConsumer {
   private appendToolTrailFooter(text: string): string {
     const footer = formatToolTrailFooter(this.toolTrail);
     return footer ? `${text}\n\n${footer}` : text;
+  }
+
+  private extractAppendText(nextText: string): string {
+    if (nextText === this.appendSourceText) return '';
+    if (this.appendSourceText && nextText.startsWith(this.appendSourceText)) {
+      return nextText.slice(this.appendSourceText.length).trim();
+    }
+    return nextText.trim();
+  }
+
+  private async sendAppendBlock(
+    text: string,
+    sourceText: string,
+  ): Promise<void> {
+    if (text.length < MIN_PREVIEW_CHARS && !this.appendSourceText) return;
+
+    const chunks = this.chunkAppendBlock(text);
+    if (chunks.length === 0) return;
+
+    let sentAll = true;
+    for (const chunk of chunks) {
+      const result = await this.config.adapter.send(this.config.chatId, chunk);
+      if (!result.success) {
+        sentAll = false;
+        this.recordFailure();
+        break;
+      }
+    }
+
+    if (sentAll) {
+      this.appendSourceText = sourceText;
+      this.lastText = sourceText;
+      this.clearFailures();
+    }
+  }
+
+  private chunkAppendBlock(text: string): string[] {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+    if (trimmed.length <= MAX_APPEND_BLOCK_CHARS) return [trimmed];
+
+    const chunks: string[] = [];
+    let remaining = trimmed;
+    while (remaining.length > MAX_APPEND_BLOCK_CHARS) {
+      let splitAt = remaining.lastIndexOf('\n\n', MAX_APPEND_BLOCK_CHARS);
+      if (splitAt < MAX_APPEND_BLOCK_CHARS * 0.5) {
+        splitAt = remaining.lastIndexOf('\n', MAX_APPEND_BLOCK_CHARS);
+      }
+      if (splitAt < MAX_APPEND_BLOCK_CHARS * 0.5) {
+        splitAt = MAX_APPEND_BLOCK_CHARS;
+      }
+      chunks.push(remaining.slice(0, splitAt).trim());
+      remaining = remaining.slice(splitAt).trim();
+    }
+    if (remaining) chunks.push(remaining);
+    return chunks;
   }
 
   private emitStatusText(phase: string, text: string, detail?: string): void {
