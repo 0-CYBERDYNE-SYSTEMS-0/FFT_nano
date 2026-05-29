@@ -1,22 +1,29 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { StreamConsumer } from '../../src/streaming/stream-consumer.js';
-import type { PlatformAdapter, SendResult } from '../../src/streaming/platform-adapter.js';
+import type { PlatformAdapter } from '../../src/streaming/platform-adapter.js';
 
-function createMockAdapter(overrides?: Partial<PlatformAdapter>): PlatformAdapter & {
+function createMockAdapter(
+  overrides?: Partial<PlatformAdapter>,
+): PlatformAdapter & {
   sent: Array<{ chatId: string; content: string }>;
   edits: Array<{ chatId: string; messageId: string; content: string }>;
   deletes: Array<{ chatId: string; messageId: string }>;
+  drafts: Array<{ chatId: string; draftId: number; content: string }>;
 } {
   let messageCounter = 0;
   const sent: Array<{ chatId: string; content: string }> = [];
-  const edits: Array<{ chatId: string; messageId: string; content: string }> = [];
+  const edits: Array<{ chatId: string; messageId: string; content: string }> =
+    [];
   const deletes: Array<{ chatId: string; messageId: string }> = [];
+  const drafts: Array<{ chatId: string; draftId: number; content: string }> =
+    [];
 
   return {
     sent,
     edits,
     deletes,
+    drafts,
     async send(chatId, content) {
       sent.push({ chatId, content });
       messageCounter++;
@@ -28,6 +35,13 @@ function createMockAdapter(overrides?: Partial<PlatformAdapter>): PlatformAdapte
     },
     async deleteMessage(chatId, messageId) {
       deletes.push({ chatId, messageId });
+    },
+    async sendDraft(chatId, draftId, content) {
+      drafts.push({ chatId, draftId, content });
+      return { success: true, messageId: String(draftId) };
+    },
+    supportsDraftStreaming() {
+      return true;
     },
     ...overrides,
   };
@@ -48,13 +62,20 @@ describe('StreamConsumer', () => {
       verboseMode: 'off',
     });
 
-    await consumer.onDelta('Hello, this is a long enough message to pass threshold');
+    await consumer.onDelta(
+      'Hello, this is a long enough message to pass threshold',
+    );
     await flush();
 
     assert.equal(adapter.sent.length, 1);
-    assert.equal(adapter.sent[0].content, 'Hello, this is a long enough message to pass threshold');
+    assert.equal(
+      adapter.sent[0].content,
+      'Hello, this is a long enough message to pass threshold',
+    );
 
-    await consumer.onDelta('Hello, this is updated text that is also long enough');
+    await consumer.onDelta(
+      'Hello, this is updated text that is also long enough',
+    );
     await flush();
 
     assert.equal(adapter.edits.length, 1);
@@ -94,6 +115,72 @@ describe('StreamConsumer', () => {
     await flush();
 
     assert.equal(adapter.sent.length, 0);
+    assert.equal(adapter.drafts.length, 0);
+    consumer.stop();
+  });
+
+  test('delivery mode draft sends native drafts instead of durable preview messages', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-draft',
+      adapter,
+      draftId: 321,
+      deliveryMode: 'draft',
+      verboseMode: 'off',
+    });
+
+    await consumer.onDelta('This is a native draft preview with enough text');
+    await flush();
+    await consumer.onDelta(
+      'This is an updated native draft preview with enough text',
+    );
+    await flush();
+    await consumer.onDelta(
+      'This is an updated native draft preview with enough text',
+    );
+    await flush();
+
+    assert.equal(adapter.sent.length, 0);
+    assert.equal(adapter.edits.length, 0);
+    assert.deepEqual(adapter.drafts, [
+      {
+        chatId: 'telegram:1',
+        draftId: 321,
+        content: 'This is a native draft preview with enough text',
+      },
+      {
+        chatId: 'telegram:1',
+        draftId: 321,
+        content: 'This is an updated native draft preview with enough text',
+      },
+    ]);
+
+    const result = await consumer.finish(
+      'This final answer is delivered separately',
+    );
+    assert.equal(result.previewState, null);
+  });
+
+  test('delivery mode draft keeps verbose tool progress in the native draft', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-draft-tools',
+      adapter,
+      draftId: 654,
+      deliveryMode: 'draft',
+      verboseMode: 'all',
+    });
+
+    consumer.onToolEvent({ toolName: 'Bash', status: 'start' });
+    await flush();
+
+    assert.equal(adapter.sent.length, 0);
+    assert.equal(adapter.edits.length, 0);
+    assert.equal(adapter.drafts.length, 1);
+    assert.equal(adapter.drafts[0].draftId, 654);
+    assert.match(adapter.drafts[0].content, /Bash/);
     consumer.stop();
   });
 
@@ -170,11 +257,16 @@ describe('StreamConsumer', () => {
     await consumer.onDelta('This is the current preview text here');
     await flush();
 
-    const result = await consumer.finish('This is the final text for the message');
+    const result = await consumer.finish(
+      'This is the final text for the message',
+    );
     assert.equal(result.completed, true);
     assert.ok(result.previewState);
     assert.equal(result.previewState.messageId, '1');
-    assert.equal(result.previewState.lastText, 'This is the final text for the message');
+    assert.equal(
+      result.previewState.lastText,
+      'This is the final text for the message',
+    );
   });
 
   test('finish with no message returns null previewState', async () => {
@@ -245,8 +337,10 @@ describe('StreamConsumer', () => {
     await flush();
 
     assert.equal(adapter.sent.length >= 1, true);
-    const lastContent = adapter.sent[adapter.sent.length - 1]?.content ||
-      adapter.edits[adapter.edits.length - 1]?.content || '';
+    const lastContent =
+      adapter.sent[adapter.sent.length - 1]?.content ||
+      adapter.edits[adapter.edits.length - 1]?.content ||
+      '';
     assert.ok(lastContent.includes('Tools:'));
     assert.ok(lastContent.includes('Bash'));
     assert.ok(lastContent.includes('Read'));
@@ -266,7 +360,12 @@ describe('StreamConsumer', () => {
       onTuiEvent: (event) => tuiEvents.push(event),
     });
 
-    consumer.handleProgress({ kind: 'spawn', at: Date.now(), pid: 1, resumed: false });
+    consumer.handleProgress({
+      kind: 'spawn',
+      at: Date.now(),
+      pid: 1,
+      resumed: false,
+    });
     consumer.handleProgress({ kind: 'thinking', at: Date.now() });
 
     assert.ok(tuiEvents.some((e) => e.phase === 'spawn'));
@@ -292,7 +391,10 @@ describe('StreamConsumer', () => {
     await new Promise((resolve) => setTimeout(resolve, 120));
 
     const heartbeats = tuiEvents.filter((e) => e.text?.includes('Still'));
-    assert.ok(heartbeats.length >= 1, `expected heartbeat events, got ${heartbeats.length}`);
+    assert.ok(
+      heartbeats.length >= 1,
+      `expected heartbeat events, got ${heartbeats.length}`,
+    );
     consumer.stop();
   });
 });
