@@ -725,16 +725,31 @@ export async function runAgent(
       runToolsInvoked = output.toolExecutions?.length ?? 0;
 
       // Bridge: write StreamConsumer preview state into the registry
-      if (streamConsumer && attemptRequestId && isTelegramJid(chatJid)) {
-        const preview = streamConsumer.getPreviewState();
-        if (preview) {
-          const streamKey = getTelegramPreviewRunKey(chatJid, attemptRequestId);
-          telegramPreviewRegistry.setPreviewState(streamKey, {
-            messageId: Number(preview.messageId),
-            lastText: preview.lastText,
-            updatedAt: Date.now(),
-          });
+      if (streamConsumer && isTelegramJid(chatJid)) {
+        if (attemptRequestId) {
+          const preview = streamConsumer.getPreviewState();
+          if (preview) {
+            const streamKey = getTelegramPreviewRunKey(
+              chatJid,
+              attemptRequestId,
+            );
+            telegramPreviewRegistry.setPreviewState(streamKey, {
+              messageId: Number(preview.messageId),
+              lastText: preview.lastText,
+              updatedAt: Date.now(),
+            });
+          }
         }
+        // Collapse the ephemeral Activity bubble to a one-line receipt so the
+        // run's status churn never lingers as stale text. No-op when no activity
+        // bubble was spawned (quick turns). Non-destructive: never deletes.
+        const receipt =
+          output.status === 'error'
+            ? '⚠️ Stopped'
+            : runToolsInvoked > 0
+              ? `✓ Done · ${runToolsInvoked} tool${runToolsInvoked === 1 ? '' : 's'}`
+              : '✓ Done';
+        await streamConsumer.collapseActivity(receipt);
         streamConsumer.stop();
       }
 
