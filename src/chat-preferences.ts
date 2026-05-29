@@ -63,17 +63,24 @@ export function normalizeTelegramDeliveryMode(
       'streaming',
       'message',
       'messages',
-      'persistent',
-      'persist',
       'progress',
       'live',
       'partial',
+    ].includes(key)
+  ) {
+    return 'stream';
+  }
+  if (
+    [
+      'persistent',
+      'persist',
       'block',
+      'blocks',
       'append',
       'transcript',
     ].includes(key)
   ) {
-    return 'stream';
+    return 'append';
   }
   if (
     [
@@ -205,7 +212,8 @@ export function compactChatRunPreferences(
   }
   if (
     prefs.telegramDeliveryMode === 'off' ||
-    prefs.telegramDeliveryMode === 'draft'
+    prefs.telegramDeliveryMode === 'draft' ||
+    prefs.telegramDeliveryMode === 'append'
   ) {
     next.telegramDeliveryMode = prefs.telegramDeliveryMode;
   }

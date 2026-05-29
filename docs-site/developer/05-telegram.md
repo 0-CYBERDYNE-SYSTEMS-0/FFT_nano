@@ -70,19 +70,21 @@ Typing indicator:
 Public modes:
 
 - `stream`: default. Sends a durable preview message with `sendStreamMessage`, edits it as assistant/status text arrives, then finalizes the same message when possible to avoid duplicate final sends.
+- `append`: sends durable in-flight update blocks as separate Telegram messages. Those blocks remain visible; the final response is still sent as a separate durable message.
 - `off`: disables Telegram preview streaming for the chat. The container run receives `suppressPreviewStreaming`, and the user receives only the final durable answer.
 - `draft`: sends in-flight assistant/status text through native `sendMessageDraft`. Drafts are ephemeral; finalization does not treat the draft as a delivered answer, so the final response is still sent as a normal message.
 
 Legacy aliases normalize to public modes:
 
-- `partial`, `append`, `persistent`, `progress`, `live`, `transcript`, and related stream terms normalize to `stream`.
+- `partial`, `progress`, and `live` normalize to `stream`.
+- `append`, `persistent`, `block`, and `transcript` normalize to `append`.
 - `final`, `quiet`, and `final-only` normalize to `off`.
 
 Implementation map:
 
 ```mermaid
 flowchart TB
-  User["Telegram user"] --> Cmd["/delivery [stream|off|draft]<br/>alias: /text_delivery"]
+  User["Telegram user"] --> Cmd["/delivery [stream|append|off|draft]<br/>alias: /text_delivery"]
 
   Cmd --> Parser["telegram-commands.ts<br/>normalizeTelegramDeliveryMode"]
   Parser --> Prefs["chatRunPreferences[chatJid].telegramDeliveryMode"]
@@ -107,8 +109,9 @@ flowchart TB
 
 Notes:
 
-- `TelegramDeliveryMode` still includes `partial` and `append` for legacy state compatibility, and `host-coordination.ts` still has an `append` branch. The `/delivery` command no longer exposes those as real modes.
+- `TelegramDeliveryMode` still includes `partial` for legacy state compatibility. `append` is a real public mode for persistent update blocks.
 - Draft-mode assistant deltas and verbose tool progress are routed through `StreamConsumer` to `sendMessageDraft`; no durable preview message is created for those updates.
+- Actionful chat tasks still publish assistant/status preview deltas unless delivery mode is `off`; evaluator-specific runs keep preview streaming suppressed.
 - `skills/runtime/fft-telegram-ops/SKILL.md` is the repo-tracked operator skill for Telegram workflows and should stay aligned with this command surface.
 
 ## Hermes Comparison

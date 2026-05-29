@@ -40,14 +40,14 @@ test('normalizeTelegramDeliveryMode maps supported values', () => {
   assert.equal(normalizeTelegramDeliveryMode('off'), 'off');
   assert.equal(normalizeTelegramDeliveryMode('stream'), 'stream');
   assert.equal(normalizeTelegramDeliveryMode('partial'), 'stream');
-  assert.equal(normalizeTelegramDeliveryMode('block'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('block'), 'append');
   assert.equal(normalizeTelegramDeliveryMode('draft'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('native'), 'draft');
   assert.equal(normalizeTelegramDeliveryMode('progress'), 'stream');
   assert.equal(normalizeTelegramDeliveryMode('live'), 'stream');
-  assert.equal(normalizeTelegramDeliveryMode('append'), 'stream');
-  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'stream');
-  assert.equal(normalizeTelegramDeliveryMode('transcript'), 'stream');
+  assert.equal(normalizeTelegramDeliveryMode('append'), 'append');
+  assert.equal(normalizeTelegramDeliveryMode('persistent'), 'append');
+  assert.equal(normalizeTelegramDeliveryMode('transcript'), 'append');
   assert.equal(normalizeTelegramDeliveryMode('final'), 'off');
   assert.equal(normalizeTelegramDeliveryMode(''), undefined);
 });
@@ -117,7 +117,7 @@ test('updateChatRunPreferences compacts defaults and persists', () => {
   assert.equal(runtime.getSaveCount(), 4);
 });
 
-test('legacy Telegram delivery aliases normalize to durable stream and compact away', () => {
+test('persistent Telegram delivery aliases normalize to durable append mode', () => {
   const runtime = createRuntime();
 
   const next = updateChatRunPreferences(runtime, 'telegram:1', (prefs) => {
@@ -125,8 +125,11 @@ test('legacy Telegram delivery aliases normalize to durable stream and compact a
     return prefs;
   });
 
-  assert.equal(next.telegramDeliveryMode, undefined);
-  assert.equal(runtime.chatRunPreferences['telegram:1'], undefined);
+  assert.equal(next.telegramDeliveryMode, 'append');
+  assert.equal(
+    runtime.chatRunPreferences['telegram:1']?.telegramDeliveryMode,
+    'append',
+  );
 });
 
 test('explicit native Telegram draft mode persists because it is not the default', () => {

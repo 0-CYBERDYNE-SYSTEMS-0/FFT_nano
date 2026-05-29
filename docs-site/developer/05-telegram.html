@@ -175,17 +175,19 @@
 <p>Public modes:</p>
 <ul>
 <li><code>stream</code>: default. Sends a durable preview message with <code>sendStreamMessage</code>, edits it as assistant/status text arrives, then finalizes the same message when possible to avoid duplicate final sends.</li>
+<li><code>append</code>: sends durable in-flight update blocks as separate Telegram messages. Those blocks remain visible; the final response is still sent as a separate durable message.</li>
 <li><code>off</code>: disables Telegram preview streaming for the chat. The container run receives <code>suppressPreviewStreaming</code>, and the user receives only the final durable answer.</li>
 <li><code>draft</code>: sends in-flight assistant/status text through native <code>sendMessageDraft</code>. Drafts are ephemeral; finalization does not treat the draft as a delivered answer, so the final response is still sent as a normal message.</li>
 </ul>
 <p>Legacy aliases normalize to public modes:</p>
 <ul>
-<li><code>partial</code>, <code>append</code>, <code>persistent</code>, <code>progress</code>, <code>live</code>, <code>transcript</code>, and related stream terms normalize to <code>stream</code>.</li>
+<li><code>partial</code>, <code>progress</code>, and <code>live</code> normalize to <code>stream</code>.</li>
+<li><code>append</code>, <code>persistent</code>, <code>block</code>, and <code>transcript</code> normalize to <code>append</code>.</li>
 <li><code>final</code>, <code>quiet</code>, and <code>final-only</code> normalize to <code>off</code>.</li>
 </ul>
 <p>Implementation map:</p>
 <pre><code class="language-mermaid">flowchart TB
-  User[&quot;Telegram user&quot;] --&gt; Cmd[&quot;/delivery [stream|off|draft]&lt;br/&gt;alias: /text_delivery&quot;]
+  User[&quot;Telegram user&quot;] --&gt; Cmd[&quot;/delivery [stream|append|off|draft]&lt;br/&gt;alias: /text_delivery&quot;]
 
   Cmd --&gt; Parser[&quot;telegram-commands.ts&lt;br/&gt;normalizeTelegramDeliveryMode&quot;]
   Parser --&gt; Prefs[&quot;chatRunPreferences[chatJid].telegramDeliveryMode&quot;]
@@ -209,8 +211,9 @@
 </code></pre>
 <p>Notes:</p>
 <ul>
-<li><code>TelegramDeliveryMode</code> still includes <code>partial</code> and <code>append</code> for legacy state compatibility, and <code>host-coordination.ts</code> still has an <code>append</code> branch. The <code>/delivery</code> command no longer exposes those as real modes.</li>
+<li><code>TelegramDeliveryMode</code> still includes <code>partial</code> for legacy state compatibility. <code>append</code> is a real public mode for persistent update blocks.</li>
 <li>Draft-mode assistant deltas and verbose tool progress are routed through <code>StreamConsumer</code> to <code>sendMessageDraft</code>; no durable preview message is created for those updates.</li>
+<li>Actionful chat tasks still publish assistant/status preview deltas unless delivery mode is <code>off</code>; evaluator-specific runs keep preview streaming suppressed.</li>
 <li><code>skills/runtime/fft-telegram-ops/SKILL.md</code> is the repo-tracked operator skill for Telegram workflows and should stay aligned with this command surface.</li>
 </ul>
 <h2 id="hermes-comparison">Hermes Comparison</h2>
