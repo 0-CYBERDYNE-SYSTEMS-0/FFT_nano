@@ -17,10 +17,22 @@ const MIN_PREVIEW_CHARS = 20;
 const MAX_TOOL_TRAIL_LENGTH = 8;
 const MAX_TOOL_PROGRESS_LINES = 12;
 
+function deriveStreamDraftId(seed: string): number {
+  const input = seed.trim() || `draft-${Date.now()}`;
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const raw = hash >>> 0;
+  return (raw % 2_000_000_000) + 1;
+}
+
 export interface StreamConsumerConfig {
   chatId: string;
   runId: string;
   adapter: PlatformAdapter;
+  draftId?: number;
   label?: string;
   heartbeatMs?: number;
   deliveryMode: TelegramDeliveryMode;
@@ -76,6 +88,14 @@ export class StreamConsumer {
   constructor(private readonly config: StreamConsumerConfig) {
     this.label = config.label || 'Agent';
     this.heartbeatMs = config.heartbeatMs ?? 15_000;
+    this.draftMode =
+      config.deliveryMode === 'draft' &&
+      typeof config.adapter.sendDraft === 'function' &&
+      config.adapter.supportsDraftStreaming?.(config.chatId) !== false;
+    this.draftId = this.draftMode
+      ? config.draftId ||
+        deriveStreamDraftId(`${config.chatId}:${config.runId}`)
+      : null;
   }
 
   async onDelta(text: string): Promise<void> {
@@ -85,15 +105,18 @@ export class StreamConsumer {
 
     const nextText = this.appendToolTrailFooter(text);
 
+    const hasExistingDraft = this.draftMode && this.lastText.length > 0;
     if (
       !this.messageId &&
-      !this.draftMode &&
+      !hasExistingDraft &&
       nextText.length < MIN_PREVIEW_CHARS
     ) {
       return;
     }
 
-    if (this.messageId && this.lastText === nextText) return;
+    if ((this.messageId || hasExistingDraft) && this.lastText === nextText) {
+      return;
+    }
 
     this.editChain = this.editChain
       .catch(() => {})
@@ -274,9 +297,13 @@ export class StreamConsumer {
 
     try {
       if (this.draftMode && this.draftId !== null && adapter.sendDraft) {
-        await adapter.sendDraft(chatId, this.draftId, text);
-        this.lastText = text;
-        this.clearFailures();
+        const result = await adapter.sendDraft(chatId, this.draftId, text);
+        if (result.success) {
+          this.lastText = text;
+          this.clearFailures();
+        } else {
+          this.recordFailure();
+        }
         return;
       }
 
@@ -345,6 +372,11 @@ export class StreamConsumer {
       .catch(() => {})
       .then(async () => {
         const { adapter, chatId } = this.config;
+        if (this.draftMode && this.draftId !== null) {
+          await this.sendOrEdit(text);
+          return;
+        }
+
         if (!this.toolProgressMessageId) {
           const result = await adapter.send(chatId, text);
           if (result.success) this.toolProgressMessageId = result.messageId;

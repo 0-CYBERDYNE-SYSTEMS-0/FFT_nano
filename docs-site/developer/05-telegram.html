@@ -110,7 +110,7 @@
           <h1>Telegram Integration</h1>
           <p>Rendered from Markdown into styled HTML. Code blocks, tables, and links stay readable and theme-consistent.</p>
         </section>
-        <section class="toc-box"><h3>On This Page</h3><a class="" href="#chat-jid-format">Chat JID Format</a><a class="" href="#polling-and-state">Polling and State</a><a class="" href="#inbound-message-normalization">Inbound Message Normalization</a><a class="" href="#outbound-behavior">Outbound Behavior</a><a class="" href="#media-download">Media Download</a><a class="" href="#command-menu-scopes">Command Menu Scopes</a><a class="" href="#command-surface-from-srcindexts">Command Surface (From src/index.ts)</a><a class="" href="#callback-panel-actions">Callback Panel Actions</a></section>
+        <section class="toc-box"><h3>On This Page</h3><a class="" href="#chat-jid-format">Chat JID Format</a><a class="" href="#polling-and-state">Polling and State</a><a class="" href="#inbound-message-normalization">Inbound Message Normalization</a><a class="" href="#outbound-behavior">Outbound Behavior</a><a class="" href="#delivery-text-preview-preference">/delivery Text Preview Preference</a><a class="" href="#hermes-comparison">Hermes Comparison</a><a class="" href="#media-download">Media Download</a><a class="" href="#command-menu-scopes">Command Menu Scopes</a><a class="" href="#command-surface-from-srcindexts">Command Surface (From src/index.ts)</a><a class="" href="#callback-panel-actions">Callback Panel Actions</a></section>
         <article class="article">
           <h1 id="telegram-integration">Telegram Integration</h1>
 <p>Primary files:</p>
@@ -131,6 +131,14 @@
 <ul>
 <li><code>data/telegram_state.json</code></li>
 </ul>
+<p>Telegram Bot API constraints to preserve:</p>
+<ul>
+<li><code>getUpdates</code> long polling uses monotonically advanced offsets; it does not work while an outgoing webhook is configured.</li>
+<li><code>setWebhook</code> supports a <code>secret_token</code>, which Telegram returns in the <code>X-Telegram-Bot-Api-Secret-Token</code> header.</li>
+<li><code>sendMessage</code>, <code>editMessageText</code>, and <code>sendMessageDraft</code> cap text at 4096 characters after entity parsing.</li>
+<li><code>sendMessageDraft</code> is Telegram&#39;s native ephemeral preview API; drafts are temporary and the finalized answer must still be sent with <code>sendMessage</code>.</li>
+</ul>
+<p>Source: <a href="https://core.telegram.org/bots/api/">Telegram Bot API</a>.</p>
 <p>Handled update kinds:</p>
 <ul>
 <li><code>message</code></li>
@@ -161,6 +169,58 @@
 <ul>
 <li><code>setTyping(chatJid, true)</code> starts periodic <code>sendChatAction(typing)</code> refresh loop</li>
 <li>disabled when run completes</li>
+</ul>
+<h2 id="delivery-text-preview-preference"><code>/delivery</code> Text Preview Preference</h2>
+<p><code>/delivery</code> is a per-chat Telegram text streaming preference. It is not cron result delivery. The alias <code>/text_delivery</code> reaches the same handler.</p>
+<p>Public modes:</p>
+<ul>
+<li><code>stream</code>: default. Sends a durable preview message with <code>sendStreamMessage</code>, edits it as assistant/status text arrives, then finalizes the same message when possible to avoid duplicate final sends.</li>
+<li><code>off</code>: disables Telegram preview streaming for the chat. The container run receives <code>suppressPreviewStreaming</code>, and the user receives only the final durable answer.</li>
+<li><code>draft</code>: sends in-flight assistant/status text through native <code>sendMessageDraft</code>. Drafts are ephemeral; finalization does not treat the draft as a delivered answer, so the final response is still sent as a normal message.</li>
+</ul>
+<p>Legacy aliases normalize to public modes:</p>
+<ul>
+<li><code>partial</code>, <code>append</code>, <code>persistent</code>, <code>progress</code>, <code>live</code>, <code>transcript</code>, and related stream terms normalize to <code>stream</code>.</li>
+<li><code>final</code>, <code>quiet</code>, and <code>final-only</code> normalize to <code>off</code>.</li>
+</ul>
+<p>Implementation map:</p>
+<pre><code class="language-mermaid">flowchart TB
+  User[&quot;Telegram user&quot;] --&gt; Cmd[&quot;/delivery [stream|off|draft]&lt;br/&gt;alias: /text_delivery&quot;]
+
+  Cmd --&gt; Parser[&quot;telegram-commands.ts&lt;br/&gt;normalizeTelegramDeliveryMode&quot;]
+  Parser --&gt; Prefs[&quot;chatRunPreferences[chatJid].telegramDeliveryMode&quot;]
+
+  Prefs --&gt; AgentRunner[&quot;agent-runner.ts&quot;]
+  Prefs --&gt; HostCoord[&quot;host-coordination.ts&quot;]
+  Prefs --&gt; Settings[&quot;telegram-settings.ts delivery panel&quot;]
+
+  AgentRunner --&gt; StreamConsumer[&quot;streaming/stream-consumer.ts&lt;br/&gt;assistant deltas + tool progress&quot;]
+  StreamConsumer --&gt; TgAdapter[&quot;streaming/telegram-adapter.ts&quot;]
+  TgAdapter --&gt; BotApi[&quot;telegram.ts&lt;br/&gt;sendStreamMessage/editStreamMessage/sendMessageDraft&quot;]
+
+  HostCoord --&gt; Registry[&quot;telegram-streaming.ts&lt;br/&gt;TelegramPreviewRegistry&quot;]
+  Registry --&gt; Preview[&quot;updateTelegramPreview&lt;br/&gt;durable message edit&quot;]
+  Registry --&gt; Draft[&quot;updateTelegramDraftPreview&lt;br/&gt;native draft preview&quot;]
+
+  AgentRunner --&gt; Finalize[&quot;message-dispatch-pipeline.ts&lt;br/&gt;finalizeCompletedRun&quot;]
+  HostCoord --&gt; Prep[&quot;prepareTelegramCompletionState&quot;]
+  Prep --&gt; Finalize
+  Finalize --&gt; FinalMsg[&quot;final answer send or preview finalize&quot;]
+</code></pre>
+<p>Notes:</p>
+<ul>
+<li><code>TelegramDeliveryMode</code> still includes <code>partial</code> and <code>append</code> for legacy state compatibility, and <code>host-coordination.ts</code> still has an <code>append</code> branch. The <code>/delivery</code> command no longer exposes those as real modes.</li>
+<li>Draft-mode assistant deltas and verbose tool progress are routed through <code>StreamConsumer</code> to <code>sendMessageDraft</code>; no durable preview message is created for those updates.</li>
+<li><code>skills/runtime/fft-telegram-ops/SKILL.md</code> is the repo-tracked operator skill for Telegram workflows and should stay aligned with this command surface.</li>
+</ul>
+<h2 id="hermes-comparison">Hermes Comparison</h2>
+<p>Hermes and FFT_nano both use Telegram as an operator-facing channel, but the delivery model is different:</p>
+<ul>
+<li>Hermes uses a generalized delivery system: <code>DeliveryTarget</code>, <code>DeliveryRouter</code>, and <code>send_message</code> can target <code>telegram</code>, <code>telegram:chat_id</code>, and <code>telegram:chat_id:thread_id</code>.</li>
+<li>FFT_nano uses a chat-runtime preference: <code>/delivery</code> changes how one Telegram chat sees in-flight assistant text for the current host runtime.</li>
+<li>Hermes Telegram is a <code>python-telegram-bot</code> adapter inside a multi-platform gateway.</li>
+<li>FFT_nano Telegram is a custom TypeScript Bot API client in <code>src/telegram.ts</code>, with preview delivery split across <code>telegram-delivery.ts</code>, <code>telegram-streaming.ts</code>, <code>streaming/stream-consumer.ts</code>, and finalization in <code>pipeline/message-dispatch-pipeline.ts</code>.</li>
+<li>Hermes exposes Telegram behavior through broad toolsets and <code>send_message</code>; FFT_nano exposes Telegram operations through command panels and <code>skills/runtime/fft-telegram-ops/SKILL.md</code>.</li>
 </ul>
 <h2 id="media-download">Media Download</h2>
 <p><code>downloadFile(fileId)</code> does:</p>
