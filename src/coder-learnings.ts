@@ -27,6 +27,40 @@ export interface CoderLearningsEntry {
   rawText?: string; // original markdown for reference
 }
 
+function emptyEntry(date: string): CoderLearningsEntry {
+  return { date, whatWorked: [], whatDidnt: [], patterns: [] };
+}
+
+/**
+ * An entry carries no lesson when every section is empty. Such entries are
+ * dropped rather than written, so the learnings file never accumulates blank
+ * or fabricated notes.
+ */
+export function isEmptyEntry(entry: CoderLearningsEntry): boolean {
+  return (
+    entry.whatWorked.length === 0 &&
+    entry.whatDidnt.length === 0 &&
+    entry.patterns.length === 0
+  );
+}
+
+/**
+ * A reflection is only grounded if the run produced a concrete, citable signal:
+ * a real error, changed files, commands/tests run, a diff, or a QA verdict. A
+ * "successful" run that observably did nothing has nothing to ground a lesson
+ * in — reflecting on it invites hallucinated lessons, so we skip it.
+ */
+export function hasRunEvidence(result: CodingWorkerResult): boolean {
+  if (result.status === 'error') return true;
+  return (
+    result.changedFiles.length > 0 ||
+    result.commandsRun.length > 0 ||
+    result.testsRun.length > 0 ||
+    Boolean(result.diffSummary) ||
+    Boolean(result.qaVerdict)
+  );
+}
+
 const LEARNINGS_SECTION_HEADER = '## Coder Learnings';
 const DATE_HEADING_RE = /^### (\d{4}-\d{2}-\d{2})\s*$/;
 const WHAT_WORKED_RE = /^What worked:?\s*$/i;
@@ -528,10 +562,7 @@ async function callLlmReflection(
  * Parse the LLM response into a CoderLearningsEntry.
  * Handles various response formats gracefully.
  */
-function parseReflectionResponse(
-  response: string,
-  status: CodingWorkerResult['status'],
-): CoderLearningsEntry {
+export function parseReflectionResponse(response: string): CoderLearningsEntry {
   const today = new Date().toISOString().slice(0, 10);
   const whatWorked: string[] = [];
   const whatDidnt: string[] = [];
@@ -577,20 +608,8 @@ function parseReflectionResponse(
     }
   }
 
-  // If we couldn't parse anything meaningful, provide sensible defaults
-  if (
-    whatWorked.length === 0 &&
-    whatDidnt.length === 0 &&
-    patterns.length === 0
-  ) {
-    if (status === 'success') {
-      whatWorked.push('Task completed successfully');
-      patterns.push('Completed coding task as requested');
-    } else {
-      whatDidnt.push('Task did not complete successfully');
-    }
-  }
-
+  // If nothing parsed, return an empty (ungrounded) entry. The caller drops it
+  // rather than fabricating a lesson the reflection never actually produced.
   return {
     date: today,
     whatWorked,
@@ -613,15 +632,18 @@ export async function reflectOnCoderRun(
   workerResult: CodingWorkerResult,
   taskText: string,
 ): Promise<CoderLearningsEntry> {
+  const today = new Date().toISOString().slice(0, 10);
+
   // Skip reflection for aborted runs
   if (workerResult.status === 'aborted') {
     logger.debug('Skipping reflection for aborted coder run');
-    return {
-      date: new Date().toISOString().slice(0, 10),
-      whatWorked: [],
-      whatDidnt: [],
-      patterns: [],
-    };
+    return emptyEntry(today);
+  }
+
+  // Skip runs with no citable signal — there is nothing to ground a lesson in.
+  if (!hasRunEvidence(workerResult)) {
+    logger.debug('Skipping reflection: coder run produced no citable evidence');
+    return emptyEntry(today);
   }
 
   try {
@@ -652,7 +674,7 @@ export async function reflectOnCoderRun(
       return createFallbackEntry(workerResult, 'LLM call returned no response');
     }
 
-    return parseReflectionResponse(response, workerResult.status);
+    return parseReflectionResponse(response);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logger.warn({ error }, 'reflectOnCoderRun threw');
@@ -661,29 +683,30 @@ export async function reflectOnCoderRun(
 }
 
 /**
- * Create a fallback learnings entry when LLM reflection fails.
+ * Create a fallback learnings entry when LLM reflection is unavailable. Only an
+ * actual error carries a citable signal worth recording; a "successful" run with
+ * no reflection has nothing to ground a lesson in, so it yields an empty entry
+ * (which the caller drops) rather than a fabricated "task completed" note.
  */
-function createFallbackEntry(
+export function createFallbackEntry(
   result: CodingWorkerResult,
   reason: string,
 ): CoderLearningsEntry {
   const today = new Date().toISOString().slice(0, 10);
 
-  if (result.status === 'success') {
-    return {
-      date: today,
-      whatWorked: [`Task completed: ${result.summary.slice(0, 100)}`],
-      whatDidnt: [],
-      patterns: [`Changed ${result.changedFiles.length} files`],
-    };
-  } else {
-    return {
-      date: today,
-      whatWorked: [],
-      whatDidnt: [`Error: ${(result.error || reason).slice(0, 100)}`],
-      patterns: [],
-    };
+  if (result.status === 'error') {
+    const detail = (result.error || reason || '').trim();
+    if (detail) {
+      return {
+        date: today,
+        whatWorked: [],
+        whatDidnt: [`Error: ${detail.slice(0, 100)}`],
+        patterns: [],
+      };
+    }
   }
+
+  return emptyEntry(today);
 }
 
 const MAX_CODER_LEARNINGS_ENTRIES = 20;
@@ -706,6 +729,8 @@ export async function writeCoderLearningsToMemory(
   entry: CoderLearningsEntry,
   groupFolder: string,
 ): Promise<boolean> {
+  // Never persist an ungrounded/empty reflection.
+  if (isEmptyEntry(entry)) return false;
   try {
     const { GROUPS_DIR } = await import('./config.js');
     const fs = await import('fs');
@@ -808,6 +833,8 @@ export function writeCoderLearningsToMemorySync(
   entry: CoderLearningsEntry,
   groupFolder: string,
 ): boolean {
+  // Never persist an ungrounded/empty reflection.
+  if (isEmptyEntry(entry)) return false;
   try {
     const { GROUPS_DIR } = require('./config.js');
     const fs = require('fs');
