@@ -17,6 +17,9 @@ const MIN_PREVIEW_CHARS = 20;
 const MAX_APPEND_BLOCK_CHARS = 3_900;
 const MAX_TOOL_TRAIL_LENGTH = 8;
 const MAX_TOOL_PROGRESS_LINES = 12;
+// Below this run age, status text never spawns its own bubble — quick turns stay
+// a single content bubble with no progress ceremony. See updateActivity().
+const DEFAULT_ACTIVITY_SPAWN_THRESHOLD_MS = 2_500;
 
 function deriveStreamDraftId(seed: string): number {
   const input = seed.trim() || `draft-${Date.now()}`;
@@ -39,6 +42,10 @@ export interface StreamConsumerConfig {
   deliveryMode: TelegramDeliveryMode;
   verboseMode: VerboseMode;
   onTuiEvent?: (event: StreamTuiEvent) => void;
+  // How long a run must last before status/progress text earns its own
+  // (ephemeral) Activity bubble. Quick turns finish before this and stay a
+  // single content bubble. Defaults to 2.5s.
+  activitySpawnThresholdMs?: number;
 }
 
 export interface StreamTuiEvent {
@@ -61,12 +68,28 @@ export interface FinishResult {
 }
 
 export class StreamConsumer {
+  // Content (Answer) block — streams the assistant's reply and becomes the
+  // final answer. In two-block mode nothing else writes here, so it is never
+  // overwritten mid-run.
   private messageId: string | null = null;
   private lastText = '';
   private failureCount = 0;
   private disabled = false;
   private disabledUntil = 0;
   private completed = false;
+
+  // Activity block — ephemeral bubble carrying status/progress/reasoning churn,
+  // kept separate from the content block so the two never clobber each other.
+  private activityMessageId: string | null = null;
+  private activityText = '';
+  private pendingActivityText = '';
+  private activitySpawnTimer: NodeJS.Timeout | null = null;
+  private activityCollapsed = false;
+  private readonly runStartedAt = Date.now();
+  private readonly activitySpawnThresholdMs: number;
+  // Two-block delivery (separate activity + content bubbles) applies only to
+  // `stream` mode. append/draft/off retain their existing single-path behavior.
+  private readonly twoBlock: boolean;
 
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private heartbeatPhase = '';
@@ -91,11 +114,14 @@ export class StreamConsumer {
   constructor(private readonly config: StreamConsumerConfig) {
     this.label = config.label || 'Agent';
     this.heartbeatMs = config.heartbeatMs ?? 15_000;
+    this.activitySpawnThresholdMs =
+      config.activitySpawnThresholdMs ?? DEFAULT_ACTIVITY_SPAWN_THRESHOLD_MS;
     this.appendMode = config.deliveryMode === 'append';
     this.draftMode =
       config.deliveryMode === 'draft' &&
       typeof config.adapter.sendDraft === 'function' &&
       config.adapter.supportsDraftStreaming?.(config.chatId) !== false;
+    this.twoBlock = config.deliveryMode === 'stream';
     this.draftId = this.draftMode
       ? config.draftId ||
         deriveStreamDraftId(`${config.chatId}:${config.runId}`)
@@ -258,9 +284,11 @@ export class StreamConsumer {
   async finish(finalText?: string): Promise<FinishResult> {
     this.completed = true;
     this.clearHeartbeat();
+    this.clearActivityTimer();
 
     if (this.appendMode) {
       await this.editChain.catch(() => {});
+      await this.collapseActivity();
       return { previewState: null, completed: true };
     }
 
@@ -278,26 +306,62 @@ export class StreamConsumer {
     }
 
     await this.editChain.catch(() => {});
+    await this.collapseActivity();
 
     const previewState = this.getPreviewState();
     return { previewState, completed: true };
   }
 
+  /**
+   * Collapse the ephemeral Activity bubble to a one-line receipt at run end.
+   * No-op if no activity bubble was ever spawned (quick turns). Never deletes —
+   * a finished turn leaves a quiet "✓ Done" receipt above/near the answer
+   * rather than yanking content away. Safe to call more than once.
+   */
+  async collapseActivity(summary?: string): Promise<void> {
+    this.clearActivityTimer();
+    this.pendingActivityText = '';
+    await this.editChain.catch(() => {});
+    if (!this.activityMessageId || this.activityCollapsed) {
+      this.activityCollapsed = true;
+      return;
+    }
+    const text = summary && summary.trim() ? summary.trim() : '✓ Done';
+    try {
+      await this.config.adapter.editMessage(
+        this.config.chatId,
+        this.activityMessageId,
+        text,
+        true,
+      );
+      this.activityText = text;
+    } catch {
+      // best-effort
+    }
+    this.activityCollapsed = true;
+  }
+
   async abort(): Promise<void> {
     this.completed = true;
     this.clearHeartbeat();
+    this.clearActivityTimer();
     await this.editChain.catch(() => {});
 
-    if (this.messageId) {
+    // Non-destructive: collapse the activity bubble to an interrupted notice and
+    // LEAVE the content bubble in place. A recoverable stop must never yank away
+    // text the user was reading.
+    if (this.activityMessageId && !this.activityCollapsed) {
       try {
-        await this.config.adapter.deleteMessage(
+        await this.config.adapter.editMessage(
           this.config.chatId,
-          this.messageId,
+          this.activityMessageId,
+          '⟳ Interrupted.',
+          true,
         );
       } catch {
         // best-effort
       }
-      this.messageId = null;
+      this.activityCollapsed = true;
     }
   }
 
@@ -309,6 +373,7 @@ export class StreamConsumer {
 
   stop(): void {
     this.clearHeartbeat();
+    this.clearActivityTimer();
   }
 
   // ── Internal ──────────────────────────────────────────────────────
@@ -352,6 +417,74 @@ export class StreamConsumer {
     }
   }
 
+  /**
+   * Route status/progress text to the Activity bubble. Gated: for the first
+   * `activitySpawnThresholdMs` of a run no bubble is spawned (so quick turns
+   * stay a single content bubble). The latest pending status is buffered and a
+   * one-shot timer flushes it once the threshold passes, so a slow run whose
+   * status fired early still surfaces activity.
+   */
+  private updateActivity(text: string): void {
+    if (this.completed) return;
+    if (this.config.deliveryMode === 'off') return;
+    if (this.activityCollapsed) return;
+
+    const elapsed = Date.now() - this.runStartedAt;
+    if (!this.activityMessageId && elapsed < this.activitySpawnThresholdMs) {
+      this.pendingActivityText = text;
+      if (!this.activitySpawnTimer) {
+        const wait = Math.max(0, this.activitySpawnThresholdMs - elapsed);
+        this.activitySpawnTimer = setTimeout(() => {
+          this.activitySpawnTimer = null;
+          const pending = this.pendingActivityText;
+          if (!pending || this.completed || this.activityCollapsed) return;
+          this.editChain = this.editChain
+            .catch(() => {})
+            .then(() => this.sendOrEditActivity(pending));
+        }, wait);
+      }
+      return;
+    }
+
+    this.editChain = this.editChain
+      .catch(() => {})
+      .then(() => this.sendOrEditActivity(text));
+  }
+
+  private async sendOrEditActivity(text: string): Promise<void> {
+    if (this.activityCollapsed) return;
+    if (this.completed && !this.activityMessageId) return;
+    if (text === this.activityText) return;
+    const { adapter, chatId } = this.config;
+    try {
+      if (!this.activityMessageId) {
+        const result = await adapter.send(chatId, text);
+        if (result.success) {
+          this.activityMessageId = result.messageId;
+          this.activityText = text;
+        }
+        return;
+      }
+      const result = await adapter.editMessage(
+        chatId,
+        this.activityMessageId,
+        text,
+      );
+      if (result.success) {
+        this.activityText = text;
+      }
+    } catch {
+      // Activity is best-effort and must never throttle answer delivery.
+    }
+  }
+
+  private clearActivityTimer(): void {
+    if (this.activitySpawnTimer) {
+      clearTimeout(this.activitySpawnTimer);
+      this.activitySpawnTimer = null;
+    }
+  }
+
   private handleToolTrail(event: ToolProgressEvent): void {
     const { deliveryMode, verboseMode } = this.config;
     if (deliveryMode === 'off') return;
@@ -389,6 +522,12 @@ export class StreamConsumer {
     }
 
     const text = formatToolProgressMessage(this.toolProgressLines);
+
+    if (this.twoBlock) {
+      this.updateActivity(text);
+      return;
+    }
+
     this.editChain = this.editChain
       .catch(() => {})
       .then(async () => {
@@ -488,7 +627,13 @@ export class StreamConsumer {
       detail,
     });
 
-    if (this.config.deliveryMode !== 'off') {
+    if (this.config.deliveryMode === 'off') return;
+
+    // Two-block mode: status/progress churn goes to its own Activity bubble so
+    // it never overwrites the content bubble. Other modes keep the legacy path.
+    if (this.twoBlock) {
+      this.updateActivity(text);
+    } else {
       this.onDelta(text);
     }
   }

@@ -343,7 +343,7 @@ describe('StreamConsumer', () => {
     assert.equal(result.previewState, null);
   });
 
-  test('abort deletes preview message', async () => {
+  test('abort is non-destructive: never deletes the content bubble', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
       chatId: 'chat1',
@@ -351,6 +351,7 @@ describe('StreamConsumer', () => {
       adapter,
       deliveryMode: 'stream',
       verboseMode: 'off',
+      heartbeatMs: 0,
     });
 
     await consumer.onDelta('Preview text that is long enough to trigger send');
@@ -358,9 +359,157 @@ describe('StreamConsumer', () => {
 
     await consumer.abort();
 
-    assert.equal(adapter.deletes.length, 1);
-    assert.equal(adapter.deletes[0].messageId, '1');
-    assert.equal(consumer.getPreviewState(), null);
+    // The content the user was reading must survive a recoverable interruption.
+    assert.equal(adapter.deletes.length, 0);
+    assert.ok(consumer.getPreviewState());
+    assert.equal(consumer.getPreviewState()?.messageId, '1');
+  });
+
+  // ── Two-block delivery (stream mode) ───────────────────────────────────────
+
+  test('two-block: status text never overwrites the content bubble', async () => {
+    const adapter = createMockAdapter();
+    // Threshold 0 forces the Activity bubble to spawn immediately so we can
+    // prove status and content occupy DIFFERENT messages.
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run1',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      heartbeatMs: 0,
+      activitySpawnThresholdMs: 0,
+    });
+
+    await consumer.onDelta('This is the real streamed answer content here');
+    consumer.handleProgress({ kind: 'thinking', at: Date.now() });
+    await flush();
+
+    // Two distinct bubbles: content (msg 1) + activity (msg 2).
+    assert.equal(adapter.sent.length, 2);
+    const statusEditsOnContent = adapter.edits.filter(
+      (e) => e.messageId === '1' && e.content.includes('status:'),
+    );
+    assert.equal(
+      statusEditsOnContent.length,
+      0,
+      'status text must never be edited into the content bubble',
+    );
+    consumer.stop();
+  });
+
+  test('two-block: quick turns spawn no activity bubble', async () => {
+    const adapter = createMockAdapter();
+    // Default 2.5s threshold; run is brand new, so status fired now must NOT
+    // spawn an activity bubble before the run completes.
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run1',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      heartbeatMs: 0,
+    });
+
+    await consumer.onDelta('Quick answer that resolves immediately right now');
+    consumer.handleProgress({ kind: 'thinking', at: Date.now() });
+    await flush();
+    await consumer.finish('Quick answer that resolves immediately right now');
+
+    assert.equal(adapter.sent.length, 1, 'quick turn must stay one bubble');
+    consumer.stop();
+  });
+
+  test('two-block: collapseActivity leaves a receipt and never deletes', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run1',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      heartbeatMs: 0,
+      activitySpawnThresholdMs: 0,
+    });
+
+    consumer.handleProgress({ kind: 'thinking', at: Date.now() });
+    await flush();
+    await consumer.collapseActivity('✓ Done · 2 tools');
+
+    assert.equal(adapter.deletes.length, 0, 'collapse must never delete');
+    const lastEdit = adapter.edits[adapter.edits.length - 1];
+    assert.ok(lastEdit && lastEdit.content === '✓ Done · 2 tools');
+  });
+
+  test('two-block: activity send failure does not throttle answer delivery', async () => {
+    const adapter = createMockAdapter({
+      async send(chatId, content) {
+        if (content.includes('status:')) {
+          return { success: false, messageId: '', error: 'activity failed' };
+        }
+        return {
+          success: true,
+          messageId: String(adapter.sent.length + 1),
+        };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run1',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      heartbeatMs: 0,
+      activitySpawnThresholdMs: 0,
+    });
+
+    await consumer.onDelta('This is the real streamed answer content here');
+    consumer.handleProgress({ kind: 'thinking', at: Date.now() });
+    await flush();
+    await consumer.onDelta(
+      'This is the updated streamed answer content after activity failed',
+    );
+    await flush();
+
+    assert.equal(adapter.edits.length, 1);
+    assert.equal(adapter.edits[0].messageId, '1');
+    assert.equal(
+      adapter.edits[0].content,
+      'This is the updated streamed answer content after activity failed',
+    );
+    consumer.stop();
+  });
+
+  test('two-block: verbose tool progress uses the activity bubble', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run1',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'all',
+      heartbeatMs: 0,
+      activitySpawnThresholdMs: 0,
+    });
+
+    consumer.onToolEvent({
+      toolName: 'Bash',
+      status: 'start',
+      args: JSON.stringify({ command: 'npm test' }),
+    });
+    await flush();
+    await consumer.onDelta('This is the real streamed answer content here');
+    await flush();
+
+    assert.equal(adapter.sent.length, 2);
+    assert.match(adapter.sent[0].content, /Tool progress/);
+    assert.match(adapter.sent[0].content, /Bash/);
+    assert.equal(
+      adapter.sent[1].content,
+      'This is the real streamed answer content here\n\nTools: 🔥 Bash',
+    );
+    assert.equal(adapter.edits.length, 0);
+    consumer.stop();
   });
 
   test('onDelta after finish is ignored', async () => {
