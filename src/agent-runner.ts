@@ -43,6 +43,7 @@ import { MAIN_ONBOARDING_COMPLETION_TOKEN } from './onboarding-completion.js';
 import type { RegisteredGroup } from './types.js';
 import type { CodingHint } from './coding-delegation.js';
 import type { ExtensionUIRequest, ExtensionUIResponse } from './pi-runner.js';
+import type { PiToolExecution } from './pi-json-parser.js';
 import {
   maybeRunSkillSelfImprovement,
   maybeRunSkillManager,
@@ -639,6 +640,7 @@ export async function runAgent(
 
     const sessionKey = deps.getSessionKeyForChat(chatJid);
     let runToolsInvoked = 0;
+    let runToolExecutions: PiToolExecution[] = [];
 
     let streamConsumer: StreamConsumer | null = null;
 
@@ -723,6 +725,7 @@ export async function runAgent(
       );
       cancelPendingConfirmationsForChat(chatJid);
       runToolsInvoked = output.toolExecutions?.length ?? 0;
+      runToolExecutions = output.toolExecutions ?? [];
 
       // Bridge: write StreamConsumer preview state into the registry
       if (streamConsumer && isTelegramJid(chatJid)) {
@@ -885,6 +888,7 @@ export async function runAgent(
         originalTask: prompt,
         agentOutput: finalResult.result,
         toolsInvoked: runToolsInvoked,
+        toolExecutions: runToolExecutions,
         runtimePrefs,
         requestId,
       });

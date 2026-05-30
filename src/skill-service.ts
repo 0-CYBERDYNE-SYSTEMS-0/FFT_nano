@@ -36,6 +36,11 @@ import {
 } from './app-state.js';
 import { logger } from './logger.js';
 import type { RegisteredGroup } from './types.js';
+import type { PiToolExecution } from './pi-json-parser.js';
+import {
+  extractLearningSignals,
+  recordSelfImproveEvent,
+} from './self-improve-signals.js';
 import { ensureKnowledgeRuntimeSetup } from './telegram-group-mgmt.js';
 
 // ---------------------------------------------------------------------------
@@ -184,23 +189,49 @@ export function maybeRunSkillSelfImprovement(params: {
   originalTask: string;
   agentOutput: string;
   toolsInvoked: number;
+  toolExecutions?: PiToolExecution[];
   runtimePrefs: ChatRunPreferences;
   requestId?: string;
 }): void {
-  if (
-    !shouldTriggerSkillSelfImprove({
-      groupFolder: params.group.folder,
-      toolsInvoked: params.toolsInvoked,
-    })
-  ) {
+  const runId = params.requestId || 'run';
+  const { signals } = extractLearningSignals({
+    userTask: params.originalTask,
+    agentOutput: params.agentOutput,
+    toolExecutions: params.toolExecutions,
+  });
+
+  const due = shouldTriggerSkillSelfImprove({
+    groupFolder: params.group.folder,
+    toolsInvoked: params.toolsInvoked,
+  });
+
+  if (!due) {
+    recordSelfImproveEvent(params.group.folder, {
+      run_id: runId,
+      review_type: 'skill-self-improve',
+      trigger_reason: 'interval',
+      signals_detected: signals,
+      review_fired: false,
+      noop_reason: 'cadence threshold not reached',
+      success: true,
+    });
     return;
   }
+
+  recordSelfImproveEvent(params.group.folder, {
+    run_id: runId,
+    review_type: 'skill-self-improve',
+    trigger_reason: 'interval',
+    signals_detected: signals,
+    review_fired: true,
+    success: true,
+  });
 
   runQuietSkillAgent({
     group: params.group,
     chatJid: params.chatJid,
     runtimePrefs: params.runtimePrefs,
-    requestId: `${params.requestId || 'run'}:skill-self-improve`,
+    requestId: `${runId}:skill-self-improve`,
     prompt: [
       'Review the completed conversation for reusable procedural knowledge.',
       'Use skill_list first. Create or patch a skill only if this run taught a reusable workflow, pitfall, command pattern, farm operating procedure, or troubleshooting recipe.',
