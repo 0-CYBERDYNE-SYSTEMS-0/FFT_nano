@@ -235,6 +235,9 @@ export const state = {
   lastTelegramMenuMainChatId: null as string | null,
   lidToPhoneMap: {} as Record<string, string>,
   messageLoopRunning: false,
+  // Epoch ms of the most recent inbound user message across all channels.
+  // Drives the idle-curator gate (only runs when the host has been quiet).
+  lastInboundAt: 0,
   ipcWatcherRunning: false,
   groupSyncTimerStarted: false,
   heartbeatLoopStarted: false,

@@ -842,10 +842,20 @@ export function shouldRunSkillManager(
   skillsDir: string,
   config: SkillManagerConfig,
   now = new Date(),
+  lastInboundAt?: number,
 ): boolean {
   if (!config.enabled) return false;
   const state = loadSkillManagerState(skillsDir);
   if (state.paused) return false;
+  // Idle gate: don't run curator maintenance while the host is actively in use.
+  if (
+    config.minIdleHours > 0 &&
+    typeof lastInboundAt === 'number' &&
+    lastInboundAt > 0 &&
+    now.getTime() - lastInboundAt < config.minIdleHours * 60 * 60 * 1000
+  ) {
+    return false;
+  }
   if (!state.lastRunAt) {
     state.lastRunAt = now.toISOString();
     state.lastRunSummary =

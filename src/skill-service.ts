@@ -321,7 +321,10 @@ export function maybeRunSkillManager(params: {
 }): void {
   const skillsDir = resolveGroupSkillsDir(params.group.folder);
   const config = toSkillManagerConfig();
-  if (!shouldRunSkillManager(skillsDir, config)) return;
+  if (
+    !shouldRunSkillManager(skillsDir, config, new Date(), state.lastInboundAt)
+  )
+    return;
 
   const started = Date.now();
   if (config.backupEnabled) {

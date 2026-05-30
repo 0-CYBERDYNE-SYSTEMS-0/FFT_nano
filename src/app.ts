@@ -115,6 +115,7 @@ export interface AppRuntimeDeps {
     delivered: number;
     stillPending: number;
   }>;
+  runCuratorTick?: () => void;
 }
 
 export function createAppRuntime(deps: AppRuntimeDeps): {
@@ -128,7 +129,9 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
   main: () => Promise<void>;
 } {
   const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
+  const CURATOR_TICK_INTERVAL_MS = 60 * 60 * 1000; // hourly idle check
   let pruneTimer: ReturnType<typeof setInterval> | null = null;
+  let curatorTimer: ReturnType<typeof setInterval> | null = null;
   let groupSyncTimer: ReturnType<typeof setInterval> | null = null;
 
   function startPruneLoop(): void {
@@ -143,6 +146,24 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     if (pruneTimer !== null) {
       clearInterval(pruneTimer);
       pruneTimer = null;
+    }
+  }
+
+  // Idle curator: ticks hourly and runs skill-manager maintenance only when the
+  // host has been idle long enough (enforced by shouldRunSkillManager via
+  // minIdleHours), so curation happens independent of user traffic.
+  function startCuratorLoop(): void {
+    if (!deps.runCuratorTick) return;
+    curatorTimer = setInterval(() => {
+      deps.runCuratorTick?.();
+    }, CURATOR_TICK_INTERVAL_MS);
+    curatorTimer.unref?.();
+  }
+
+  function stopCuratorLoop(): void {
+    if (curatorTimer !== null) {
+      clearInterval(curatorTimer);
+      curatorTimer = null;
     }
   }
 
@@ -492,6 +513,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     exitCode: number,
   ): Promise<void> {
     stopPruneLoop();
+    stopCuratorLoop();
     stopFarmServicesForShutdown(signal);
     await deps.stopWebControlCenterService?.();
     await deps.stopTuiGatewayService?.();
@@ -529,6 +551,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
   async function main(): Promise<void> {
     registerShutdownHandlers();
     startPruneLoop();
+    startCuratorLoop();
     if (
       deps.constants.heartbeatActiveHoursRaw?.trim() &&
       deps.isWithinHeartbeatActiveHoursInvalid

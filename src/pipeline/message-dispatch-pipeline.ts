@@ -165,6 +165,7 @@ export interface MessageDispatcherDeps {
     registeredGroups: Record<string, any>;
     chatRunPreferences: Record<string, Record<string, any>>;
     lastAgentTimestamp?: Record<string, string>;
+    lastInboundAt?: number;
   };
   constants: {
     assistantName: string;
@@ -1729,6 +1730,10 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
   ): Promise<ProcessMessageOutcome> {
     const classified = classifyInboundMessage(msg, deps);
     if (!classified) return 'ignored';
+    if (classified.origin === 'user') {
+      // Mark host activity so the idle curator only runs during true quiet.
+      deps.state.lastInboundAt = Date.now();
+    }
     if (classified.origin === 'user' && deps.activeChatRuns.has(msg.chat_jid)) {
       enqueueInboundMessage(msg);
       return 'queued';
