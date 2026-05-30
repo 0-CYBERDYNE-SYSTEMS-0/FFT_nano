@@ -1747,6 +1747,22 @@ const appRuntime = createAppRuntime({
   getContainerRuntime,
   resumeRecoverableLongRuns: () => longRunService.resumeRecoverableRuns(),
   flushDeliveryOutbox: () => outboxDeliverer.flushPending(),
+  runCuratorTick: () => {
+    try {
+      const mainChatJid = findMainChatJid();
+      if (!mainChatJid) return;
+      const group = state.registeredGroups[mainChatJid];
+      if (!group) return;
+      maybeRunSkillManager({
+        group,
+        chatJid: mainChatJid,
+        runtimePrefs: state.chatRunPreferences[mainChatJid] || {},
+        requestId: `curator-loop-${Date.now()}`,
+      });
+    } catch (err) {
+      logger.warn({ err }, 'Curator loop tick failed');
+    }
+  },
 });
 
 async function startTelegram(): Promise<void> {
