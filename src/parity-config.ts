@@ -66,6 +66,7 @@ export interface SkillSelfImproveConfig {
   enabled: boolean;
   turnInterval: number;
   toolInterval: number;
+  minIntervalMinutes: number;
 }
 
 export interface SkillManagerBackupConfig {
@@ -154,7 +155,12 @@ const DEFAULTS: ParityConfig = {
     deterministicTopOfHourStagger: { enabled: false, maxMs: 5 * 60_000 },
   },
   skills: {
-    selfImprove: { enabled: true, turnInterval: 10, toolInterval: 10 },
+    selfImprove: {
+      enabled: true,
+      turnInterval: 10,
+      toolInterval: 10,
+      minIntervalMinutes: 15,
+    },
     curator: {
       enabled: true,
       intervalHours: 168,
@@ -343,6 +349,11 @@ function mergeParityConfig(file: Partial<ParityConfig>): ParityConfig {
     10,
     1,
   );
+  merged.skills.selfImprove.minIntervalMinutes = clamp(
+    merged.skills.selfImprove.minIntervalMinutes,
+    15,
+    0,
+  );
   merged.skills.curator.intervalHours = clamp(
     merged.skills.curator.intervalHours,
     168,
@@ -513,6 +524,12 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     c.skills.selfImprove.toolInterval,
     1,
     10_000,
+  );
+  c.skills.selfImprove.minIntervalMinutes = envInt(
+    e.FFT_NANO_SKILL_SELF_IMPROVE_MIN_INTERVAL_MINUTES,
+    c.skills.selfImprove.minIntervalMinutes,
+    0,
+    100_000,
   );
   c.skills.curator.enabled = envBool(
     e.FFT_NANO_SKILL_CURATOR_ENABLED,

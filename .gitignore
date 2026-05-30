@@ -88,3 +88,6 @@ fft-experience/
 
 # Claude Code planning artifacts (local only)
 docs/superpowers/
+
+# Local runtime lock (not for VCS)
+.claude/scheduled_tasks.lock

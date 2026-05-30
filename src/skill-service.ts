@@ -40,6 +40,7 @@ import type { PiToolExecution } from './pi-json-parser.js';
 import {
   extractLearningSignals,
   recordSelfImproveEvent,
+  type SelfImprovePriority,
 } from './self-improve-signals.js';
 import { ensureKnowledgeRuntimeSetup } from './telegram-group-mgmt.js';
 
@@ -70,52 +71,98 @@ export function skillSelfImproveStatePath(groupFolder: string): string {
   );
 }
 
-export function readSkillSelfImproveState(groupFolder: string): {
+interface SkillSelfImproveState {
   turnsSinceReview: number;
   toolsSinceReview: number;
-} {
+  lastReviewAt: string | null;
+}
+
+export function readSkillSelfImproveState(
+  groupFolder: string,
+): SkillSelfImproveState {
   try {
     const filePath = skillSelfImproveStatePath(groupFolder);
     if (!fs.existsSync(filePath)) {
-      return { turnsSinceReview: 0, toolsSinceReview: 0 };
+      return { turnsSinceReview: 0, toolsSinceReview: 0, lastReviewAt: null };
     }
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     return {
       turnsSinceReview: Number(parsed.turnsSinceReview) || 0,
       toolsSinceReview: Number(parsed.toolsSinceReview) || 0,
+      lastReviewAt:
+        typeof parsed.lastReviewAt === 'string' ? parsed.lastReviewAt : null,
     };
   } catch {
-    return { turnsSinceReview: 0, toolsSinceReview: 0 };
+    return { turnsSinceReview: 0, toolsSinceReview: 0, lastReviewAt: null };
   }
 }
 
 export function writeSkillSelfImproveState(
   groupFolder: string,
-  next: { turnsSinceReview: number; toolsSinceReview: number },
+  next: SkillSelfImproveState,
 ): void {
   const filePath = skillSelfImproveStatePath(groupFolder);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`);
 }
 
+export interface SkillSelfImproveDecision {
+  due: boolean;
+  triggerReason: string;
+}
+
 export function shouldTriggerSkillSelfImprove(params: {
   groupFolder: string;
   toolsInvoked: number;
-}): boolean {
-  if (!PARITY_CONFIG.skills.selfImprove.enabled) return false;
+  priority?: SelfImprovePriority;
+  now?: number;
+}): SkillSelfImproveDecision {
+  if (!PARITY_CONFIG.skills.selfImprove.enabled) {
+    return { due: false, triggerReason: 'disabled' };
+  }
+  const now = params.now ?? Date.now();
   const current = readSkillSelfImproveState(params.groupFolder);
-  const next = {
+  const next: SkillSelfImproveState = {
     turnsSinceReview: current.turnsSinceReview + 1,
     toolsSinceReview: current.toolsSinceReview + params.toolsInvoked,
+    lastReviewAt: current.lastReviewAt,
   };
-  const due =
+
+  const intervalDue =
     next.turnsSinceReview >= PARITY_CONFIG.skills.selfImprove.turnInterval ||
     next.toolsSinceReview >= PARITY_CONFIG.skills.selfImprove.toolInterval;
-  writeSkillSelfImproveState(
-    params.groupFolder,
-    due ? { turnsSinceReview: 0, toolsSinceReview: 0 } : next,
-  );
-  return due;
+  const signalDue = params.priority === 'full';
+
+  if (!intervalDue && !signalDue) {
+    writeSkillSelfImproveState(params.groupFolder, next);
+    return { due: false, triggerReason: 'interval-not-reached' };
+  }
+
+  // Cost guard: never fire the quiet agent more than once per min-interval
+  // window, regardless of signals. Keeps a correction-heavy conversation from
+  // spawning a pi subprocess on every message. Counters are preserved (not
+  // reset) so the review still fires on the next eligible turn after the window.
+  const minIntervalMs =
+    PARITY_CONFIG.skills.selfImprove.minIntervalMinutes * 60_000;
+  const lastMs = current.lastReviewAt ? Date.parse(current.lastReviewAt) : NaN;
+  if (
+    minIntervalMs > 0 &&
+    Number.isFinite(lastMs) &&
+    now - lastMs < minIntervalMs
+  ) {
+    writeSkillSelfImproveState(params.groupFolder, next);
+    return {
+      due: false,
+      triggerReason: signalDue ? 'signal-debounced' : 'interval-debounced',
+    };
+  }
+
+  writeSkillSelfImproveState(params.groupFolder, {
+    turnsSinceReview: 0,
+    toolsSinceReview: 0,
+    lastReviewAt: new Date(now).toISOString(),
+  });
+  return { due: true, triggerReason: signalDue ? 'signal' : 'interval' };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,25 +241,33 @@ export function maybeRunSkillSelfImprovement(params: {
   requestId?: string;
 }): void {
   const runId = params.requestId || 'run';
-  const { signals } = extractLearningSignals({
+  const { signals, priority } = extractLearningSignals({
     userTask: params.originalTask,
     agentOutput: params.agentOutput,
     toolExecutions: params.toolExecutions,
   });
 
-  const due = shouldTriggerSkillSelfImprove({
+  const decision = shouldTriggerSkillSelfImprove({
     groupFolder: params.group.folder,
     toolsInvoked: params.toolsInvoked,
+    priority,
   });
 
-  if (!due) {
+  const triggerReason =
+    decision.triggerReason === 'signal' && signals.length > 0
+      ? `signal:${signals.join(',')}`
+      : decision.triggerReason;
+
+  if (!decision.due) {
     recordSelfImproveEvent(params.group.folder, {
       run_id: runId,
       review_type: 'skill-self-improve',
-      trigger_reason: 'interval',
+      trigger_reason: triggerReason,
       signals_detected: signals,
       review_fired: false,
-      noop_reason: 'cadence threshold not reached',
+      noop_reason: decision.triggerReason.includes('debounced')
+        ? 'min-interval debounce'
+        : 'cadence threshold not reached',
       success: true,
     });
     return;
@@ -221,11 +276,16 @@ export function maybeRunSkillSelfImprovement(params: {
   recordSelfImproveEvent(params.group.folder, {
     run_id: runId,
     review_type: 'skill-self-improve',
-    trigger_reason: 'interval',
+    trigger_reason: triggerReason,
     signals_detected: signals,
     review_fired: true,
     success: true,
   });
+
+  const signalLine =
+    signals.length > 0
+      ? `Host-detected learning signals for this run: ${signals.join(', ')}. Weigh these when deciding what is durable.`
+      : 'No strong learning signals were detected; no-op unless you find genuinely reusable knowledge.';
 
   runQuietSkillAgent({
     group: params.group,
@@ -234,9 +294,11 @@ export function maybeRunSkillSelfImprovement(params: {
     requestId: `${runId}:skill-self-improve`,
     prompt: [
       'Review the completed conversation for reusable procedural knowledge.',
-      'Use skill_list first. Create or patch a skill only if this run taught a reusable workflow, pitfall, command pattern, farm operating procedure, or troubleshooting recipe.',
-      'Prefer broad class-level skills with labeled sections over many narrow one-off skills.',
-      'Do not duplicate existing skills. Keep frontmatter valid and descriptions practical.',
+      signalLine,
+      'Use skill_list first. Prefer patching an existing relevant agent-created skill over creating a near-duplicate. Create broad class-level skills with labeled sections, not narrow one-offs.',
+      'Capture: reusable workflows, command/tool/API pitfalls with a reusable recovery, farm/device operating procedures, troubleshooting recipes, and user corrections that change how future work should be done.',
+      'Do NOT create or patch skills for: one-off task narratives, raw transcripts, transient/environment outages without a reusable recovery, speculation, or anything whose only content is "remember that this happened".',
+      'Never mutate source-owned project or personal skills — report those gaps in your summary instead. Keep frontmatter valid and descriptions practical. No-op when the lesson is not durable.',
       '',
       'Original task:',
       params.originalTask.slice(0, 3000),
