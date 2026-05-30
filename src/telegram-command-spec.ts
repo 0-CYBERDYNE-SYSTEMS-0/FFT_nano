@@ -45,6 +45,10 @@ export const TELEGRAM_ADMIN_COMMANDS = [
     command: 'librarian',
     description: 'Knowledge wiki controls (status, lint, capture, run)',
   },
+  {
+    command: 'reflect',
+    description: 'Reflect on recent work; save only durable learning',
+  },
   { command: 'tasks', description: 'List scheduled tasks' },
   { command: 'knowledge', description: 'Manage knowledge wiki/librarian' },
   { command: 'task_pause', description: 'Pause a task: /task_pause <id>' },
@@ -92,6 +96,7 @@ export type TelegramCommandName =
   | '/skill_manager'
   | '/librarian'
   | '/curator'
+  | '/reflect'
   | '/main'
   | '/gateway'
   | '/restart'
@@ -144,6 +149,7 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/skill_manager',
   '/librarian',
   '/curator',
+  '/reflect',
   '/main',
   '/gateway',
   '/restart',
@@ -231,6 +237,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/run-status <id> - show long run status',
     '/cancel-run <id> - cancel an active long run',
     '/skill-manager status|dry-run|run|pause|resume|pin|unpin|archive|restore|backup - manage skill lifecycle',
+    '/reflect [dry-run] [focus] - reflect on recent work and save only durable learning (memory/skill); no-ops when nothing is reusable',
     '/librarian status|lint|capture|run|dry-run|log|progress - manage knowledge wiki',
     '/curator status|dry-run|run|pause|resume|pin|unpin|archive|restore|backup - [DEPRECATED: use /skill-manager]',
   ].join('\n');
