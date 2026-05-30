@@ -82,3 +82,13 @@ test('main chat help includes admin restart alias and non-main help does not', (
     /Admin commands are only available in the main chat/,
   );
 });
+
+test('/reflect is a registered, normalizable, main-only command', () => {
+  assert.equal(normalizeTelegramCommandToken('/reflect'), '/reflect');
+  assert.equal(normalizeTelegramCommandToken('/reflect@TestBot'), '/reflect');
+
+  const mainHelp = formatHelpText(true);
+  const nonMainHelp = formatHelpText(false);
+  assert.match(mainHelp, /\/reflect \[dry-run\] \[focus\]/);
+  assert.doesNotMatch(nonMainHelp, /\/reflect \[dry-run\]/);
+});

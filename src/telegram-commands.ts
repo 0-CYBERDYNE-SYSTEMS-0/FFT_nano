@@ -354,9 +354,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
   }
 
   function formatMaintenanceLabel(
-    label: 'librarian' | 'skill-manager',
+    label: 'librarian' | 'skill-manager' | 'reflect',
   ): string {
-    return label === 'skill-manager' ? 'Skill manager' : 'Librarian';
+    if (label === 'skill-manager') return 'Skill manager';
+    if (label === 'reflect') return 'Reflection';
+    return 'Librarian';
   }
 
   function formatElapsedSeconds(startedAt: number): string {
@@ -366,7 +368,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
   function emitMaintenanceProgress(params: {
     chatJid: string;
     requestId: string;
-    label: 'librarian' | 'skill-manager';
+    label: 'librarian' | 'skill-manager' | 'reflect';
     phase: MaintenanceRunProgressPhase;
     text: string;
     detail?: string;
@@ -484,10 +486,47 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       .join('\n');
   }
 
+  function buildReflectionAgentPrompt(
+    action: 'run' | 'dry-run',
+    input: string,
+  ): string {
+    const dryRun = action === 'dry-run';
+    return [
+      dryRun
+        ? 'Operator-triggered self-reflection (dry-run). Review the recent conversation in this chat and report what — if anything — you would save as durable learning, but do not write memory or mutate any skill.'
+        : 'Operator-triggered self-reflection. Review the recent conversation in this chat and save only genuinely durable, reusable learning.',
+      '',
+      'Being asked to reflect is permission to look — it is NOT evidence that there is anything to save. Be exactly as selective as an automatic post-turn review. If there is no durable, reusable lesson, say so plainly and change nothing; a clean no-op is the correct and expected outcome.',
+      '',
+      'How to classify what you find:',
+      '- Durable facts, preferences, environment details, project/farm state → write to memory (MEMORY.md / memory files).',
+      '- Reusable procedures, pitfalls with a reusable recovery, command sequences, troubleshooting recipes, or task-class behavior → create or patch an agent-owned runtime skill via skill_action.',
+      '- Prefer patching an existing relevant agent-created skill over creating a near-duplicate. Create broad class-level skills, not narrow one-offs.',
+      '- A user correction that changes how future work should be done is durable — capture it as procedural guidance.',
+      '',
+      'Do NOT save:',
+      '- One-off task narratives, raw transcripts, or "remember that this happened" notes.',
+      '- Transient or environment outages without a reusable recovery path.',
+      '- Speculation or anything you are not confident is reusable.',
+      '',
+      'Safety:',
+      '- All skill writes go through skill_action. Never edit skill files directly.',
+      '- Never mutate source-owned project skills or personal override skills; report those gaps in your summary instead.',
+      dryRun
+        ? '- Dry-run: do not call mutating skill actions (skill_patch/skill_archive/skill_restore/skill_pin/skill_unpin) and do not write memory; describe what you would save and why.'
+        : '- Live: use memory writes and skill_action for anything genuinely durable, and summarize each write with its rationale.',
+      '',
+      'Final answer: a concise summary of what you saved and why, or an explicit "nothing durable to save" with a one-line reason.',
+      input ? ['', 'Operator focus:', input] : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
   async function startMaintenanceAgentRun(params: {
     chatJid: string;
     command: string;
-    label: 'librarian' | 'skill-manager';
+    label: 'librarian' | 'skill-manager' | 'reflect';
     action: 'run' | 'dry-run';
     prompt: string;
   }): Promise<void> {
@@ -544,7 +583,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       text:
         params.label === 'skill-manager'
           ? 'Starting library review...'
-          : 'Starting wiki review...',
+          : params.label === 'reflect'
+            ? 'Starting reflection on recent work...'
+            : 'Starting wiki review...',
       detail: `${params.action} ${requestId}`,
     });
     await deps.setTyping(params.chatJid, true);
@@ -557,7 +598,9 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         text:
           params.label === 'skill-manager'
             ? 'Agent is inspecting skills content...'
-            : 'Agent is inspecting wiki content...',
+            : params.label === 'reflect'
+              ? 'Agent is reviewing the recent conversation...'
+              : 'Agent is inspecting wiki content...',
       });
       const run = await deps.runAgent(
         group,
@@ -2366,6 +2409,50 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           ? `Gateway ${action}:\n${result.text}`
           : `Gateway ${action} failed:\n${result.text}`,
       );
+      return true;
+    }
+
+    if (cmd === '/reflect') {
+      if (!isMainGroup) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
+        await deps.sendMessage(
+          m.chatJid,
+          `${deps.constants.assistantName}: /reflect is only available in the main/admin chat.`,
+        );
+        return true;
+      }
+      const first = (rest[0] || '').trim().toLowerCase();
+      if (first === 'help') {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
+        await deps.sendMessage(
+          m.chatJid,
+          [
+            'Usage: /reflect [dry-run] [focus]',
+            '',
+            'Runs a deliberate self-reflection on the recent conversation and saves only genuinely durable learning (memory or an agent-owned skill). It stays just as selective as an automatic review and no-ops when there is nothing reusable.',
+            '- /reflect                 — reflect on recent work and save anything durable',
+            '- /reflect <focus>         — focus the reflection on a topic',
+            '- /reflect dry-run [focus] — report what it would save, without writing',
+          ].join('\n'),
+        );
+        return true;
+      }
+      const isDryRun = first === 'dry-run' || first === 'dry';
+      const action: 'run' | 'dry-run' = isDryRun ? 'dry-run' : 'run';
+      const focus = (isDryRun ? rest.slice(1) : rest).join(' ').trim();
+      deps.logTelegramCommandAudit(
+        m.chatJid,
+        cmd,
+        true,
+        focus ? `${action}: ${focus}` : action,
+      );
+      await startMaintenanceAgentRun({
+        chatJid: m.chatJid,
+        command: cmd,
+        label: 'reflect',
+        action,
+        prompt: buildReflectionAgentPrompt(action, focus),
+      });
       return true;
     }
 
