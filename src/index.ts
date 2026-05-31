@@ -1976,16 +1976,18 @@ async function finalizeTelegramToolProgress(
 async function deleteTelegramPreviewMessage(
   chatJid: string,
   messageId: number,
+  messageIds?: number[],
 ): Promise<void> {
-  return tdDeleteTelegramPreviewMessage(chatJid, messageId);
+  return tdDeleteTelegramPreviewMessage(chatJid, messageId, messageIds);
 }
 
 async function finalizeTelegramPreviewMessage(
   chatJid: string,
   messageId: number,
   text: string,
+  messageIds?: number[],
 ): Promise<boolean> {
-  return tdFinalizeTelegramPreviewMessage(chatJid, messageId, text);
+  return tdFinalizeTelegramPreviewMessage(chatJid, messageId, text, messageIds);
 }
 
 function buildHostCoordinationDeps(): HostCoordinationDeps {
