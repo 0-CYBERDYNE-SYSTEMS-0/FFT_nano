@@ -428,18 +428,8 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
   function ensureContainerSystemRunning(): void {
     const runtime = deps.getContainerRuntime?.() || 'docker';
     if (runtime === 'host') {
-      if (
-        (process.env.NODE_ENV || '').toLowerCase() === 'production' &&
-        !['1', 'true', 'yes', 'on'].includes(
-          (process.env.FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD || '').toLowerCase(),
-        )
-      ) {
-        throw new Error(
-          'Host runtime is blocked in production unless FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1',
-        );
-      }
       deps.logger.warn?.(
-        'Running in host runtime mode (no container isolation). This should only be used for trusted local workflows.',
+        'Running in host runtime mode because Docker is not selected/available. This runs Pi without container isolation.',
       );
       return;
     }

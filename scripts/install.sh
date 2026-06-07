@@ -265,7 +265,6 @@ seed_env_from_shell() {
     TELEGRAM_MAIN_CHAT_ID
     WHATSAPP_ENABLED
     CONTAINER_RUNTIME
-    FFT_NANO_ALLOW_HOST_RUNTIME
     FFT_NANO_MAIN_WORKSPACE_DIR
   )
 
@@ -300,7 +299,6 @@ main() {
   if is_termux; then
     runtime_args=(--runtime host --no-install-daemon)
     export CONTAINER_RUNTIME=host
-    export FFT_NANO_ALLOW_HOST_RUNTIME=1
     AUTO_LINK=0
     export FFT_NANO_AUTO_LINK=0
   elif ! args_have_runtime "$@"; then
@@ -310,7 +308,6 @@ main() {
     else
       runtime_args=(--runtime host)
       export CONTAINER_RUNTIME=host
-      export FFT_NANO_ALLOW_HOST_RUNTIME=1
       say "Docker is not available or not healthy. Using host runtime so setup can continue."
     fi
   fi
@@ -347,7 +344,6 @@ main() {
   seed_env_from_shell "$INSTALL_DIR/.env"
   if is_termux; then
     set_env_value "$INSTALL_DIR/.env" CONTAINER_RUNTIME host
-    set_env_value "$INSTALL_DIR/.env" FFT_NANO_ALLOW_HOST_RUNTIME 1
   fi
 
   export FFT_NANO_AUTO_LINK="$AUTO_LINK"
