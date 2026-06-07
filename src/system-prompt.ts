@@ -560,8 +560,6 @@ function buildBaseCacheKey(params: {
   canDelegateToCoder: boolean;
   autoDelegationEnabled: boolean;
   isEvaluatorRun: boolean;
-  contextEntries: ContextEntry[];
-  skillCatalogText: string;
 }): string {
   const payload = {
     assistantName: params.assistantName,
@@ -571,15 +569,6 @@ function buildBaseCacheKey(params: {
     canDelegateToCoder: params.canDelegateToCoder,
     autoDelegationEnabled: params.autoDelegationEnabled,
     isEvaluatorRun: params.isEvaluatorRun,
-    skillCatalogHash: hashString(params.skillCatalogText),
-    contextEntries: params.contextEntries.map((entry) => ({
-      path: entry.path,
-      missing: entry.missing,
-      blocked: entry.blocked,
-      blockedPatterns: entry.blockedPatterns,
-      rawChars: entry.rawChars,
-      contentHash: hashString(entry.content),
-    })),
   };
   return hashString(JSON.stringify(payload));
 }
@@ -587,8 +576,6 @@ function buildBaseCacheKey(params: {
 function renderBasePrompt(params: {
   assistantName: string;
   paths: WorkspacePaths;
-  contextEntries: ContextEntry[];
-  skillCatalogText: string;
   forcedDelegateMode: 'execute' | 'plan' | null;
   canDelegateToCoder: boolean;
   autoDelegationEnabled: boolean;
@@ -672,11 +659,6 @@ function renderBasePrompt(params: {
       'If intent is ambiguous, ask one concise clarification before delegating.',
     );
     lines.push('For small tasks, complete directly in this run.');
-    lines.push('');
-  }
-
-  if (params.skillCatalogText) {
-    lines.push(params.skillCatalogText);
     lines.push('');
   }
 
@@ -812,21 +794,6 @@ function renderBasePrompt(params: {
   );
   lines.push('');
 
-  if (params.contextEntries.length > 0) {
-    lines.push('## Workspace Files (injected)');
-    lines.push(
-      'These files are loaded for this run (subject to prompt budget limits).',
-    );
-    lines.push('');
-    lines.push('# Project Context');
-    lines.push('');
-    for (const entry of params.contextEntries) {
-      lines.push(`## ${entry.path}`);
-      lines.push(entry.content);
-      lines.push('');
-    }
-  }
-
   lines.push('## Heartbeats');
   lines.push(
     'If this run is a heartbeat poll and nothing needs attention, reply exactly HEARTBEAT_OK. If something needs attention, send alert text without HEARTBEAT_OK.',
@@ -842,6 +809,9 @@ function renderOverlayPrompt(params: {
   providedMemoryContext: string;
   now: Date;
   timezone: string;
+  contextEntries: ContextEntry[];
+  skillCatalogText: string;
+  fileMaxChars: number;
 }): string {
   const lines: string[] = [];
   lines.push('## Inbound Context (trusted metadata)');
@@ -925,9 +895,36 @@ function renderOverlayPrompt(params: {
     lines.push('');
   }
 
+  if (params.skillCatalogText) {
+    lines.push(params.skillCatalogText);
+    lines.push('');
+  }
+
   if (params.providedMemoryContext) {
     lines.push('## Retrieved Memory Context');
     lines.push(clampMemoryContext(params.providedMemoryContext));
+  }
+
+  if (params.contextEntries.length > 0) {
+    lines.push('## Workspace Files (injected)');
+    lines.push(
+      'These files are loaded for this run (subject to prompt budget limits).',
+    );
+    lines.push('');
+    lines.push('# Project Context');
+    lines.push('');
+    for (const entry of params.contextEntries) {
+      const fitted = fitContentToBudget(
+        entry.content,
+        entry.label || entry.path,
+        params.fileMaxChars,
+        params.fileMaxChars,
+      );
+      const injected = fitted?.injected || '';
+      lines.push(`## ${entry.path}`);
+      lines.push(injected);
+      lines.push('');
+    }
   }
 
   return lines.join('\n').trim();
@@ -1017,8 +1014,6 @@ export function buildSystemPrompt(
     canDelegateToCoder,
     autoDelegationEnabled,
     isEvaluatorRun: input.isEvaluatorRun === true,
-    contextEntries: contextState.entries,
-    skillCatalogText: skillCatalog.text,
   });
 
   const cacheHit =
@@ -1030,8 +1025,6 @@ export function buildSystemPrompt(
     : renderBasePrompt({
         assistantName,
         paths,
-        contextEntries: contextState.entries,
-        skillCatalogText: skillCatalog.text,
         forcedDelegateMode,
         canDelegateToCoder,
         autoDelegationEnabled,
@@ -1045,6 +1038,9 @@ export function buildSystemPrompt(
     providedMemoryContext,
     now,
     timezone,
+    contextEntries: contextState.entries,
+    skillCatalogText: skillCatalog.text,
+    fileMaxChars,
   });
   const text = [baseContent, overlayContent]
     .filter(Boolean)
