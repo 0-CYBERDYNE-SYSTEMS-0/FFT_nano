@@ -17,10 +17,10 @@ curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
 # guided wrapper (backup/setup/wizard/service/doctor)
 ./scripts/onboard-all.sh
 
-# guided wrapper with explicit host runtime
+# guided wrapper with host runtime
 ./scripts/onboard-all.sh --runtime host
 
-# public installer with explicit host runtime
+# public installer with host runtime
 curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime host
 
 # full guided wrapper (same behavior as onboard-all)
@@ -65,7 +65,7 @@ Installer environment overrides:
 - `FFT_NANO_AUTO_LINK=0`: skip the pinned `~/.local/bin/fft` launcher and global `npm link`
 - `FFT_NANO_USER_BIN_DIR=/path/to/bin`: install the pinned `fft` launcher somewhere other than `~/.local/bin`
 
-The public installer chooses Docker when it is already installed and healthy. If Docker is missing or unhealthy, it uses host runtime and writes the required host-runtime opt-in values before onboarding.
+The public installer chooses Docker when it is already installed and healthy. If Docker is missing or unhealthy, it uses host runtime before onboarding.
 
 If hatch is `web`, use:
 
@@ -146,21 +146,14 @@ Runtime gate env toggles:
 - `setup.sh` is the single runtime decision point for guided installs.
 - Shared install/build work runs first. Runtime-specific preparation happens later in setup step 2.
 - Default Docker-first behavior:
-  - `CONTAINER_RUNTIME=auto` means “prefer Docker when it is available and healthy”
+  - `CONTAINER_RUNTIME=auto` means “prefer Docker when it is available and healthy; otherwise use host”
   - `CONTAINER_RUNTIME=docker` is an explicit Docker requirement
-- Host runtime (no container isolation) requires explicit opt-in:
+- Host runtime (no container isolation):
   - `CONTAINER_RUNTIME=host`
-  - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
-  - in production, also set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
   - guided setup and runtime use the repo-local `pi` CLI from `node_modules/.bin/pi` when available
   - `PI_PATH` is the explicit override; global `pi` is only a fallback when the repo-local binary is missing
   - if the repo-local binary is missing, rerun `npm install`, set `PI_PATH`, or install `@mariozechner/pi-coding-agent` globally
-- First-time guided installs without Docker do not silently switch to host:
-  - interactive runs prompt for `host` or `docker` during `setup.sh`
-  - the prompt defaults to `host` when Docker is unavailable
-  - choosing `host` persists the host runtime keys in `.env`
-  - choosing `docker` writes Docker-first defaults and exits cleanly so you can install/start Docker
-  - non-interactive runs must be explicit: use `--runtime host` or provide Docker
+- First-time guided installs without healthy Docker default to host runtime.
 - If Docker reports `EOF`, `Cannot connect`, or `no space left on device`, run:
 
 ```bash

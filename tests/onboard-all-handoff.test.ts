@@ -57,7 +57,6 @@ fi
 if [[ "\${FFT_TEST_SETUP_WRITE_HOST_ENV:-0}" == "1" ]]; then
   {
     printf 'CONTAINER_RUNTIME=host\\n'
-    printf 'FFT_NANO_ALLOW_HOST_RUNTIME=1\\n'
   } >> .env
 fi
 echo "stub setup complete"
@@ -207,12 +206,12 @@ test('onboard-all prints READY when Telegram main chat is already configured', (
   assert.match(output, /ONBOARDING COMPLETE: READY/);
 });
 
-test('onboard-all passes explicit host opt-in to setup when runtime=host', () => {
+test('onboard-all passes host runtime to setup without legacy opt-in', () => {
   const fixtureRoot = setupOnboardAllFixture({ withMainChatId: false });
   runOnboardAllFixture(fixtureRoot, { runtime: 'host', skipSetup: false });
   const setupLog = readFileSync(path.join(fixtureRoot, 'setup.log'), 'utf8');
   assert.match(setupLog, /args:--runtime host/);
-  assert.match(setupLog, /allow_host:1/);
+  assert.match(setupLog, /allow_host:$/m);
 });
 
 test('onboard-all passes runtime persisted by setup into onboarding', () => {
