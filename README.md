@@ -412,10 +412,8 @@ npm run auth
 docker info
 ```
 
-- Optional advanced mode: unisolated host runtime (explicit opt-in)
+- Host runtime fallback when Docker is unavailable or unhealthy:
   - `CONTAINER_RUNTIME=host`
-  - `FFT_NANO_ALLOW_HOST_RUNTIME=1`
-  - for production use additionally set `FFT_NANO_ALLOW_HOST_RUNTIME_IN_PROD=1`
 
 ### Linux
 
@@ -684,8 +682,8 @@ No. Use `skills/setup` and `skills/runtime` in this repo.
 
 ## Security Model
 
-- Default runtime is Linux container isolation.
-- Optional host runtime exists as an explicit unsafe opt-in (`CONTAINER_RUNTIME=host` + allow flags).
+- Default `auto` runtime uses Docker when it is available and healthy, otherwise host runtime.
+- Host runtime runs Pi without container isolation.
 - Mounts define visibility boundaries.
 - Additional mounts are validated against external allowlist at:
   - `~/.config/fft_nano/mount-allowlist.json`

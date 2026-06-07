@@ -134,12 +134,12 @@ printf 'pkg:%s\\n' "$*" >> "${path.join(fixtureRoot, 'pkg.log')}"
   );
   assert.doesNotMatch(onboardBody, /docker|--install-daemon(?! --non)/);
   assert.match(onboardBody, /^container:host$/m);
-  assert.match(onboardBody, /^allow_host:1$/m);
+  assert.match(onboardBody, /^allow_host:$/m);
   assert.match(onboardBody, /^auto_link:0$/m);
 
   const envBody = readFileSync(path.join(installDir, '.env'), 'utf8');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
-  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=/m);
   assert.match(result.stdout, /Android Termux detected/);
   assert.match(result.stdout, /Termux install complete/);
 });

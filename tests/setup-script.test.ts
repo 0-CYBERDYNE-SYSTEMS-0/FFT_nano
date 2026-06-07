@@ -195,7 +195,7 @@ test('setup.sh with no Docker and --runtime host persists host runtime and skips
   assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   const envBody = readFileSync(path.join(fixtureRoot, '.env'), 'utf8');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
-  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=/m);
   assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /docker-build/);
 
   const npmCalls = readFileSync(npmLog, 'utf8').trim().split('\n');
@@ -246,16 +246,15 @@ test('setup.sh installs pinned fft launcher and shell PATH block when auto-link 
   ]);
 });
 
-test('setup.sh with no Docker and no runtime flag fails non-interactively with actionable guidance', () => {
+test('setup.sh with no Docker and no runtime flag defaults to host', () => {
   const { fixtureRoot, npmLog, dockerLog } = setupSetupFixture();
 
   const result = runSetupFixture(fixtureRoot, []);
 
-  assert.notEqual(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-  assert.match(
-    `${result.stdout}\n${result.stderr}`,
-    /Install Docker, or re-run with --runtime host/i,
-  );
+  assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  const envBody = readFileSync(path.join(fixtureRoot, '.env'), 'utf8');
+  assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=/m);
   assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /docker-build/);
 
   const npmCalls = readFileSync(npmLog, 'utf8').trim().split('\n');
@@ -278,7 +277,7 @@ test('setup.sh respects persisted host runtime from .env without requiring Docke
   assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   const envBody = readFileSync(path.join(fixtureRoot, '.env'), 'utf8');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
-  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=/m);
   assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /docker-build/);
 
   const npmCalls = readFileSync(npmLog, 'utf8').trim().split('\n');
@@ -291,19 +290,19 @@ test('setup.sh respects persisted host runtime from .env without requiring Docke
   ]);
 });
 
-test('setup.sh interactive host selection persists host runtime instead of falling through to docker', () => {
+test('setup.sh interactive no-Docker run defaults to host instead of prompting', () => {
   const { fixtureRoot, dockerLog } = setupSetupFixture();
 
   const result = runSetupFixtureInteractive(fixtureRoot, []);
 
   assert.equal(result.status, 0, `output:\n${result.output}`);
-  assert.match(result.output, /Runtime \[host\/docker\] \[host\]:/);
+  assert.doesNotMatch(result.output, /Runtime \[host\/docker\] \[host\]:/);
   assert.match(result.output, /Detected container runtime: host/);
   assert.doesNotMatch(result.output, /Docker-first runtime selected\./);
   assert.doesNotMatch(result.output, /Preparing host runtime runner dependencies\.\.\./);
 
   const envBody = readFileSync(path.join(fixtureRoot, '.env'), 'utf8');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
-  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=/m);
   assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /docker-build/);
 });

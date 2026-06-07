@@ -47,7 +47,7 @@ This is the one-command onboarding flow:
 
 Runtime note:
   setup.sh is the single runtime decision point. If Docker is unavailable and
-  runtime is unresolved, setup prompts for host or docker during step 2.
+  runtime is unresolved, setup defaults to host during step 2.
 USAGE
 }
 
@@ -561,10 +561,6 @@ if [[ "$SKIP_SETUP" -eq 0 ]]; then
     setup_args+=(--runtime "$RUNTIME_ARG")
   fi
   setup_env=(FFT_NANO_AUTO_SERVICE=0)
-  if [[ "$RUNTIME_ARG" == "host" ]]; then
-    # Runtime choice in onboarding is explicit user opt-in for host mode.
-    setup_env+=(FFT_NANO_ALLOW_HOST_RUNTIME=1)
-  fi
   if [[ -n "$RUNTIME_ARG" ]]; then
     env "${setup_env[@]}" ./scripts/setup.sh "${setup_args[@]}"
   else

@@ -102,15 +102,10 @@ run_runtime_detect() {
   if [[ "$raw" == "docker" || "$raw" == "host" ]]; then
     echo "$raw"; return
   fi
-  if command -v docker >/dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     echo "docker"; return
   fi
-  local allow_host="${FFT_NANO_ALLOW_HOST_RUNTIME:-0}"
-  allow_host="$(printf %s "$allow_host" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$allow_host" == "1" || "$allow_host" == "true" || "$allow_host" == "yes" || "$allow_host" == "on" ]]; then
-    echo "host"; return
-  fi
-  echo "unknown"
+  echo "host"
 }
 
 runtime="$(run_runtime_detect)"
