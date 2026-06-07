@@ -251,10 +251,10 @@ test('runOnboarding defaults local runtime from existing env runtime', async () 
   const envBody = fs.readFileSync(envPath, 'utf-8');
   assert.equal(result.runtime, 'host');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
-  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
 });
 
-test('runOnboarding host runtime writes host opt-in env flags', async () => {
+test('runOnboarding host runtime writes host runtime without opt-in flags', async () => {
   const workspace = makeTmpWorkspace();
   const envPath = path.join(workspace, '.env');
   const result = await runOnboarding({
@@ -267,7 +267,7 @@ test('runOnboarding host runtime writes host opt-in env flags', async () => {
   const envBody = fs.readFileSync(envPath, 'utf-8');
   assert.equal(result.runtime, 'host');
   assert.match(envBody, /^CONTAINER_RUNTIME=host$/m);
-  assert.match(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
+  assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=/m);
 });
 
 test('runOnboarding docker runtime clears lingering host opt-in env flag', async () => {

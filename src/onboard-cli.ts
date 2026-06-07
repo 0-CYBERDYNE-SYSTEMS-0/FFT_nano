@@ -864,7 +864,7 @@ export async function runOnboarding(
           ? String(wizard.gatewayPort)
           : undefined,
       CONTAINER_RUNTIME: wizard.runtime,
-      FFT_NANO_ALLOW_HOST_RUNTIME: wizard.runtime === 'host' ? '1' : undefined,
+      FFT_NANO_ALLOW_HOST_RUNTIME: undefined,
     };
     ensureAdminSecret(updates, envMap);
 
@@ -913,8 +913,7 @@ export async function runOnboarding(
     };
     if (opts.runtime) {
       updates.CONTAINER_RUNTIME = wizard.runtime;
-      updates.FFT_NANO_ALLOW_HOST_RUNTIME =
-        wizard.runtime === 'host' ? '1' : undefined;
+      updates.FFT_NANO_ALLOW_HOST_RUNTIME = undefined;
     }
     upsertDotEnv(envPath, updates);
   }
