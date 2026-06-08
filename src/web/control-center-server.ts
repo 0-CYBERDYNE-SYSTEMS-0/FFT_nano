@@ -5,7 +5,10 @@ import path from 'path';
 import type { WebAccessMode } from '../config.js';
 import { logger } from '../logger.js';
 import { sanitizeUserFacingVerdictLeak } from '../runtime/boundary-ipc.js';
-import type { UpdateCommandStartResult } from '../update-command.js';
+import type {
+  UpdateCommandStartResult,
+  UpdateNotificationRecord,
+} from '../update-command.js';
 
 interface RuntimeStatusPayload {
   runtime: string;
@@ -131,6 +134,7 @@ export interface WebControlCenterAdapters {
     payload: OnboardingConfigPayload,
   ) => Promise<{ ok: boolean; requiresRestart: boolean; adminSecret?: string }>;
   hostUpdate?: () => UpdateCommandStartResult;
+  getUpdateReport?: (reportId: string) => UpdateNotificationRecord | null;
   getProviderSetup?: () => ProviderSetupLink[];
   getRuntimeSettings?: () => RuntimeSettingsSnapshot;
   applyRuntimeSettings?: (
@@ -1230,6 +1234,66 @@ export async function startWebControlCenterServer(
             ...(typeof result.reportId === 'string'
               ? { reportId: result.reportId }
               : {}),
+          });
+        } catch (err) {
+          sendJson(res, 500, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/update/status') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.getUpdateReport) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Update status not available',
+          });
+          return;
+        }
+        const reportId = (url.searchParams.get('reportId') || '').trim();
+        if (!reportId) {
+          sendJson(res, 400, {
+            ok: false,
+            error: 'reportId query parameter is required',
+          });
+          return;
+        }
+        try {
+          const record = adapters.getUpdateReport(reportId);
+          if (!record) {
+            sendJson(res, 404, { ok: false, error: 'Report not found' });
+            return;
+          }
+          // Calculate elapsed time
+          const startedAt = new Date(record.startedAt);
+          const now = record.completedAt
+            ? new Date(record.completedAt)
+            : new Date();
+          const elapsedMs = now.getTime() - startedAt.getTime();
+
+          // Find current phase from progress
+          let currentPhase: string = record.status;
+          if (record.progress && record.progress.length > 0) {
+            const lastIndex =
+              record.lastProgressIndex ?? record.progress.length - 1;
+            const lastEvent = record.progress[Math.max(0, lastIndex)];
+            if (lastEvent) {
+              currentPhase = lastEvent.phase;
+            }
+          }
+
+          sendJson(res, 200, {
+            ok: record.ok ?? false,
+            status: record.status,
+            currentPhase,
+            elapsedMs,
+            previewMessageId: record.previewMessageId ?? null,
           });
         } catch (err) {
           sendJson(res, 500, {
