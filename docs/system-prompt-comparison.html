@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>System Prompt Context Comparison: Hermes Agent vs FFT_nano</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f7f4;
+        --panel: #ffffff;
+        --text: #1f2933;
+        --muted: #5f6f7f;
+        --border: #d9dfd7;
+        --header: #eef3ed;
+        --high: #ffe8e5;
+        --medium: #fff4d8;
+        --low: #e7f7ea;
+        --code: #f1f4f8;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 32px 20px 56px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.2;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 30px;
+      }
+
+      h2 {
+        margin: 34px 0 12px;
+        font-size: 22px;
+      }
+
+      h3 {
+        margin: 22px 0 10px;
+        font-size: 17px;
+      }
+
+      p {
+        margin: 8px 0 14px;
+      }
+
+      .lede {
+        color: var(--muted);
+        max-width: 850px;
+      }
+
+      .note {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 16px;
+        margin: 16px 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        margin: 12px 0 24px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--header);
+        font-weight: 650;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      code {
+        background: var(--code);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.94em;
+      }
+
+      .risk-high {
+        background: var(--high);
+      }
+
+      .risk-medium {
+        background: var(--medium);
+      }
+
+      .risk-low {
+        background: var(--low);
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      @media (max-width: 820px) {
+        .two-col {
+          grid-template-columns: 1fr;
+        }
+
+        table {
+          display: block;
+          overflow-x: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>System Prompt Context Comparison</h1>
+      <p class="lede">
+        Reference notes comparing how Hermes Agent and FFT_nano handle Markdown
+        context files in system messages, especially after starting a fresh
+        session and across later turns.
+      </p>
+
+      <section class="note">
+        <strong>Key distinction:</strong> the older FFT_nano prompt-cache work
+        added stable/ephemeral machinery. The newer Hermes-inspired work changes
+        what belongs in each layer: durable policy stays stable, while
+        operational and high-churn context moves to the ephemeral suffix.
+      </section>
+
+      <h2>Terms</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Term</th>
+            <th>Meaning</th>
+            <th>Good Fit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Stable</strong></td>
+            <td>Provider-cacheable prompt prefix expected to stay mostly identical across runs.</td>
+            <td>Identity, safety, durable policy, IPC schemas, workspace paths.</td>
+          </tr>
+          <tr>
+            <td><strong>Ephemeral</strong></td>
+            <td>Per-run suffix rebuilt for the current request/session turn.</td>
+            <td>Current time, request metadata, active memory, TODOs, skill catalog, retrieved context.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Hermes Agent</h2>
+      <p>
+        Hermes builds a fresh system prompt snapshot for a new session. Later
+        turns generally reuse that session-start snapshot rather than re-reading
+        Markdown files every turn.
+      </p>
+
+      <h3>First Turn After <code>/new</code></h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>In First-Turn System Prompt?</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>~/.hermes/SOUL.md</code></td>
+            <td>Yes, if present</td>
+            <td>Identity/persona block; otherwise Hermes uses default identity text.</td>
+          </tr>
+          <tr>
+            <td><code>.hermes.md</code> / <code>HERMES.md</code></td>
+            <td>Yes, if found</td>
+            <td>Highest-priority project context. Hermes walks upward to project root.</td>
+          </tr>
+          <tr>
+            <td><code>AGENTS.md</code></td>
+            <td>Yes, fallback</td>
+            <td>Used only if higher-priority Hermes project files are absent.</td>
+          </tr>
+          <tr>
+            <td><code>CLAUDE.md</code></td>
+            <td>Yes, fallback</td>
+            <td>Compatibility fallback if Hermes/Agents files are absent.</td>
+          </tr>
+          <tr>
+            <td><code>.cursorrules</code> / <code>.cursor/rules/*.mdc</code></td>
+            <td>Yes, lowest-priority fallback</td>
+            <td>Used only if no higher-priority project context file is found.</td>
+          </tr>
+          <tr>
+            <td><code>~/.hermes/memories/MEMORY.md</code></td>
+            <td>Yes</td>
+            <td>Frozen memory snapshot at session start.</td>
+          </tr>
+          <tr>
+            <td><code>~/.hermes/memories/USER.md</code></td>
+            <td>Yes</td>
+            <td>Frozen user profile snapshot at session start.</td>
+          </tr>
+          <tr>
+            <td>Skill index / skills prompt</td>
+            <td>Yes, if skills are available</td>
+            <td>Compact skill index, not necessarily every full skill body.</td>
+          </tr>
+          <tr>
+            <td>Subdirectory <code>AGENTS.md</code> / <code>CLAUDE.md</code></td>
+            <td>No at startup</td>
+            <td>Discovered later when tools touch or enter relevant paths.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Every Later Turn In Same Session</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Re-read From Disk Every Turn?</th>
+            <th>Still Present Every Turn?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>SOUL.md</code></td>
+            <td>No</td>
+            <td>Yes, frozen from session start.</td>
+          </tr>
+          <tr>
+            <td>Startup project context file</td>
+            <td>No</td>
+            <td>Yes, frozen from session start.</td>
+          </tr>
+          <tr>
+            <td><code>MEMORY.md</code></td>
+            <td>No</td>
+            <td>Yes, frozen from session start.</td>
+          </tr>
+          <tr>
+            <td><code>USER.md</code></td>
+            <td>No</td>
+            <td>Yes, frozen from session start.</td>
+          </tr>
+          <tr>
+            <td>Skill index</td>
+            <td>No</td>
+            <td>Yes, frozen from session start.</td>
+          </tr>
+          <tr>
+            <td>Subdirectory context files</td>
+            <td>Only when discovered</td>
+            <td>Only when relevant via tool/path context.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>FFT_nano Before Hermes-Inspired Split</h2>
+      <p>
+        FFT_nano already had stable/ephemeral prompt layers, but too much
+        behavior-shaping context lived in the provider-cacheable stable layer.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>File / Source</th>
+            <th>Raw Chars</th>
+            <th>Layer Before New Split</th>
+            <th>Tool-Trigger Risk</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="risk-high">
+            <td><code>NANO.md</code></td>
+            <td>~8,221</td>
+            <td>Stable, always for main runs</td>
+            <td>High: operational guidance, tool verification, TODO discipline, delegation rules.</td>
+          </tr>
+          <tr class="risk-medium">
+            <td><code>SOUL.md</code></td>
+            <td>~7,108</td>
+            <td>Stable, always for main runs</td>
+            <td>Medium: identity and boundary framing, mostly durable policy/style.</td>
+          </tr>
+          <tr class="risk-medium">
+            <td><code>MEMORY.md</code></td>
+            <td>~14,050</td>
+            <td>Stable, always for main runs</td>
+            <td>Medium: active context can indirectly cue behavior.</td>
+          </tr>
+          <tr class="risk-low">
+            <td><code>TODOS.md</code></td>
+            <td>~451</td>
+            <td>Stable, always for main runs</td>
+            <td>Low: small task state, but still active context.</td>
+          </tr>
+          <tr class="risk-high">
+            <td>Skill catalog</td>
+            <td>Up to ~20,000</td>
+            <td>Stable, interactive runs</td>
+            <td>High: explicit skill/tool affordances and allowed-tool lists.</td>
+          </tr>
+          <tr class="risk-low">
+            <td><code>current_tasks.json</code></td>
+            <td>~866</td>
+            <td>Ephemeral / runtime metadata path</td>
+            <td>Low: structured task metadata, not durable prompt policy.</td>
+          </tr>
+          <tr class="risk-medium">
+            <td>Daily memory</td>
+            <td>Variable</td>
+            <td>Stable if injected</td>
+            <td>Medium: depends on content; can carry active operational cues.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>FFT_nano After Hermes-Inspired Split</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>New Layer</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Base identity/safety/tool truthfulness</td>
+            <td>Stable</td>
+            <td>Durable policy that should remain consistent across runs.</td>
+          </tr>
+          <tr>
+            <td>IPC schemas, workspace paths, completion expectations</td>
+            <td>Stable</td>
+            <td>Stable host contract and safety-critical operating rules.</td>
+          </tr>
+          <tr>
+            <td><code>SOUL.md</code></td>
+            <td>Stable</td>
+            <td>Identity, tone, safety, and durable user/policy context.</td>
+          </tr>
+          <tr>
+            <td><code>NANO.md</code></td>
+            <td>Ephemeral</td>
+            <td>Operational guidance can trigger tool use, TODO reads, or delegation.</td>
+          </tr>
+          <tr>
+            <td><code>MEMORY.md</code></td>
+            <td>Ephemeral</td>
+            <td>High-churn durable memory detail should be current per run, not cached as permanent policy.</td>
+          </tr>
+          <tr>
+            <td><code>TODOS.md</code></td>
+            <td>Ephemeral</td>
+            <td>Active mission/task state should update per run.</td>
+          </tr>
+          <tr>
+            <td>Canonical files</td>
+            <td>Ephemeral</td>
+            <td>Potentially important, but still content context rather than cacheable base policy.</td>
+          </tr>
+          <tr>
+            <td>Daily memory files</td>
+            <td>Ephemeral</td>
+            <td>Recent, high-churn context.</td>
+          </tr>
+          <tr>
+            <td>Skill catalog</td>
+            <td>Ephemeral</td>
+            <td>Capability hints are action-triggering and should not live in the cached prefix.</td>
+          </tr>
+          <tr>
+            <td>Request metadata, current time, request id, host overlay</td>
+            <td>Ephemeral</td>
+            <td>Per-run facts.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Practical Recommendation</h2>
+      <div class="two-col">
+        <section class="note">
+          <h3>Stable Should Be Boring</h3>
+          <p>
+            Keep identity, safety, truthfulness, destructive-command policy,
+            IPC schemas, and stable workspace contracts in the cacheable prefix.
+          </p>
+        </section>
+        <section class="note">
+          <h3>Ephemeral Should Be Current</h3>
+          <p>
+            Keep skills, TODOs, memory, operational guidance, retrieved context,
+            and active runtime metadata in the per-run suffix.
+          </p>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

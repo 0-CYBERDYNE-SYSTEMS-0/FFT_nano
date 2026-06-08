@@ -101,6 +101,20 @@ export interface StablePromptLayer {
 }
 
 /**
+ * The session bootstrap layer carries behavior-rich but mostly session-scoped
+ * context. It is sent when starting/rebasing a pi session, then omitted from
+ * continued turns so those turns stay lean while the model keeps the context
+ * in session history.
+ */
+export interface SessionBootstrapPromptLayer {
+  id: 'session_bootstrap';
+  title: string;
+  content: string;
+  chars: number;
+  included: boolean;
+}
+
+/**
  * The ephemeral layer is the per-turn volatile suffix the provider cannot
  * cache: the `Inbound Context` JSON metadata (timestamps, requestId, etc.),
  * the host context overlay, runtime hints, reasoning visibility, and the
@@ -123,7 +137,11 @@ export interface SystemPromptReport {
     injectedTotalChars: number;
     remainingChars: number;
   };
-  layers: (StablePromptLayer | EphemeralPromptLayer)[];
+  layers: (
+    | StablePromptLayer
+    | SessionBootstrapPromptLayer
+    | EphemeralPromptLayer
+  )[];
   /**
    * Stable-layer cache key. Includes only stable contributing file mtimes
    * so SOUL changes force a rebuild without letting high-churn operational
@@ -167,6 +185,12 @@ const MAIN_ALWAYS_INJECTED_FILES = [
   'SOUL.md',
   'TODOS.md',
   'MEMORY.md',
+] as const;
+
+const MAIN_SESSION_BOOTSTRAP_FILES = [
+  'USER.md',
+  'IDENTITY.md',
+  'TOOLS.md',
 ] as const;
 
 function buildDailyMemoryFileNames(now: Date, timezone: string): string[] {
@@ -338,6 +362,24 @@ function addContextEntry(params: {
   return Math.max(0, params.remainingTotalChars - injected.length);
 }
 
+function addOptionalNonEmptyContextEntry(params: {
+  entries: ContextEntry[];
+  readFileIfExists: (filePath: string) => string | null;
+  label: string;
+  path: string;
+  fileMaxChars: number;
+  remainingTotalChars: number;
+}): number {
+  const content = params.readFileIfExists(params.path);
+  if (!content || !trimAndNormalize(content)) {
+    return params.remainingTotalChars;
+  }
+  return addContextEntry({
+    ...params,
+    includeMissing: false,
+  });
+}
+
 function buildMainContextEntries(params: {
   readFileIfExists: (filePath: string) => string | null;
   includeHeartbeat: boolean;
@@ -359,6 +401,30 @@ function buildMainContextEntries(params: {
       readFileIfExists: params.readFileIfExists,
       label: name,
       path: `${params.groupDir}/${name}`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+    });
+  }
+
+  for (const name of MAIN_SESSION_BOOTSTRAP_FILES) {
+    if (remaining <= 0) break;
+    remaining = addContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: name,
+      path: `${params.groupDir}/${name}`,
+      fileMaxChars: params.fileMaxChars,
+      remainingTotalChars: remaining,
+      includeMissing: false,
+    });
+  }
+
+  if (remaining > 0) {
+    remaining = addOptionalNonEmptyContextEntry({
+      entries,
+      readFileIfExists: params.readFileIfExists,
+      label: 'BOOTSTRAP.md',
+      path: `${params.groupDir}/BOOTSTRAP.md`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
     });
@@ -979,15 +1045,19 @@ function isStableContextEntry(entry: ContextEntry): boolean {
   return entry.path.endsWith('/SOUL.md');
 }
 
+function isPerTurnContextEntry(entry: ContextEntry): boolean {
+  return (
+    entry.path.endsWith('/TODOS.md') || entry.path.endsWith('/HEARTBEAT.md')
+  );
+}
+
 function pickMtimeMap(
   source: Record<string, number | null>,
   paths: Iterable<string>,
 ): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   for (const p of paths) {
-    out[p] = Object.prototype.hasOwnProperty.call(source, p)
-      ? source[p]
-      : null;
+    out[p] = Object.prototype.hasOwnProperty.call(source, p) ? source[p] : null;
   }
   return out;
 }
@@ -1025,10 +1095,35 @@ function renderContextOverlay(params: {
 
 function renderEphemeralOverlay(params: {
   contextEntries: ContextEntry[];
+  fileMaxChars: number;
+}): string {
+  const lines: string[] = [];
+
+  const contextOverlay = renderContextOverlay({
+    contextEntries: params.contextEntries,
+    fileMaxChars: params.fileMaxChars,
+  });
+  if (contextOverlay) lines.push(contextOverlay);
+
+  return lines.join('\n').trim();
+}
+
+function renderSessionBootstrapOverlay(params: {
+  contextEntries: ContextEntry[];
   skillCatalogText: string;
   fileMaxChars: number;
 }): string {
   const lines: string[] = [];
+
+  if (params.contextEntries.length === 0 && !params.skillCatalogText) {
+    return '';
+  }
+
+  lines.push('## Session Bootstrap Context');
+  lines.push(
+    'Loaded when a pi session starts or is rebased. Continued turns rely on session history and do not resend this layer.',
+  );
+  lines.push('');
 
   if (params.skillCatalogText) {
     lines.push(params.skillCatalogText);
@@ -1050,12 +1145,13 @@ export function buildSystemPrompt(
   options: BuildSystemPromptOptions = {},
 ): {
   stableText: string;
+  sessionBootstrapText: string;
   ephemeralText: string;
   /**
-   * Convenience concatenation of stable + ephemeral layers, joined with
-   * double newlines (matching how pi's `--append-system-prompt` joins
-   * multiple values). Useful for preview/diagnostic consumers that want
-   * the full prompt as one string.
+   * Convenience concatenation of the layers that are sent for this build,
+   * joined with double newlines (matching how pi's `--append-system-prompt`
+   * joins multiple values). Session bootstrap is included only when
+   * `input.noContinue` starts/rebases the session.
    */
   text: string;
   report: SystemPromptReport;
@@ -1155,6 +1251,10 @@ export function buildSystemPrompt(
       ...MAIN_ALWAYS_INJECTED_FILES.map((n) => `${paths.groupDir}/${n}`),
     );
     stableSourcePaths.push(
+      ...MAIN_SESSION_BOOTSTRAP_FILES.map((n) => `${paths.groupDir}/${n}`),
+    );
+    stableSourcePaths.push(`${paths.groupDir}/BOOTSTRAP.md`);
+    stableSourcePaths.push(
       ...DEFAULT_CANONICAL_FILE_NAMES.map(
         (n) => `${paths.groupDir}/canonical/${n}`,
       ),
@@ -1190,9 +1290,13 @@ export function buildSystemPrompt(
     }
   }
 
-  const stableContextEntries = contextState.entries.filter(isStableContextEntry);
+  const stableContextEntries =
+    contextState.entries.filter(isStableContextEntry);
+  const sessionBootstrapContextEntries = contextState.entries.filter(
+    (entry) => !isStableContextEntry(entry) && !isPerTurnContextEntry(entry),
+  );
   const ephemeralContextEntries = contextState.entries.filter(
-    (entry) => !isStableContextEntry(entry),
+    isPerTurnContextEntry,
   );
   const stableMtimeMap = pickMtimeMap(
     mtimeTracker,
@@ -1249,9 +1353,13 @@ export function buildSystemPrompt(
     now,
     timezone,
   });
+  const sessionBootstrapText = renderSessionBootstrapOverlay({
+    contextEntries: sessionBootstrapContextEntries,
+    skillCatalogText: skillCatalog.text,
+    fileMaxChars,
+  });
   const ephemeralOverlay = renderEphemeralOverlay({
     contextEntries: ephemeralContextEntries,
-    skillCatalogText: skillCatalog.text,
     fileMaxChars,
   });
   const ephemeralText = [ephemeralBaseText, ephemeralOverlay]
@@ -1264,12 +1372,21 @@ export function buildSystemPrompt(
     0,
   );
   const basePromptHash = hashString(stableText);
-  const totalChars = stableText.length + ephemeralText.length;
+  const includeSessionBootstrap = input.noContinue === true;
+  const totalChars =
+    stableText.length +
+    (includeSessionBootstrap ? sessionBootstrapText.length : 0) +
+    ephemeralText.length;
 
   return {
     stableText,
+    sessionBootstrapText,
     ephemeralText,
-    text: [stableText, ephemeralText]
+    text: [
+      stableText,
+      includeSessionBootstrap ? sessionBootstrapText : '',
+      ephemeralText,
+    ]
       .filter((s) => s && s.length > 0)
       .join('\n\n')
       .trim(),
@@ -1292,6 +1409,13 @@ export function buildSystemPrompt(
           mtimeMap: stableMtimeMap,
           hash: basePromptHash,
           key: stableCacheKey,
+        },
+        {
+          id: 'session_bootstrap',
+          title: 'Session Bootstrap Context (fresh sessions only)',
+          content: sessionBootstrapText,
+          chars: sessionBootstrapText.length,
+          included: includeSessionBootstrap,
         },
         {
           id: 'ephemeral',
