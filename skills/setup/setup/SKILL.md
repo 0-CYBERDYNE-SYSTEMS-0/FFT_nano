@@ -9,6 +9,11 @@ Run all commands automatically. Only pause when user action is required (scannin
 
 **UX Note:** When asking the user questions, prefer using the `AskUserQuestion` tool instead of just outputting text. This integrates with Claude's built-in question/answer system for a better experience.
 
+## When not to use this skill
+
+- Do not use for runtime incident diagnosis after setup is complete; use the debug guide.
+- Do not use for feature development, refactors, or dashboard customization.
+
 ## 1. Install Dependencies
 
 ```bash

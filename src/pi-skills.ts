@@ -11,13 +11,17 @@ export const PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES = [
 export const PROJECT_SETUP_SKILLS_RELATIVE_DIR_CANDIDATES = [
   path.join('skills', 'setup'),
 ] as const;
-export const REQUIRED_PROJECT_PI_SKILLS = [
-  'fft-setup',
-  'fft-debug',
-  'fft-telegram-ops',
-  'fft-coder-ops',
-  'web-search',
-] as const;
+export const PROJECT_SKILLS_MANIFEST_RELATIVE_PATH = path.join(
+  'skills',
+  'manifest.json',
+);
+
+export interface ProjectSkillsManifest {
+  version: string;
+  required: string[];
+  bundled: string[];
+  setupOnly: string[];
+}
 
 export interface SkillValidationIssue {
   file: string;
@@ -64,9 +68,6 @@ const FRONTMATTER_ALLOWED_FIELDS = new Set<string>([
   ...FRONTMATTER_OPTIONAL_FIELDS,
 ]);
 const SKILL_NAME_PATTERN = /^[\p{Ll}\p{Nd}-]+$/u;
-const REQUIRED_PROJECT_PI_SKILL_SET = new Set<string>(
-  REQUIRED_PROJECT_PI_SKILLS,
-);
 const HIGH_RISK_SKILL_NAME_PATTERN =
   /(?:^|-)(?:ops|install|setup|bootstrap|onboarding|validate|debug|migrate|deploy|provision|flash)(?:-|$)/;
 const WHEN_TO_USE_SECTION_PATTERN = /^##\s+when to use(?:\s+this\s+skill)?\b/im;
@@ -74,6 +75,13 @@ const WHEN_NOT_TO_USE_SECTION_PATTERN =
   /^##\s+when not to use(?:\s+this\s+skill)?\b/im;
 const LIMITATIONS_SECTION_PATTERN =
   /^##\s+(?:limitations|what this skill does not do)\b/im;
+const BACKTICKED_SKILL_REFERENCE_PATTERN = /`([a-z][a-z0-9-]*-[a-z0-9-]+)`/g;
+const INITIAL_PROJECT_SKILLS_MANIFEST = readProjectSkillsManifest(
+  process.cwd(),
+);
+export const REQUIRED_PROJECT_PI_SKILLS = Object.freeze([
+  ...(INITIAL_PROJECT_SKILLS_MANIFEST?.required ?? []),
+]) as readonly string[];
 
 interface ParsedSkillMarkdown {
   frontmatter: Record<string, unknown>;
@@ -98,6 +106,129 @@ type ManagedSkillSource = 'project' | 'external';
 interface ManagedSkillManifest {
   managed: string[];
   sources: Record<string, ManagedSkillSource>;
+}
+
+function projectSkillsManifestPath(projectRoot: string): string {
+  return path.join(projectRoot, PROJECT_SKILLS_MANIFEST_RELATIVE_PATH);
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return Array.from(new Set(values)).sort();
+}
+
+function readStringArrayField(
+  value: unknown,
+  fieldName: keyof ProjectSkillsManifest,
+  manifestPath: string,
+  issues?: SkillValidationIssue[],
+): string[] {
+  if (!Array.isArray(value)) {
+    issues?.push({
+      file: manifestPath,
+      message: `Manifest field "${fieldName}" must be an array of skill names`,
+    });
+    return [];
+  }
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim()) {
+      issues?.push({
+        file: manifestPath,
+        message: `Manifest field "${fieldName}" contains a non-string skill name`,
+      });
+      continue;
+    }
+    const skillName = item.trim();
+    if (!SKILL_NAME_PATTERN.test(skillName)) {
+      issues?.push({
+        file: manifestPath,
+        message: `Manifest field "${fieldName}" contains invalid skill name: ${skillName}`,
+      });
+      continue;
+    }
+    out.push(skillName);
+  }
+  return uniqueSorted(out);
+}
+
+export function readProjectSkillsManifest(
+  projectRoot: string = process.cwd(),
+  issues?: SkillValidationIssue[],
+): ProjectSkillsManifest | null {
+  const manifestPath = projectSkillsManifestPath(projectRoot);
+  if (!fs.existsSync(manifestPath)) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+  } catch (err) {
+    issues?.push({
+      file: manifestPath,
+      message: `Unable to parse skills manifest: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    issues?.push({
+      file: manifestPath,
+      message: 'Skills manifest must be a JSON object',
+    });
+    return null;
+  }
+
+  const manifest = parsed as Record<string, unknown>;
+  const version =
+    typeof manifest.version === 'string' && manifest.version.trim()
+      ? manifest.version.trim()
+      : '';
+  if (!version) {
+    issues?.push({
+      file: manifestPath,
+      message: 'Manifest field "version" must be a non-empty string',
+    });
+  }
+
+  const required = readStringArrayField(
+    manifest.required,
+    'required',
+    manifestPath,
+    issues,
+  );
+  const bundled = readStringArrayField(
+    manifest.bundled,
+    'bundled',
+    manifestPath,
+    issues,
+  );
+  const setupOnly = readStringArrayField(
+    manifest.setupOnly,
+    'setupOnly',
+    manifestPath,
+    issues,
+  );
+
+  const bundledSet = new Set(bundled);
+  for (const skillName of required) {
+    if (bundledSet.has(skillName)) continue;
+    issues?.push({
+      file: manifestPath,
+      message: `Required skill "${skillName}" must also be listed in bundled`,
+    });
+  }
+
+  return { version, required, bundled, setupOnly };
+}
+
+function getProjectSkillsManifest(projectRoot: string): ProjectSkillsManifest {
+  return (
+    readProjectSkillsManifest(projectRoot) ?? {
+      version: '',
+      required: [...REQUIRED_PROJECT_PI_SKILLS],
+      bundled: [],
+      setupOnly: [],
+    }
+  );
 }
 
 function parseSkillMarkdown(
@@ -528,6 +659,87 @@ function listSkillDirectories(sourceRoot: string): string[] {
     .filter((name) => fs.existsSync(path.join(sourceRoot, name, 'SKILL.md')));
 }
 
+function getManifestRuntimeSkillNames(projectRoot: string): string[] | null {
+  const manifest = readProjectSkillsManifest(projectRoot);
+  if (!manifest) return null;
+  return uniqueSorted(manifest.bundled);
+}
+
+function getProjectRuntimeSkillNames(
+  projectRoot: string,
+  sourceRoot: string,
+): string[] {
+  const manifestNames = getManifestRuntimeSkillNames(projectRoot);
+  if (!manifestNames) return listSkillDirectories(sourceRoot);
+  return manifestNames.filter((skillName) =>
+    fs.existsSync(path.join(sourceRoot, skillName, 'SKILL.md')),
+  );
+}
+
+function validateDeclaredSkillSet(params: {
+  sourceRoot: string;
+  declared: string[];
+  label: string;
+  issues: SkillValidationIssue[];
+}): void {
+  const actual = new Set(listSkillDirectories(params.sourceRoot));
+  const declared = new Set(params.declared);
+
+  for (const skillName of Array.from(actual).sort()) {
+    if (declared.has(skillName)) continue;
+    params.issues.push({
+      file: path.join(params.sourceRoot, skillName),
+      message: `${params.label} skill is not declared in ${PROJECT_SKILLS_MANIFEST_RELATIVE_PATH}`,
+    });
+  }
+
+  for (const skillName of Array.from(declared).sort()) {
+    if (actual.has(skillName)) continue;
+    params.issues.push({
+      file: path.join(params.sourceRoot, skillName),
+      message: `${params.label} skill is declared in ${PROJECT_SKILLS_MANIFEST_RELATIVE_PATH} but missing on disk`,
+    });
+  }
+}
+
+function validateBacktickedSkillReferences(params: {
+  sourceRoots: string[];
+  declaredSkillNames: Set<string>;
+  issues: SkillValidationIssue[];
+}): void {
+  for (const sourceRoot of params.sourceRoots) {
+    for (const skillName of listSkillDirectories(sourceRoot)) {
+      const skillMarkdownPath = path.join(sourceRoot, skillName, 'SKILL.md');
+      let content = '';
+      try {
+        content = fs.readFileSync(skillMarkdownPath, 'utf-8');
+      } catch {
+        continue;
+      }
+      for (const match of content.matchAll(
+        BACKTICKED_SKILL_REFERENCE_PATTERN,
+      )) {
+        const referencedSkillName = match[1];
+        const matchIndex = match.index ?? 0;
+        const lineStart = content.lastIndexOf('\n', matchIndex) + 1;
+        const lineEnd = content.indexOf('\n', matchIndex);
+        const line = content.slice(
+          lineStart,
+          lineEnd === -1 ? content.length : lineEnd,
+        );
+        if (!/\b(skill|handoff|hand off|route|routing)\b/i.test(line)) {
+          continue;
+        }
+        if (params.declaredSkillNames.has(referencedSkillName)) continue;
+        params.issues.push({
+          file: skillMarkdownPath,
+          message: `Backticked skill reference "${referencedSkillName}" is not declared in ${PROJECT_SKILLS_MANIFEST_RELATIVE_PATH}`,
+        });
+      }
+    }
+  }
+}
+
 function summarizeParagraph(text: string, maxChars = 220): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (!normalized) return '';
@@ -698,10 +910,40 @@ export function validateProjectPiSkills(
 ): SkillValidationResult {
   const issues: SkillValidationIssue[] = [];
   const warnings: SkillValidationIssue[] = [];
+  const manifest = readProjectSkillsManifest(projectRoot, issues);
   const skillsRoot = resolveProjectRuntimeSkillsDir(projectRoot);
+  const setupSkillsRoot = path.join(
+    projectRoot,
+    PROJECT_SETUP_SKILLS_RELATIVE_DIR_CANDIDATES[0],
+  );
   const validatedSkills = new Set<string>();
+  const requiredSkillNames = manifest?.required ?? [
+    ...REQUIRED_PROJECT_PI_SKILLS,
+  ];
+  const runtimeSkillNames =
+    manifest?.bundled ?? listSkillDirectories(skillsRoot);
 
-  for (const skillName of REQUIRED_PROJECT_PI_SKILLS) {
+  if (manifest) {
+    validateDeclaredSkillSet({
+      sourceRoot: skillsRoot,
+      declared: manifest.bundled,
+      label: 'Runtime',
+      issues,
+    });
+    validateDeclaredSkillSet({
+      sourceRoot: setupSkillsRoot,
+      declared: manifest.setupOnly,
+      label: 'Setup-only',
+      issues,
+    });
+    validateBacktickedSkillReferences({
+      sourceRoots: [skillsRoot, setupSkillsRoot],
+      declaredSkillNames: new Set([...manifest.bundled, ...manifest.setupOnly]),
+      issues,
+    });
+  }
+
+  for (const skillName of requiredSkillNames) {
     const skillPath = path.join(skillsRoot, skillName);
     if (!fs.existsSync(skillPath) || !fs.statSync(skillPath).isDirectory()) {
       issues.push({
@@ -721,7 +963,7 @@ export function validateProjectPiSkills(
     validatedSkills.add(skillName);
   }
 
-  for (const skillName of listSkillDirectories(skillsRoot)) {
+  for (const skillName of runtimeSkillNames) {
     if (validatedSkills.has(skillName)) continue;
     const skillMarkdownPath = path.join(skillsRoot, skillName, 'SKILL.md');
     const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
@@ -730,6 +972,50 @@ export function validateProjectPiSkills(
     });
     issues.push(...validation.issues);
     warnings.push(...validation.warnings);
+  }
+
+  if (manifest) {
+    for (const skillName of manifest.setupOnly) {
+      const skillMarkdownPath = path.join(
+        setupSkillsRoot,
+        skillName,
+        'SKILL.md',
+      );
+      const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
+        enforceFftPolicy: false,
+        ...nonRequiredSkillValidationPolicy(skillName),
+      });
+      issues.push(...validation.issues);
+      warnings.push(...validation.warnings);
+    }
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    warnings,
+  };
+}
+
+export function validatePiSkillsSourceDir(
+  skillsRoot: string,
+): SkillValidationResult {
+  const issues: SkillValidationIssue[] = [];
+  const warnings: SkillValidationIssue[] = [];
+
+  for (const skillName of listSkillDirectories(skillsRoot)) {
+    const skillMarkdownPath = path.join(skillsRoot, skillName, 'SKILL.md');
+    const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
+      enforceFftPolicy: false,
+      ...nonRequiredSkillValidationPolicy(skillName),
+    });
+    issues.push(...validation.issues);
+    warnings.push(...validation.warnings);
+
+    const safetyIssues = validateSkillPathSafety(
+      path.join(skillsRoot, skillName),
+    );
+    issues.push(...safetyIssues);
   }
 
   return {
@@ -764,6 +1050,10 @@ export function syncProjectPiSkillsToGroupPiHome(
     projectRoot,
     projectCandidates,
   );
+  const projectSkillsManifest = getProjectSkillsManifest(projectRoot);
+  const requiredProjectSkillSet = new Set<string>(
+    projectSkillsManifest.required,
+  );
   for (const projectSourceDir of projectSourceDirs) {
     if (sourceDirSet.has(projectSourceDir)) continue;
     sourceDirSet.add(projectSourceDir);
@@ -792,7 +1082,10 @@ export function syncProjectPiSkillsToGroupPiHome(
   >();
 
   for (const sourceDir of projectSourceDirs) {
-    for (const skillName of listSkillDirectories(sourceDir)) {
+    for (const skillName of getProjectRuntimeSkillNames(
+      projectRoot,
+      sourceDir,
+    )) {
       const existing = mergedSkills.get(skillName) ?? [];
       existing.push({
         skillPath: path.join(sourceDir, skillName),
@@ -823,7 +1116,7 @@ export function syncProjectPiSkillsToGroupPiHome(
   >();
   for (const [skillName, entries] of mergedSkills.entries()) {
     const invalidCandidates: SkillValidationIssue[] = [];
-    const isRequiredSkill = REQUIRED_PROJECT_PI_SKILL_SET.has(skillName);
+    const isRequiredSkill = requiredProjectSkillSet.has(skillName);
     const validationPolicy = isRequiredSkill
       ? requiredSkillValidationPolicy(skillName)
       : nonRequiredSkillValidationPolicy(skillName);
