@@ -1,0 +1,26 @@
+{
+  "version": "0.4.0",
+  "required": [
+    "fft-coder-ops",
+    "fft-debug",
+    "fft-setup",
+    "fft-telegram-ops",
+    "web-search"
+  ],
+  "bundled": [
+    "agent-browser",
+    "autoresearch-create",
+    "autoresearch-finalize",
+    "fft-coder-ops",
+    "fft-dashboard-ops",
+    "fft-debug",
+    "fft-farm-bootstrap",
+    "fft-farm-onboarding",
+    "fft-farm-ops",
+    "fft-setup",
+    "fft-telegram-ops",
+    "rapid-research",
+    "web-search"
+  ],
+  "setupOnly": ["customize", "debug", "setup"]
+}
