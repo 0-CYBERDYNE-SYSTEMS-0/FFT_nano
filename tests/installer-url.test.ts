@@ -25,8 +25,14 @@ test('installer-url: no farm-friend.com URL remains in any tracked file', () => 
   const extensions = ['md', 'html', 'ts', 'js', 'sh', 'yml', 'yaml', 'json'];
   const files = getTrackedFiles(extensions);
 
+  // Exclude this test file itself since it contains the pattern as a constant
+  const selfFile = import.meta.file || '';
+  const filteredFiles = files.filter(
+    (f) => !f.endsWith('installer-url.test.ts'),
+  );
+
   const failures: string[] = [];
-  for (const file of files) {
+  for (const file of filteredFiles) {
     try {
       const content = readFileSync(file, 'utf8');
       if (content.includes(OLD_URL_PATTERN)) {

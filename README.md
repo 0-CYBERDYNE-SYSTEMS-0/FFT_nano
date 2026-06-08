@@ -11,7 +11,7 @@ An autonomous AI coworker that runs on your farm's hardware. It learns your oper
 ## Quick Start
 
 ```bash
-curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/main/scripts/install.sh | bash
 ```
 
 Runs on Raspberry Pi, your own server, or local hardware. Chat via Telegram or WhatsApp.
@@ -29,8 +29,9 @@ Built by a farmer with 24 years of field experience. Three years of real operati
 ## Project Status
 
 - Official distribution: **GitHub Releases**
+- Public installer URL is canonical and always current: [`docs/INSTALLER.md`](docs/INSTALLER.md)
 - `npm install` is not the primary install path yet
-- See `docs/RELEASE.md` for current release process
+- See `docs/RELEASE.md` for the current release process
 
 **Links:** [Releases](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/releases) | [Security](.github/SECURITY.md) | [Contributing](CONTRIBUTING.md) | [Docs](docs/)
 - Support: `SUPPORT.md`
@@ -43,7 +44,7 @@ This is the canonical install-and-run flow.
 ### 1. Run the installer
 
 ```bash
-curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/main/scripts/install.sh | bash
 ```
 
 The installer downloads the latest stable release, installs missing basics where it can, chooses Docker when it is already healthy, falls back to host runtime when Docker is unavailable, then runs `./scripts/onboard-all.sh`.
@@ -91,10 +92,10 @@ Choose runtime at install time:
 
 ```bash
 # isolated Docker runtime
-curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime docker
+curl -fsSL https://raw.githubusercontent.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/main/scripts/install.sh | bash -s -- --runtime docker
 
 # host runtime fallback
-curl -fsSL https://farm-friend.com/fft-nano/install.sh | bash -s -- --runtime host
+curl -fsSL https://raw.githubusercontent.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/main/scripts/install.sh | bash -s -- --runtime host
 ```
 
 ### All Setup Options
@@ -522,6 +523,25 @@ Behavior:
 - admin and coder delegation commands are main-chat only
 - main/admin can query or restart host service with `/gateway status` and `/gateway restart`
 
+## Updating (`/update` and `fft update`)
+
+The host update flow is unified across all surfaces. In the main Telegram chat, send
+`/update`; the bot streams a single live preview message that ticks through every
+phase (`fetching` → `pulling` → `installing` → `building` → `restarting` → `verifying`)
+and finalizes with a terminal success/failure line.
+
+The same flow is available from:
+
+- **Web Control Center**: `POST /api/update` starts the update; `GET /api/update/status?reportId=<id>` returns the live progress for the front-end to render.
+- **TUI gateway**: `host.update` returns a report id; the TUI client polls the status to drive its UI.
+- **CLI**: `node bin/fft.js update` (or `fft update` once linked) prints a live, line-by-line progress stream to stdout with timestamps, elapsed time, and a final `Update complete in <s>s.` or `Update failed.` line.
+
+The update preserves local changes (auto-stash → pull --ff-only → reapply), reinstalls
+dependencies, rebuilds the host, and restarts the service. If the pull is not a
+fast-forward, the auto-stash is preserved and the recovery hint is included in the
+final message. See `docs/INSTALLER.md` for the canonical installer URL and override
+knobs (`FFT_NANO_REF`, `FFT_NANO_REPO`, `FFT_NANO_INSTALL_DIR`).
+
 ## Coding Delegation (`/coder`)
 
 Main/admin chat supports explicit delegation triggers:
@@ -650,7 +670,8 @@ Telegram/WhatsApp -> SQLite -> host router/scheduler -> containerized Pi runtime
 
 Core files:
 
-- `src/index.ts` - channel ingestion, routing, admin command policy
+- `src/index.ts` - thin process entrypoint
+- `src/wiring.ts` - host composition, channel ingestion, routing, admin command policy
 - `src/pi-runner.ts` - Pi subprocess launch, sandbox wiring, snapshots, runtime event emission
 - `src/sandbox.ts` - optional `bwrap`/Docker wrapping for Pi runs
 - `src/task-scheduler.ts` - scheduler mode switch (`v2` default, `legacy` fallback)

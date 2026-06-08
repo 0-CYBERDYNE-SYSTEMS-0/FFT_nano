@@ -45,6 +45,12 @@ export interface UpdateNotificationRecord {
   ok?: boolean;
   text?: string;
   progress?: UpdateProgressEvent[];
+  /** Index into the progress array that the update service has already processed */
+  lastProgressIndex?: number;
+  /** Telegram message ID of the preview message for editing in place */
+  previewMessageId?: number;
+  /** Flag indicating that the preview message send failed and we should use fallback mode */
+  previewFailed?: boolean;
 }
 
 export interface CommandRunResult {
@@ -734,6 +740,52 @@ export function runUpdateCommand(
   } finally {
     if (lockFile) releaseUpdateLock(lockFile);
   }
+}
+
+/**
+ * resolveRef calls the installer's resolve_ref() bash function.
+ * It sources installScriptPath in a bash subshell and invokes resolve_ref
+ * with the given repo and ref, returning the resolved tag.
+ *
+ * This is used by the installer-update-e2e integration test to exercise
+ * the full installer + update loop with a real local git fixture.
+ */
+export async function resolveRef(
+  repo: string,
+  ref: string,
+  installScriptPath: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'bash',
+      ['-c', `set -euo pipefail; source "${installScriptPath}" && resolve_ref`],
+      {
+        env: { ...process.env, REPO: repo, REF: ref },
+        cwd: path.dirname(installScriptPath),
+        timeout: 30_000,
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(
+          new Error(`resolve_ref exited ${code}${stderr ? `: ${stderr}` : ''}`),
+        );
+      }
+    });
+    child.on('error', (err) => {
+      reject(err);
+    });
+  });
 }
 
 export function startDetachedUpdateCommand(
