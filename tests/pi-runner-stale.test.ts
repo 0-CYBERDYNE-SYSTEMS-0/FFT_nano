@@ -7,6 +7,7 @@ import test from 'node:test';
 import { hostEventBus } from '../src/app-state.js';
 import {
   getProviderFallbackCandidates,
+  resolveExtensionPaths,
   runContainerAgent,
 } from '../src/pi-runner.ts';
 import {
@@ -35,6 +36,28 @@ test('getProviderFallbackCandidates preserves forward-only fallback progression'
     }),
     ['zai'],
   );
+});
+
+test('resolveExtensionPaths prefers built dist extensions over source extensions', (t) => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-ext-paths-'));
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+
+  const srcDir = path.join(projectRoot, 'src', 'extensions');
+  const distDir = path.join(projectRoot, 'dist', 'extensions');
+  fs.mkdirSync(path.join(srcDir, 'pi-autoresearch'), { recursive: true });
+  fs.mkdirSync(path.join(distDir, 'pi-autoresearch'), { recursive: true });
+  fs.writeFileSync(path.join(srcDir, 'fft-permission-gate.ts'), '');
+  fs.writeFileSync(path.join(distDir, 'fft-permission-gate.js'), '');
+  fs.writeFileSync(path.join(srcDir, 'deepseek-v4-flash-compaction.ts'), '');
+  fs.writeFileSync(path.join(distDir, 'deepseek-v4-flash-compaction.js'), '');
+  fs.writeFileSync(path.join(srcDir, 'pi-autoresearch', 'index.ts'), '');
+  fs.writeFileSync(path.join(distDir, 'pi-autoresearch', 'index.js'), '');
+
+  assert.deepEqual(resolveExtensionPaths(projectRoot), [
+    path.join(distDir, 'fft-permission-gate.js'),
+    path.join(distDir, 'deepseek-v4-flash-compaction.js'),
+    path.join(distDir, 'pi-autoresearch', 'index.js'),
+  ]);
 });
 
 test('runContainerAgent handles an already aborted signal without throwing', async (t) => {

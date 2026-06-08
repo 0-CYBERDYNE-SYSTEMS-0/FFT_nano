@@ -149,6 +149,12 @@ export class PipelineDispatcher {
       );
     }
     const pipeline = this.selectPipeline(normalized);
+    if (pipeline instanceof ChatPipeline) {
+      const prepared = await pipeline.prepare(normalized);
+      const output = await pipeline.runChatTurn(normalized);
+      await pipeline.deliver(output, prepared);
+      return;
+    }
     const prepared = await pipeline.prepare(normalized);
     const output = await pipeline.execute(prepared);
     await pipeline.deliver(output, prepared);

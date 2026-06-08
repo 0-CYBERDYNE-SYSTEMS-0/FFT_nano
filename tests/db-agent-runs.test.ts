@@ -34,11 +34,15 @@ test('agent run records can be created, updated, listed, and recovered after res
       last_progress_at: '2026-05-24T00:01:00.000Z',
       current_phase: 'tool_running',
       current_detail: 'bash',
+      provider: 'zai',
+      model: 'glm-4.7',
     });
 
     const listed = listAgentRunsForChat('telegram:1');
     assert.equal(listed.length, 1);
     assert.equal(listed[0]?.current_phase, 'tool_running');
+    assert.equal(listed[0]?.provider, 'zai');
+    assert.equal(listed[0]?.model, 'glm-4.7');
 
     closeDatabase();
     initDatabaseAtPath(dbPath);

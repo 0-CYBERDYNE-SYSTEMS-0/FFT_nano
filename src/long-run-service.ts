@@ -322,6 +322,10 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         abortController.signal,
       );
       deps.updateChatUsage(run.chat_jid, result.usage);
+      updateAgentRun(runId, {
+        provider: result.usage?.provider ?? null,
+        model: result.usage?.model ?? null,
+      });
       const finishedAt = new Date().toISOString();
       if (abortController.signal.aborted) {
         updateAgentRun(runId, {
