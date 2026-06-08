@@ -749,12 +749,7 @@ export function resolveExtensionPaths(projectRoot = process.cwd()): string[] {
   const found: string[] = [];
   for (const [, srcName, distName] of extensions) {
     const srcPath = path.resolve(projectRoot, 'src', 'extensions', srcName);
-    const distPath = path.resolve(
-      projectRoot,
-      'dist',
-      'extensions',
-      distName,
-    );
+    const distPath = path.resolve(projectRoot, 'dist', 'extensions', distName);
     if (fs.existsSync(distPath)) {
       found.push(distPath);
     } else if (fs.existsSync(srcPath)) {
@@ -768,6 +763,7 @@ type PiTransportMode = 'json' | 'rpc';
 
 function buildPiArgs(params: {
   stablePrompt: string;
+  sessionBootstrapPrompt: string;
   ephemeralPrompt: string;
   prompt: string;
   useContinue: boolean;
@@ -779,6 +775,7 @@ function buildPiArgs(params: {
 }): string[] {
   const {
     stablePrompt,
+    sessionBootstrapPrompt,
     ephemeralPrompt,
     prompt,
     useContinue,
@@ -813,11 +810,15 @@ function buildPiArgs(params: {
   if (input.thinkLevel) args.push('--thinking', input.thinkLevel);
   if (apiKey) args.push('--api-key', apiKey);
 
-  // Stable layer first, ephemeral suffix second. pi joins multiple
-  // --append-system-prompt values with double newlines (see @mariozechner/pi-coding-agent
-  // CHANGELOG.md:543), so the provider receives stableText + "\n\n" + ephemeralText.
-  // The byte-identical stable prefix is what the provider's cache key covers.
+  // Stable layer first, optional session bootstrap second, per-turn ephemeral
+  // suffix last. pi joins multiple --append-system-prompt values with double
+  // newlines (see @mariozechner/pi-coding-agent CHANGELOG.md:543). Continued
+  // sessions omit the behavior-rich bootstrap because that context should
+  // already live in the session history.
   args.push('--append-system-prompt', stablePrompt);
+  if (!useContinue && sessionBootstrapPrompt) {
+    args.push('--append-system-prompt', sessionBootstrapPrompt);
+  }
   if (ephemeralPrompt) {
     args.push('--append-system-prompt', ephemeralPrompt);
   }
@@ -1146,6 +1147,7 @@ export async function runContainerAgent(
   }
 
   const stablePrompt = systemPromptBuild.stableText;
+  const sessionBootstrapPrompt = systemPromptBuild.sessionBootstrapText;
   const ephemeralPrompt = systemPromptBuild.ephemeralText;
   const latestManifestPath = resolveLatestPromptManifestPath(groupDir);
   if (PARITY_CONFIG.prompt.persistLatestManifest) {
@@ -1225,6 +1227,8 @@ export async function runContainerAgent(
       group: group.name,
       mode: systemPromptBuild.report.mode,
       stableChars: stablePrompt.length,
+      sessionBootstrapChars: sessionBootstrapPrompt.length,
+      sessionBootstrapIncluded: effectiveInputNoContinue,
       ephemeralChars: ephemeralPrompt.length,
       chars: systemPromptBuild.report.totalChars,
       contextEntries: systemPromptBuild.report.contextEntries.length,
@@ -1352,6 +1356,7 @@ export async function runContainerAgent(
         : 'json';
       const piArgs = buildPiArgs({
         stablePrompt,
+        sessionBootstrapPrompt,
         ephemeralPrompt,
         prompt,
         useContinue,
