@@ -326,7 +326,9 @@ export function buildControlCenterSystemPromptPreview(
     chatJid,
     groupFolder,
     mode,
-    text: result.text,
+    text: [result.stableText, result.ephemeralText]
+      .filter((s) => s && s.length > 0)
+      .join('\n\n'),
     report: result.report,
     persisted: false,
     note: 'Preview only; no role:system message is stored or sent.',

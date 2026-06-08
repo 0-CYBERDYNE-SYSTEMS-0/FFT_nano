@@ -13,7 +13,19 @@ export type PromptPreflightDecision =
 export interface PromptCacheEntry {
   key: string;
   hash: string;
-  content: string;
+  /**
+   * Full content of the stable layer (identity, safety, IPC, delegation,
+   * skill catalog, NANO/SOUL/MEMORY/canonical/daily memory entries).
+   * Optional for back-compat with older on-disk entries that only stored
+   * the tiny base prompt.
+   */
+  content?: string;
+  /**
+   * Map of absolute path → mtime (ms since epoch) for the files that
+   * contributed to the stable layer. Optional for back-compat.
+   * Missing file paths map to `null`.
+   */
+  mtimeMap?: Record<string, number | null>;
   manifest: SystemPromptReport;
   builtAt: string;
 }
@@ -217,7 +229,22 @@ export function readPromptRuntimeState(statePath: string): PromptRuntimeState {
           : undefined,
       cacheEntries:
         parsed.cacheEntries && typeof parsed.cacheEntries === 'object'
-          ? (parsed.cacheEntries as Record<string, PromptCacheEntry>)
+          ? Object.fromEntries(
+              Object.entries(
+                parsed.cacheEntries as Record<string, PromptCacheEntry>,
+              ).map(([slot, entry]) => [
+                slot,
+                {
+                  ...entry,
+                  content:
+                    typeof entry?.content === 'string' ? entry.content : '',
+                  mtimeMap:
+                    entry?.mtimeMap && typeof entry.mtimeMap === 'object'
+                      ? (entry.mtimeMap as Record<string, number | null>)
+                      : {},
+                },
+              ]),
+            )
           : {},
     };
   } catch {

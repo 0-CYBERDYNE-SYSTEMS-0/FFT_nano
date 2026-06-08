@@ -83,6 +83,35 @@ export interface PromptLayer {
   chars: number;
 }
 
+/**
+ * The stable layer is the byte-identical prefix the provider caches for the
+ * life of a session: identity, safety, IPC, delegation, skill catalog, and
+ * NANO/SOUL/MEMORY/canonical/daily memory entries. It is recomputed only when
+ * a contributing file's mtime changes.
+ */
+export interface StablePromptLayer {
+  id: 'stable';
+  title: string;
+  content: string;
+  chars: number;
+  mtimeMap: Record<string, number | null>;
+  hash: string;
+  key: string;
+}
+
+/**
+ * The ephemeral layer is the per-turn volatile suffix the provider cannot
+ * cache: the `Inbound Context` JSON metadata (timestamps, requestId, etc.),
+ * the host context overlay, runtime hints, reasoning visibility, and the
+ * inbound message wrapper.
+ */
+export interface EphemeralPromptLayer {
+  id: 'ephemeral';
+  title: string;
+  content: string;
+  chars: number;
+}
+
 export interface SystemPromptReport {
   mode: PromptMode;
   totalChars: number;
@@ -93,7 +122,12 @@ export interface SystemPromptReport {
     injectedTotalChars: number;
     remainingChars: number;
   };
-  layers: PromptLayer[];
+  layers: (StablePromptLayer | EphemeralPromptLayer)[];
+  /**
+   * Stable-layer cache key. Includes contributing file mtimes so a touch
+   * of NANO.md / SOUL.md / MEMORY.md / canonical/* / daily memory changes
+   * the key and forces a rebuild.
+   */
   baseCacheKey: string;
   basePromptHash: string;
   cacheHit: boolean;
@@ -104,10 +138,11 @@ export interface SystemPromptReport {
   };
 }
 
-interface CachedBaseLayer {
+interface CachedStableLayer {
   key: string;
   hash: string;
   content: string;
+  mtimeMap: Record<string, number | null>;
 }
 
 interface BuildSystemPromptOptions {
@@ -118,7 +153,7 @@ interface BuildSystemPromptOptions {
   fileMaxChars?: number;
   totalMaxChars?: number;
   skillCatalogMaxChars?: number;
-  cachedBaseLayer?: CachedBaseLayer | null;
+  cachedStableLayer?: CachedStableLayer | null;
 }
 
 const DEFAULT_FILE_MAX_CHARS = 24_000;
@@ -552,7 +587,7 @@ function renderSkillCatalog(
   };
 }
 
-function buildBaseCacheKey(params: {
+function buildStableCacheKey(params: {
   assistantName: string;
   promptMode: PromptMode;
   isMain: boolean;
@@ -560,7 +595,11 @@ function buildBaseCacheKey(params: {
   canDelegateToCoder: boolean;
   autoDelegationEnabled: boolean;
   isEvaluatorRun: boolean;
+  mtimeMap: Record<string, number | null>;
 }): string {
+  const sortedEntries = Object.keys(params.mtimeMap)
+    .sort()
+    .map((k) => [k, params.mtimeMap[k]]);
   const payload = {
     assistantName: params.assistantName,
     promptMode: params.promptMode,
@@ -569,8 +608,41 @@ function buildBaseCacheKey(params: {
     canDelegateToCoder: params.canDelegateToCoder,
     autoDelegationEnabled: params.autoDelegationEnabled,
     isEvaluatorRun: params.isEvaluatorRun,
+    mtimeMap: Object.fromEntries(sortedEntries),
   };
   return hashString(JSON.stringify(payload));
+}
+
+function mtimeMapDeepEqual(
+  a: Record<string, number | null>,
+  b: Record<string, number | null>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const k of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+/**
+ * Stat every path and return a map of path → mtimeMs (or `null` when the
+ * file is missing). The caller is expected to pass the same set of paths
+ * that contribute to the stable prompt layer.
+ */
+function collectMtimeMap(paths: Iterable<string>): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const p of paths) {
+    try {
+      const stat = fs.statSync(p);
+      out[p] = stat.mtimeMs;
+    } catch {
+      out[p] = null;
+    }
+  }
+  return out;
 }
 
 function renderBasePrompt(params: {
@@ -801,7 +873,7 @@ function renderBasePrompt(params: {
   return lines.join('\n').trim();
 }
 
-function renderOverlayPrompt(params: {
+function renderEphemeralPrompt(params: {
   input: SystemPromptInput;
   assistantName: string;
   promptMode: PromptMode;
@@ -809,9 +881,6 @@ function renderOverlayPrompt(params: {
   providedMemoryContext: string;
   now: Date;
   timezone: string;
-  contextEntries: ContextEntry[];
-  skillCatalogText: string;
-  fileMaxChars: number;
 }): string {
   const lines: string[] = [];
   lines.push('## Inbound Context (trusted metadata)');
@@ -895,14 +964,24 @@ function renderOverlayPrompt(params: {
     lines.push('');
   }
 
-  if (params.skillCatalogText) {
-    lines.push(params.skillCatalogText);
-    lines.push('');
-  }
-
   if (params.providedMemoryContext) {
     lines.push('## Retrieved Memory Context');
     lines.push(clampMemoryContext(params.providedMemoryContext));
+  }
+
+  return lines.join('\n').trim();
+}
+
+function renderStableOverlay(params: {
+  contextEntries: ContextEntry[];
+  skillCatalogText: string;
+  fileMaxChars: number;
+}): string {
+  const lines: string[] = [];
+
+  if (params.skillCatalogText) {
+    lines.push(params.skillCatalogText);
+    lines.push('');
   }
 
   if (params.contextEntries.length > 0) {
@@ -934,7 +1013,18 @@ export function buildSystemPrompt(
   input: SystemPromptInput,
   paths: WorkspacePaths,
   options: BuildSystemPromptOptions = {},
-): { text: string; report: SystemPromptReport } {
+): {
+  stableText: string;
+  ephemeralText: string;
+  /**
+   * Convenience concatenation of stable + ephemeral layers, joined with
+   * double newlines (matching how pi's `--append-system-prompt` joins
+   * multiple values). Useful for preview/diagnostic consumers that want
+   * the full prompt as one string.
+   */
+  text: string;
+  report: SystemPromptReport;
+} {
   const readFileIfExists = options.readFileIfExists ?? defaultReadFileIfExists;
   const fileMaxChars =
     options.fileMaxChars ??
@@ -982,9 +1072,24 @@ export function buildSystemPrompt(
     !input.isScheduledTask &&
     options.delegationExtensionAvailable === true;
 
+  // Collect mtimes for every stable-source path so a later cache key/hash can
+  // detect any contributing file change without re-hashing file content.
+  const mtimeTracker: Record<string, number | null> = {};
+  const trackingReadFileIfExists = (filePath: string): string | null => {
+    const value = readFileIfExists(filePath);
+    if (!Object.prototype.hasOwnProperty.call(mtimeTracker, filePath)) {
+      try {
+        mtimeTracker[filePath] = fs.statSync(filePath).mtimeMs;
+      } catch {
+        mtimeTracker[filePath] = null;
+      }
+    }
+    return value;
+  };
+
   const contextState = input.isMain
     ? buildMainContextEntries({
-        readFileIfExists,
+        readFileIfExists: trackingReadFileIfExists,
         includeHeartbeat: includeHeartbeatContext,
         fileMaxChars,
         totalMaxChars,
@@ -993,7 +1098,7 @@ export function buildSystemPrompt(
         timezone,
       })
     : buildNonMainContextEntries({
-        readFileIfExists,
+        readFileIfExists: trackingReadFileIfExists,
         includeHeartbeat: includeHeartbeatContext,
         fileMaxChars,
         totalMaxChars,
@@ -1006,7 +1111,51 @@ export function buildSystemPrompt(
       ? renderSkillCatalog(input.skillCatalog || [], skillCatalogMaxChars)
       : { text: '', injectedChars: 0, count: 0, truncated: false };
 
-  const baseCacheKey = buildBaseCacheKey({
+  // Also stat any stable-source files that exist on disk but were not
+  // read because of a budget or include-missing gate — their mtime still
+  // belongs in the cache key.
+  const stableSourcePaths: string[] = [];
+  if (input.isMain) {
+    stableSourcePaths.push(
+      ...MAIN_ALWAYS_INJECTED_FILES.map((n) => `${paths.groupDir}/${n}`),
+    );
+    stableSourcePaths.push(
+      ...DEFAULT_CANONICAL_FILE_NAMES.map(
+        (n) => `${paths.groupDir}/canonical/${n}`,
+      ),
+    );
+    for (const rel of buildDailyMemoryFileNames(now, timezone)) {
+      stableSourcePaths.push(`${paths.groupDir}/${rel}`);
+    }
+    if (includeHeartbeatContext)
+      stableSourcePaths.push(`${paths.groupDir}/HEARTBEAT.md`);
+  } else {
+    stableSourcePaths.push(
+      `${paths.globalDir}/NANO.md`,
+      `${paths.groupDir}/NANO.md`,
+      `${paths.globalDir}/SOUL.md`,
+      `${paths.groupDir}/SOUL.md`,
+      `${paths.globalDir}/TODOS.md`,
+      `${paths.groupDir}/TODOS.md`,
+      `${paths.globalDir}/MEMORY.md`,
+      `${paths.globalDir}/memory.md`,
+      `${paths.groupDir}/MEMORY.md`,
+      `${paths.groupDir}/memory.md`,
+    );
+    if (includeHeartbeatContext)
+      stableSourcePaths.push(`${paths.groupDir}/HEARTBEAT.md`);
+  }
+  for (const p of stableSourcePaths) {
+    if (!Object.prototype.hasOwnProperty.call(mtimeTracker, p)) {
+      try {
+        mtimeTracker[p] = fs.statSync(p).mtimeMs;
+      } catch {
+        mtimeTracker[p] = null;
+      }
+    }
+  }
+
+  const stableCacheKey = buildStableCacheKey({
     assistantName,
     promptMode,
     isMain: input.isMain,
@@ -1014,23 +1163,41 @@ export function buildSystemPrompt(
     canDelegateToCoder,
     autoDelegationEnabled,
     isEvaluatorRun: input.isEvaluatorRun === true,
+    mtimeMap: mtimeTracker,
   });
 
+  const cached = options.cachedStableLayer;
   const cacheHit =
-    options.cachedBaseLayer?.key === baseCacheKey &&
-    typeof options.cachedBaseLayer.content === 'string' &&
-    options.cachedBaseLayer.content.length > 0;
-  const baseContent = cacheHit
-    ? options.cachedBaseLayer!.content
-    : renderBasePrompt({
-        assistantName,
-        paths,
-        forcedDelegateMode,
-        canDelegateToCoder,
-        autoDelegationEnabled,
-        isEvaluatorRun: input.isEvaluatorRun === true,
-      });
-  const overlayContent = renderOverlayPrompt({
+    !!cached &&
+    cached.key === stableCacheKey &&
+    mtimeMapDeepEqual(cached.mtimeMap, mtimeTracker) &&
+    typeof cached.content === 'string' &&
+    cached.content.length > 0;
+
+  let stableText: string;
+  if (cacheHit) {
+    stableText = cached!.content;
+  } else {
+    const baseText = renderBasePrompt({
+      assistantName,
+      paths,
+      forcedDelegateMode,
+      canDelegateToCoder,
+      autoDelegationEnabled,
+      isEvaluatorRun: input.isEvaluatorRun === true,
+    });
+    const stableOverlay = renderStableOverlay({
+      contextEntries: contextState.entries,
+      skillCatalogText: skillCatalog.text,
+      fileMaxChars,
+    });
+    stableText = [baseText, stableOverlay]
+      .filter((s) => s && s.length > 0)
+      .join('\n\n')
+      .trim();
+  }
+
+  const ephemeralText = renderEphemeralPrompt({
     input,
     assistantName,
     promptMode,
@@ -1038,25 +1205,25 @@ export function buildSystemPrompt(
     providedMemoryContext,
     now,
     timezone,
-    contextEntries: contextState.entries,
-    skillCatalogText: skillCatalog.text,
-    fileMaxChars,
   });
-  const text = [baseContent, overlayContent]
-    .filter(Boolean)
-    .join('\n\n')
-    .trim();
+
   const injectedTotalChars = contextState.entries.reduce(
     (sum, entry) => sum + entry.injectedChars,
     0,
   );
-  const basePromptHash = hashString(baseContent);
+  const basePromptHash = hashString(stableText);
+  const totalChars = stableText.length + ephemeralText.length;
 
   return {
-    text,
+    stableText,
+    ephemeralText,
+    text: [stableText, ephemeralText]
+      .filter((s) => s && s.length > 0)
+      .join('\n\n')
+      .trim(),
     report: {
       mode: promptMode,
-      totalChars: text.length,
+      totalChars,
       contextEntries: contextState.entries,
       contextBudget: {
         fileMaxChars,
@@ -1066,19 +1233,22 @@ export function buildSystemPrompt(
       },
       layers: [
         {
-          id: 'base',
-          title: 'Base Prompt',
-          content: baseContent,
-          chars: baseContent.length,
+          id: 'stable',
+          title: 'Stable Prompt (cacheable prefix)',
+          content: stableText,
+          chars: stableText.length,
+          mtimeMap: mtimeTracker,
+          hash: basePromptHash,
+          key: stableCacheKey,
         },
         {
-          id: 'overlays',
-          title: 'Runtime Overlays',
-          content: overlayContent,
-          chars: overlayContent.length,
+          id: 'ephemeral',
+          title: 'Ephemeral Overlay (per-turn suffix)',
+          content: ephemeralText,
+          chars: ephemeralText.length,
         },
       ],
-      baseCacheKey,
+      baseCacheKey: stableCacheKey,
       basePromptHash,
       cacheHit,
       skillsCatalog: {
