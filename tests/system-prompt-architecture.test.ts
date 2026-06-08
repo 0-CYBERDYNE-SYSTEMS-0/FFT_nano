@@ -587,6 +587,31 @@ test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cac
       true,
       'ephemeral layer must contain runtime metadata block',
     );
+    assert.equal(
+      stableLayer.content.includes('## /workspace/group/SOUL.md'),
+      true,
+      'stable layer keeps durable SOUL identity/policy context',
+    );
+    assert.equal(
+      stableLayer.content.includes('## /workspace/group/NANO.md'),
+      false,
+      'operational NANO context must stay out of stable cache',
+    );
+    assert.equal(
+      stableLayer.content.includes('## /workspace/group/TODOS.md'),
+      false,
+      'active TODO context must stay out of stable cache',
+    );
+    assert.equal(
+      stableLayer.content.includes('## /workspace/group/MEMORY.md'),
+      false,
+      'durable memory detail must stay out of stable cache',
+    );
+    assert.equal(
+      ephemeralLayer.content.includes('## /workspace/group/NANO.md'),
+      true,
+      'ephemeral layer carries operational NANO context',
+    );
     const firstKey = stableLayer.key;
     const firstHash = stableLayer.hash;
 
@@ -603,8 +628,8 @@ test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cac
     assert.equal(second.report.cacheHit, true);
     assert.equal(second.stableText, first.stableText);
 
-    // Mutate one mtime AND its content; the cache must miss and the new
-    // stable layer must reflect the changed content.
+    // Mutate high-churn operational context. It should update the ephemeral
+    // suffix without invalidating the stable provider-cacheable prefix.
     setMtime('/workspace/group/NANO.md', nextMtime++);
     files.set('/workspace/group/NANO.md', '# NANO (updated)\n');
     const third = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
@@ -616,25 +641,42 @@ test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cac
         mtimeMap: stableLayer.mtimeMap,
       },
     });
-    assert.equal(third.report.cacheHit, false);
-    assert.notEqual(third.stableText, first.stableText);
-    assert.match(third.stableText, /# NANO \(updated\)/);
-    const thirdStable = third.report.layers.find((l) => l.id === 'stable');
-    assert.ok(thirdStable && thirdStable.id === 'stable');
-    assert.notEqual(thirdStable.key, firstKey);
+    assert.equal(third.report.cacheHit, true);
+    assert.equal(third.stableText, first.stableText);
+    assert.match(third.ephemeralText, /# NANO \(updated\)/);
 
-    // Mismatched cached mtimeMap forces a miss even if the key would match.
-    setMtime('/workspace/group/NANO.md', nextMtime++);
+    // Mutate stable SOUL context. The stable cache must miss and the new
+    // stable layer must reflect the changed content.
+    setMtime('/workspace/group/SOUL.md', nextMtime++);
+    files.set('/workspace/group/SOUL.md', '# SOUL (updated)\n');
     const fourth = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
       readFileIfExists: (p) => files.get(p) ?? null,
       cachedStableLayer: {
         key: firstKey,
         hash: firstHash,
         content: first.stableText,
-        mtimeMap: { '/workspace/group/NANO.md': 999_999 },
+        mtimeMap: stableLayer.mtimeMap,
       },
     });
     assert.equal(fourth.report.cacheHit, false);
+    assert.notEqual(fourth.stableText, first.stableText);
+    assert.match(fourth.stableText, /# SOUL \(updated\)/);
+    const fourthStable = fourth.report.layers.find((l) => l.id === 'stable');
+    assert.ok(fourthStable && fourthStable.id === 'stable');
+    assert.notEqual(fourthStable.key, firstKey);
+
+    // Mismatched cached mtimeMap forces a miss even if the key would match.
+    setMtime('/workspace/group/SOUL.md', nextMtime++);
+    const fifth = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+      readFileIfExists: (p) => files.get(p) ?? null,
+      cachedStableLayer: {
+        key: firstKey,
+        hash: firstHash,
+        content: first.stableText,
+        mtimeMap: { '/workspace/group/SOUL.md': 999_999 },
+      },
+    });
+    assert.equal(fifth.report.cacheHit, false);
   } finally {
     (fs as { statSync: typeof fs.statSync }).statSync = originalStatSync;
   }

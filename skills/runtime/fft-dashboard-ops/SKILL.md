@@ -18,7 +18,7 @@ Use this skill for generating, staging, applying, and validating farm dashboards
 - Do not use for direct live YAML edits in Home Assistant config.
 - Do not use for non-dashboard automation or device control requests.
 - Do not use outside main/admin chat for dashboard apply operations.
-- Do not use for runtime multi-card canvas composition; hand off to `fft-canvas-dynamic-ops`.
+- Do not use for runtime multi-card canvas composition; that capability is not bundled with FFT_nano yet.
 
 ## Guardrails
 
@@ -54,7 +54,7 @@ Use templates as a baseline, then adapt entity references using live discovery f
 
 ## Skill Routing
 
-- If the user asks for runtime canvas cards, card-level canvas edits, or spec-driven layout updates, use `fft-canvas-dynamic-ops`.
+- If the user asks for runtime canvas cards, card-level canvas edits, or spec-driven layout updates, explain that this skill only covers Home Assistant Lovelace dashboard work.
 - If the user asks for full view composition, theme/view structure changes, or staged apply lifecycle management, stay in `fft-dashboard-ops`.
 
 ## Context-Reactive Theming
