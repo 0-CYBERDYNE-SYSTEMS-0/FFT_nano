@@ -3,6 +3,26 @@ import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+export type UpdateProgressPhase =
+  | 'starting'
+  | 'fetching'
+  | 'pulling'
+  | 'installing'
+  | 'building'
+  | 'restarting'
+  | 'verifying'
+  | 'complete';
+
+export interface UpdateProgressEvent {
+  phase: UpdateProgressPhase;
+  label: string;
+  status: 'started' | 'completed' | 'failed';
+  message?: string;
+  at: string;
+  durationMs?: number;
+  ok?: boolean;
+}
+
 export interface UpdateCommandResult {
   ok: boolean;
   text: string;
@@ -24,6 +44,13 @@ export interface UpdateNotificationRecord {
   sentAt?: string;
   ok?: boolean;
   text?: string;
+  progress?: UpdateProgressEvent[];
+  /** Index into the progress array that the update service has already processed */
+  lastProgressIndex?: number;
+  /** Telegram message ID of the preview message for editing in place */
+  previewMessageId?: number;
+  /** Flag indicating that the preview message send failed and we should use fallback mode */
+  previewFailed?: boolean;
 }
 
 export interface CommandRunResult {
@@ -52,6 +79,7 @@ export interface RunUpdateCommandOptions {
   run?: CommandRunner;
   existsSync?: (filePath: string) => boolean;
   now?: () => Date;
+  onProgress?: (event: UpdateProgressEvent) => void;
 }
 
 export interface StartDetachedUpdateCommandOptions {
@@ -273,6 +301,7 @@ export function runUpdateCommand(
   const run = options.run || defaultRunner;
   const existsSync = options.existsSync || fs.existsSync;
   const now = options.now || (() => new Date());
+  const onProgress = options.onProgress;
   const stepTimeoutMs = parsePositiveInt(
     env.FFT_NANO_UPDATE_STEP_TIMEOUT_MS,
     DEFAULT_STEP_TIMEOUT_MS,
@@ -280,6 +309,26 @@ export function runUpdateCommand(
   const outputLines: string[] = [];
   let stashRef: string | null = null;
   let lockFile: string | null = null;
+
+  const emit = (
+    phase: UpdateProgressPhase,
+    label: string,
+    status: 'started' | 'completed' | 'failed',
+    message?: string,
+    durationMs?: number,
+    ok?: boolean,
+  ): void => {
+    if (!onProgress) return;
+    onProgress({
+      phase,
+      label,
+      status,
+      at: new Date().toISOString(),
+      message,
+      durationMs,
+      ok,
+    });
+  };
 
   const runRaw = (command: string, args: string[]): CommandRunResult =>
     run(command, args, { cwd, env, timeoutMs: stepTimeoutMs });
@@ -341,16 +390,36 @@ export function runUpdateCommand(
   lockFile = lock.lockFile;
 
   try {
+    // --- starting phase ---
+    emit('starting', 'update worker started', 'started');
     const gitCheck = runRaw('git', ['rev-parse', '--is-inside-work-tree']);
     if (gitCheck.error) {
+      emit('starting', 'git rev-parse', 'failed', gitCheck.error.message);
       return fail(`Failed checking git checkout: ${gitCheck.error.message}`);
     }
     if (gitCheck.status !== 0 || gitCheck.stdout?.trim() !== 'true') {
+      emit('starting', 'git rev-parse', 'failed', 'not a git checkout');
       return fail('Update aborted: current directory is not a git checkout.');
     }
 
     const status = runStep('git status', 'git', ['status', '--porcelain']);
-    if (!status.ok) return fail('Update aborted before changing files.');
+    if (!status.ok) {
+      emit(
+        'starting',
+        'git status',
+        'failed',
+        status.result.stderr || 'failed',
+      );
+      return fail('Update aborted before changing files.');
+    }
+    emit(
+      'starting',
+      'update worker started',
+      'completed',
+      undefined,
+      undefined,
+      true,
+    );
 
     const dirty = Boolean(status.result.stdout?.trim());
     if (dirty) {
@@ -363,8 +432,10 @@ export function runUpdateCommand(
         '-m',
         marker,
       ]);
-      if (!stash.ok)
+      if (!stash.ok) {
+        emit('pulling', 'git stash', 'failed', stash.result.stderr || 'failed');
         return fail('Update aborted: could not stash local changes.');
+      }
 
       const stashList = runRaw('git', ['stash', 'list', '--format=%gd%x00%gs']);
       if (stashList.error) {
@@ -381,12 +452,32 @@ export function runUpdateCommand(
       outputLines.push(`Saved local changes as ${stashRef}.`);
     }
 
+    // --- fetching phase ---
+    emit('fetching', 'git fetch origin', 'started');
+    let fetchStart = Date.now();
     const fetch = runStep('git fetch', 'git', ['fetch', 'origin']);
     if (!fetch.ok) {
+      emit(
+        'fetching',
+        'git fetch origin',
+        'failed',
+        fetch.result.stderr || 'failed',
+        Date.now() - fetchStart,
+      );
       restoreAutostashAfterAbort();
       return fail('Update aborted during fetch.');
     }
+    emit(
+      'fetching',
+      'git fetch origin',
+      'completed',
+      undefined,
+      Date.now() - fetchStart,
+    );
 
+    // --- pulling phase ---
+    emit('pulling', 'git pull --ff-only', 'started');
+    let pullStart = Date.now();
     const branch = runRaw('git', ['symbolic-ref', '--short', 'HEAD']);
     const currentBranch =
       branch.status === 0 && branch.stdout?.trim()
@@ -410,9 +501,23 @@ export function runUpdateCommand(
     const pullArgs = ['pull', '--ff-only', 'origin', pullBranch];
     const pull = runStep('git pull', 'git', pullArgs);
     if (!pull.ok) {
+      emit(
+        'pulling',
+        'git pull --ff-only',
+        'failed',
+        pull.result.stderr || 'failed',
+        Date.now() - pullStart,
+      );
       restoreAutostashAfterAbort();
       return fail('Update aborted during pull.');
     }
+    emit(
+      'pulling',
+      'git pull --ff-only',
+      'completed',
+      pull.result.stdout || undefined,
+      Date.now() - pullStart,
+    );
 
     if (stashRef) {
       const apply = runStep('git stash apply', 'git', [
@@ -421,6 +526,12 @@ export function runUpdateCommand(
         stashRef,
       ]);
       if (!apply.ok) {
+        emit(
+          'pulling',
+          'git stash apply',
+          'failed',
+          apply.result.stderr || 'failed',
+        );
         return fail(
           `Update aborted: local changes could not be reapplied cleanly. Resolve conflicts, then recover with: git stash apply ${stashRef}`,
         );
@@ -438,7 +549,12 @@ export function runUpdateCommand(
       }
     }
 
-    const installStep = existsSync(path.join(cwd, 'package-lock.json'))
+    // --- installing phase ---
+    const isPackageLock = existsSync(path.join(cwd, 'package-lock.json'));
+    const installLabel = isPackageLock ? 'npm ci' : 'npm install';
+    emit('installing', installLabel, 'started');
+    let installStart = Date.now();
+    const installStep = isPackageLock
       ? runStep('npm ci', 'npm', ['ci', '--include=dev'])
       : runStep('npm install', 'npm', ['install', '--include=dev']);
 
@@ -449,22 +565,74 @@ export function runUpdateCommand(
         '--include=dev',
       ]);
       if (!fallbackInstall.ok) {
+        emit(
+          'installing',
+          'npm install',
+          'failed',
+          fallbackInstall.result.stderr || 'failed',
+          Date.now() - installStart,
+        );
         return fail('Update aborted during dependency installation.');
       }
+      emit(
+        'installing',
+        'npm install',
+        'completed',
+        fallbackInstall.result.stdout || undefined,
+        Date.now() - installStart,
+      );
     } else if (!installStep.ok) {
+      emit(
+        'installing',
+        installLabel,
+        'failed',
+        installStep.result.stderr || 'failed',
+        Date.now() - installStart,
+      );
       return fail('Update aborted during dependency installation.');
+    } else {
+      emit(
+        'installing',
+        installLabel,
+        'completed',
+        installStep.result.stdout || undefined,
+        Date.now() - installStart,
+      );
     }
 
+    // --- building phase ---
+    emit('building', 'npm run build', 'started');
+    let buildStart = Date.now();
     const build = runStep('npm run build', 'npm', ['run', 'build']);
-    if (!build.ok) return fail('Update aborted during build.');
+    if (!build.ok) {
+      emit(
+        'building',
+        'npm run build',
+        'failed',
+        build.result.stderr || 'failed',
+        Date.now() - buildStart,
+      );
+      return fail('Update aborted during build.');
+    }
+    emit(
+      'building',
+      'npm run build',
+      'completed',
+      build.result.stdout || undefined,
+      Date.now() - buildStart,
+    );
 
+    // --- restarting phase ---
     outputLines.push('--- restart ---');
     const scriptPath = path.join(cwd, 'scripts', 'service.sh');
     if (!existsSync(scriptPath)) {
       outputLines.push('Service script not found. Restart manually.');
+      emit('restarting', 'service.sh restart', 'failed', 'script not found');
       return { ok: false, text: outputLines.join('\n') };
     }
 
+    emit('restarting', 'service.sh restart', 'started');
+    let restartStart = Date.now();
     const restartResult = run('bash', [scriptPath, 'restart'], {
       cwd,
       env: {
@@ -483,11 +651,33 @@ export function runUpdateCommand(
       (restartResult.signal === 'SIGTERM' || restartResult.signal === 'SIGKILL')
     ) {
       outputLines.push('Update complete. Service restarting.');
+      emit(
+        'restarting',
+        'service.sh restart',
+        'completed',
+        'SIGTERM received (expected)',
+        Date.now() - restartStart,
+      );
+      emit(
+        'complete',
+        'update complete',
+        'completed',
+        undefined,
+        undefined,
+        true,
+      );
       return { ok: true, text: outputLines.join('\n') };
     }
 
     if (restartResult.error) {
       outputLines.push(`Failed: ${restartResult.error.message}`);
+      emit(
+        'restarting',
+        'service.sh restart',
+        'failed',
+        restartResult.error.message,
+        Date.now() - restartStart,
+      );
       return { ok: false, text: outputLines.join('\n') };
     }
 
@@ -495,22 +685,107 @@ export function runUpdateCommand(
       outputLines.push(
         `Service restart failed with exit code ${restartResult.status ?? 'unknown'}. Update applied but service may need manual restart.`,
       );
+      emit(
+        'restarting',
+        'service.sh restart',
+        'failed',
+        `exit code ${restartResult.status}`,
+        Date.now() - restartStart,
+      );
       return { ok: false, text: outputLines.join('\n') };
     }
+    emit(
+      'restarting',
+      'service.sh restart',
+      'completed',
+      restartResult.stdout || undefined,
+      Date.now() - restartStart,
+    );
 
+    // --- verifying phase ---
+    emit('verifying', 'service.sh status', 'started');
+    let verifyStart = Date.now();
     const statusCheck = runStep('service status check', 'bash', [
       scriptPath,
       'status',
     ]);
     if (!statusCheck.ok) {
+      emit(
+        'verifying',
+        'service.sh status',
+        'failed',
+        statusCheck.result.stderr || 'failed',
+        Date.now() - verifyStart,
+      );
       return fail('Update applied, but service status verification failed.');
     }
+    emit(
+      'verifying',
+      'service.sh status',
+      'completed',
+      statusCheck.result.stdout || undefined,
+      Date.now() - verifyStart,
+    );
 
     outputLines.push('Update complete. Service restarted.');
+    emit(
+      'complete',
+      'update complete',
+      'completed',
+      undefined,
+      undefined,
+      true,
+    );
     return { ok: true, text: outputLines.join('\n') };
   } finally {
     if (lockFile) releaseUpdateLock(lockFile);
   }
+}
+
+/**
+ * resolveRef calls the installer's resolve_ref() bash function.
+ * It sources installScriptPath in a bash subshell and invokes resolve_ref
+ * with the given repo and ref, returning the resolved tag.
+ *
+ * This is used by the installer-update-e2e integration test to exercise
+ * the full installer + update loop with a real local git fixture.
+ */
+export async function resolveRef(
+  repo: string,
+  ref: string,
+  installScriptPath: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'bash',
+      ['-c', `set -euo pipefail; source "${installScriptPath}" && resolve_ref`],
+      {
+        env: { ...process.env, REPO: repo, REF: ref },
+        cwd: path.dirname(installScriptPath),
+        timeout: 30_000,
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(
+          new Error(`resolve_ref exited ${code}${stderr ? `: ${stderr}` : ''}`),
+        );
+      }
+    });
+    child.on('error', (err) => {
+      reject(err);
+    });
+  });
 }
 
 export function startDetachedUpdateCommand(

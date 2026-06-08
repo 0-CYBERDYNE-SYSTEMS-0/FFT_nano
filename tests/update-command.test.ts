@@ -10,6 +10,7 @@ import {
   startDetachedUpdateCommand,
   type CommandRunOptions,
   type CommandRunResult,
+  type UpdateProgressEvent,
 } from '../src/update-command.js';
 
 interface ExpectedCommand {
@@ -516,4 +517,369 @@ test('runUpdateCommand fails fast when another update lock is active', () => {
 
   assert.equal(result.ok, false);
   assert.match(result.text, /already running/);
+});
+
+test('runUpdateCommand emits progress events for a clean run', () => {
+  const events: UpdateProgressEvent[] = [];
+  const { run, remaining } = makeRunner([
+    {
+      command: 'git',
+      args: ['rev-parse', '--is-inside-work-tree'],
+      result: ok('true\n'),
+    },
+    { command: 'git', args: ['status', '--porcelain'], result: ok('') },
+    { command: 'git', args: ['fetch', 'origin'], result: ok('') },
+    {
+      command: 'git',
+      args: ['symbolic-ref', '--short', 'HEAD'],
+      result: ok('main\n'),
+    },
+    {
+      command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
+    },
+    {
+      command: 'git',
+      args: ['pull', '--ff-only', 'origin', 'main'],
+      result: ok('Already up to date.\n'),
+    },
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
+    { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'restart'],
+      result: ok('restarted\n'),
+    },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'status'],
+      result: ok('running\n'),
+    },
+  ]);
+
+  const result = runUpdateCommand({
+    cwd,
+    run,
+    onProgress: (event) => events.push(event),
+    existsSync: (filePath) =>
+      filePath === '/tmp/fft_nano/package-lock.json' ||
+      filePath === '/tmp/fft_nano/scripts/service.sh',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(remaining.length, 0);
+
+  // Verify phase sequence - each phase except 'complete' emits started then completed
+  const phases = events.map((e) => e.phase);
+  assert.deepEqual(
+    phases,
+    [
+      'starting',
+      'starting',
+      'fetching',
+      'fetching',
+      'pulling',
+      'pulling',
+      'installing',
+      'installing',
+      'building',
+      'building',
+      'restarting',
+      'restarting',
+      'verifying',
+      'verifying',
+      'complete',
+    ],
+    'phases must follow the expected sequence',
+  );
+
+  // Verify status transitions: first occurrence is 'started', second is 'completed'
+  const startingEvents = events.filter((e) => e.phase === 'starting');
+  assert.equal(startingEvents[0]?.status, 'started');
+  assert.equal(startingEvents[1]?.status, 'completed');
+
+  const fetchingEvents = events.filter((e) => e.phase === 'fetching');
+  assert.equal(fetchingEvents[0]?.status, 'started');
+  assert.equal(fetchingEvents[1]?.status, 'completed');
+  assert.ok(typeof fetchingEvents[1]?.durationMs === 'number');
+
+  const pullingEvents = events.filter((e) => e.phase === 'pulling');
+  assert.equal(pullingEvents[0]?.status, 'started');
+  assert.equal(pullingEvents[1]?.status, 'completed');
+  assert.ok(typeof pullingEvents[1]?.durationMs === 'number');
+
+  const installingEvents = events.filter((e) => e.phase === 'installing');
+  assert.equal(installingEvents[0]?.status, 'started');
+  assert.equal(installingEvents[1]?.status, 'completed');
+  assert.ok(typeof installingEvents[1]?.durationMs === 'number');
+
+  const buildingEvents = events.filter((e) => e.phase === 'building');
+  assert.equal(buildingEvents[0]?.status, 'started');
+  assert.equal(buildingEvents[1]?.status, 'completed');
+  assert.ok(typeof buildingEvents[1]?.durationMs === 'number');
+
+  const restartingEvents = events.filter((e) => e.phase === 'restarting');
+  assert.equal(restartingEvents[0]?.status, 'started');
+  assert.equal(restartingEvents[1]?.status, 'completed');
+  assert.ok(typeof restartingEvents[1]?.durationMs === 'number');
+
+  const verifyingEvents = events.filter((e) => e.phase === 'verifying');
+  assert.equal(verifyingEvents[0]?.status, 'started');
+  assert.equal(verifyingEvents[1]?.status, 'completed');
+  assert.ok(typeof verifyingEvents[1]?.durationMs === 'number');
+
+  const completeEvents = events.filter((e) => e.phase === 'complete');
+  assert.equal(completeEvents[0]?.status, 'completed');
+  assert.equal(completeEvents[0]?.ok, true);
+
+  // Every event must have an ISO timestamp
+  for (const event of events) {
+    assert.ok(event.at, 'every event must have an at timestamp');
+    assert.ok(new Date(event.at).toString() !== 'Invalid Date', 'at must be a valid ISO string');
+  }
+});
+
+test('runUpdateCommand emits progress events for a dirty-with-stash run', () => {
+  const events: UpdateProgressEvent[] = [];
+  const { run, remaining } = makeRunner([
+    {
+      command: 'git',
+      args: ['rev-parse', '--is-inside-work-tree'],
+      result: ok('true\n'),
+    },
+    {
+      command: 'git',
+      args: ['status', '--porcelain'],
+      result: ok(' M README.md\n?? local.txt\n'),
+    },
+    {
+      command: 'git',
+      args: ['stash', 'push', '--include-untracked', '-m', marker],
+      result: ok(`Saved working directory and index state On main: ${marker}\n`),
+    },
+    {
+      command: 'git',
+      args: ['stash', 'list', '--format=%gd%x00%gs'],
+      result: ok(`stash@{0}\0On main: ${marker}\n`),
+    },
+    { command: 'git', args: ['fetch', 'origin'], result: ok('') },
+    {
+      command: 'git',
+      args: ['symbolic-ref', '--short', 'HEAD'],
+      result: ok('main\n'),
+    },
+    {
+      command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
+    },
+    {
+      command: 'git',
+      args: ['pull', '--ff-only', 'origin', 'main'],
+      result: ok('Updating abc..def\n'),
+    },
+    { command: 'git', args: ['stash', 'apply', 'stash@{0}'], result: ok('') },
+    {
+      command: 'git',
+      args: ['stash', 'drop', 'stash@{0}'],
+      result: ok('Dropped stash@{0}\n'),
+    },
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
+    { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'restart'],
+      result: { status: null, signal: 'SIGTERM', stdout: '' },
+    },
+  ]);
+
+  const result = runUpdateCommand({
+    cwd,
+    run,
+    now: fixedNow,
+    onProgress: (event) => events.push(event),
+    existsSync: (filePath) =>
+      filePath === '/tmp/fft_nano/package-lock.json' ||
+      filePath === '/tmp/fft_nano/scripts/service.sh',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(remaining.length, 0);
+
+  const phases = events.map((e) => e.phase);
+  // Dirty run should still have the same phases (stash is implicit in pulling)
+  assert.ok(
+    phases.includes('starting'),
+    'must have starting phase',
+  );
+  assert.ok(
+    phases.includes('fetching'),
+    'must have fetching phase',
+  );
+  assert.ok(
+    phases.includes('pulling'),
+    'must have pulling phase',
+  );
+  assert.ok(
+    phases.includes('installing'),
+    'must have installing phase',
+  );
+  assert.ok(
+    phases.includes('building'),
+    'must have building phase',
+  );
+  assert.ok(
+    phases.includes('restarting'),
+    'must have restarting phase',
+  );
+  assert.ok(
+    phases.includes('complete'),
+    'must have complete phase',
+  );
+
+  // Verify final event
+  const finalEvent = events[events.length - 1];
+  assert.equal(finalEvent.phase, 'complete');
+  assert.equal(finalEvent.status, 'completed');
+  assert.equal(finalEvent.ok, true);
+});
+
+test('runUpdateCommand emits failed progress event when pull fails', () => {
+  const events: UpdateProgressEvent[] = [];
+  const { run, remaining } = makeRunner([
+    {
+      command: 'git',
+      args: ['rev-parse', '--is-inside-work-tree'],
+      result: ok('true\n'),
+    },
+    {
+      command: 'git',
+      args: ['status', '--porcelain'],
+      result: ok(' M README.md\n'),
+    },
+    {
+      command: 'git',
+      args: ['stash', 'push', '--include-untracked', '-m', marker],
+      result: ok(`Saved working directory and index state On main: ${marker}\n`),
+    },
+    {
+      command: 'git',
+      args: ['stash', 'list', '--format=%gd%x00%gs'],
+      result: ok(`stash@{0}\0On main: ${marker}\n`),
+    },
+    { command: 'git', args: ['fetch', 'origin'], result: ok('') },
+    {
+      command: 'git',
+      args: ['symbolic-ref', '--short', 'HEAD'],
+      result: ok('main\n'),
+    },
+    {
+      command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
+    },
+    {
+      command: 'git',
+      args: ['pull', '--ff-only', 'origin', 'main'],
+      result: fail('fatal: Not possible to fast-forward\n'),
+    },
+    { command: 'git', args: ['stash', 'apply', 'stash@{0}'], result: ok('') },
+  ]);
+
+  const result = runUpdateCommand({
+    cwd,
+    run,
+    now: fixedNow,
+    onProgress: (event) => events.push(event),
+    existsSync: () => true,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.text, /Update aborted during pull\./);
+  assert.equal(remaining.length, 0);
+
+  // Verify the pulling phase received a 'failed' event
+  const pullingEvents = events.filter((e) => e.phase === 'pulling');
+  assert.ok(pullingEvents.some((e) => e.status === 'failed'), 'pulling phase must have a failed event');
+  assert.ok(
+    pullingEvents.some((e) => e.status === 'failed' && e.message),
+    'failed event should have a message',
+  );
+
+  // Verify no complete event with ok=true; instead the final event should reflect failure
+  const completeEvents = events.filter((e) => e.phase === 'complete');
+  assert.equal(completeEvents.length, 0, 'no complete phase on failure');
+
+  // Verify the result still returns ok:false to honor existing callers
+  assert.equal(result.ok, false);
+});
+
+test('runUpdateCommand without onProgress behaves exactly as before', () => {
+  // This is verified by running without onProgress and checking result shape
+  const { run, remaining } = makeRunner([
+    {
+      command: 'git',
+      args: ['rev-parse', '--is-inside-work-tree'],
+      result: ok('true\n'),
+    },
+    { command: 'git', args: ['status', '--porcelain'], result: ok('') },
+    { command: 'git', args: ['fetch', 'origin'], result: ok('') },
+    {
+      command: 'git',
+      args: ['symbolic-ref', '--short', 'HEAD'],
+      result: ok('main\n'),
+    },
+    {
+      command: 'git',
+      args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'],
+      result: ok(''),
+    },
+    {
+      command: 'git',
+      args: ['pull', '--ff-only', 'origin', 'main'],
+      result: ok('Already up to date.\n'),
+    },
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
+    { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'restart'],
+      result: ok('restarted\n'),
+    },
+    {
+      command: 'bash',
+      args: ['/tmp/fft_nano/scripts/service.sh', 'status'],
+      result: ok('running\n'),
+    },
+  ]);
+
+  const result = runUpdateCommand({
+    cwd,
+    run,
+    existsSync: (filePath) =>
+      filePath === '/tmp/fft_nano/package-lock.json' ||
+      filePath === '/tmp/fft_nano/scripts/service.sh',
+    // NOTE: no onProgress passed
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.text, /Update complete\. Service restarted\./);
+  assert.equal(remaining.length, 0);
+  // The result shape must be exactly UpdateCommandResult (no extra fields)
+  assert.equal(typeof result.ok, 'boolean');
+  assert.equal(typeof result.text, 'string');
+  assert.equal(Object.keys(result).length, 2);
 });
