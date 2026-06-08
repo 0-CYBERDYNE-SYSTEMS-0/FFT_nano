@@ -15,7 +15,7 @@ export interface PromptCacheEntry {
   hash: string;
   /**
    * Full content of the stable layer (identity, safety, IPC, delegation,
-   * skill catalog, NANO/SOUL/MEMORY/canonical/daily memory entries).
+   * and stable SOUL identity/policy context).
    * Optional for back-compat with older on-disk entries that only stored
    * the tiny base prompt.
    */

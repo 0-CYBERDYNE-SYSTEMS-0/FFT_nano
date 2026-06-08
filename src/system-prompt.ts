@@ -85,9 +85,10 @@ export interface PromptLayer {
 
 /**
  * The stable layer is the byte-identical prefix the provider caches for the
- * life of a session: identity, safety, IPC, delegation, skill catalog, and
- * NANO/SOUL/MEMORY/canonical/daily memory entries. It is recomputed only when
- * a contributing file's mtime changes.
+ * life of a session: identity, safety, IPC, delegation, and stable SOUL
+ * identity/policy context. Action-triggering material like skills, NANO,
+ * TODOS, MEMORY, canonical files, and daily memory belongs in the ephemeral
+ * suffix.
  */
 export interface StablePromptLayer {
   id: 'stable';
@@ -124,9 +125,9 @@ export interface SystemPromptReport {
   };
   layers: (StablePromptLayer | EphemeralPromptLayer)[];
   /**
-   * Stable-layer cache key. Includes contributing file mtimes so a touch
-   * of NANO.md / SOUL.md / MEMORY.md / canonical/* / daily memory changes
-   * the key and forces a rebuild.
+   * Stable-layer cache key. Includes only stable contributing file mtimes
+   * so SOUL changes force a rebuild without letting high-churn operational
+   * context invalidate the provider-cacheable prefix.
    */
   baseCacheKey: string;
   basePromptHash: string;
@@ -632,7 +633,9 @@ function mtimeMapDeepEqual(
  * file is missing). The caller is expected to pass the same set of paths
  * that contribute to the stable prompt layer.
  */
-function collectMtimeMap(paths: Iterable<string>): Record<string, number | null> {
+function collectMtimeMap(
+  paths: Iterable<string>,
+): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   for (const p of paths) {
     try {
@@ -972,17 +975,28 @@ function renderEphemeralPrompt(params: {
   return lines.join('\n').trim();
 }
 
-function renderStableOverlay(params: {
+function isStableContextEntry(entry: ContextEntry): boolean {
+  return entry.path.endsWith('/SOUL.md');
+}
+
+function pickMtimeMap(
+  source: Record<string, number | null>,
+  paths: Iterable<string>,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const p of paths) {
+    out[p] = Object.prototype.hasOwnProperty.call(source, p)
+      ? source[p]
+      : null;
+  }
+  return out;
+}
+
+function renderContextOverlay(params: {
   contextEntries: ContextEntry[];
-  skillCatalogText: string;
   fileMaxChars: number;
 }): string {
   const lines: string[] = [];
-
-  if (params.skillCatalogText) {
-    lines.push(params.skillCatalogText);
-    lines.push('');
-  }
 
   if (params.contextEntries.length > 0) {
     lines.push('## Workspace Files (injected)');
@@ -1005,6 +1019,27 @@ function renderStableOverlay(params: {
       lines.push('');
     }
   }
+
+  return lines.join('\n').trim();
+}
+
+function renderEphemeralOverlay(params: {
+  contextEntries: ContextEntry[];
+  skillCatalogText: string;
+  fileMaxChars: number;
+}): string {
+  const lines: string[] = [];
+
+  if (params.skillCatalogText) {
+    lines.push(params.skillCatalogText);
+    lines.push('');
+  }
+
+  const contextOverlay = renderContextOverlay({
+    contextEntries: params.contextEntries,
+    fileMaxChars: params.fileMaxChars,
+  });
+  if (contextOverlay) lines.push(contextOverlay);
 
   return lines.join('\n').trim();
 }
@@ -1155,6 +1190,15 @@ export function buildSystemPrompt(
     }
   }
 
+  const stableContextEntries = contextState.entries.filter(isStableContextEntry);
+  const ephemeralContextEntries = contextState.entries.filter(
+    (entry) => !isStableContextEntry(entry),
+  );
+  const stableMtimeMap = pickMtimeMap(
+    mtimeTracker,
+    stableContextEntries.map((entry) => entry.path),
+  );
+
   const stableCacheKey = buildStableCacheKey({
     assistantName,
     promptMode,
@@ -1163,14 +1207,14 @@ export function buildSystemPrompt(
     canDelegateToCoder,
     autoDelegationEnabled,
     isEvaluatorRun: input.isEvaluatorRun === true,
-    mtimeMap: mtimeTracker,
+    mtimeMap: stableMtimeMap,
   });
 
   const cached = options.cachedStableLayer;
   const cacheHit =
     !!cached &&
     cached.key === stableCacheKey &&
-    mtimeMapDeepEqual(cached.mtimeMap, mtimeTracker) &&
+    mtimeMapDeepEqual(cached.mtimeMap, stableMtimeMap) &&
     typeof cached.content === 'string' &&
     cached.content.length > 0;
 
@@ -1186,9 +1230,8 @@ export function buildSystemPrompt(
       autoDelegationEnabled,
       isEvaluatorRun: input.isEvaluatorRun === true,
     });
-    const stableOverlay = renderStableOverlay({
-      contextEntries: contextState.entries,
-      skillCatalogText: skillCatalog.text,
+    const stableOverlay = renderContextOverlay({
+      contextEntries: stableContextEntries,
       fileMaxChars,
     });
     stableText = [baseText, stableOverlay]
@@ -1197,7 +1240,7 @@ export function buildSystemPrompt(
       .trim();
   }
 
-  const ephemeralText = renderEphemeralPrompt({
+  const ephemeralBaseText = renderEphemeralPrompt({
     input,
     assistantName,
     promptMode,
@@ -1206,6 +1249,15 @@ export function buildSystemPrompt(
     now,
     timezone,
   });
+  const ephemeralOverlay = renderEphemeralOverlay({
+    contextEntries: ephemeralContextEntries,
+    skillCatalogText: skillCatalog.text,
+    fileMaxChars,
+  });
+  const ephemeralText = [ephemeralBaseText, ephemeralOverlay]
+    .filter((s) => s && s.length > 0)
+    .join('\n\n')
+    .trim();
 
   const injectedTotalChars = contextState.entries.reduce(
     (sum, entry) => sum + entry.injectedChars,
@@ -1237,7 +1289,7 @@ export function buildSystemPrompt(
           title: 'Stable Prompt (cacheable prefix)',
           content: stableText,
           chars: stableText.length,
-          mtimeMap: mtimeTracker,
+          mtimeMap: stableMtimeMap,
           hash: basePromptHash,
           key: stableCacheKey,
         },
