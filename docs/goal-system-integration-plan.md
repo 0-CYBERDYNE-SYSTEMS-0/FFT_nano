@@ -28,7 +28,7 @@
   2. `/subgoal [text|remove N|clear]`
   3. Main/admin gating aligned with other high-control commands.
   4. Help/menu/normalization updates in command spec.
-- Dispatcher integration (`src/message-dispatch.ts` + wiring in `src/index.ts`):
+- Dispatcher integration (`src/message-dispatch.ts` + host composition in `src/wiring.ts`):
   1. After a successful direct `agent` run, if a goal is active for that chat, evaluate assistant output with a judge run in read-only mode.
   2. Judge result handling:
      1. `done` -> mark goal done and stop loop.
