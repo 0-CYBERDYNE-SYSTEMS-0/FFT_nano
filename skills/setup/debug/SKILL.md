@@ -9,10 +9,15 @@ This guide covers host-side diagnosis for current runtime modes:
 - Docker (default)
 - Host runtime (advanced, explicit opt-in)
 
+## When not to use this skill
+
+- Do not use for feature development or planned refactors.
+- Do not use for normal chat operations when the runtime is healthy.
+
 ## Runtime Architecture
 
 ```
-Host process (src/index.ts)
+Host process (src/index.ts -> src/wiring.ts)
   -> runtime selection (src/container-runtime.ts)
   -> agent execution (src/container-runner.ts)
      - Docker mode: docker run fft_nano-agent:latest
