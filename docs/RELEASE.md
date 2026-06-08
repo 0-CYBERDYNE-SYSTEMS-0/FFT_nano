@@ -71,13 +71,16 @@ git push origin vX.Y.Z
    - publish as a stable release, not a prerelease
 
 6. Publish the curl installer:
-   - upload `scripts/install.sh` to `https://farm-friend.com/fft-nano/install-test.sh`
-   - run the staged installer smoke tests from a clean temp directory and disposable Linux host/container
-   - upload the same tested file to `https://farm-friend.com/fft-nano/install.sh`
-   - verify:
+   The public installer URL is canonical and always serves the current `main` branch:
+   `https://raw.githubusercontent.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/main/scripts/install.sh`
+
+   Cutting a new GitHub release tag is sufficient — no manual upload step is required.
+   The installer's `FFT_NANO_REF=latest` (default) resolves to the most recent tag via the GitHub releases redirect.
+
+   Verify:
 
 ```bash
-curl -fsSL https://farm-friend.com/fft-nano/install.sh | head
+curl -fsSL https://raw.githubusercontent.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/main/scripts/install.sh | head
 ```
 
 ## Release Notes Expectations
