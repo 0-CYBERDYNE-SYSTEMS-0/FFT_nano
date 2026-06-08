@@ -98,6 +98,8 @@ export function initDatabaseAtPath(dbPath: string): void {
       last_progress_at TEXT,
       current_phase TEXT,
       current_detail TEXT,
+      provider TEXT,
+      model TEXT,
       result TEXT,
       error TEXT
     );
@@ -179,6 +181,8 @@ export function initDatabaseAtPath(dbPath: string): void {
     `ALTER TABLE agent_runs ADD COLUMN evaluator_score INTEGER`,
     `ALTER TABLE agent_runs ADD COLUMN evaluator_pass INTEGER`,
     `ALTER TABLE agent_runs ADD COLUMN resume_attempts INTEGER`,
+    `ALTER TABLE agent_runs ADD COLUMN provider TEXT`,
+    `ALTER TABLE agent_runs ADD COLUMN model TEXT`,
   ];
   for (const migration of agentRunMigrations) {
     try {
@@ -788,6 +792,8 @@ export interface AgentRunRecord {
   last_progress_at: string | null;
   current_phase: string | null;
   current_detail: string | null;
+  provider: string | null;
+  model: string | null;
   result: string | null;
   error: string | null;
   recovery_state: AgentRunRecoveryState | null;
@@ -877,6 +883,8 @@ export function updateAgentRun(
     last_progress_at: string | null;
     current_phase: string | null;
     current_detail: string | null;
+    provider: string | null;
+    model: string | null;
     result: string | null;
     error: string | null;
     recovery_state: AgentRunRecoveryState | null;

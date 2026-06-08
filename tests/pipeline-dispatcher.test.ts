@@ -172,6 +172,92 @@ test('PipelineDispatcher can retrieve individual pipelines via getter methods', 
   assert.ok(cronPipeline, 'Should have CronPipeline');
 });
 
+test('PipelineDispatcher dispatches chat requests through runAgent and delivery', async () => {
+  const events: string[] = [];
+  const chatDeps = createMockChatDeps();
+  chatDeps.state.registeredGroups['test-group'] = {
+    name: 'Test Group',
+    folder: 'test-group',
+    trigger: '@TestBot',
+    added_at: '2026-03-31T00:00:00.000Z',
+  };
+  chatDeps.runAgent = async (
+    _group: unknown,
+    prompt: string,
+    chatJid: string,
+    _hint: unknown,
+    requestId: string,
+  ) => {
+    events.push(`run:${chatJid}:${requestId}:${prompt}`);
+    return {
+      ok: true,
+      result: 'agent reply',
+      streamed: false,
+      usage: { totalTokens: 12, provider: 'zai', model: 'glm-4.7' },
+    };
+  };
+  chatDeps.finalizeCompletedRun = async (params: {
+    chatJid: string;
+    runId: string;
+    result: string | null;
+    usage?: { provider?: string; model?: string };
+  }) => {
+    events.push(
+      `deliver:${params.chatJid}:${params.runId}:${params.result}:${params.usage?.provider}/${params.usage?.model}`,
+    );
+  };
+  chatDeps.emitTuiChatEvent = (payload: {
+    state: string;
+    message?: { role?: string; content?: string };
+  }) => {
+    events.push(
+      `tui-chat:${payload.state}:${payload.message?.role || ''}:${payload.message?.content || ''}`,
+    );
+  };
+  chatDeps.emitTuiAgentEvent = (payload: { phase: string; detail: string }) => {
+    events.push(`tui-agent:${payload.phase}:${payload.detail}`);
+  };
+  chatDeps.setTyping = async (_chatJid: string, typing: boolean) => {
+    events.push(`typing:${typing}`);
+  };
+  chatDeps.noteRunStarted = (params: {
+    chatJid: string;
+    requestId: string;
+    latestUserText: string;
+  }) => {
+    events.push(
+      `started:${params.chatJid}:${params.requestId}:${params.latestUserText}`,
+    );
+  };
+
+  const dispatcher = new PipelineDispatcher(
+    chatDeps,
+    createMockCodingDeps(),
+    createMockCronDeps(),
+  );
+
+  await dispatcher.dispatch({
+    requestId: 'chat-dispatch-1',
+    chatJid: 'telegram:1',
+    sessionKey: 'session-1',
+    groupFolder: 'test-group',
+    runType: 'chat',
+    prompt: 'hello',
+    latestUserText: 'hello',
+    runtimePrefs: { provider: 'zai', model: 'glm-4.7' },
+  });
+
+  assert.deepEqual(events, [
+    'started:telegram:1:chat-dispatch-1:hello',
+    'tui-chat:message:user:hello',
+    'tui-agent:start:running',
+    'typing:true',
+    'run:telegram:1:chat-dispatch-1:hello',
+    'typing:false',
+    'deliver:telegram:1:chat-dispatch-1:agent reply:zai/glm-4.7',
+  ]);
+});
+
 // Mock dependencies factory functions
 function createMockChatDeps() {
   return {
