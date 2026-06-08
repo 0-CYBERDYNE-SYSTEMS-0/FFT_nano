@@ -75,6 +75,7 @@ test('buildSystemPrompt injects trusted metadata, overlay, durable canon, and re
     makeInput({
       requestId: 'req-123',
       extraSystemPrompt: 'Injected host overlay.',
+      noContinue: true,
     }),
     DEFAULT_PATHS,
     {
@@ -102,13 +103,75 @@ test('buildSystemPrompt injects trusted metadata, overlay, durable canon, and re
   assert.match(text, /## \/workspace\/group\/canonical\/constraints\.md/);
   assert.match(text, /## \/workspace\/group\/canonical\/commitments\.md/);
   assert.match(text, /## \/workspace\/group\/canonical\/projects\.md/);
-  assert.doesNotMatch(text, /## \/workspace\/group\/BOOTSTRAP\.md/);
+  assert.match(text, /## \/workspace\/group\/BOOTSTRAP\.md/);
   assert.match(text, /today memory/);
   assert.match(text, /yesterday memory/);
   assert.ok(
     report.contextEntries.some(
       (entry) => entry.path === '/workspace/group/TODOS.md' && !entry.missing,
     ),
+  );
+});
+
+test('buildSystemPrompt omits session bootstrap context from continued turns', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\nOperational contract.\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\nStable identity.\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\nCurrent task.\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\nDurable context.\n'],
+    ['/workspace/group/USER.md', '# USER\nTD.\n'],
+    ['/workspace/group/IDENTITY.md', '# IDENTITY\nFarmFriend.\n'],
+    ['/workspace/group/TOOLS.md', '# TOOLS\nTool policy.\n'],
+    ['/workspace/group/memory/2026-02-17.md', 'today memory'],
+  ]);
+
+  const continued = buildSystemPrompt(
+    makeInput({
+      noContinue: false,
+      skillCatalog: makeSkillCatalog(),
+    }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-02-17T12:00:00.000Z'),
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+  const fresh = buildSystemPrompt(
+    makeInput({
+      noContinue: true,
+      skillCatalog: makeSkillCatalog(),
+    }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-02-17T12:00:00.000Z'),
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+
+  assert.doesNotMatch(continued.text, /## Session Bootstrap Context/);
+  assert.doesNotMatch(continued.text, /## \/workspace\/group\/NANO\.md/);
+  assert.doesNotMatch(continued.text, /## Skills Catalog/);
+  assert.doesNotMatch(continued.text, /Durable context/);
+  assert.match(continued.text, /## \/workspace\/group\/TODOS\.md/);
+  assert.match(continued.text, /## Inbound Context \(trusted metadata\)/);
+
+  assert.match(fresh.text, /## Session Bootstrap Context/);
+  assert.match(fresh.text, /## \/workspace\/group\/NANO\.md/);
+  assert.match(fresh.text, /## \/workspace\/group\/MEMORY\.md/);
+  assert.match(fresh.text, /## \/workspace\/group\/USER\.md/);
+  assert.match(fresh.text, /## \/workspace\/group\/IDENTITY\.md/);
+  assert.match(fresh.text, /## \/workspace\/group\/TOOLS\.md/);
+  assert.match(fresh.text, /## Skills Catalog/);
+  assert.match(fresh.text, /## \/workspace\/group\/TODOS\.md/);
+
+  const bootstrapLayer = continued.report.layers.find(
+    (layer) => layer.id === 'session_bootstrap',
+  );
+  assert.ok(bootstrapLayer && bootstrapLayer.id === 'session_bootstrap');
+  assert.equal(bootstrapLayer.included, false);
+  assert.match(
+    continued.sessionBootstrapText,
+    /## \/workspace\/group\/NANO\.md/,
   );
 });
 
@@ -169,11 +232,15 @@ test('buildSystemPrompt selects daily memory files using configured local timezo
     ['/workspace/group/memory/2026-04-03.md', 'legacy utc today memory'],
   ]);
 
-  const { text } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
-    now: () => new Date('2026-04-03T02:15:30.000Z'),
-    timezone: 'America/Chicago',
-    readFileIfExists: (filePath) => files.get(filePath) ?? null,
-  });
+  const { text } = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-04-03T02:15:30.000Z'),
+      timezone: 'America/Chicago',
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
 
   assert.match(text, /local today memory/);
   assert.match(text, /local yesterday memory/);
@@ -189,11 +256,15 @@ test('buildSystemPrompt preserves fallback reads for pre-timezone UTC daily memo
     ['/workspace/group/memory/2026-04-03.md', 'pre-upgrade utc note'],
   ]);
 
-  const { text } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
-    now: () => new Date('2026-04-03T02:15:30.000Z'),
-    timezone: 'America/Chicago',
-    readFileIfExists: (filePath) => files.get(filePath) ?? null,
-  });
+  const { text } = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-04-03T02:15:30.000Z'),
+      timezone: 'America/Chicago',
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
 
   assert.match(text, /pre-upgrade utc note/);
 });
@@ -214,9 +285,13 @@ test('buildSystemPrompt skips untouched canonical scaffold placeholders for main
     ],
   ]);
 
-  const { text } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
-    readFileIfExists: (filePath) => files.get(filePath) ?? null,
-  });
+  const { text } = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
 
   assert.doesNotMatch(text, /## \/workspace\/group\/canonical\/_hot\.md/);
   assert.doesNotMatch(text, /## \/workspace\/group\/canonical\/identity\.md/);
@@ -275,6 +350,7 @@ test('buildSystemPrompt loads non-main control-plane files plus durable memory f
       isMain: false,
       groupFolder: 'telegram-123',
       codingHint: 'none',
+      noContinue: true,
     }),
     DEFAULT_PATHS,
     {
@@ -306,6 +382,7 @@ test('buildSystemPrompt falls back to legacy non-main memory.md when MEMORY.md i
       isMain: false,
       groupFolder: 'telegram-123',
       codingHint: 'none',
+      noContinue: true,
     }),
     DEFAULT_PATHS,
     {
@@ -363,6 +440,7 @@ test('buildSystemPrompt blocks suspicious injected markdown and records layer me
       extraSystemPrompt: 'Host-only overlay',
       memoryContext: 'remember this',
       skillCatalog: makeSkillCatalog(),
+      noContinue: true,
     }),
     DEFAULT_PATHS,
     {
@@ -490,6 +568,7 @@ test('buildSystemPrompt injects compact skills catalog only for interactive runs
   const interactive = buildSystemPrompt(
     makeInput({
       skillCatalog: makeSkillCatalog(),
+      noContinue: true,
     }),
     DEFAULT_PATHS,
     {
@@ -575,7 +654,13 @@ test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cac
     const ephemeralLayer = first.report.layers.find(
       (l) => l.id === 'ephemeral',
     );
+    const sessionBootstrapLayer = first.report.layers.find(
+      (l) => l.id === 'session_bootstrap',
+    );
     assert.ok(stableLayer && stableLayer.id === 'stable');
+    assert.ok(
+      sessionBootstrapLayer && sessionBootstrapLayer.id === 'session_bootstrap',
+    );
     assert.ok(ephemeralLayer && ephemeralLayer.id === 'ephemeral');
     assert.equal(
       stableLayer.content.includes('## Inbound Context'),
@@ -608,9 +693,14 @@ test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cac
       'durable memory detail must stay out of stable cache',
     );
     assert.equal(
-      ephemeralLayer.content.includes('## /workspace/group/NANO.md'),
+      sessionBootstrapLayer.content.includes('## /workspace/group/NANO.md'),
       true,
-      'ephemeral layer carries operational NANO context',
+      'session bootstrap layer carries operational NANO context',
+    );
+    assert.equal(
+      ephemeralLayer.content.includes('## /workspace/group/TODOS.md'),
+      true,
+      'ephemeral layer carries active TODO context',
     );
     const firstKey = stableLayer.key;
     const firstHash = stableLayer.hash;
@@ -643,7 +733,7 @@ test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cac
     });
     assert.equal(third.report.cacheHit, true);
     assert.equal(third.stableText, first.stableText);
-    assert.match(third.ephemeralText, /# NANO \(updated\)/);
+    assert.match(third.sessionBootstrapText, /# NANO \(updated\)/);
 
     // Mutate stable SOUL context. The stable cache must miss and the new
     // stable layer must reflect the changed content.
