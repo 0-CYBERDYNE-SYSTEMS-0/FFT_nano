@@ -3,6 +3,7 @@ import {
   runUpdateCommand,
   writeUpdateNotification,
   type UpdateNotificationRecord,
+  type UpdateProgressEvent,
 } from './update-command.js';
 
 function getArg(name: string): string | null {
@@ -15,6 +16,7 @@ function completeRecord(
   record: UpdateNotificationRecord,
   ok: boolean,
   text: string,
+  progress?: UpdateProgressEvent[],
 ): UpdateNotificationRecord {
   const completedAt = new Date().toISOString();
   return {
@@ -24,6 +26,7 @@ function completeRecord(
     text,
     completedAt,
     updatedAt: completedAt,
+    progress,
   };
 }
 
@@ -46,18 +49,28 @@ const baseRecord: UpdateNotificationRecord = existing || {
   updatedAt: new Date().toISOString(),
 };
 
+const progressEvents: UpdateProgressEvent[] = [];
+
 try {
-  const result = runUpdateCommand({ cwd });
+  const result = runUpdateCommand({
+    cwd,
+    onProgress: (event) => progressEvents.push(event),
+  });
   writeUpdateNotification(
     reportFile,
-    completeRecord(baseRecord, result.ok, result.text),
+    completeRecord(baseRecord, result.ok, result.text, progressEvents),
   );
   process.exit(result.ok ? 0 : 1);
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
   writeUpdateNotification(
     reportFile,
-    completeRecord(baseRecord, false, `Update worker crashed: ${message}`),
+    completeRecord(
+      baseRecord,
+      false,
+      `Update worker crashed: ${message}`,
+      progressEvents,
+    ),
   );
   process.exit(1);
 }
