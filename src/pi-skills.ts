@@ -100,6 +100,10 @@ interface ManagedSkillManifest {
   sources: Record<string, ManagedSkillSource>;
 }
 
+interface ProjectSkillManifest {
+  declaredRuntimeSkills: Set<string>;
+}
+
 function parseSkillMarkdown(
   skillMarkdownPath: string,
 ): ParsedSkillMarkdown | null {
@@ -647,6 +651,32 @@ function readManagedSkillNames(manifestPath: string): string[] {
   return readManagedSkillManifest(manifestPath).managed;
 }
 
+function parseManifestSkillList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
+function readProjectSkillManifest(
+  projectRoot: string,
+): ProjectSkillManifest | null {
+  const manifestPath = path.join(projectRoot, 'skills', 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return null;
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
+      required?: unknown;
+      bundled?: unknown;
+    };
+    const declaredRuntimeSkills = new Set<string>([
+      ...parseManifestSkillList(parsed.required),
+      ...parseManifestSkillList(parsed.bundled),
+    ]);
+    return { declaredRuntimeSkills };
+  } catch {
+    return null;
+  }
+}
+
 function writeManagedSkillNames(
   manifestPath: string,
   managed: string[],
@@ -698,6 +728,7 @@ export function validateProjectPiSkills(
 ): SkillValidationResult {
   const issues: SkillValidationIssue[] = [];
   const warnings: SkillValidationIssue[] = [];
+  const projectSkillManifest = readProjectSkillManifest(projectRoot);
   const skillsRoot = resolveProjectRuntimeSkillsDir(projectRoot);
   const validatedSkills = new Set<string>();
 
@@ -723,6 +754,15 @@ export function validateProjectPiSkills(
 
   for (const skillName of listSkillDirectories(skillsRoot)) {
     if (validatedSkills.has(skillName)) continue;
+    if (
+      projectSkillManifest &&
+      !projectSkillManifest.declaredRuntimeSkills.has(skillName)
+    ) {
+      issues.push({
+        file: path.join(skillsRoot, skillName),
+        message: 'Skill directory is not declared in skills/manifest.json',
+      });
+    }
     const skillMarkdownPath = path.join(skillsRoot, skillName, 'SKILL.md');
     const validation = validateSkillMarkdown(skillName, skillMarkdownPath, {
       enforceFftPolicy: false,
@@ -757,6 +797,7 @@ export function syncProjectPiSkillsToGroupPiHome(
   };
   const sourceDirs: string[] = [];
   const sourceDirSet = new Set<string>();
+  const projectSkillManifest = readProjectSkillManifest(projectRoot);
   const projectCandidates =
     options.projectRuntimeSkillDirCandidates ??
     Array.from(PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES);
@@ -793,6 +834,12 @@ export function syncProjectPiSkillsToGroupPiHome(
 
   for (const sourceDir of projectSourceDirs) {
     for (const skillName of listSkillDirectories(sourceDir)) {
+      if (
+        projectSkillManifest &&
+        !projectSkillManifest.declaredRuntimeSkills.has(skillName)
+      ) {
+        continue;
+      }
       const existing = mergedSkills.get(skillName) ?? [];
       existing.push({
         skillPath: path.join(sourceDir, skillName),

@@ -736,7 +736,7 @@ function syncSkills(
   return skillSync;
 }
 
-function resolveExtensionPaths(): string[] {
+export function resolveExtensionPaths(projectRoot = process.cwd()): string[] {
   const extensions = [
     ['fft-permission-gate', 'fft-permission-gate.ts', 'fft-permission-gate.js'],
     [
@@ -748,17 +748,17 @@ function resolveExtensionPaths(): string[] {
   ];
   const found: string[] = [];
   for (const [, srcName, distName] of extensions) {
-    const srcPath = path.resolve(process.cwd(), 'src', 'extensions', srcName);
+    const srcPath = path.resolve(projectRoot, 'src', 'extensions', srcName);
     const distPath = path.resolve(
-      process.cwd(),
+      projectRoot,
       'dist',
       'extensions',
       distName,
     );
-    if (fs.existsSync(srcPath)) {
-      found.push(srcPath);
-    } else if (fs.existsSync(distPath)) {
+    if (fs.existsSync(distPath)) {
       found.push(distPath);
+    } else if (fs.existsSync(srcPath)) {
+      found.push(srcPath);
     }
   }
   return found;

@@ -22,6 +22,15 @@ const logger = pino({
 // Cache the allowlist in memory - only reloads on process restart
 let cachedAllowlist: MountAllowlist | null = null;
 let allowlistLoadError: string | null = null;
+let testAllowlistOverride: MountAllowlist | null | undefined;
+
+export function setMountAllowlistForTest(
+  allowlist: MountAllowlist | null | undefined,
+): void {
+  testAllowlistOverride = allowlist;
+  cachedAllowlist = null;
+  allowlistLoadError = null;
+}
 
 /**
  * Default blocked patterns - paths that should never be mounted
@@ -52,6 +61,20 @@ const DEFAULT_BLOCKED_PATTERNS = [
  * Result is cached in memory for the lifetime of the process.
  */
 export function loadMountAllowlist(): MountAllowlist | null {
+  if (testAllowlistOverride !== undefined) {
+    if (testAllowlistOverride === null) return null;
+    return {
+      ...testAllowlistOverride,
+      allowedRoots: [...testAllowlistOverride.allowedRoots],
+      blockedPatterns: [
+        ...new Set([
+          ...DEFAULT_BLOCKED_PATTERNS,
+          ...testAllowlistOverride.blockedPatterns,
+        ]),
+      ],
+    };
+  }
+
   if (cachedAllowlist !== null) {
     return cachedAllowlist;
   }

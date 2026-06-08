@@ -147,7 +147,12 @@ test('exact /run query starts durable run and status can be polled while progres
               reject(new Error('aborted by user'));
             });
           });
-          return { ok: true, result: 'done', streamed: false };
+          return {
+            ok: true,
+            result: 'done',
+            streamed: false,
+            usage: { totalTokens: 12, provider: 'zai', model: 'glm-4.7' },
+          };
         },
         typingEvents,
         timeline,
@@ -205,6 +210,9 @@ test('exact /run query starts durable run and status can be polled while progres
       'durable status to show completed',
     );
     assert.equal(typingEvents.at(-1)?.typing, false);
+    const completedRun = getAgentRunById(runId);
+    assert.equal(completedRun?.provider, 'zai');
+    assert.equal(completedRun?.model, 'glm-4.7');
   });
 });
 
