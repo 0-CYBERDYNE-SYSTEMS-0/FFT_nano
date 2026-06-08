@@ -107,7 +107,9 @@ resolve_ref() {
   fs.chmodSync(path.join(fixturePath, 'install.sh'), 0o755);
 
   // Initialize a real git repo with an initial commit
-  execSync('git init', { cwd: fixturePath, stdio: 'ignore' });
+  // Use -b main to explicitly set the initial branch name regardless of the
+  // system's init.defaultBranch setting (which may default to 'master' in CI).
+  execSync('git init -b main', { cwd: fixturePath, stdio: 'ignore' });
   execSync('git config user.email "test@fft"', { cwd: fixturePath, stdio: 'ignore' });
   execSync('git config user.name "FFT Test"', { cwd: fixturePath, stdio: 'ignore' });
   execSync('git add .', { cwd: fixturePath, stdio: 'ignore' });
