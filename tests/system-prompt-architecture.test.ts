@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -369,8 +370,8 @@ test('buildSystemPrompt blocks suspicious injected markdown and records layer me
     },
   );
 
-  assert.equal(report.layers[0]?.id, 'base');
-  assert.equal(report.layers.at(-1)?.id, 'overlays');
+  assert.equal(report.layers[0]?.id, 'stable');
+  assert.equal(report.layers.at(-1)?.id, 'ephemeral');
   assert.equal(typeof report.basePromptHash, 'string');
   assert.match(
     text,
@@ -383,8 +384,14 @@ test('buildSystemPrompt blocks suspicious injected markdown and records layer me
     ),
     true,
   );
-  assert.match(report.layers.at(-1)?.content || '', /req-overlay/);
-  assert.doesNotMatch(report.layers[0]?.content || '', /req-overlay/);
+  assert.match(
+    report.layers.find((l) => l.id === 'ephemeral')?.content || '',
+    /req-overlay/,
+  );
+  assert.doesNotMatch(
+    report.layers.find((l) => l.id === 'stable')?.content || '',
+    /req-overlay/,
+  );
 });
 
 test('buildSystemPrompt injects HEARTBEAT.md only for scheduled or heartbeat runs', () => {
@@ -519,4 +526,116 @@ test('buildSystemPrompt documents run_progress messaging IPC shape', () => {
   assert.match(text, /"requestId":"<current request_id>"/);
   assert.match(text, /"phase":"thinking\|tool_running\|stale"/);
   assert.match(text, /concise run_progress updates/);
+});
+
+test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cache invalidation', () => {
+  // Mock statSync: mtimes are stable across both builds except where we mutate.
+  const mtimeTable = new Map<string, number>();
+  let nextMtime = 1_000;
+  const setMtime = (path: string, mtime: number) => {
+    mtimeTable.set(path, mtime);
+  };
+  const originalStatSync = fs.statSync;
+  const statSyncSpy = ((target: string) => {
+    if (mtimeTable.has(target)) {
+      return { mtimeMs: mtimeTable.get(target)! } as fs.Stats;
+    }
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  }) as typeof fs.statSync;
+  (fs as { statSync: typeof fs.statSync }).statSync = statSyncSpy;
+
+  try {
+    const files = new Map<string, string>([
+      ['/workspace/group/NANO.md', '# NANO\n'],
+      ['/workspace/group/SOUL.md', '# SOUL\n'],
+      ['/workspace/group/TODOS.md', '# TODOS\n'],
+      ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+    ]);
+    const mtimes = [
+      '/workspace/group/NANO.md',
+      '/workspace/group/SOUL.md',
+      '/workspace/group/TODOS.md',
+      '/workspace/group/MEMORY.md',
+      '/workspace/group/canonical/_hot.md',
+      '/workspace/group/canonical/identity.md',
+      '/workspace/group/canonical/constraints.md',
+      '/workspace/group/canonical/commitments.md',
+      '/workspace/group/canonical/projects.md',
+    ];
+    for (const p of mtimes) setMtime(p, nextMtime++);
+
+    // First build: cache miss.
+    const first = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+      readFileIfExists: (p) => files.get(p) ?? null,
+    });
+    assert.equal(first.report.cacheHit, false);
+    assert.equal(first.stableText.length > 0, true);
+    assert.equal(first.ephemeralText.length > 0, true);
+    const stableLayer = first.report.layers.find((l) => l.id === 'stable');
+    const ephemeralLayer = first.report.layers.find(
+      (l) => l.id === 'ephemeral',
+    );
+    assert.ok(stableLayer && stableLayer.id === 'stable');
+    assert.ok(ephemeralLayer && ephemeralLayer.id === 'ephemeral');
+    assert.equal(
+      stableLayer.content.includes('## Inbound Context'),
+      false,
+      'ephemeral content must not bleed into stable layer',
+    );
+    assert.equal(
+      ephemeralLayer.content.includes('## Inbound Context'),
+      true,
+      'ephemeral layer must contain runtime metadata block',
+    );
+    const firstKey = stableLayer.key;
+    const firstHash = stableLayer.hash;
+
+    // Second build with same mtimes + matching cached layer: hit.
+    const second = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+      readFileIfExists: (p) => files.get(p) ?? null,
+      cachedStableLayer: {
+        key: firstKey,
+        hash: firstHash,
+        content: first.stableText,
+        mtimeMap: stableLayer.mtimeMap,
+      },
+    });
+    assert.equal(second.report.cacheHit, true);
+    assert.equal(second.stableText, first.stableText);
+
+    // Mutate one mtime AND its content; the cache must miss and the new
+    // stable layer must reflect the changed content.
+    setMtime('/workspace/group/NANO.md', nextMtime++);
+    files.set('/workspace/group/NANO.md', '# NANO (updated)\n');
+    const third = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+      readFileIfExists: (p) => files.get(p) ?? null,
+      cachedStableLayer: {
+        key: firstKey,
+        hash: firstHash,
+        content: first.stableText,
+        mtimeMap: stableLayer.mtimeMap,
+      },
+    });
+    assert.equal(third.report.cacheHit, false);
+    assert.notEqual(third.stableText, first.stableText);
+    assert.match(third.stableText, /# NANO \(updated\)/);
+    const thirdStable = third.report.layers.find((l) => l.id === 'stable');
+    assert.ok(thirdStable && thirdStable.id === 'stable');
+    assert.notEqual(thirdStable.key, firstKey);
+
+    // Mismatched cached mtimeMap forces a miss even if the key would match.
+    setMtime('/workspace/group/NANO.md', nextMtime++);
+    const fourth = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+      readFileIfExists: (p) => files.get(p) ?? null,
+      cachedStableLayer: {
+        key: firstKey,
+        hash: firstHash,
+        content: first.stableText,
+        mtimeMap: { '/workspace/group/NANO.md': 999_999 },
+      },
+    });
+    assert.equal(fourth.report.cacheHit, false);
+  } finally {
+    (fs as { statSync: typeof fs.statSync }).statSync = originalStatSync;
+  }
 });

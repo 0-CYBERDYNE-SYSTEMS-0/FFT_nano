@@ -767,7 +767,8 @@ function resolveExtensionPaths(): string[] {
 type PiTransportMode = 'json' | 'rpc';
 
 function buildPiArgs(params: {
-  systemPrompt: string;
+  stablePrompt: string;
+  ephemeralPrompt: string;
   prompt: string;
   useContinue: boolean;
   input: ContainerInput;
@@ -777,7 +778,8 @@ function buildPiArgs(params: {
   transportMode: PiTransportMode;
 }): string[] {
   const {
-    systemPrompt,
+    stablePrompt,
+    ephemeralPrompt,
     prompt,
     useContinue,
     input,
@@ -811,7 +813,14 @@ function buildPiArgs(params: {
   if (input.thinkLevel) args.push('--thinking', input.thinkLevel);
   if (apiKey) args.push('--api-key', apiKey);
 
-  args.push('--append-system-prompt', systemPrompt);
+  // Stable layer first, ephemeral suffix second. pi joins multiple
+  // --append-system-prompt values with double newlines (see @mariozechner/pi-coding-agent
+  // CHANGELOG.md:543), so the provider receives stableText + "\n\n" + ephemeralText.
+  // The byte-identical stable prefix is what the provider's cache key covers.
+  args.push('--append-system-prompt', stablePrompt);
+  if (ephemeralPrompt) {
+    args.push('--append-system-prompt', ephemeralPrompt);
+  }
 
   if (input.toolMode === 'read_only') {
     args.push('--tools', 'read,grep,find,ls');
@@ -1019,7 +1028,7 @@ export async function runContainerAgent(
 
   const effectiveTimezone = getEffectiveTimezone(input.effectiveTimezone);
 
-  const cachedBase = PARITY_CONFIG.prompt.cacheEnabled
+  const cachedStable = PARITY_CONFIG.prompt.cacheEnabled
     ? promptState.cacheEntries[
         `${isMain ? 'main' : 'group'}:${input.isScheduledTask ? 'minimal' : 'full'}:${codingHint}`
       ]
@@ -1028,11 +1037,12 @@ export async function runContainerAgent(
     delegationExtensionAvailable: true,
     skillCatalogMaxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
     timezone: effectiveTimezone,
-    cachedBaseLayer: cachedBase
+    cachedStableLayer: cachedStable?.content
       ? {
-          key: cachedBase.key,
-          hash: cachedBase.hash,
-          content: cachedBase.content,
+          key: cachedStable.key,
+          hash: cachedStable.hash,
+          content: cachedStable.content,
+          mtimeMap: cachedStable.mtimeMap ?? {},
         }
       : null,
   });
@@ -1123,18 +1133,20 @@ export async function runContainerAgent(
         delegationExtensionAvailable: true,
         skillCatalogMaxChars: PARITY_CONFIG.prompt.skillCatalogMaxChars,
         timezone: effectiveTimezone,
-        cachedBaseLayer: cachedBase
+        cachedStableLayer: cachedStable?.content
           ? {
-              key: cachedBase.key,
-              hash: cachedBase.hash,
-              content: cachedBase.content,
+              key: cachedStable.key,
+              hash: cachedStable.hash,
+              content: cachedStable.content,
+              mtimeMap: cachedStable.mtimeMap ?? {},
             }
           : null,
       },
     );
   }
 
-  const systemPrompt = systemPromptBuild.text;
+  const stablePrompt = systemPromptBuild.stableText;
+  const ephemeralPrompt = systemPromptBuild.ephemeralText;
   const latestManifestPath = resolveLatestPromptManifestPath(groupDir);
   if (PARITY_CONFIG.prompt.persistLatestManifest) {
     writePromptManifest(latestManifestPath, systemPromptBuild.report);
@@ -1182,14 +1194,15 @@ export async function runContainerAgent(
     },
   };
   if (PARITY_CONFIG.prompt.cacheEnabled) {
-    const baseLayer = systemPromptBuild.report.layers.find(
-      (layer) => layer.id === 'base',
+    const stableLayer = systemPromptBuild.report.layers.find(
+      (layer) => layer.id === 'stable',
     );
-    if (baseLayer) {
+    if (stableLayer && stableLayer.id === 'stable') {
       const cacheEntry: PromptCacheEntry = {
         key: systemPromptBuild.report.baseCacheKey,
-        hash: hashPromptContent(baseLayer.content),
-        content: baseLayer.content,
+        hash: hashPromptContent(stableLayer.content),
+        content: stableLayer.content,
+        mtimeMap: stableLayer.mtimeMap,
         manifest: systemPromptBuild.report,
         builtAt: new Date().toISOString(),
       };
@@ -1211,6 +1224,8 @@ export async function runContainerAgent(
     {
       group: group.name,
       mode: systemPromptBuild.report.mode,
+      stableChars: stablePrompt.length,
+      ephemeralChars: ephemeralPrompt.length,
       chars: systemPromptBuild.report.totalChars,
       contextEntries: systemPromptBuild.report.contextEntries.length,
       cacheHit: systemPromptBuild.report.cacheHit,
@@ -1336,7 +1351,8 @@ export async function runContainerAgent(
         ? 'rpc'
         : 'json';
       const piArgs = buildPiArgs({
-        systemPrompt,
+        stablePrompt,
+        ephemeralPrompt,
         prompt,
         useContinue,
         input: payload,
