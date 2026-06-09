@@ -7,6 +7,34 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-09
+
+### Added
+
+- Host runtime now defaults to the non-Docker path when Docker is unavailable,
+  which keeps the local host usable on machines without a healthy container
+  daemon.
+- Web installer auto-update support and `/update` progress streaming now carry
+  through the control-center path end to end.
+- Project skill validation is now enforced through an explicit manifest, with
+  separate validation for personal skills.
+
+### Changed
+
+- Runtime quality guardrails were tightened around extension resolution,
+  durable run metadata, dispatcher behavior, and skill catalog visibility.
+- Host wiring was extracted from the process entrypoint into a dedicated
+  composition module.
+- Prompt assembly now reuses stable, session-bootstrap, and per-turn layers
+  more efficiently across continued Pi sessions.
+
+### Fixed
+
+- `/update` preserves dirty local checkouts while pulling, then rebuilds and
+  restarts with the updated code.
+- Telegram preview and delivery behavior was tightened so operator-visible
+  output stays consistent across long-running runs.
+
 ## [0.4.0] - 2026-05-31
 
 ### Added
