@@ -1178,7 +1178,7 @@ export function getEvaluatorStats(
 export interface LearningInjectionInput {
   requestId: string;
   groupFolder: string;
-  kind: 'memory' | 'verdict-issues';
+  kind: 'memory' | 'skill' | 'verdict-issues';
   item: string;
 }
 
@@ -1207,6 +1207,101 @@ export function recordLearningInjection(input: LearningInjectionInput): void {
       'Failed to record learning injection',
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// WS5.2 — Skill efficacy join (VAL-WS5-006..009)
+// ---------------------------------------------------------------------------
+
+/** Per-skill efficacy result for one group. */
+export interface SkillEfficacy {
+  /** Count of joined rows for this skill (non-skipped evaluator verdicts only). */
+  runsWith: number;
+  /** pass / total over non-skipped joined rows. */
+  passRateWith: number;
+  /** Group-level baseline passRate from getEvaluatorStats(groupFolder).passRate. */
+  groupBaseline: number;
+}
+
+/**
+ * Per-skill efficacy: join learning_injections (kind='skill') against
+ * evaluator_verdicts on request_id, scoped to groupFolder.
+ *
+ * Returns efficacy for skills with >= 5 matching (non-skipped) rows;
+ * below the sample floor of 5, no entry is published for that skill.
+ *
+ * The join is scoped on group_folder (group A's data does not contaminate
+ * group B's). The function is read-only — no table is modified.
+ *
+ * groupBaseline is the overall group passRate from getEvaluatorStats,
+ * computed over all non-skipped evaluator_verdicts in the group.
+ *
+ * Excludes skipped evaluator_verdicts from both the passRateWith numerator
+ * and denominator (I3: only ground truth gates).
+ */
+export function getSkillEfficacy(groupFolder: string): Map<string, SkillEfficacy> {
+  if (!db) return new Map();
+
+  // Get overall group baseline from evaluator stats (covers all evaluator_verdicts
+  // in the group, not just the skill-matched subset — this is the comparison yardstick).
+  const stats = getEvaluatorStats(groupFolder);
+  const groupBaseline = stats.passRate;
+
+  // Join learning_injections (kind='skill') with evaluator_verdicts on request_id.
+  // Both sides are filtered by group_folder to ensure per-group isolation.
+  const rows = db.prepare(
+    `
+    SELECT
+      li.item AS skill_name,
+      ev.pass,
+      ev.skipped
+    FROM learning_injections li
+    JOIN evaluator_verdicts ev ON li.request_id = ev.request_id
+    WHERE li.group_folder = ?
+      AND li.kind = 'skill'
+      AND ev.group_folder = ?
+    `,
+  ).all(groupFolder, groupFolder) as Array<{
+    skill_name: string;
+    pass: number;
+    skipped: number | null;
+  }>;
+
+  // Group by skill_name and accumulate non-skipped pass counts.
+  const skillGroups = new Map<
+    string,
+    { totalNonSkipped: number; passesNonSkipped: number }
+  >();
+
+  for (const row of rows) {
+    if (row.skipped === 1) {
+      // Skipped rows are excluded from both numerator and denominator (I3).
+      continue;
+    }
+    const existing = skillGroups.get(row.skill_name) ?? {
+      totalNonSkipped: 0,
+      passesNonSkipped: 0,
+    };
+    existing.totalNonSkipped += 1;
+    if (row.pass === 1) {
+      existing.passesNonSkipped += 1;
+    }
+    skillGroups.set(row.skill_name, existing);
+  }
+
+  // Build result map: only skills with >= 5 non-skipped matching rows get a published entry.
+  const result = new Map<string, SkillEfficacy>();
+  for (const [skillName, { totalNonSkipped, passesNonSkipped }] of skillGroups) {
+    if (totalNonSkipped < 5) continue;
+    result.set(skillName, {
+      runsWith: totalNonSkipped,
+      passRateWith:
+        totalNonSkipped > 0 ? passesNonSkipped / totalNonSkipped : 0,
+      groupBaseline,
+    });
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
