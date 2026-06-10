@@ -23,6 +23,7 @@ import {
 } from '../db.js';
 import { logger } from '../logger.js';
 import { RegisteredGroup, ScheduledTask } from '../types.js';
+import { recordTaskAuditEvent } from '../task-audit.js';
 import { resolveNoContinueForTask } from './adapters.js';
 import { getEffectiveTimezone } from '../time-context.js';
 import type { OutboxDeliverer } from '../outbox.js';
@@ -486,6 +487,13 @@ export async function runScheduledTaskV2(
   });
 
   if (task.schedule_type === 'once' && task.delete_after_run && !hadError) {
+    // WS2.4: Write audit line for delete_after_run before deleting the row
+    recordTaskAuditEvent(task.group_folder, {
+      taskId: task.id,
+      kind: 'delete_after_run',
+      priorStatus: task.status || null,
+      newStatus: null,
+    });
     deleteTask(task.id);
   } else {
     updateTaskAfterRunV2({

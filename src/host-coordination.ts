@@ -60,6 +60,7 @@ import {
   resolveCronPolicy,
 } from './cron/adapters.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import { recordTaskAuditEvent } from './task-audit.js';
 
 export interface HostCoordinationDeps {
   sendTelegramAgentReply: (chatJid: string, text: string) => Promise<boolean>;
@@ -1153,6 +1154,22 @@ export async function processTaskIpc(
           },
           'Task created via IPC',
         );
+
+        // WS2.4: Write audit line for task creation
+        recordTaskAuditEvent(targetGroup, {
+          taskId,
+          kind: 'create',
+          authorityId: runAuthority?.authorityId,
+          priorStatus: undefined,
+          newStatus: taskStatus,
+          promptPreview: data.prompt?.slice(0, 200) || undefined,
+          scheduleType: executionPlan.scheduleType,
+          scheduleValue: executionPlan.scheduleValue,
+          deliveryTo: policy.delivery.to || null,
+          deliveryMode: policy.delivery.mode || null,
+          deleteAfterRun: policy.deleteAfterRun,
+          createdBy: createdBy as 'operator' | 'agent',
+        });
       }
       break;
 
@@ -1196,6 +1213,13 @@ export async function processTaskIpc(
       if (data.taskId) {
         const task = getTask(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
+          // WS2.4: Write audit line before deleting
+          recordTaskAuditEvent(task.group_folder, {
+            taskId: data.taskId,
+            kind: 'cancel',
+            priorStatus: task.status || null,
+            newStatus: null,
+          });
           deleteTask(data.taskId);
           logger.info(
             { taskId: data.taskId, sourceGroup },
