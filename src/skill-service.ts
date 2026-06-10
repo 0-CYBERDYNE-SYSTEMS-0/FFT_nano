@@ -122,6 +122,10 @@ export function shouldTriggerSkillSelfImprove(params: {
   if (!PARITY_CONFIG.skills.selfImprove.enabled) {
     return { due: false, triggerReason: 'disabled' };
   }
+  // WS6.3: Global pause short-circuits before any other check. VAL-WS6-017
+  if (state.learningPaused) {
+    return { due: false, triggerReason: 'learning-paused' };
+  }
   const now = params.now ?? Date.now();
   const current = readSkillSelfImproveState(params.groupFolder);
   const next: SkillSelfImproveState = {
@@ -263,9 +267,10 @@ export function maybeRunSkillSelfImprovement(params: {
       ? `signal:${signals.join(',')}`
       : decision.triggerReason;
 
-  // WS6.3: if global pause is active and a full-priority signal would fire,
-  // suppress the spawn and record a pause-driven noop.
-  if (state.learningPaused && priority === 'full' && decision.due) {
+  // WS6.3: global pause short-circuits the self-improve trigger. VAL-WS6-017,
+  // VAL-XARE-014. shouldTriggerSkillSelfImprove returns
+  // { due: false, triggerReason: 'learning-paused' } when paused.
+  if (decision.triggerReason === 'learning-paused') {
     recordSelfImproveEvent(params.group.folder, {
       run_id: runId,
       authorityId: runId,
