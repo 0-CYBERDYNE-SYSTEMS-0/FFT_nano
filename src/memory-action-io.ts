@@ -6,6 +6,10 @@ import {
   isAllowedMemoryRelativePath,
   resolveAllowedMemoryFilePath,
   resolveGroupWorkspaceDir,
+  resolveTodosPath,
+  resolveMemoryPath,
+  resolveSoulPath,
+  resolveNanoPath,
 } from './memory-paths.js';
 import type { MemoryActionRequest } from './types.js';
 import { completeMainWorkspaceOnboarding } from './workspace-bootstrap.js';
@@ -17,6 +21,8 @@ import {
   slugId,
   taskLineFromPayload,
 } from './memory-action-validation.js';
+import { snapshotMemoryFile } from './memory-history.js';
+import { PARITY_CONFIG } from './config.js';
 
 const TODO_SECTION_OBJECTIVE = '## 🚀 ACTIVE OBJECTIVE';
 const TODO_SECTION_TASKS = '## 📋 TASK BOARD';
@@ -134,6 +140,11 @@ export function applyTodoMutation(input: {
   intent: NonNullable<MemoryActionRequest['params']['intent']>;
   payload: Record<string, unknown>;
   recordedAt: string;
+  attribution?: {
+    authorityId: string;
+    senderRole: string;
+    jid?: string;
+  };
 }): {
   targetPath: string;
   operation: string;
@@ -141,6 +152,12 @@ export function applyTodoMutation(input: {
   entryId?: string;
 } {
   const todosPath = ensureTodosFile(input.groupFolder);
+  // WS6 mutation-budget: snapshot before write so memory is reversible
+  snapshotMemoryFile(
+    todosPath,
+    input.attribution,
+    PARITY_CONFIG.skills.historyRetentionDays,
+  );
   const lines = normalizeLines(readTextFile(todosPath, DEFAULT_TODOS_MD));
 
   if (input.intent === 'todo_set_objective') {
@@ -342,6 +359,11 @@ export function applyMemoryMutation(input: {
   intent: 'memory_append' | 'memory_promote';
   targetSection?: string;
   payload: Record<string, unknown>;
+  attribution?: {
+    authorityId: string;
+    senderRole: string;
+    jid?: string;
+  };
 }): { targetPath: string; operation: string; message: string } {
   const relPath =
     String(input.payload.path || 'MEMORY.md').trim() || 'MEMORY.md';
@@ -350,6 +372,12 @@ export function applyMemoryMutation(input: {
   }
   assertDurableMemoryPath(relPath);
   const absPath = resolveAllowedMemoryFilePath(input.groupFolder, relPath);
+  // WS6 mutation-budget: snapshot before write so memory is reversible
+  snapshotMemoryFile(
+    absPath,
+    input.attribution,
+    PARITY_CONFIG.skills.historyRetentionDays,
+  );
   const current = readTextFile(
     absPath,
     relPath.toLowerCase().startsWith('memory/') ||
@@ -373,8 +401,19 @@ export function applySoulPatch(input: {
   groupFolder: string;
   targetSection?: string;
   payload: Record<string, unknown>;
+  attribution?: {
+    authorityId: string;
+    senderRole: string;
+    jid?: string;
+  };
 }): { targetPath: string; operation: string; message: string } {
-  const absPath = resolveAllowedMemoryFilePath(input.groupFolder, 'SOUL.md');
+  const absPath = resolveSoulPath(input.groupFolder);
+  // WS6 mutation-budget: snapshot before write so memory is reversible
+  snapshotMemoryFile(
+    absPath,
+    input.attribution,
+    PARITY_CONFIG.skills.historyRetentionDays,
+  );
   const current = readTextFile(absPath, '# SOUL\n');
   const content = String(input.payload.content || '').trim();
   if (!content) throw new Error('soul_patch requires payload.content');
@@ -392,8 +431,19 @@ export function applyNanoPatch(input: {
   groupFolder: string;
   targetSection?: string;
   payload: Record<string, unknown>;
+  attribution?: {
+    authorityId: string;
+    senderRole: string;
+    jid?: string;
+  };
 }): { targetPath: string; operation: string; message: string } {
-  const absPath = resolveAllowedMemoryFilePath(input.groupFolder, 'NANO.md');
+  const absPath = resolveNanoPath(input.groupFolder);
+  // WS6 mutation-budget: snapshot before write so memory is reversible
+  snapshotMemoryFile(
+    absPath,
+    input.attribution,
+    PARITY_CONFIG.skills.historyRetentionDays,
+  );
   const current = readTextFile(absPath, '# NANO\n');
   const content = String(input.payload.content || '').trim();
   if (!content) throw new Error('nano_patch requires payload.content');

@@ -13,6 +13,12 @@ import {
 import { DATA_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
 import { PARITY_CONFIG } from './parity-config.js';
 import {
+  checkMutationBudget,
+  recordMutation,
+  type MutationAttribution,
+} from './mutation-budget.js';
+import { recordMutationAuditEvent } from './mutation-audit.js';
+import {
   assertValidGroupFolder,
   resolveGroupFolderPath,
 } from './group-folder.js';
@@ -1063,18 +1069,62 @@ export async function executeSkillAction(
     // WS3.3: determine senderRole and provenance for skill writes
     // Prefer explicit senderRole from context; fall back to runAuthority registry.
     let senderRole: 'operator' | 'member' | 'unknown' = 'unknown';
+    let authorityId = 'unknown';
+    let chatJid: string | undefined;
+
     if (context.senderRole) {
       senderRole = context.senderRole;
-    } else {
-      const authority = runAuthorityRegistry.get(context.sourceGroup);
-      if (authority?.senderRole) {
+    }
+    const authority = runAuthorityRegistry.get(context.sourceGroup);
+    if (authority) {
+      if (!context.senderRole && authority.senderRole) {
         senderRole = authority.senderRole;
       }
+      authorityId = authority.authorityId;
     }
+    // Find the chat JID for this group from registeredGroups
+    for (const [jid, group] of Object.entries(context.registeredGroups)) {
+      if (group.folder === groupFolder) {
+        chatJid = jid;
+        break;
+      }
+    }
+
+    const attribution: MutationAttribution = { authorityId, senderRole, jid: chatJid };
     const provenance =
       senderRole === 'operator' ? 'operator-requested' : 'agent-inferred';
 
+    // Mutation-budget check: only for mutation-type actions
+    const isMutationAction = [
+      'skill_create', 'skill_patch', 'skill_write_file',
+      'skill_archive', 'skill_restore', 'skill_rollback',
+    ].includes(parsed.action);
+
+    if (isMutationAction) {
+      const budgetResult = checkMutationBudget({ groupFolder, attribution, mutationType: 'skill' });
+      if (!budgetResult.allowed) {
+        // Record no-op event
+        recordMutationAuditEvent(groupFolder, {
+          kind: 'noop',
+          authorityId,
+          senderRole,
+          mutationType: 'skill',
+          action: parsed.action,
+          targetName: parsed.params.name,
+          noopReason: budgetResult.reason,
+          success: false,
+        });
+        return {
+          requestId: parsed.requestId,
+          status: 'error',
+          error: `Skill mutation rejected: ${budgetResult.reason}`,
+          executedAt,
+        };
+      }
+    }
+
     const name = parsed.params.name?.trim();
+    let mutationRecorded = false;
     const result = (() => {
       switch (parsed.action) {
         case 'skill_list':
@@ -1153,6 +1203,21 @@ export async function executeSkillAction(
           return setPinned(skillsDir, name, false);
       }
     })();
+
+    // Record successful mutation
+    if (isMutationAction) {
+      recordMutation({ groupFolder, attribution, mutationType: 'skill' });
+      recordMutationAuditEvent(groupFolder, {
+        kind: 'mutation',
+        authorityId,
+        senderRole,
+        mutationType: 'skill',
+        action: parsed.action,
+        targetName: name,
+        success: true,
+      });
+    }
+
     return {
       requestId: parsed.requestId,
       status: 'success',

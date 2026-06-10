@@ -146,6 +146,18 @@ export function initDatabaseAtPath(dbPath: string): void {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_learning_injections_request ON learning_injections(request_id);
+
+    CREATE TABLE IF NOT EXISTS mutation_budget_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      authority_id TEXT NOT NULL,
+      sender_role TEXT NOT NULL,
+      mutation_type TEXT NOT NULL,
+      jid TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mutation_budget_group_type_created
+      ON mutation_budget_events(group_folder, mutation_type, created_at);
   `);
 
   // Add sender_name column if it doesn't exist (migration for existing DBs)

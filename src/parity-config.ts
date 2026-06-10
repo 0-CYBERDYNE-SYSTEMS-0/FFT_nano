@@ -89,10 +89,26 @@ export interface SkillManagerParityConfig {
   backup: SkillManagerBackupConfig;
 }
 
+export interface MutationBudgetPerRunConfig {
+  skillMutations: number;  // max skill mutations per single run (default: 5)
+  memoryMutations: number; // max memory mutations per single run (default: 10)
+}
+
+export interface MutationBudgetRollingWindowConfig {
+  windowMinutes: number; // rolling window size (default: 60 minutes)
+  maxMutations: number;   // max mutations per window per group (default: 20)
+}
+
+export interface MutationBudgetConfig {
+  perRun: MutationBudgetPerRunConfig;
+  rollingWindow: MutationBudgetRollingWindowConfig;
+}
+
 export interface SkillsParityConfig {
   selfImprove: SkillSelfImproveConfig;
   curator: SkillManagerParityConfig;
   historyRetentionDays: number;
+  mutationBudget?: MutationBudgetConfig;
 }
 
 export interface WorkspaceParityConfig {
@@ -184,6 +200,16 @@ const DEFAULTS: ParityConfig = {
       backup: { enabled: true, keep: 5 },
     },
     historyRetentionDays: 14,
+    mutationBudget: {
+      perRun: {
+        skillMutations: 5,
+        memoryMutations: 10,
+      },
+      rollingWindow: {
+        windowMinutes: 60,
+        maxMutations: 20,
+      },
+    },
   },
   workspace: {
     skipBootstrap: false,
@@ -619,6 +645,36 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     c.skills.historyRetentionDays,
     1,
     3650,
+  );
+
+  // Mutation budget overrides
+  c.skills.mutationBudget = c.skills.mutationBudget ?? {
+    perRun: { skillMutations: 5, memoryMutations: 10 },
+    rollingWindow: { windowMinutes: 60, maxMutations: 20 },
+  };
+  c.skills.mutationBudget.perRun.skillMutations = envInt(
+    e.FFT_NANO_MUTATION_BUDGET_PER_RUN_SKILL,
+    c.skills.mutationBudget.perRun.skillMutations,
+    1,
+    1000,
+  );
+  c.skills.mutationBudget.perRun.memoryMutations = envInt(
+    e.FFT_NANO_MUTATION_BUDGET_PER_RUN_MEMORY,
+    c.skills.mutationBudget.perRun.memoryMutations,
+    1,
+    1000,
+  );
+  c.skills.mutationBudget.rollingWindow.windowMinutes = envInt(
+    e.FFT_NANO_MUTATION_BUDGET_WINDOW_MINUTES,
+    c.skills.mutationBudget.rollingWindow.windowMinutes,
+    1,
+    100_000,
+  );
+  c.skills.mutationBudget.rollingWindow.maxMutations = envInt(
+    e.FFT_NANO_MUTATION_BUDGET_MAX_MUTATIONS,
+    c.skills.mutationBudget.rollingWindow.maxMutations,
+    1,
+    100_000,
   );
 
   c.workspace.skipBootstrap = envBool(
