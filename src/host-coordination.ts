@@ -16,6 +16,7 @@ import {
   state,
   telegramPreviewRegistry,
   hostEventBus,
+  runAuthorityRegistry,
   type TelegramDeliveryMode,
 } from './app-state.js';
 import {
@@ -1103,6 +1104,19 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
+
+        // WS2.2: Derive created_by and status from the run authority's origin.
+        // Agent-created tasks (origin headless/subagent) → pending_approval, created_by='agent'.
+        // Operator-created tasks (origin interactive-main) → active, created_by='operator'.
+        // Conservative default: if no authority found, treat as agent-created.
+        const runAuthority = runAuthorityRegistry.get(sourceGroup);
+        const isAgentOrigin =
+          !runAuthority ||
+          runAuthority.origin === 'headless' ||
+          runAuthority.origin === 'subagent';
+        const taskStatus = isAgentOrigin ? 'pending_approval' : 'active';
+        const createdBy = isAgentOrigin ? 'agent' : 'operator';
+
         createTask({
           id: taskId,
           group_folder: targetGroup,
@@ -1123,7 +1137,8 @@ export async function processTaskIpc(
           delete_after_run: policy.deleteAfterRun ? 1 : 0,
           consecutive_errors: 0,
           next_run: executionPlan.nextRun,
-          status: 'active',
+          status: taskStatus,
+          created_by: createdBy,
           created_at: new Date().toISOString(),
         });
         logger.info(
