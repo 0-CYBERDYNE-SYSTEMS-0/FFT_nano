@@ -544,9 +544,10 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     100_000,
   );
   if (e.FFT_NANO_SKILL_SELF_IMPROVE_OPERATORS?.trim()) {
-    c.skills.selfImprove.operators = e.FFT_NANO_SKILL_SELF_IMPROVE_OPERATORS.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    c.skills.selfImprove.operators =
+      e.FFT_NANO_SKILL_SELF_IMPROVE_OPERATORS.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
   }
   c.skills.curator.enabled = envBool(
     e.FFT_NANO_SKILL_CURATOR_ENABLED,

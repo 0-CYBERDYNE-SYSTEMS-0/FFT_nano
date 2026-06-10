@@ -694,7 +694,11 @@ function classifyInboundMessage(
     origin: resolveInboundOrigin(msg, deps.constants.assistantName),
     isMainGroup: group.folder === deps.constants.mainGroupFolder,
     queuePrefs,
-    senderRole: resolveSenderRole(msg, deps.state.registeredGroups, deps.constants.mainGroupFolder),
+    senderRole: resolveSenderRole(
+      msg,
+      deps.state.registeredGroups,
+      deps.constants.mainGroupFolder,
+    ),
   };
 }
 

@@ -401,7 +401,11 @@ function validateSkillMarkdown(
   ]);
   const rawProvenance = toTrimmedString(frontmatter.provenance);
   // Only validate if provenance is present as a non-null string
-  if (rawProvenance !== undefined && rawProvenance !== null && !VALID_PROVENANCE_VALUES.has(rawProvenance)) {
+  if (
+    rawProvenance !== undefined &&
+    rawProvenance !== null &&
+    !VALID_PROVENANCE_VALUES.has(rawProvenance)
+  ) {
     issues.push({
       file: skillMarkdownPath,
       message: `Frontmatter provenance value "${rawProvenance}" is not supported. Allowed: ${[...VALID_PROVENANCE_VALUES].join(', ')}`,
