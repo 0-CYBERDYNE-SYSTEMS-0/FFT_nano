@@ -135,6 +135,16 @@ export function initDatabaseAtPath(dbPath: string): void {
       delivered_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_delivery_outbox_status ON delivery_outbox(status, created_at);
+
+    CREATE TABLE IF NOT EXISTS learning_injections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id TEXT,
+      group_folder TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      item TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_injections_request ON learning_injections(request_id);
   `);
 
   // Add sender_name column if it doesn't exist (migration for existing DBs)

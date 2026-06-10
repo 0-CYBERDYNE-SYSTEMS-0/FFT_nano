@@ -223,3 +223,94 @@ test('VAL-WS4-001/002: evaluator_verdicts migration is idempotent - running twic
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('VAL-WS5-001: learning_injections table exists post-migration with six columns', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-migrations-'));
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    initDatabaseAtPath(dbPath);
+
+    const db2 = new Database(dbPath);
+    const info = db2.prepare(`PRAGMA table_info('learning_injections')`).all() as Array<{
+      name: string;
+      type: string;
+      dflt_value: string | null;
+      notnull: number;
+    }>;
+    db2.close();
+
+    assert.equal(info.length, 6, 'learning_injections must have exactly 6 columns');
+
+    const colNames = info.map((c) => c.name);
+    assert.ok(colNames.includes('id'), 'id column must exist');
+    assert.ok(colNames.includes('request_id'), 'request_id column must exist');
+    assert.ok(colNames.includes('group_folder'), 'group_folder column must exist');
+    assert.ok(colNames.includes('kind'), 'kind column must exist');
+    assert.ok(colNames.includes('item'), 'item column must exist');
+    assert.ok(colNames.includes('created_at'), 'created_at column must exist');
+
+    // Verify column types
+    const idCol = info.find((c) => c.name === 'id');
+    assert.equal(idCol?.type, 'INTEGER', 'id must be INTEGER');
+
+    const requestIdCol = info.find((c) => c.name === 'request_id');
+    assert.equal(requestIdCol?.type, 'TEXT', 'request_id must be TEXT');
+
+    const groupFolderCol = info.find((c) => c.name === 'group_folder');
+    assert.equal(groupFolderCol?.type, 'TEXT', 'group_folder must be TEXT');
+
+    const kindCol = info.find((c) => c.name === 'kind');
+    assert.equal(kindCol?.type, 'TEXT', 'kind must be TEXT');
+
+    const itemCol = info.find((c) => c.name === 'item');
+    assert.equal(itemCol?.type, 'TEXT', 'item must be TEXT');
+
+    const createdAtCol = info.find((c) => c.name === 'created_at');
+    assert.equal(createdAtCol?.type, 'TEXT', 'created_at must be TEXT');
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS5-001: idx_learning_injections_request index exists on learning_injections(request_id)', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-migrations-'));
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    initDatabaseAtPath(dbPath);
+
+    const db2 = new Database(dbPath);
+    const indexes = db2.prepare(`PRAGMA index_list('learning_injections')`).all() as Array<{
+      name: string;
+      unique: number;
+      origin: string;
+    }>;
+    db2.close();
+
+    const requestIndex = indexes.find((idx) => idx.name === 'idx_learning_injections_request');
+    assert.ok(requestIndex, 'idx_learning_injections_request index must exist');
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS5-001: learning_injections migration is idempotent - running twice does not throw', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-migrations-'));
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    // First init
+    initDatabaseAtPath(dbPath);
+    closeDatabase();
+
+    // Second init (re-run migrations) - should not throw
+    initDatabaseAtPath(dbPath);
+    closeDatabase();
+
+    // Third init - still should not throw
+    initDatabaseAtPath(dbPath);
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
