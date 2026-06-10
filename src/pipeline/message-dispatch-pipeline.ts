@@ -110,12 +110,15 @@ type CodingRunResult = {
 
 export type InboundOrigin = 'user' | 'assistant' | 'tui' | 'system';
 
+export type SenderRole = 'operator' | 'member' | 'unknown';
+
 interface ClassifiedInboundMessage {
   group: any;
   content: string;
   origin: InboundOrigin;
   isMainGroup: boolean;
   queuePrefs: Record<string, any>;
+  senderRole: SenderRole;
 }
 
 interface DispatchRequest {
@@ -133,6 +136,7 @@ interface DispatchRequest {
   runPreferences: Record<string, any>;
   timestampToPersist?: string;
   workspaceRoot?: string;
+  senderRole: SenderRole;
 }
 
 export type RunRoute = 'agent' | 'coding_worker';
@@ -631,6 +635,48 @@ function resolveInboundOrigin(
   return 'user';
 }
 
+/**
+ * Resolves the sender role for a message.
+ *
+ * Logic (per WS3.1 spec):
+ * - The main-chat owner is always 'operator' (the main chat JID itself)
+ * - A JID in PARITY_CONFIG.skills.selfImprove.operators is 'operator'
+ * - A JID in a registered group but not in the allowlist is 'member'
+ * - A JID with no registered group is 'unknown'
+ */
+export function resolveSenderRole(
+  msg: NewMessage,
+  registeredGroups: Record<string, any>,
+  mainGroupFolder: string,
+): SenderRole {
+  const { sender } = msg;
+
+  // Empty sender defaults to unknown
+  if (!sender) return 'unknown';
+
+  // Check if sender is in the operators allowlist
+  const operators = PARITY_CONFIG.skills.selfImprove.operators || [];
+  if (operators.includes(sender)) return 'operator';
+
+  // Find the main chat JID (the chat with folder === mainGroupFolder)
+  const mainChatJid = Object.entries(registeredGroups).find(
+    ([, group]) => group.folder === mainGroupFolder,
+  )?.[0];
+
+  // The main chat owner (the main chat JID itself) is always operator
+  if (mainChatJid && sender === mainChatJid) return 'operator';
+
+  // Check if sender is in any registered group
+  const senderChatJid = msg.chat_jid;
+  if (registeredGroups[senderChatJid]) {
+    // Sender is in a registered group but not in allowlist and not the main chat owner
+    return 'member';
+  }
+
+  // No registered group found
+  return 'unknown';
+}
+
 function classifyInboundMessage(
   msg: NewMessage,
   deps: MessageDispatcherDeps,
@@ -648,6 +694,7 @@ function classifyInboundMessage(
     origin: resolveInboundOrigin(msg, deps.constants.assistantName),
     isMainGroup: group.folder === deps.constants.mainGroupFolder,
     queuePrefs,
+    senderRole: resolveSenderRole(msg, deps.state.registeredGroups, deps.constants.mainGroupFolder),
   };
 }
 
@@ -1166,6 +1213,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     deliverToChat?: boolean;
     onSettled?: () => void;
     workspaceRoot?: string;
+    senderRole: SenderRole;
   }): Promise<void> {
     let result: string | null = null;
     let streamed = false;
@@ -1256,7 +1304,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
                 params.codingHint,
                 params.requestId,
                 params.runPreferences,
-                {},
+                { senderRole: params.senderRole },
                 abortController.signal,
               );
 
@@ -1722,6 +1770,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       runPreferences,
       timestampToPersist: msg.timestamp,
       workspaceRoot,
+      senderRole: classified.senderRole,
     };
   }
 
@@ -1783,6 +1832,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         drainQueuedWork(msg.chat_jid);
       },
       workspaceRoot: request.workspaceRoot,
+      senderRole: request.senderRole,
     });
     return 'started';
   }
@@ -1894,6 +1944,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         onSettled: () => {
           drainQueuedWork(chatJid);
         },
+        senderRole: 'unknown', // TUI sessions don't have a senderRole context
       });
     })();
     return { runId, status: 'started' };

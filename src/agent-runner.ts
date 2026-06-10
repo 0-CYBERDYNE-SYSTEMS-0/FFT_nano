@@ -524,6 +524,7 @@ export async function runAgent(
     skipSkillMaintenance?: boolean;
     lifecyclePolicyOverride?: ContainerInput['lifecyclePolicyOverride'];
     onProgressEvent?: (event: ContainerProgressEvent) => void;
+    senderRole?: 'operator' | 'member' | 'unknown';
   } = {},
   abortSignal?: AbortSignal,
 ): Promise<{
@@ -891,6 +892,7 @@ export async function runAgent(
         toolExecutions: runToolExecutions,
         runtimePrefs,
         requestId,
+        senderRole: options.senderRole,
       });
       maybeRunSkillManager({
         group,

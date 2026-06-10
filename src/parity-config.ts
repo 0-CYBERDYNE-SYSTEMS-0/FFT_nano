@@ -72,6 +72,7 @@ export interface SkillSelfImproveConfig {
   turnInterval: number;
   toolInterval: number;
   minIntervalMinutes: number;
+  operators: string[];
 }
 
 export interface SkillManagerBackupConfig {
@@ -166,6 +167,7 @@ const DEFAULTS: ParityConfig = {
       turnInterval: 10,
       toolInterval: 10,
       minIntervalMinutes: 15,
+      operators: [],
     },
     curator: {
       enabled: true,
@@ -541,6 +543,11 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     0,
     100_000,
   );
+  if (e.FFT_NANO_SKILL_SELF_IMPROVE_OPERATORS?.trim()) {
+    c.skills.selfImprove.operators = e.FFT_NANO_SKILL_SELF_IMPROVE_OPERATORS.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
   c.skills.curator.enabled = envBool(
     e.FFT_NANO_SKILL_CURATOR_ENABLED,
     c.skills.curator.enabled,

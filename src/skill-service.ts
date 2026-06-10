@@ -239,12 +239,15 @@ export function maybeRunSkillSelfImprovement(params: {
   toolExecutions?: PiToolExecution[];
   runtimePrefs: ChatRunPreferences;
   requestId?: string;
+  senderRole?: 'operator' | 'member' | 'unknown';
 }): void {
   const runId = params.requestId || 'run';
+  const senderRole = params.senderRole ?? 'unknown';
   const { signals, priority } = extractLearningSignals({
     userTask: params.originalTask,
     agentOutput: params.agentOutput,
     toolExecutions: params.toolExecutions,
+    senderRole,
   });
 
   const decision = shouldTriggerSkillSelfImprove({
@@ -262,6 +265,7 @@ export function maybeRunSkillSelfImprovement(params: {
     recordSelfImproveEvent(params.group.folder, {
       run_id: runId,
       authorityId: runId, // INV.1: stamped for forensic traceability (VAL-XARE-009)
+      sender_role: senderRole,
       review_type: 'skill-self-improve',
       trigger_reason: triggerReason,
       signals_detected: signals,
@@ -277,6 +281,7 @@ export function maybeRunSkillSelfImprovement(params: {
   recordSelfImproveEvent(params.group.folder, {
     run_id: runId,
     authorityId: runId, // INV.1: stamped for forensic traceability (VAL-XARE-009)
+    sender_role: senderRole,
     review_type: 'skill-self-improve',
     trigger_reason: triggerReason,
     signals_detected: signals,

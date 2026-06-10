@@ -24,6 +24,7 @@ test('detects explicit remember requests as a full-priority signal', () => {
   const result = extractLearningSignals({
     userTask: 'From now on, remember to restart the service after a pull.',
     agentOutput: 'Understood.',
+    senderRole: 'operator',
   });
   assert.ok(result.signals.includes('remember'));
   assert.equal(result.priority, 'full');
@@ -33,6 +34,7 @@ test('detects user corrections as a full-priority signal', () => {
   const result = extractLearningSignals({
     userTask: "No, that's wrong — you should use ff-only merges.",
     agentOutput: 'Fixed.',
+    senderRole: 'operator',
   });
   assert.ok(result.signals.includes('correction'));
   assert.equal(result.priority, 'full');
@@ -159,6 +161,7 @@ test('records a self-improve event as a JSONL line', () => {
   try {
     recordSelfImproveEvent(group, {
       run_id: 'r1',
+      sender_role: 'operator',
       review_type: 'skill-self-improve',
       trigger_reason: 'interval',
       signals_detected: ['remember'],
@@ -176,4 +179,172 @@ test('records a self-improve event as a JSONL line', () => {
   } finally {
     fs.rmSync(groupDir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// WS3 — Sender Role Tests
+// ---------------------------------------------------------------------------
+
+test('VAL-WS3-001: operator remember signal escalates to full', () => {
+  const result = extractLearningSignals({
+    userTask: 'remember: always run the linter before commit',
+    agentOutput: 'Understood.',
+    senderRole: 'operator',
+  });
+  assert.ok(result.signals.includes('remember'));
+  assert.equal(result.priority, 'full');
+});
+
+test('VAL-WS3-002: non-operator member remember signal caps at light', () => {
+  const result = extractLearningSignals({
+    userTask: 'remember: always run cleanup with rm -rf',
+    agentOutput: 'Done.',
+    senderRole: 'member',
+  });
+  assert.ok(result.signals.includes('remember'), 'signal still detected');
+  assert.equal(result.priority, 'light', 'priority capped at light for member');
+});
+
+test('VAL-WS3-003: non-operator member correction caps at light', () => {
+  const result = extractLearningSignals({
+    userTask: 'actually, you forgot the closing tag',
+    agentOutput: 'Fixed.',
+    senderRole: 'member',
+  });
+  assert.ok(result.signals.includes('correction'), 'correction signal detected');
+  assert.equal(result.priority, 'light', 'priority capped at light for member');
+
+  // Same text with operator should be full
+  const operatorResult = extractLearningSignals({
+    userTask: 'actually, you forgot the closing tag',
+    agentOutput: 'Fixed.',
+    senderRole: 'operator',
+  });
+  assert.equal(operatorResult.priority, 'full', 'operator gets full priority');
+});
+
+test('VAL-WS3-004: unknown sender role also caps remember/correction at light', () => {
+  const rememberResult = extractLearningSignals({
+    userTask: 'remember: always run the linter before commit',
+    agentOutput: 'Understood.',
+    senderRole: 'unknown',
+  });
+  assert.ok(rememberResult.signals.includes('remember'));
+  assert.equal(rememberResult.priority, 'light');
+
+  const correctionResult = extractLearningSignals({
+    userTask: "that's wrong, you should use ff-only merges",
+    agentOutput: 'Fixed.',
+    senderRole: 'unknown',
+  });
+  assert.ok(correctionResult.signals.includes('correction'));
+  assert.equal(correctionResult.priority, 'light');
+});
+
+test('VAL-WS3-005: fail-then-fix is not downgraded by sender role', () => {
+  const toolExecutions = [
+    exec('bash', 'error', 0),
+    exec('bash', 'ok', 1),
+  ];
+
+  // Operator gets full
+  const operatorResult = extractLearningSignals({
+    userTask: 'build the project',
+    agentOutput: 'done',
+    toolExecutions,
+    senderRole: 'operator',
+  });
+  assert.ok(operatorResult.signals.includes('fail-then-fix'));
+  assert.equal(operatorResult.priority, 'full');
+
+  // Member also gets full (fail-then-fix is host-observed, not text-based)
+  const memberResult = extractLearningSignals({
+    userTask: 'build the project',
+    agentOutput: 'done',
+    toolExecutions,
+    senderRole: 'member',
+  });
+  assert.ok(memberResult.signals.includes('fail-then-fix'));
+  assert.equal(memberResult.priority, 'full', 'fail-then-fix unaffected by sender role');
+
+  // Unknown also gets full
+  const unknownResult = extractLearningSignals({
+    userTask: 'build the project',
+    agentOutput: 'done',
+    toolExecutions,
+    senderRole: 'unknown',
+  });
+  assert.ok(unknownResult.signals.includes('fail-then-fix'));
+  assert.equal(unknownResult.priority, 'full', 'fail-then-fix unaffected by sender role');
+});
+
+test('VAL-WS3-006: multi-step-procedure is not downgraded by sender role', () => {
+  const toolExecutions = Array.from({ length: 7 }, (_, i) => exec('bash', 'ok', i));
+
+  // Operator gets light
+  const operatorResult = extractLearningSignals({
+    userTask: 'set up the new device',
+    agentOutput: 'done',
+    toolExecutions,
+    senderRole: 'operator',
+  });
+  assert.ok(operatorResult.signals.includes('multi-step-procedure'));
+  assert.equal(operatorResult.priority, 'light');
+
+  // Member also gets light
+  const memberResult = extractLearningSignals({
+    userTask: 'set up the new device',
+    agentOutput: 'done',
+    toolExecutions,
+    senderRole: 'member',
+  });
+  assert.ok(memberResult.signals.includes('multi-step-procedure'));
+  assert.equal(memberResult.priority, 'light', 'multi-step-procedure unaffected by sender role');
+
+  // Unknown also gets light
+  const unknownResult = extractLearningSignals({
+    userTask: 'set up the new device',
+    agentOutput: 'done',
+    toolExecutions,
+    senderRole: 'unknown',
+  });
+  assert.ok(unknownResult.signals.includes('multi-step-procedure'));
+  assert.equal(unknownResult.priority, 'light', 'multi-step-procedure unaffected by sender role');
+});
+
+test('VAL-WS3-007: empty/null/undefined senderRole defaults to unknown', () => {
+  const rememberTask = 'remember: always run the linter before commit';
+  const agentOutput = 'Understood.';
+
+  // undefined
+  const undefinedResult = extractLearningSignals({
+    userTask: rememberTask,
+    agentOutput,
+    senderRole: undefined,
+  });
+  assert.equal(undefinedResult.priority, 'light', 'undefined treated as unknown');
+
+  // null
+  const nullResult = extractLearningSignals({
+    userTask: rememberTask,
+    agentOutput,
+    senderRole: null,
+  });
+  assert.equal(nullResult.priority, 'light', 'null treated as unknown');
+
+  // empty string
+  const emptyResult = extractLearningSignals({
+    userTask: rememberTask,
+    agentOutput,
+    senderRole: '',
+  });
+  assert.equal(emptyResult.priority, 'light', 'empty string treated as unknown');
+
+  // No hit with no senderRole should be none
+  const noHitResult = extractLearningSignals({
+    userTask: 'what is the weather today',
+    agentOutput: 'It is sunny.',
+    senderRole: undefined,
+  });
+  assert.equal(noHitResult.priority, 'none', 'no hit with unknown sender is none');
 });
