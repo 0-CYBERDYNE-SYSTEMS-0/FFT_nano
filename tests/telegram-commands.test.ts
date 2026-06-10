@@ -1773,6 +1773,78 @@ test('VAL-WS6-012 /learning shows pending agent-task approvals', async () => {
   assert.match(text, /task-2: do another thing/);
 });
 
+test('VAL-WS6-013 /learning digest is read-only — no LLM call, no DB write, no spawn', async () => {
+  // Track write operations that must NOT be called during /learning digest handling.
+  const runAgentCalls: unknown[] = [];
+  const runCodingTaskCalls: unknown[] = [];
+  const recordAuditCalls: Array<{ groupFolder: string; event: unknown }> = [];
+
+  const cannedDigest =
+    '## Learning Status\n' +
+    'Skills (last 7 days): No skills created or modified in the last 7 days.\n' +
+    'Memory writes: No memory writes in the last 20 injections.\n' +
+    'Pass-rate trend: No runs evaluated yet.\n' +
+    'Recent skips: 0 / 0\n' +
+    'Pending agent-task approvals: None.\n' +
+    'Pause status: Learning is active';
+
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.formatLearningDigest = () => cannedDigest;
+
+  // Wrap the write-side deps so we can assert they are never called.
+  deps.runAgent = async (...args: unknown[]) => {
+    runAgentCalls.push(args);
+    return { ok: true, result: 'noop', streamed: false };
+  };
+  deps.runCodingTask = async (...args: unknown[]) => {
+    runCodingTaskCalls.push(args);
+    return { ok: true, result: 'noop', streamed: false };
+  };
+  deps.recordTaskAuditEvent = (groupFolder: string, event: unknown) => {
+    recordAuditCalls.push({ groupFolder, event });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning',
+  });
+
+  // VAL-WS6-013 assertions: digest was sent.
+  assert.equal(deps.sent.length, 1);
+  assert.equal(deps.sent[0].text, cannedDigest);
+
+  // VAL-WS6-013: audit was recorded (this write is explicitly allowed by the spec).
+  assert.deepEqual(deps.audits.at(-1), {
+    chatJid: 'telegram:main',
+    command: '/learning',
+    allowed: true,
+    reason: 'digest',
+  });
+
+  // VAL-WS6-013: no LLM call — runAgent and runCodingTask are the LLM invocation paths.
+  assert.equal(runAgentCalls.length, 0, 'runAgent must not be called during /learning digest');
+  assert.equal(runCodingTaskCalls.length, 0, 'runCodingTask must not be called during /learning digest');
+
+  // VAL-WS6-013: no DB/JSONL write — recordTaskAuditEvent is the only write in this code path.
+  // It is called by the approve/reject callback handlers, NOT by the digest handler.
+  assert.equal(
+    recordAuditCalls.length,
+    0,
+    'recordTaskAuditEvent must not be called during /learning digest',
+  );
+});
+
 test('VAL-WS6-015 /learning pause sets the pause flag', async () => {
   const savedStates: boolean[] = [];
   const deps = createBaseDeps() as TelegramCommandDeps & {
