@@ -62,8 +62,14 @@ export function shouldEvaluate(ctx: EvaluatorContext): {
     return { evaluate: false, reason: 'empty output' };
   }
 
+  // forceEvaluate short-circuits the runType gate: agent-created task runs
+  // always go through the evaluator regardless of run type
+  if (ctx.forceEvaluate) {
+    return { evaluate: true, reason: 'forced evaluation' };
+  }
+
   // Only coding and subagent runs are eligible for evaluation
-  // chat, cron, scheduled, and heartbeat always skip
+  // chat, cron, scheduled, and heartbeat always skip unless forceEvaluate
   if (ctx.runType !== 'coding' && ctx.runType !== 'subagent') {
     return {
       evaluate: false,
@@ -73,10 +79,6 @@ export function shouldEvaluate(ctx: EvaluatorContext): {
 
   if (ctx.runType === 'coding' && (ctx.changedFiles?.length ?? 0) > 0) {
     return { evaluate: true, reason: 'coding run with changed files' };
-  }
-
-  if (ctx.forceEvaluate) {
-    return { evaluate: true, reason: 'forced evaluation' };
   }
 
   // Fast path: trivially short runs with no tools skip evaluation

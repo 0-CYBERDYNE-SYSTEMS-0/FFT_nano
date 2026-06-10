@@ -19,6 +19,7 @@ import {
   getNextDueTaskTime,
   getTaskById,
   logTaskRun,
+  recordEvaluatorVerdict,
   updateTaskAfterRunV2,
 } from '../db.js';
 import { logger } from '../logger.js';
@@ -416,6 +417,7 @@ export async function runScheduledTaskV2(
         outputResult = output.result;
 
         // Evaluator pass for cron tasks — always runs
+        // WS2.5: agent-created tasks use forceEvaluate to force a real evaluation
         if (outputResult) {
           const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
           const verdict = await evaluateRun({
@@ -432,6 +434,7 @@ export async function runScheduledTaskV2(
               : path.join(GROUPS_DIR, task.group_folder),
             startedAtMs: startedAt,
             abortSignal: abortController.signal,
+            forceEvaluate: task.created_by === 'agent',
           }).catch((err) => {
             logger.warn(
               { err, taskId: task.id },
@@ -439,6 +442,24 @@ export async function runScheduledTaskV2(
             );
             return null;
           });
+
+          // Record verdict to evaluator_verdicts (WS2.5 / WS4.5 chokepoint)
+          // Best-effort: recording failure does not break the run
+          if (verdict) {
+            try {
+              recordEvaluatorVerdict({
+                groupFolder: task.group_folder,
+                chatJid: task.chat_jid ?? null,
+                runType: 'cron',
+                pass: verdict.pass,
+                score: verdict.score,
+                issues: verdict.issues,
+              });
+            } catch (err) {
+              logger.warn({ err, taskId: task.id }, 'Failed to record evaluator verdict');
+            }
+          }
+
           if (verdict && !verdict.skipped && !verdict.pass) {
             logger.warn(
               {

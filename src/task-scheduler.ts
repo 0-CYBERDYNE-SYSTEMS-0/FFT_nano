@@ -14,6 +14,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  recordEvaluatorVerdict,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
@@ -147,6 +148,7 @@ async function runLegacyTask(
       result = output.result;
 
       // Evaluator pass for scheduled tasks — always runs
+      // WS2.5: agent-created tasks use forceEvaluate to force a real evaluation
       if (result && group) {
         const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
         const verdict = await evaluateRun({
@@ -160,6 +162,7 @@ async function runLegacyTask(
           isMain,
           workspaceDir: isMain ? MAIN_WORKSPACE_DIR : groupDir,
           startedAtMs: startTime,
+          forceEvaluate: task.created_by === 'agent',
         }).catch((err) => {
           logger.warn(
             { err, taskId: task.id },
@@ -167,6 +170,24 @@ async function runLegacyTask(
           );
           return null;
         });
+
+        // Record verdict to evaluator_verdicts (WS2.5 / WS4.5 chokepoint)
+        // Best-effort: recording failure does not break the run
+        if (verdict) {
+          try {
+            recordEvaluatorVerdict({
+              groupFolder: task.group_folder,
+              chatJid: task.chat_jid ?? null,
+              runType: 'scheduled',
+              pass: verdict.pass,
+              score: verdict.score,
+              issues: verdict.issues,
+            });
+          } catch (err) {
+            logger.warn({ err, taskId: task.id }, 'Failed to record evaluator verdict');
+          }
+        }
+
         if (verdict && !verdict.skipped && !verdict.pass) {
           logger.warn(
             {
