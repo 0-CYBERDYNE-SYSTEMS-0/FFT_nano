@@ -8,7 +8,11 @@ import {
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
 import { runContainerAgent, writeTasksSnapshot } from './pi-runner.js';
-import { runEvaluatorPass, recordVerdictOutcome, verdictToOutcome } from './evaluator.js';
+import {
+  runEvaluatorPass,
+  recordVerdictOutcome,
+  verdictToOutcome,
+} from './evaluator.js';
 import {
   getAllTasks,
   getDueTasks,

@@ -946,7 +946,9 @@ export function formatLearningDigest(): string {
   const lines: string[] = ['## Learning Status'];
 
   // Pause status (VAL-INV-I6-002)
-  lines.push(`Pause status: ${state.learningPaused ? 'Learning is paused' : 'Learning is active'}`);
+  lines.push(
+    `Pause status: ${state.learningPaused ? 'Learning is paused' : 'Learning is active'}`,
+  );
 
   // Recent evaluator stats
   const stats = getEvaluatorStats(MAIN_GROUP_FOLDER, 20);
@@ -972,9 +974,7 @@ export function formatLearningDigest(): string {
   if (pendingTasks.length > 0) {
     for (const task of pendingTasks.slice(0, 5)) {
       const promptPreview =
-        task.prompt.length > 50
-          ? `${task.prompt.slice(0, 50)}…`
-          : task.prompt;
+        task.prompt.length > 50 ? `${task.prompt.slice(0, 50)}…` : task.prompt;
       lines.push(`  - ${task.id}: ${promptPreview}`);
     }
     if (pendingTasks.length > 5) {

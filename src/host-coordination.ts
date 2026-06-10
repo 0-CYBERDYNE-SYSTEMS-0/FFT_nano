@@ -1155,10 +1155,13 @@ export async function processTaskIpc(
           runAuthority.origin === 'subagent';
         // WS6.3: When learning is paused, autoApprove is ignored and agent tasks
         // always go to pending_approval (VAL-WS6-019, VAL-XARE-014).
-        const effectiveAutoApprove =
-          state.learningPaused ? false : PARITY_CONFIG.cron.agentTasks.autoApprove;
+        const effectiveAutoApprove = state.learningPaused
+          ? false
+          : PARITY_CONFIG.cron.agentTasks.autoApprove;
         const taskStatus =
-          isAgentOrigin && !effectiveAutoApprove ? 'pending_approval' : 'active';
+          isAgentOrigin && !effectiveAutoApprove
+            ? 'pending_approval'
+            : 'active';
         const createdBy = isAgentOrigin ? 'agent' : 'operator';
 
         createTask({

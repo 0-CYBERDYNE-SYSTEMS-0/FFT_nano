@@ -2826,12 +2826,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       // Main-chat only for pause/resume (VAL-WS6-015, VAL-WS6-016)
       if (sub === 'pause' || sub === 'resume') {
         if (!isMainGroup) {
-          deps.logTelegramCommandAudit(
-            m.chatJid,
-            cmd,
-            false,
-            'not main/admin',
-          );
+          deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
           await deps.sendMessage(
             m.chatJid,
             `${deps.constants.assistantName}: /learning pause/resume is only available in the main/admin chat.`,

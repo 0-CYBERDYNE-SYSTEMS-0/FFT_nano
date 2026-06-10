@@ -1081,7 +1081,14 @@ export function getEvaluatorStats(
   groupFolder: string,
   limit = 20,
 ): EvaluatorStats {
-  if (!db) return { total: 0, passes: 0, passRate: 0, recentIssues: [], recentSkips: 0 };
+  if (!db)
+    return {
+      total: 0,
+      passes: 0,
+      passRate: 0,
+      recentIssues: [],
+      recentSkips: 0,
+    };
   const safeLimit = Number.isFinite(limit)
     ? Math.max(1, Math.min(100, Math.floor(limit)))
     : 20;

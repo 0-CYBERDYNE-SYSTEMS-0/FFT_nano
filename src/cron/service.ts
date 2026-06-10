@@ -11,7 +11,11 @@ import {
   TIMEZONE,
 } from '../config.js';
 import { runContainerAgent, writeTasksSnapshot } from '../pi-runner.js';
-import { runEvaluatorPass, recordVerdictOutcome, verdictToOutcome } from '../evaluator.js';
+import {
+  runEvaluatorPass,
+  recordVerdictOutcome,
+  verdictToOutcome,
+} from '../evaluator.js';
 import {
   deleteTask,
   getAllTasks,

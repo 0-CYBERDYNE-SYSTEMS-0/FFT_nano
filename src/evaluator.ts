@@ -5,7 +5,11 @@ import type { RegisteredGroup, RunAuthority, RunType } from './types.js';
 import type { ContainerInput, ContainerOutput } from './pi-runner.js';
 import { runContainerAgent } from './pi-runner.js';
 import { logger } from './logger.js';
-import { recordEvaluatorVerdict, enqueueDelivery, getEvaluatorStats } from './db.js';
+import {
+  recordEvaluatorVerdict,
+  enqueueDelivery,
+  getEvaluatorStats,
+} from './db.js';
 import { PARITY_CONFIG } from './parity-config.js';
 import { findMainChatJid } from './telegram-group-mgmt.js';
 import { state } from './app-state.js';
@@ -792,14 +796,20 @@ export interface RecordVerdictOutcomeResult {
  * legacy task scheduler, and chat-sampling path (WS4.4) all write rows.
  * Future run types cannot silently skip recording.
  */
-export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVerdictOutcomeResult {
+export function recordVerdictOutcome(
+  input: RecordVerdictOutcomeInput,
+): RecordVerdictOutcomeResult {
   const { authority, outcome } = input;
   let shouldAlert = false;
 
   // threshold-skip: no-op (run was never eligible, no signal to record)
   if (outcome.kind === 'threshold-skip') {
     logger.debug(
-      { runType: outcome.runType, skipReason: outcome.skipReason, requestId: authority.requestId },
+      {
+        runType: outcome.runType,
+        skipReason: outcome.skipReason,
+        requestId: authority.requestId,
+      },
       'Threshold-skip outcome: no verdict row written',
     );
     return { shouldAlert };
@@ -822,7 +832,10 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVe
       recordEvaluatorVerdict({
         requestId: authority.requestId,
         groupFolder: authority.groupFolder,
-        chatJid: authority.origin === 'interactive-main' ? authority.requestId : undefined,
+        chatJid:
+          authority.origin === 'interactive-main'
+            ? authority.requestId
+            : undefined,
         runType: outcome.runType,
         pass: outcome.pass,
         score: outcome.score,
@@ -830,7 +843,10 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVe
         refinements: outcome.refinements,
       });
     } catch (err) {
-      logger.warn({ err, requestId: authority.requestId }, 'Failed to record verdict outcome');
+      logger.warn(
+        { err, requestId: authority.requestId },
+        'Failed to record verdict outcome',
+      );
     }
   } else if (outcome.kind === 'eligible-skip') {
     // eligible-skip: write row with skipped=1, pass=0, score=0, skip_reason=<reason>
@@ -848,7 +864,10 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVe
       recordEvaluatorVerdict({
         requestId: authority.requestId,
         groupFolder: authority.groupFolder,
-        chatJid: authority.origin === 'interactive-main' ? authority.requestId : undefined,
+        chatJid:
+          authority.origin === 'interactive-main'
+            ? authority.requestId
+            : undefined,
         runType: outcome.runType,
         pass: false, // pass = 0 for eligible-skip
         score: 0, // score = 0 for eligible-skip
@@ -858,7 +877,10 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVe
         skipReason: outcome.skipReason,
       });
     } catch (err) {
-      logger.warn({ err, requestId: authority.requestId }, 'Failed to record eligible-skip outcome');
+      logger.warn(
+        { err, requestId: authority.requestId },
+        'Failed to record eligible-skip outcome',
+      );
     }
 
     // WS4.3: Check degraded-signal alert
@@ -890,7 +912,10 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVe
             'Degraded signal alert enqueued',
           );
         } catch (err) {
-          logger.warn({ err, dedupeKey }, 'Failed to enqueue degraded signal alert');
+          logger.warn(
+            { err, dedupeKey },
+            'Failed to enqueue degraded signal alert',
+          );
         }
       }
     }
@@ -953,7 +978,9 @@ export function verdictToOutcome(
         issues: verdict.issues,
         feedback: verdict.feedback,
         refinements,
-        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R } ? R : never,
+        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R }
+          ? R
+          : never,
         skipped: true,
       };
     } else {
@@ -961,7 +988,9 @@ export function verdictToOutcome(
       return {
         kind: 'threshold-skip',
         runType,
-        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R } ? R : never,
+        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R }
+          ? R
+          : never,
         skipped: true,
       };
     }
@@ -1017,7 +1046,15 @@ export interface ChatSampleDecision {
 export async function runSampledChatEvaluation(
   params: RunSampledChatEvaluationParams,
 ): Promise<ChatSampleDecision> {
-  const { authority, originalTask, agentOutput, group, chatJid, startedAtMs, abortSignal } = params;
+  const {
+    authority,
+    originalTask,
+    agentOutput,
+    group,
+    chatJid,
+    startedAtMs,
+    abortSignal,
+  } = params;
 
   // 1. Global pause check: if paused, hard no-op
   if (state.learningPaused) {

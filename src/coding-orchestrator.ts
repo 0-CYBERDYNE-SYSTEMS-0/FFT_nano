@@ -29,10 +29,7 @@ import {
 } from './db.js';
 import { createRunProgressReporter } from './run-progress.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import {
-  mintRunAuthority,
-  deriveEffectiveToolSet,
-} from './run-authority.js';
+import { mintRunAuthority, deriveEffectiveToolSet } from './run-authority.js';
 import type { RunAuthority } from './types.js';
 
 export interface CodingRunConfig {
