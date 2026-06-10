@@ -3,9 +3,12 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { logger } from './logger.js';
 import {
   runEvaluatorPass as defaultRunEvaluatorPass,
   buildRefinementPrompt,
+  recordVerdictOutcome,
+  verdictToOutcome,
 } from './evaluator.js';
 
 import type { RegisteredGroup } from './types.js';
@@ -17,15 +20,19 @@ import type {
   ExtensionUIResponse,
   ContainerRuntimeEvent,
 } from './pi-runner.js';
+import { ADVISORY_FRAME_HEADER } from './pi-runner.js';
 import { createHostEventId, type HostEvent } from './runtime/host-events.js';
 import { getCoderLearningsForContext } from './coder-learnings.js';
 import {
   recordEvaluatorVerdict,
   getEvaluatorStats,
+  recordLearningInjection,
   type EvaluatorStats,
 } from './db.js';
 import { createRunProgressReporter } from './run-progress.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import { mintRunAuthority, deriveEffectiveToolSet } from './run-authority.js';
+import type { RunAuthority } from './types.js';
 
 export interface CodingRunConfig {
   toolMode: 'read_only' | 'full';
@@ -1065,10 +1072,11 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       activeRun.state = 'running';
 
       // Fetch coder learnings from MEMORY.md to prepend to context
-      const baseLearningsContext = await getCoderLearningsForContext(
-        request.originGroupFolder,
-        5, // maxEntries
-      );
+      const { formatted: baseLearningsContext, entriesCount } =
+        await getCoderLearningsForContext(
+          request.originGroupFolder,
+          5, // maxEntries
+        );
       // Close the loop: prepend prior evaluator outcomes for this workspace so
       // the next run is aware of how recent runs scored and what recurred.
       const evalStatsContext = formatEvaluatorStatsContext(
@@ -1077,13 +1085,53 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       const learningsContext = [evalStatsContext, baseLearningsContext]
         .filter(Boolean)
         .join('\n\n');
+      // WS5.1: Stamp learning injections (best-effort — recorder failure never aborts the run).
+      const reqId = request.requestId;
+      // One row per coder-learning entry with kind='memory', item='MEMORY.md'
+      for (let i = 0; i < entriesCount; i += 1) {
+        try {
+          recordLearningInjection({
+            requestId: reqId,
+            groupFolder: request.originGroupFolder,
+            kind: 'memory',
+            item: 'MEMORY.md',
+          });
+        } catch (err) {
+          logger.warn(
+            { err, requestId: reqId, groupFolder: request.originGroupFolder },
+            'Failed to record coder-learning injection stamp',
+          );
+        }
+      }
+      // One row for verdict-issues when evalStatsContext is non-empty
+      if (evalStatsContext) {
+        try {
+          recordLearningInjection({
+            requestId: reqId,
+            groupFolder: request.originGroupFolder,
+            kind: 'verdict-issues',
+            item: 'recurring-issues',
+          });
+        } catch (err) {
+          logger.warn(
+            { err, requestId: reqId, groupFolder: request.originGroupFolder },
+            'Failed to record verdict-issues injection stamp',
+          );
+        }
+      }
+      // VAL-WS3-018 + VAL-WS3-019: Wrap entire learnings block (eval stats +
+      // base learnings) in advisory frame so neither sub-section can authorize
+      // a gated action.
+      const framedLearningsContext = learningsContext
+        ? `${ADVISORY_FRAME_HEADER}\n\n${learningsContext}`
+        : '';
 
       const output = await deps.runContainerAgent(
         request.group,
         {
           prompt: buildWorkerPrompt(
             request,
-            learningsContext,
+            framedLearningsContext,
             executionContract,
           ),
           groupFolder: request.group.folder,
@@ -1318,22 +1366,33 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
             refinements,
           };
           // Persist the verdict so the scoring feeds future runs (closes the
-          // self-improvement loop). Skipped verdicts carry no signal.
-          if (!lastVerdict.skipped) {
-            try {
-              recordEvaluatorVerdict({
-                requestId: request.requestId,
-                groupFolder: request.originGroupFolder,
-                chatJid: request.originChatJid,
-                runType: request.config.isSubagent ? 'subagent' : 'coding',
-                pass: lastVerdict.pass,
-                score: lastVerdict.score,
-                issues: lastVerdict.issues,
-                refinements,
-              });
-            } catch {
-              /* verdict persistence is best-effort */
-            }
+          // self-improvement loop). The chokepoint decides whether to write a row
+          // based on the EvaluatorOutcome discriminator (verdict vs eligible-skip vs
+          // threshold-skip). VAL-WS4-004.
+          try {
+            // Construct RunAuthority for the chokepoint (WS4.5)
+            const isMain = request.group.folder === request.originGroupFolder;
+            const runAuthority: RunAuthority = mintRunAuthority({
+              requestId: request.requestId,
+              groupFolder: request.originGroupFolder,
+              isMain,
+              isSubagent: request.config.isSubagent,
+              effectiveToolSet: deriveEffectiveToolSet({
+                toolMode: request.config.toolMode,
+              }),
+              senderRole: 'operator',
+            });
+            const outcome = verdictToOutcome(
+              request.config.isSubagent ? 'subagent' : 'coding',
+              lastVerdict,
+              refinements,
+            );
+            recordVerdictOutcome({
+              authority: runAuthority,
+              outcome,
+            });
+          } catch {
+            /* verdict persistence is best-effort */
           }
           qaReportPath = writeCoderArtifact(
             request,

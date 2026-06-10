@@ -128,12 +128,13 @@ describe('shouldEvaluate', () => {
     assert.match(result.reason, /not eligible/);
   });
 
-  it('skips chat runs even with forceEvaluate', () => {
+  // VAL-WS2-015: forceEvaluate short-circuits the runType gate
+  it('evaluates chat run when forceEvaluate is true', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'chat', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /forced/);
   });
 
   // VAL-EVAL-002: Scheduled runs always skip evaluator regardless of thresholds
@@ -153,12 +154,13 @@ describe('shouldEvaluate', () => {
     assert.match(result.reason, /not eligible/);
   });
 
-  it('skips scheduled runs even with forceEvaluate', () => {
+  // VAL-WS2-015: forceEvaluate short-circuits the runType gate
+  it('evaluates scheduled run when forceEvaluate is true', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'scheduled', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /forced/);
   });
 
   // VAL-EVAL-003: Cron runs always skip evaluator regardless of thresholds
@@ -178,12 +180,13 @@ describe('shouldEvaluate', () => {
     assert.match(result.reason, /not eligible/);
   });
 
-  it('skips cron runs even with forceEvaluate', () => {
+  // VAL-WS2-015: forceEvaluate short-circuits the runType gate
+  it('evaluates cron run when forceEvaluate is true', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'cron', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /forced/);
   });
 
   // VAL-EVAL-004: Heartbeat runs always skip evaluator regardless of thresholds
@@ -203,12 +206,13 @@ describe('shouldEvaluate', () => {
     assert.match(result.reason, /not eligible/);
   });
 
-  it('skips heartbeat runs even with forceEvaluate', () => {
+  // VAL-WS2-015: forceEvaluate short-circuits the runType gate
+  it('evaluates heartbeat run when forceEvaluate is true', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'heartbeat', durationMs: 120_000, toolsInvoked: 10, agentOutput: 'x'.repeat(5000), forceEvaluate: true }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /forced/);
   });
 
   // VAL-EVAL-005: Coding runs with changed files still trigger evaluation

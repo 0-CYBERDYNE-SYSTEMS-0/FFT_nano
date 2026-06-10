@@ -7,6 +7,7 @@ import path from 'path';
 import {
   closeDatabase,
   createTask,
+  getDb,
   getTaskById,
   initDatabaseAtPath,
 } from '../src/db.js';
@@ -229,6 +230,52 @@ test('startSchedulerLoop is idempotent', async () => {
 
     assert.equal(scheduledCount, 1);
     resetSchedulerLoopForTest();
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// VAL-WS4-006: Task-scheduler legacy path routes through recordVerdictOutcome
+// ---------------------------------------------------------------------------
+
+test('VAL-WS4-006: processDueTasksOnce writes evaluator_verdicts row with runType=scheduled', async () => {
+  const { cleanup } = setupTempDb();
+  try {
+    createDueTask({
+      id: 'scheduled-verdict-task',
+      groupFolder: 'main',
+      chatJid: 'telegram:500',
+      scheduleType: 'once',
+      scheduleValue: new Date(Date.now() - 1000).toISOString(),
+    });
+
+    await processDueTasksOnce({
+      sendMessage: async () => undefined,
+      registeredGroups: () => ({ 'telegram:500': makeGroup('main') }),
+      runTaskAgent: async () => ({
+        status: 'success',
+        result: 'scheduled task completed',
+      }),
+      runEvaluatorPass: async () => ({
+        pass: true,
+        score: 7,
+        issues: [],
+        feedback: 'Good work',
+        skipped: false,
+      }),
+    });
+
+    // Verify the evaluator_verdicts row was written with runType='scheduled'
+    const db = getDb();
+    const rows = db!
+      .prepare(`SELECT request_id, run_type, pass, score FROM evaluator_verdicts WHERE group_folder = 'main'`)
+      .all() as Array<{ request_id: string; run_type: string; pass: number; score: number }>;
+
+    const scheduledRow = rows.find((r) => r.run_type === 'scheduled');
+    assert.ok(scheduledRow, `Expected a row with run_type='scheduled', got: ${JSON.stringify(rows)}`);
+    assert.equal(scheduledRow!.pass, 1);
+    assert.equal(scheduledRow!.score, 7);
   } finally {
     cleanup();
   }

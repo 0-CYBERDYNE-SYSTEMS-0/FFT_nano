@@ -25,6 +25,23 @@ export const DESTRUCTIVE_PATTERNS: DestructivePattern[] = [
   { pattern: /\bgit\s+push\s+\S*-f\b/i, description: 'git push -f' },
   { pattern: /\btruncate\b/i, description: 'truncate (zero out file)' },
   { pattern: /\bshred\b/i, description: 'shred (secure delete)' },
+  // WS1.4 new patterns
+  {
+    pattern: /\bfind\s+.*\s+-delete\b/i,
+    description: 'find ... -delete',
+  },
+  {
+    pattern: /\blaunchctl\s+(bootout|unload|remove)\b/i,
+    description: 'launchctl bootout|unload|remove',
+  },
+  {
+    pattern: /\bsqlite3\s+.*store\/messages\.db/i,
+    description: 'sqlite3 targeting store/messages.db',
+  },
+  {
+    pattern: /\b(curl|wget)\s+.*\s+\|\s*(sh|bash|zsh)\b/i,
+    description: 'pipe-to-shell (curl|wget | sh|bash|zsh)',
+  },
 ];
 
 export const DESTRUCTIVE_COMMAND_NAMES: string[] = [
@@ -39,6 +56,11 @@ export const DESTRUCTIVE_COMMAND_NAMES: string[] = [
   'git push --force / -f',
   'truncate',
   'shred',
+  // WS1.4 new patterns
+  'find ... -delete',
+  'launchctl bootout|unload|remove',
+  'sqlite3 targeting store/messages.db',
+  'pipe-to-shell (curl|wget | sh|bash|zsh)',
 ];
 
 /**

@@ -18,6 +18,13 @@ import {
   applySoulPatch,
   applyTodoMutation,
 } from './memory-action-io.js';
+import {
+  checkMutationBudget,
+  recordMutation,
+  type MutationAttribution,
+} from './mutation-budget.js';
+import { recordMutationAuditEvent } from './mutation-audit.js';
+import { runAuthorityRegistry } from './app-state.js';
 
 function applyMemoryWrite(input: {
   groupFolder: string;
@@ -26,6 +33,11 @@ function applyMemoryWrite(input: {
     targetSection?: string;
     payload?: Record<string, unknown>;
     recordedAt?: string;
+  };
+  attribution?: {
+    authorityId: string;
+    senderRole: string;
+    jid?: string;
   };
 }): {
   targetPath: string;
@@ -50,6 +62,7 @@ function applyMemoryWrite(input: {
       intent,
       payload,
       recordedAt,
+      attribution: input.attribution,
     });
   }
 
@@ -59,6 +72,7 @@ function applyMemoryWrite(input: {
       intent,
       targetSection: input.params.targetSection,
       payload,
+      attribution: input.attribution,
     });
   }
 
@@ -67,6 +81,7 @@ function applyMemoryWrite(input: {
       groupFolder: input.groupFolder,
       targetSection: input.params.targetSection,
       payload,
+      attribution: input.attribution,
     });
   }
 
@@ -75,6 +90,7 @@ function applyMemoryWrite(input: {
       groupFolder: input.groupFolder,
       targetSection: input.params.targetSection,
       payload,
+      attribution: input.attribution,
     });
   }
 
@@ -139,6 +155,46 @@ export async function executeMemoryAction(
       };
     }
 
+    // Build attribution for mutation budget check
+    const authority = runAuthorityRegistry.get(context.sourceGroup);
+    let chatJid: string | undefined;
+    for (const [jid, group] of Object.entries(context.registeredGroups)) {
+      if (group.folder === targetGroupFolder) {
+        chatJid = jid;
+        break;
+      }
+    }
+    const attribution: MutationAttribution = {
+      authorityId: authority?.authorityId ?? 'unknown',
+      senderRole: authority?.senderRole ?? 'unknown',
+      jid: chatJid,
+    };
+
+    // Mutation-budget check: all write actions (memory_write) are mutations
+    const budgetResult = checkMutationBudget({
+      groupFolder: targetGroupFolder,
+      attribution,
+      mutationType: 'memory',
+    });
+    if (!budgetResult.allowed) {
+      recordMutationAuditEvent(targetGroupFolder, {
+        kind: 'noop',
+        authorityId: attribution.authorityId,
+        senderRole: attribution.senderRole,
+        mutationType: 'memory',
+        action: String(parsed.params.intent ?? 'memory_write'),
+        targetName: parsed.params.intent ?? undefined,
+        noopReason: budgetResult.reason,
+        success: false,
+      });
+      return {
+        requestId: parsed.requestId,
+        status: 'error',
+        error: `Memory mutation rejected: ${budgetResult.reason}`,
+        executedAt,
+      };
+    }
+
     const mutation = applyMemoryWrite({
       groupFolder: targetGroupFolder,
       params: {
@@ -147,7 +203,25 @@ export async function executeMemoryAction(
         payload: parsed.params.payload,
         recordedAt: parsed.params.recordedAt,
       },
+      attribution,
     });
+
+    // Record successful memory mutation
+    recordMutation({
+      groupFolder: targetGroupFolder,
+      attribution,
+      mutationType: 'memory',
+    });
+    recordMutationAuditEvent(targetGroupFolder, {
+      kind: 'mutation',
+      authorityId: attribution.authorityId,
+      senderRole: attribution.senderRole,
+      mutationType: 'memory',
+      action: String(parsed.params.intent ?? 'memory_write'),
+      targetName: mutation.targetPath,
+      success: true,
+    });
+
     return {
       requestId: parsed.requestId,
       status: 'success',

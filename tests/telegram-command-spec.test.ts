@@ -92,3 +92,32 @@ test('/reflect is a registered, normalizable, main-only command', () => {
   assert.match(mainHelp, /\/reflect \[dry-run\] \[focus\]/);
   assert.doesNotMatch(nonMainHelp, /\/reflect \[dry-run\]/);
 });
+
+test('VAL-WS6-007: /learning is registered in TELEGRAM_ADMIN_COMMANDS and normalizes correctly', () => {
+  // Check catalog entry
+  const learningEntries = TELEGRAM_ADMIN_COMMANDS.filter(
+    (c) => c.command === 'learning',
+  );
+  assert.equal(learningEntries.length, 1, 'learning should be in TELEGRAM_ADMIN_COMMANDS');
+  assert.match(
+    learningEntries[0].description,
+    /learning/i,
+    'learning command description should mention learning',
+  );
+
+  // Check normalization
+  assert.equal(
+    normalizeTelegramCommandToken('/learning'),
+    '/learning',
+    '/learning should normalize to /learning',
+  );
+  assert.equal(
+    normalizeTelegramCommandToken('/learning@TestBot'),
+    '/learning',
+    '/learning@TestBot should normalize to /learning',
+  );
+
+  // Check /help text includes /learning
+  const mainHelp = formatHelpText(true);
+  assert.match(mainHelp, /\/learning/, '/learning should appear in main chat help');
+});

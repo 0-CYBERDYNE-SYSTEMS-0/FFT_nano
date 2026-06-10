@@ -1,3 +1,8 @@
+// WS1.3: Allow these headless-style test runs to spawn against sandbox=none.
+// This is scoped to this file only; other test files run with the production
+// refusal intact (each test file is a separate process in the Node test runner).
+process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS = '1';
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';

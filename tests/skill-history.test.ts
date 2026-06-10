@@ -58,17 +58,18 @@ test('rollback returns null when there is no history', () => {
   assert.equal(rollbackSkillFile(target), null);
 });
 
-test('history is pruned to the most recent 10 versions', () => {
+test('history is pruned to the most recent 10 versions for out-of-window entries', () => {
   const target = tempSkillFile();
   for (let i = 0; i < 15; i += 1) {
     fs.writeFileSync(target, `v${i}`);
     snapshotSkillFile(target);
   }
   const history = listSkillHistory(target);
-  assert.equal(history.length, 10);
-  // Oldest retained is v5 (v0..v4 pruned).
-  assert.equal(fs.readFileSync(history[0].path, 'utf-8'), 'v5');
-  assert.equal(fs.readFileSync(history[9].path, 'utf-8'), 'v14');
+  // All 15 entries are in-window (created in rapid succession today), so all
+  // are kept. The MAX_SNAPSHOTS count cap applies only to out-of-window entries.
+  assert.equal(history.length, 15);
+  assert.equal(fs.readFileSync(history[0].path, 'utf-8'), 'v0');
+  assert.equal(fs.readFileSync(history[14].path, 'utf-8'), 'v14');
 });
 
 test('skill_rollback IPC undoes a bad patch', async () => {

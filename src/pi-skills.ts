@@ -62,6 +62,7 @@ const FRONTMATTER_OPTIONAL_FIELDS = [
   'dependencies',
   'category',
   'disable-model-invocation',
+  'provenance', // WS3.3: operator-requested | agent-inferred | third-party-suggested
 ] as const;
 const FRONTMATTER_ALLOWED_FIELDS = new Set<string>([
   ...FRONTMATTER_REQUIRED_FIELDS,
@@ -389,6 +390,25 @@ function validateSkillMarkdown(
     issues.push({
       file: skillMarkdownPath,
       message: `Frontmatter contains unsupported field: ${key}`,
+    });
+  }
+
+  // WS3.3: validate provenance value if present
+  const VALID_PROVENANCE_VALUES = new Set([
+    'operator-requested',
+    'agent-inferred',
+    'third-party-suggested',
+  ]);
+  const rawProvenance = toTrimmedString(frontmatter.provenance);
+  // Only validate if provenance is present as a non-null string
+  if (
+    rawProvenance !== undefined &&
+    rawProvenance !== null &&
+    !VALID_PROVENANCE_VALUES.has(rawProvenance)
+  ) {
+    issues.push({
+      file: skillMarkdownPath,
+      message: `Frontmatter provenance value "${rawProvenance}" is not supported. Allowed: ${[...VALID_PROVENANCE_VALUES].join(', ')}`,
     });
   }
 

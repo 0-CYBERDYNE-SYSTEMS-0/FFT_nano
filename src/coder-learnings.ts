@@ -208,7 +208,7 @@ export function parseCoderLearnings(
 export async function getCoderLearningsForContext(
   groupFolder: string,
   maxEntries: number = 5,
-): Promise<string> {
+): Promise<{ formatted: string; entriesCount: number }> {
   const { GROUPS_DIR } = await import('./config.js');
   const fs = await import('fs');
   const path = await import('path');
@@ -217,7 +217,7 @@ export async function getCoderLearningsForContext(
 
   if (!fs.existsSync(memoryPath)) {
     logger.debug({ memoryPath }, 'MEMORY.md not found for coder learnings');
-    return '';
+    return { formatted: '', entriesCount: 0 };
   }
 
   try {
@@ -225,7 +225,7 @@ export async function getCoderLearningsForContext(
     const entries = parseCoderLearnings(content);
 
     if (entries.length === 0) {
-      return '';
+      return { formatted: '', entriesCount: 0 };
     }
 
     // Entries are already newest-first from parseCoderLearnings
@@ -266,14 +266,17 @@ export async function getCoderLearningsForContext(
       }
     }
 
-    return lines.join('\n').trimEnd();
+    return {
+      formatted: lines.join('\n').trimEnd(),
+      entriesCount: recentEntries.length,
+    };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logger.warn(
       { error, memoryPath },
       'Failed to read coder learnings for context',
     );
-    return '';
+    return { formatted: '', entriesCount: 0 };
   }
 }
 

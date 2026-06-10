@@ -37,6 +37,8 @@ export interface MemoryContextBuildResult {
   selectedK: number;
   contextChars: number;
   queryChars: number;
+  /** The actually-selected chunks that appear in the rendered context (WS5.1). */
+  selectedItems: Array<{ source: string; path: string }>;
 }
 
 const MAX_CHUNK_CHARS = 800;
@@ -348,6 +350,7 @@ export function buildMemoryContext(
       selectedK: 0,
       contextChars: 0,
       queryChars: 0,
+      selectedItems: [],
     };
   }
 
@@ -386,6 +389,7 @@ export function buildMemoryContext(
       selectedK: 0,
       contextChars: 0,
       queryChars: 0,
+      selectedItems: [],
     };
   }
 
@@ -430,6 +434,8 @@ export function buildMemoryContext(
     MEMORY_CONTEXT_CHAR_BUDGET - header.length,
   );
   const selected: string[] = [];
+  /** Tracks which chunks made it into `selected` so we can stamp them (WS5.1). */
+  const selectedItems: Array<{ source: string; path: string }> = [];
   let usedChars = 0;
 
   for (let i = 0; i < rankedChunks.length; i += 1) {
@@ -443,6 +449,10 @@ export function buildMemoryContext(
     if (projected <= budgetForSnippets) {
       if (separator) usedChars += separator;
       selected.push(formatted);
+      selectedItems.push({
+        source: rankedChunks[i].chunk.source,
+        path: rankedChunks[i].chunk.path,
+      });
       usedChars += formatted.length;
       continue;
     }
@@ -456,6 +466,10 @@ export function buildMemoryContext(
           .trim();
         const clipped = `[${nextRank}] (${rankedChunks[i].chunk.source}) ${snippet}...`;
         selected.push(clipped);
+        selectedItems.push({
+          source: rankedChunks[i].chunk.source,
+          path: rankedChunks[i].chunk.path,
+        });
         usedChars = clipped.length;
       }
     }
@@ -471,5 +485,6 @@ export function buildMemoryContext(
     selectedK: selected.length,
     contextChars: context.length,
     queryChars: queryText.length,
+    selectedItems,
   };
 }

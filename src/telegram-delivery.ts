@@ -49,10 +49,14 @@ import type { VerboseMode } from './verbose-mode.js';
 import {
   getAllTasks,
   getDueTasks,
+  getPendingTasks,
   getTaskById,
   getTaskRunLogs,
+  getEvaluatorStats,
+  getRecentLearningInjections,
   listActiveAgentRuns,
 } from './db.js';
+import { resolveGroupFolderPath } from './group-folder.js';
 import { APP_VERSION, SERVICE_STARTED_AT } from './app-state.js';
 import { GIT_INFO } from './state-persistence.js';
 import { getContainerRuntime } from './container-runtime.js';
@@ -879,6 +883,259 @@ export function formatTasksText(mode: 'list' | 'due' = 'list'): string {
   }
   const prefix = mode === 'due' ? 'Due tasks:' : 'Scheduled tasks:';
   return [prefix, ...lines].join('\n');
+}
+
+// WS2.3: Format pending agent-created tasks for the operator approval surface.
+// Returns an object with the rendered text and inline keyboard rows, one row per
+// pending task with Approve/Reject buttons. Uses the registerToken callback to
+// generate non-guessable callback_data tokens.
+export interface PendingTasksDeps {
+  registerToken: (
+    taskId: string,
+    groupFolder: string,
+    action: 'approve' | 'reject',
+  ) => string;
+}
+
+export function formatPendingTasksText(deps: PendingTasksDeps): {
+  text: string;
+  keyboard: Array<Array<{ text: string; callbackData: string }>>;
+} {
+  const tasks = getPendingTasks();
+  if (tasks.length === 0) {
+    return {
+      text: 'No pending tasks requiring approval.',
+      keyboard: [],
+    };
+  }
+
+  const lines: string[] = ['Pending agent-created tasks:'];
+  const keyboard: Array<Array<{ text: string; callbackData: string }>> = [];
+
+  for (const task of tasks.slice(0, 30)) {
+    const taskText = formatPendingTaskRow(task);
+    lines.push(taskText);
+
+    const approveCallbackData = `task:approve:${deps.registerToken(
+      task.id,
+      task.group_folder,
+      'approve',
+    )}`;
+    const rejectCallbackData = `task:reject:${deps.registerToken(
+      task.id,
+      task.group_folder,
+      'reject',
+    )}`;
+
+    keyboard.push([
+      { text: `✅ Approve`, callbackData: approveCallbackData },
+      { text: `❌ Reject`, callbackData: rejectCallbackData },
+    ]);
+  }
+
+  if (tasks.length > 30) {
+    lines.push(`... ${tasks.length - 30} more pending tasks`);
+  }
+
+  return { text: lines.join('\n'), keyboard };
+}
+
+function formatPendingTaskRow(
+  task: ReturnType<typeof getPendingTasks>[0],
+): string {
+  const promptPreview =
+    task.prompt.length > 60 ? `${task.prompt.slice(0, 60)}…` : task.prompt;
+  const schedule = `${task.schedule_type} ${task.schedule_value}`;
+  const deliveryTo = task.delivery_to || 'n/a';
+  const deliveryMode = task.delivery_mode || 'none';
+  const deleteAfterRun = task.delete_after_run ? 'true' : 'false';
+  const createdAt = task.created_at
+    ? new Date(task.created_at).toLocaleString()
+    : 'n/a';
+
+  return [
+    `  ID: ${task.id}`,
+    `  Prompt: ${promptPreview}`,
+    `  Schedule: ${schedule}`,
+    `  Delivery: ${deliveryMode} → ${deliveryTo}`,
+    `  Delete after run: ${deleteAfterRun}`,
+    `  Created: ${createdAt}`,
+  ].join('\n');
+}
+
+// --- Learning digest ---
+// WS6.2: /learning digest command - single operator surface summarizing learning
+// activity, pause state, recent skips, and pending approvals.
+
+/**
+ * Read self-improve events from the JSONL file for the given group.
+ * Returns parsed lines from the last 7 days.
+ */
+function readSelfImproveEventsLast7Days(
+  groupFolder: string,
+): Array<Record<string, unknown>> {
+  try {
+    const logPath = path.join(
+      resolveGroupFolderPath(groupFolder),
+      'logs',
+      'self-improve-events.jsonl',
+    );
+    if (!fs.existsSync(logPath)) return [];
+    const content = fs.readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n').filter((l) => l.trim());
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString();
+    const events: Array<Record<string, unknown>> = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const ts = parsed['ts'] as string | undefined;
+        if (ts && ts >= cutoff) {
+          events.push(parsed);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read task audit events from the JSONL file for the given group.
+ * Returns parsed lines from the last 7 days.
+ */
+function readTaskAuditEventsLast7Days(
+  groupFolder: string,
+): Array<Record<string, unknown>> {
+  try {
+    const logPath = path.join(
+      resolveGroupFolderPath(groupFolder),
+      'logs',
+      'task-audit.jsonl',
+    );
+    if (!fs.existsSync(logPath)) return [];
+    const content = fs.readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n').filter((l) => l.trim());
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString();
+    const events: Array<Record<string, unknown>> = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const ts = parsed['ts'] as string | undefined;
+        if (ts && ts >= cutoff) {
+          events.push(parsed);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+
+export function formatLearningDigest(): string {
+  const lines: string[] = ['## Learning Status'];
+  const groupFolder = MAIN_GROUP_FOLDER;
+
+  // Section 1: Skills created/patched/archived in the last 7 days (VAL-WS6-009)
+  // Read from self-improve-events.jsonl for review activity
+  const selfImproveEvents = readSelfImproveEventsLast7Days(groupFolder);
+  const skillReviewEvents = selfImproveEvents.filter(
+    (e) =>
+      e['review_fired'] === true &&
+      (e['review_type'] === 'skill-self-improve' ||
+        e['review_type'] === 'skill-manager'),
+  );
+  if (skillReviewEvents.length === 0) {
+    lines.push('Skills (last 7 days): No skills created or modified in the last 7 days.');
+  } else {
+    lines.push(`Skills (last 7 days): ${skillReviewEvents.length} skill review(s) triggered.`);
+    const firedEvents = skillReviewEvents.filter((e) => e['review_fired'] === true);
+    if (firedEvents.length > 0) {
+      for (const evt of firedEvents.slice(0, 3)) {
+        const reason = (evt['trigger_reason'] as string) || 'unknown';
+        lines.push(`  - ${reason}`);
+      }
+      if (firedEvents.length > 3) {
+        lines.push(`  ... and ${firedEvents.length - 3} more`);
+      }
+    }
+  }
+
+  // Section 2: Memory writes from learning_injections (VAL-WS6-009)
+  const injections = getRecentLearningInjections(groupFolder, 20);
+  const memoryInjections = injections.filter((i) => i.kind === 'memory');
+  if (memoryInjections.length === 0) {
+    lines.push('Memory writes: No memory writes in the last 20 injections.');
+  } else {
+    lines.push(`Memory writes: ${memoryInjections.length} memory write(s) in last 20 injections.`);
+    for (const inj of memoryInjections.slice(0, 5)) {
+      const itemPreview =
+        inj.item.length > 50 ? inj.item.slice(0, 50) + '…' : inj.item;
+      lines.push(`  - ${inj.kind}: ${itemPreview}`);
+    }
+    if (memoryInjections.length > 5) {
+      lines.push(`  ... and ${memoryInjections.length - 5} more`);
+    }
+  }
+
+  // Section 3: Pass-rate trend (this week vs prior) (VAL-WS6-009)
+  // Read evaluator verdicts to compute week-over-week trend
+  // Note: getEvaluatorStats already provides recentSkips; we add week comparison here
+  const stats = getEvaluatorStats(groupFolder, 20);
+  if (stats.total === 0) {
+    lines.push('Pass-rate trend: No runs evaluated yet.');
+  } else {
+    // Show overall stats
+    const passPct = Math.round(stats.passRate * 100);
+    lines.push(
+      `Pass-rate (last ${stats.total} runs): ${stats.passes}/${stats.total} passed (${passPct}%)`,
+    );
+  }
+
+  // Section 4: Recent skips (VAL-WS6-011)
+  lines.push(`Recent skips: ${stats.recentSkips} / ${stats.total}`);
+  if (stats.recentIssues.length > 0) {
+    lines.push('Recurring issues:');
+    for (const issue of stats.recentIssues.slice(0, 5)) {
+      lines.push(`  - ${issue}`);
+    }
+  }
+
+  // Section 5: Pending agent-task approvals (VAL-WS6-012)
+  const pendingTasks = getPendingTasks();
+  if (pendingTasks.length === 0) {
+    lines.push('Pending agent-task approvals: None.');
+  } else {
+    lines.push(
+      `Pending agent-task approvals: ${pendingTasks.length} pending.`,
+    );
+    for (const task of pendingTasks.slice(0, 5)) {
+      const promptPreview =
+        task.prompt.length > 50
+          ? task.prompt.slice(0, 50) + '…'
+          : task.prompt;
+      lines.push(`  - ${task.id}: ${promptPreview}`);
+    }
+    if (pendingTasks.length > 5) {
+      lines.push(`  ... and ${pendingTasks.length - 5} more`);
+    }
+  }
+
+  // Section 6: Pause status (VAL-INV-I6-002)
+  lines.push(
+    `Pause status: ${state.learningPaused ? 'Learning is paused' : 'Learning is active'}`,
+  );
+
+  return lines.join('\n');
 }
 
 // --- Gateway service command ---

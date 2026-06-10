@@ -6,6 +6,7 @@ import { proto } from '@whiskeysockets/baileys';
 
 import { STORE_DIR } from './config.js';
 import { NewMessage, ScheduledTask, TaskRunLog } from './types.js';
+import { logger } from './logger.js';
 
 let db: Database.Database;
 
@@ -68,6 +69,7 @@ export function initDatabaseAtPath(dbPath: string): void {
       last_run TEXT,
       last_result TEXT,
       status TEXT DEFAULT 'active',
+      created_by TEXT DEFAULT 'operator',
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
@@ -134,6 +136,28 @@ export function initDatabaseAtPath(dbPath: string): void {
       delivered_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_delivery_outbox_status ON delivery_outbox(status, created_at);
+
+    CREATE TABLE IF NOT EXISTS learning_injections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id TEXT,
+      group_folder TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      item TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_injections_request ON learning_injections(request_id);
+
+    CREATE TABLE IF NOT EXISTS mutation_budget_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      authority_id TEXT NOT NULL,
+      sender_role TEXT NOT NULL,
+      mutation_type TEXT NOT NULL,
+      jid TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mutation_budget_group_type_created
+      ON mutation_budget_events(group_folder, mutation_type, created_at);
   `);
 
   // Add sender_name column if it doesn't exist (migration for existing DBs)
@@ -156,6 +180,7 @@ export function initDatabaseAtPath(dbPath: string): void {
     `ALTER TABLE scheduled_tasks ADD COLUMN delete_after_run INTEGER DEFAULT 0`,
     `ALTER TABLE scheduled_tasks ADD COLUMN consecutive_errors INTEGER DEFAULT 0`,
     `ALTER TABLE scheduled_tasks ADD COLUMN subagent_type TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN created_by TEXT DEFAULT 'operator'`,
   ];
   for (const migration of scheduledTaskMigrations) {
     try {
@@ -185,6 +210,31 @@ export function initDatabaseAtPath(dbPath: string): void {
     `ALTER TABLE agent_runs ADD COLUMN model TEXT`,
   ];
   for (const migration of agentRunMigrations) {
+    try {
+      db.exec(migration);
+    } catch {
+      /* column already exists */
+    }
+  }
+
+  // WS1.2 held-payload + operator-notification columns on delivery_outbox
+  const outboxMigrations = [
+    `ALTER TABLE delivery_outbox ADD COLUMN operator_notified_at TEXT`,
+  ];
+  for (const migration of outboxMigrations) {
+    try {
+      db.exec(migration);
+    } catch {
+      /* column already exists */
+    }
+  }
+
+  // WS4.1 evaluator_verdicts: skipped + skip_reason columns
+  const evaluatorVerdictMigrations = [
+    `ALTER TABLE evaluator_verdicts ADD COLUMN skipped INTEGER DEFAULT 0`,
+    `ALTER TABLE evaluator_verdicts ADD COLUMN skip_reason TEXT`,
+  ];
+  for (const migration of evaluatorVerdictMigrations) {
     try {
       db.exec(migration);
     } catch {
@@ -238,6 +288,11 @@ export function closeDatabase(): void {
   db.close();
   // @ts-expect-error allow tests to reset singleton
   db = undefined;
+}
+
+/** Get the current database instance (for testing only) */
+export function getDb(): Database.Database | undefined {
+  return db;
 }
 
 /**
@@ -516,9 +571,9 @@ export function createTask(
       id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode,
       schedule_json, session_target, wake_mode, delivery_mode, delivery_channel, delivery_to,
       delivery_webhook_url, timeout_seconds, stagger_ms, delete_after_run, consecutive_errors,
-      subagent_type, next_run, status, created_at
+      subagent_type, next_run, status, created_by, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -542,6 +597,7 @@ export function createTask(
     task.subagent_type ?? null,
     task.next_run,
     task.status,
+    task.created_by ?? 'operator',
     task.created_at,
   );
 }
@@ -563,6 +619,15 @@ export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
 export function getAllTasks(): ScheduledTask[] {
   return db
     .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
+    .all() as ScheduledTask[];
+}
+
+// WS2.3: Get tasks pending operator approval (agent-created tasks)
+export function getPendingTasks(): ScheduledTask[] {
+  return db
+    .prepare(
+      `SELECT * FROM scheduled_tasks WHERE status = 'pending_approval' ORDER BY created_at DESC`,
+    )
     .all() as ScheduledTask[];
 }
 
@@ -988,6 +1053,10 @@ export interface EvaluatorVerdictInput {
   score: number;
   issues: string[];
   refinements?: number;
+  /** WS4.1: Whether this was a skipped evaluation (eligible-skip only) */
+  skipped?: boolean;
+  /** WS4.1: Reason for skip (eligible-skip only) */
+  skipReason?: string;
 }
 
 export interface EvaluatorStats {
@@ -995,6 +1064,7 @@ export interface EvaluatorStats {
   passes: number;
   passRate: number;
   recentIssues: string[];
+  recentSkips: number;
 }
 
 /**
@@ -1006,8 +1076,8 @@ export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
   if (!db) return;
   db.prepare(
     `INSERT INTO evaluator_verdicts (
-       request_id, group_folder, chat_jid, run_type, pass, score, issues, refinements, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       request_id, group_folder, chat_jid, run_type, pass, score, issues, refinements, skipped, skip_reason, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.requestId ?? null,
     input.groupFolder,
@@ -1017,6 +1087,8 @@ export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
     Math.round(input.score),
     JSON.stringify(input.issues ?? []),
     input.refinements ?? 0,
+    input.skipped ? 1 : 0,
+    input.skipReason ?? null,
     new Date().toISOString(),
   );
 }
@@ -1026,29 +1098,44 @@ export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
  * next run awareness of how prior runs in the same workspace fared. Issues are
  * ranked by a recency- and failure-weighted score with decay (see below), not
  * pure recency, so stale one-offs drop out and persistent failures rise.
+ * Skipped rows are excluded from passRate (I3: only ground truth gates).
  */
 export function getEvaluatorStats(
   groupFolder: string,
   limit = 20,
 ): EvaluatorStats {
-  if (!db) return { total: 0, passes: 0, passRate: 0, recentIssues: [] };
+  if (!db)
+    return {
+      total: 0,
+      passes: 0,
+      passRate: 0,
+      recentIssues: [],
+      recentSkips: 0,
+    };
   const safeLimit = Number.isFinite(limit)
     ? Math.max(1, Math.min(100, Math.floor(limit)))
     : 20;
   const rows = db
     .prepare(
-      `SELECT pass, issues FROM evaluator_verdicts
+      `SELECT pass, skipped, issues FROM evaluator_verdicts
        WHERE group_folder = ?
        ORDER BY created_at DESC
        LIMIT ?`,
     )
     .all(groupFolder, safeLimit) as Array<{
     pass: number;
+    skipped: number;
     issues: string | null;
   }>;
 
   const total = rows.length;
-  const passes = rows.filter((r) => r.pass === 1).length;
+  const recentSkips = rows.filter((r) => r.skipped === 1).length;
+
+  // I3: passRate is computed over non-skipped rows only.
+  // Both numerator (passes) and denominator (totalNonSkipped) filter skipped=0.
+  const nonSkippedRows = rows.filter((r) => r.skipped === 0);
+  const totalNonSkipped = nonSkippedRows.length;
+  const passes = nonSkippedRows.filter((r) => r.pass === 1).length;
 
   // Reliability-weighted recurring issues (rows are newest-first). Each
   // occurrence is scored by recency (newer verdicts count more, via geometric
@@ -1090,16 +1177,199 @@ export function getEvaluatorStats(
   return {
     total,
     passes,
-    passRate: total > 0 ? passes / total : 0,
+    passRate: totalNonSkipped > 0 ? passes / totalNonSkipped : 0,
     recentIssues,
+    recentSkips,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Learning injections (WS5 — efficacy loop)
+// ---------------------------------------------------------------------------
+
+export interface LearningInjectionInput {
+  requestId: string;
+  groupFolder: string;
+  kind: 'memory' | 'skill' | 'verdict-issues';
+  item: string;
+}
+
+/**
+ * Record that a learning item was injected into a prompt at an assembly point.
+ * Best-effort: failures are caught and logged, never thrown — the run must
+ * never be aborted by a recorder failure (VAL-WS5-002/003/004).
+ */
+export function recordLearningInjection(input: LearningInjectionInput): void {
+  if (!db) return;
+  try {
+    db.prepare(
+      `INSERT INTO learning_injections
+         (request_id, group_folder, kind, item, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      input.requestId,
+      input.groupFolder,
+      input.kind,
+      input.item,
+      new Date().toISOString(),
+    );
+  } catch (err) {
+    logger.warn(
+      {
+        err,
+        requestId: input.requestId,
+        groupFolder: input.groupFolder,
+        kind: input.kind,
+        item: input.item,
+      },
+      'Failed to record learning injection',
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WS5.2 — Skill efficacy join (VAL-WS5-006..009)
+// ---------------------------------------------------------------------------
+
+/** Per-skill efficacy result for one group. */
+export interface SkillEfficacy {
+  /** Count of joined rows for this skill (non-skipped evaluator verdicts only). */
+  runsWith: number;
+  /** pass / total over non-skipped joined rows. */
+  passRateWith: number;
+  /** Group-level baseline passRate from getEvaluatorStats(groupFolder).passRate. */
+  groupBaseline: number;
+}
+
+/**
+ * Per-skill efficacy: join learning_injections (kind='skill') against
+ * evaluator_verdicts on request_id, scoped to groupFolder.
+ *
+ * Returns efficacy for skills with >= 5 matching (non-skipped) rows;
+ * below the sample floor of 5, no entry is published for that skill.
+ *
+ * The join is scoped on group_folder (group A's data does not contaminate
+ * group B's). The function is read-only — no table is modified.
+ *
+ * groupBaseline is the overall group passRate from getEvaluatorStats,
+ * computed over all non-skipped evaluator_verdicts in the group.
+ *
+ * Excludes skipped evaluator_verdicts from both the passRateWith numerator
+ * and denominator (I3: only ground truth gates).
+ */
+export function getSkillEfficacy(
+  groupFolder: string,
+): Map<string, SkillEfficacy> {
+  if (!db) return new Map();
+
+  // Get overall group baseline from evaluator stats (covers all evaluator_verdicts
+  // in the group, not just the skill-matched subset — this is the comparison yardstick).
+  const stats = getEvaluatorStats(groupFolder);
+  const groupBaseline = stats.passRate;
+
+  // Join learning_injections (kind='skill') with evaluator_verdicts on request_id.
+  // Both sides are filtered by group_folder to ensure per-group isolation.
+  const rows = db
+    .prepare(
+      `
+    SELECT
+      li.item AS skill_name,
+      ev.pass,
+      ev.skipped
+    FROM learning_injections li
+    JOIN evaluator_verdicts ev ON li.request_id = ev.request_id
+    WHERE li.group_folder = ?
+      AND li.kind = 'skill'
+      AND ev.group_folder = ?
+    `,
+    )
+    .all(groupFolder, groupFolder) as Array<{
+    skill_name: string;
+    pass: number;
+    skipped: number | null;
+  }>;
+
+  // Group by skill_name and accumulate non-skipped pass counts.
+  const skillGroups = new Map<
+    string,
+    { totalNonSkipped: number; passesNonSkipped: number }
+  >();
+
+  for (const row of rows) {
+    if (row.skipped === 1) {
+      // Skipped rows are excluded from both numerator and denominator (I3).
+      continue;
+    }
+    const existing = skillGroups.get(row.skill_name) ?? {
+      totalNonSkipped: 0,
+      passesNonSkipped: 0,
+    };
+    existing.totalNonSkipped += 1;
+    if (row.pass === 1) {
+      existing.passesNonSkipped += 1;
+    }
+    skillGroups.set(row.skill_name, existing);
+  }
+
+  // Build result map: only skills with >= 5 non-skipped matching rows get a published entry.
+  const result = new Map<string, SkillEfficacy>();
+  for (const [
+    skillName,
+    { totalNonSkipped, passesNonSkipped },
+  ] of skillGroups) {
+    if (totalNonSkipped < 5) continue;
+    result.set(skillName, {
+      runsWith: totalNonSkipped,
+      passRateWith:
+        totalNonSkipped > 0 ? passesNonSkipped / totalNonSkipped : 0,
+      groupBaseline,
+    });
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// WS5.2 / WS6.2 — Learning injections (read-only)
+// ---------------------------------------------------------------------------
+
+export interface LearningInjection {
+  id: number;
+  request_id: string | null;
+  group_folder: string;
+  kind: string;
+  item: string;
+  created_at: string;
+}
+
+/**
+ * Get recent learning injections for a group, ordered by created_at descending.
+ * Used by the /learning digest to show memory writes and other injections.
+ */
+export function getRecentLearningInjections(
+  groupFolder: string,
+  limit = 20,
+): LearningInjection[] {
+  if (!db) return [];
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(100, Math.floor(limit)))
+    : 20;
+  return db
+    .prepare(
+      `SELECT id, request_id, group_folder, kind, item, created_at
+       FROM learning_injections
+       WHERE group_folder = ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(groupFolder, safeLimit) as LearningInjection[];
 }
 
 // ---------------------------------------------------------------------------
 // Delivery outbox (at-least-once + dedupe for non-interactive finals/cron)
 // ---------------------------------------------------------------------------
 
-export type DeliveryOutboxStatus = 'pending' | 'delivered' | 'failed';
+export type DeliveryOutboxStatus = 'pending' | 'delivered' | 'failed' | 'held';
 
 export interface DeliveryOutboxRecord {
   id: number;
@@ -1113,6 +1383,8 @@ export interface DeliveryOutboxRecord {
   created_at: string;
   updated_at: string;
   delivered_at: string | null;
+  /** ISO timestamp when the operator was notified about this held entry. */
+  operator_notified_at: string | null;
 }
 
 /**
@@ -1150,8 +1422,87 @@ export function enqueueDelivery(input: {
 }
 
 /**
+ * Enqueue a held delivery_outbox row for an outbound action that was blocked
+ * at the gate because the run authority lacked operatorGrant.
+ *
+ * The dedupe_key is set to the IPC action's dedupe_key so that if the same
+ * logical message is re-submitted (e.g. a resumed run), the UNIQUE constraint
+ * makes the second insert a no-op — satisfying VAL-WS1-009's "single notification
+ * per hold" requirement without a separate dedupe table.
+ *
+ * Returns the row and whether it was a duplicate insert.
+ */
+export function enqueueHeldDelivery(input: {
+  dedupeKey: string;
+  destination: string;
+  body: string;
+}): { record: DeliveryOutboxRecord; duplicate: boolean } {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO delivery_outbox (
+         dedupe_key, destination, body, status, attempts, max_attempts,
+         operator_notified_at, created_at, updated_at
+       ) VALUES (?, ?, ?, 'held', 0, 0, NULL, ?, ?)`,
+    )
+    .run(input.dedupeKey, input.destination, input.body, now, now);
+  const record = db
+    .prepare(`SELECT * FROM delivery_outbox WHERE dedupe_key = ?`)
+    .get(input.dedupeKey) as DeliveryOutboxRecord;
+  return { record, duplicate: result.changes === 0 };
+}
+
+/**
+ * All held delivery_outbox rows, oldest first. Used by the operator surfaces
+ * (e.g. /tasks panel, /delivery-status) to display held payloads.
+ */
+export function listHeldDeliveries(): DeliveryOutboxRecord[] {
+  return db
+    .prepare(
+      `SELECT * FROM delivery_outbox
+       WHERE status = 'held'
+       ORDER BY created_at ASC`,
+    )
+    .all() as DeliveryOutboxRecord[];
+}
+
+/**
+ * Release a held delivery_outbox row back to 'pending' so it will be picked up
+ * by the next flushPending cycle. Used by the operator when they approve a
+ * held payload for delivery.
+ */
+export function releaseHeldDelivery(
+  dedupeKey: string,
+): DeliveryOutboxRecord | undefined {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE delivery_outbox
+     SET status = 'pending', max_attempts = 5, attempts = 0, updated_at = ?
+     WHERE dedupe_key = ? AND status = 'held'`,
+  ).run(now, dedupeKey);
+  return db
+    .prepare(`SELECT * FROM delivery_outbox WHERE dedupe_key = ?`)
+    .get(dedupeKey) as DeliveryOutboxRecord | undefined;
+}
+
+/**
+ * Mark a held row as having been notified to the operator. Idempotent — a
+ * second notify call for the same dedupe_key is a no-op because
+ * operator_notified_at is already set.
+ */
+export function markHeldDeliveryNotified(dedupeKey: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE delivery_outbox
+     SET operator_notified_at = COALESCE(operator_notified_at, ?), updated_at = ?
+     WHERE dedupe_key = ? AND status = 'held'`,
+  ).run(now, now, dedupeKey);
+}
+
+/**
  * Pending entries that still have attempts left, oldest first. Drives both the
  * inline delivery attempt and the startup/periodic flush.
+ * Note: held rows are explicitly excluded — they are never auto-promoted.
  */
 export function listPendingDeliveries(limit = 100): DeliveryOutboxRecord[] {
   const safeLimit = Number.isFinite(limit)

@@ -491,7 +491,8 @@ test('writeCoderLearningsToMemorySync refuses to persist empty entries', () => {
 
 test('getCoderLearningsForContext returns empty string when MEMORY.md does not exist', async () => {
   const result = await getCoderLearningsForContext('nonexistent-group', 5);
-  assert.equal(result, '');
+  assert.equal(result.formatted, '');
+  assert.equal(result.entriesCount, 0);
 });
 
 test('getCoderLearningsForContextSync returns empty string when MEMORY.md does not exist', () => {

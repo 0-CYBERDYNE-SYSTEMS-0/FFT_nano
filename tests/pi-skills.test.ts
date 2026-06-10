@@ -909,3 +909,152 @@ test('invalid symlink override falls back to valid project required skill', () =
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+// ── WS3.3 Provenance frontmatter ─────────────────────────────────────────────
+
+test('VAL-WS3-012: provenance is a valid frontmatter key', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-provenance-'));
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const runtimeRoot = path.join(projectRoot, 'skills', 'runtime');
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+
+    // Write a manifest so validateProjectPiSkills doesn't check REQUIRED_PROJECT_PI_SKILLS
+    fs.writeFileSync(
+      path.join(projectRoot, 'skills', 'manifest.json'),
+      JSON.stringify({ version: '1.0', required: [], bundled: ['agent-test-skill'], setupOnly: [] }, null, 2),
+    );
+
+    const skillDir = path.join(runtimeRoot, 'agent-test-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: agent-test-skill',
+        'description: A skill for testing provenance validation.',
+        'provenance: agent-inferred',
+        '---',
+        '',
+        '# agent-test-skill',
+        '',
+        '## When to use this skill',
+        '',
+        '- Use for test coverage.',
+        '',
+      ].join('\n'),
+    );
+
+    const result = validateProjectPiSkills(projectRoot);
+    assert.equal(
+      result.ok,
+      true,
+      result.issues.map((i) => `${i.file}: ${i.message}`).join('\n'),
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS3-013: three provenance values are accepted', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-provenance-'));
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const runtimeRoot = path.join(projectRoot, 'skills', 'runtime');
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+
+    // Write a manifest so validateProjectPiSkills doesn't check REQUIRED_PROJECT_PI_SKILLS
+    const skillNames = [
+      'test-skill-operator-requested',
+      'test-skill-agent-inferred',
+      'test-skill-third-party-suggested',
+    ];
+    fs.writeFileSync(
+      path.join(projectRoot, 'skills', 'manifest.json'),
+      JSON.stringify({ version: '1.0', required: [], bundled: skillNames, setupOnly: [] }, null, 2),
+    );
+
+    const provenanceValues = [
+      'operator-requested',
+      'agent-inferred',
+      'third-party-suggested',
+    ];
+
+    for (let i = 0; i < provenanceValues.length; i++) {
+      const provenance = provenanceValues[i];
+      const skillName = skillNames[i];
+      const skillDir = path.join(runtimeRoot, skillName);
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(skillDir, 'SKILL.md'),
+        [
+          '---',
+          `name: ${skillName}`,
+          'description: Testing provenance validation.',
+          `provenance: ${provenance}`,
+          '---',
+          '',
+          `# ${skillName}`,
+          '',
+          '## When to use this skill',
+          '',
+          '- Use for test coverage.',
+          '',
+        ].join('\n'),
+      );
+    }
+
+    const result = validateProjectPiSkills(projectRoot);
+    assert.equal(
+      result.ok,
+      true,
+      result.issues.map((i) => `${i.file}: ${i.message}`).join('\n'),
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS3-014: invalid provenance value fails validation with clear message', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-provenance-'));
+  try {
+    const projectRoot = path.join(tempRoot, 'project');
+    const runtimeRoot = path.join(projectRoot, 'skills', 'runtime');
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+
+    // Write a manifest so validateProjectPiSkills doesn't check REQUIRED_PROJECT_PI_SKILLS
+    fs.writeFileSync(
+      path.join(projectRoot, 'skills', 'manifest.json'),
+      JSON.stringify({ version: '1.0', required: [], bundled: ['invalid-provenance-skill'], setupOnly: [] }, null, 2),
+    );
+
+    const skillDir = path.join(runtimeRoot, 'invalid-provenance-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: invalid-provenance-skill',
+        'description: Testing invalid provenance value.',
+        'provenance: who-dis',
+        '---',
+        '',
+        '# invalid-provenance-skill',
+        '',
+        '## When to use this skill',
+        '',
+        '- Use for test coverage.',
+        '',
+      ].join('\n'),
+    );
+
+    const result = validateProjectPiSkills(projectRoot);
+    assert.equal(result.ok, false);
+    const provenanceIssue = result.issues.find((i) =>
+      i.message.includes('provenance') && i.message.includes('who-dis'),
+    );
+    assert.notEqual(provenanceIssue, undefined, JSON.stringify(result.issues));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

@@ -20,10 +20,13 @@ export interface LearningSignalResult {
   priority: SelfImprovePriority;
 }
 
+export type SenderRole = 'operator' | 'member' | 'unknown';
+
 export interface ExtractLearningSignalsInput {
   userTask: string;
   agentOutput: string;
   toolExecutions?: PiToolExecution[];
+  senderRole?: SenderRole | null | '';
 }
 
 // Multi-step procedure heuristic: a run that used at least this many tools is a
@@ -81,6 +84,14 @@ export function extractLearningSignals(
   const userTask = input.userTask || '';
   const toolExecutions = input.toolExecutions || [];
 
+  // Normalize senderRole: treat null/undefined/'' as 'unknown'
+  const rawRole = input.senderRole;
+  // Defensive: coerce any non-valid SenderRole value to 'unknown'
+  const senderRole: SenderRole =
+    rawRole === 'operator' || rawRole === 'member' || rawRole === 'unknown'
+      ? rawRole
+      : 'unknown';
+
   if (anyMatch(userTask, REMEMBER_PATTERNS)) {
     signals.push('remember');
   }
@@ -94,18 +105,36 @@ export function extractLearningSignals(
     signals.push('multi-step-procedure');
   }
 
-  // High-value signals (explicit memory request, user correction, reusable
-  // recovery) warrant a full review. A long procedure alone is only light.
-  const hasFullSignal = signals.some(
-    (s) => s === 'remember' || s === 'correction' || s === 'fail-then-fix',
-  );
-  const priority: SelfImprovePriority = hasFullSignal
-    ? 'full'
-    : signals.length > 0
-      ? 'light'
-      : 'none';
+  // WS3.1/WS3.2: remember/correction signals from non-operator senders are
+  // downgraded to 'light'. fail-then-fix and multi-step-procedure are
+  // unaffected (they derive from host-observed tool trace, not text).
+  const isOperator = senderRole === 'operator';
 
-  return { signals, priority };
+  const hasFailThenFix = signals.includes('fail-then-fix');
+  const hasRememberOrCorrection = signals.some(
+    (s) => s === 'remember' || s === 'correction',
+  );
+  const hasMultiStep = signals.includes('multi-step-procedure');
+
+  // fail-then-fix always escalates to full (host-observed, trustworthy)
+  if (hasFailThenFix) {
+    return { signals, priority: 'full' };
+  }
+
+  // remember/correction: full only for operator, light for member/unknown
+  if (hasRememberOrCorrection) {
+    return {
+      signals,
+      priority: isOperator ? 'full' : 'light',
+    };
+  }
+
+  // multi-step-procedure is always light
+  if (hasMultiStep) {
+    return { signals, priority: 'light' };
+  }
+
+  return { signals, priority: 'none' };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +148,11 @@ export function extractLearningSignals(
 export interface SelfImproveEvent {
   run_id: string;
   group_id: string;
+  // INV.1: authorityId stamped on every line so the authority can be traced
+  // back to a specific run for forensic review (VAL-XARE-009).
+  authorityId: string;
+  // WS3.5: sender_role on every event for observability of downgrades
+  sender_role: SenderRole;
   review_type: 'skill-self-improve' | 'skill-manager';
   trigger_reason: string;
   signals_detected: string[];

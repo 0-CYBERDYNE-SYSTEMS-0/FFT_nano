@@ -1,0 +1,926 @@
+{
+  "features": [
+    {
+      "id": "ws1-classify-action-categories",
+      "description": "Add `classifyActionCategory(toolName, input)` in `src/permission-gate-policy.ts` that returns one of `read | local-mutate | outbound | schedule | destroy` for every tool the agent can invoke (per spec WS1.1). `bash-guard` continues to own the `destroy` classification for bash via `isDestructiveCommand`; new outbound/schedule tools include `send_message`, `deliver_file`, `send_webhook`, `schedule_task`, `cancel_task`. The classifier is deterministic and total — unknown tool names default to `local-mutate` (the conservative-non-allow choice). Reference: corrigible-learning-spec.md section WS1.1; touch-point map section 'WS1.1 Action categories'.",
+      "skillName": "backend-worker",
+      "milestone": "ws1-action-gate",
+      "preconditions": [
+        "src/permission-gate-policy.ts (existing gate, to be extended)",
+        "src/bash-guard.ts (existing destructive patterns to delegate to)",
+        "src/extensions/fft-permission-gate.ts (existing extension that calls the gate)"
+      ],
+      "expectedBehavior": [
+        "classifyActionCategory('read', {...}) === 'read' for any input variants (empty, with path, with pattern).",
+        "classifyActionCategory('edit', { path: '/abs/file' }) === 'local-mutate' and same for 'write' with any path.",
+        "classifyActionCategory('bash', { command }) returns 'destroy' for any command flagged by isDestructiveCommand (all 19 existing+new patterns).",
+        "classifyActionCategory('send_message'|'deliver_file'|'send_webhook', {...}) === 'outbound'.",
+        "classifyActionCategory('schedule_task'|'cancel_task', {...}) === 'schedule' regardless of payload contents.",
+        "Two calls with the same input return the same category (no random/time-dependent branching); unknown toolName defaults to 'local-mutate'."
+      ],
+      "fulfills": [
+        "VAL-WS1-001",
+        "VAL-WS1-002",
+        "VAL-WS1-003",
+        "VAL-WS1-004",
+        "VAL-WS1-005",
+        "VAL-WS1-006"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws1-gate-decisions-by-origin",
+      "description": "Refactor `evaluatePermissionGate` to consume the new classifier and a host-derived origin (interactive-main | subagent | headless). The new policy table: read/local-mutate always allow; destroy confirms on interactive-main and blocks on headless/subagent; outbound from headless without operator grant is held; schedule is always allowed at the tool level (WS2 routes it to pending_approval). Agent-authored fields (prompt, IPC payload's `created_by`) are never read for gate decisions (I1). Reference: corrigible-learning-spec.md WS1.2; interface contract 'Run Authority' section; touch-point map 'WS1.2 Gate decision keyed by (category, origin)'.",
+      "skillName": "backend-worker",
+      "milestone": "ws1-action-gate",
+      "preconditions": [
+        "RunAuthority type from corrigible-learning-interfaces.md (host-issued, carries origin and operatorGrant)",
+        "classifyActionCategory helper from ws1-classify-action-categories",
+        "src/permission-gate-policy.ts (to be refactored to consume RunAuthority)"
+      ],
+      "expectedBehavior": [
+        "category ∈ {read, local-mutate} returns { action: 'allow' } for any origin.",
+        "category === 'destroy' returns { action: 'block' } on headless and subagent origins, and { action: 'confirm' } on interactive-main (operator confirms or denies).",
+        "category === 'outbound' from a headless run with runAuthority.operatorGrant === false enqueues a delivery_outbox row with status='held' and triggers a single operator notification; the operator notification is recorded in delivery_outbox via UNIQUE(dedupe_key) so re-attempts are no-ops.",
+        "category === 'outbound' from an interactive-main run (operatorGrant === true) goes through the normal pending → delivered outbox flow with no held row.",
+        "Operator-created cron tasks carry operatorGrant === true implicitly and their outbound messages are sent, not held.",
+        "category === 'schedule' returns { action: 'allow' } but WS2 enforces the pending_approval status at the IPC handler, not the gate."
+      ],
+      "fulfills": [
+        "VAL-WS1-007",
+        "VAL-WS1-008",
+        "VAL-WS1-009",
+        "VAL-WS1-010",
+        "VAL-WS1-011",
+        "VAL-WS1-012"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws1-sandbox-refusal-and-doctor",
+      "description": "Make sandbox the boundary, not the regex list (per spec WS1.3). In `src/pi-runner.ts`'s spawn path, a run with origin headless or subagent whose effective tool set includes bash|edit|write is refused at spawn when `getSandboxMode() === 'none'` and `FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS !== '1'`. The check must consult the *effective* tool set, not only `toolMode === 'full'` — scheduled/cron/subagent paths that omit toolMode still resolve to the default `read,bash,edit,write,grep,find,ls,agent` set and must be refused. Interactive-main runs are exempt. Add a `runtime.sandbox_mode` (or `security.sandbox_mode`) check to `npm run doctor` that reports the mode and override state. Reference: corrigible-learning-spec.md WS1.3; touch-point map 'WS1.3 Sandbox is the boundary'.",
+      "skillName": "backend-worker",
+      "milestone": "ws1-action-gate",
+      "preconditions": [
+        "RunAuthority type (carries origin, effectiveToolSet)",
+        "src/sandbox.ts (getSandboxMode is currently module-private — must be exported or replaced with a sibling getter)",
+        "src/pi-runner.ts (runContainerAgent is the single spawn entry)",
+        "src/doctor.ts (buildDoctorReport has a CheckResult[] array)"
+      ],
+      "expectedBehavior": [
+        "Headless full-tool run with sandbox=none and no override is refused at spawn; no child.pid is produced; one log line names `FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS` as the override.",
+        "Subagent run (isSubagent: true) with sandbox=none and no override is refused at spawn in the same way (VAL-WS1-014).",
+        "Setting FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS=1 with sandbox=none permits the headless/subagent spawn; no refusal log line.",
+        "A run with effective tool set read,grep,find,ls (read_only or force_delegate_plan) spawns normally even with sandbox=none and no override.",
+        "An interactive-main run (isMain=true, no subagent flag) with effective tool set including bash,edit,write spawns normally; destructive bash from that run produces a confirm decision, not a refusal.",
+        "The refusal check consults the effective tool set: scheduled/cron/subagent paths that omit toolMode resolve to the default branch and are refused when sandbox=none and override absent.",
+        "`npm run doctor` produces a check with id `runtime.sandbox_mode` whose level is pass when sandbox != none OR override is set, warn when sandbox=none with no override on an interactive host, fail when sandbox=none and an autonomous loop is configured to spawn without override; the entry's summary and detail include the literal sandbox mode value and the override env var state."
+      ],
+      "fulfills": [
+        "VAL-WS1-013",
+        "VAL-WS1-014",
+        "VAL-WS1-015",
+        "VAL-WS1-016",
+        "VAL-WS1-017",
+        "VAL-WS1-018",
+        "VAL-WS1-019",
+        "VAL-XARE-004",
+        "VAL-XARE-010"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws1-bash-guard-patterns",
+      "description": "Add four new defensive patterns to `DESTRUCTIVE_PATTERNS` in `src/bash-guard.ts` (per spec WS1.4): `find ... -delete`, `launchctl bootout|unload|remove`, `sqlite3 ... store/messages.db` writes, and `curl|wget ... | sh|bash|zsh` pipe-to-shell. `canonicalizeForDetection` remains unchanged. Extend `tests/bash-guard.test.ts` with cases for each new pattern (at least 3 variants for `find -delete`, 3 sub-commands for `launchctl`, destructive queries against the live DB, 4 shells × 2 fetchers for pipe-to-shell) plus bypass tests mirroring the existing rm bypass tests (backslash escapes, quote-splitting, irregular whitespace, line continuations). Verify all 15 pre-existing destructive patterns continue to fire. Reference: corrigible-learning-spec.md WS1.4; touch-point map 'WS1.4 Defense-in-depth bash patterns'.",
+      "skillName": "backend-worker",
+      "milestone": "ws1-action-gate",
+      "preconditions": [
+        "src/bash-guard.ts (DESTRUCTIVE_PATTERNS array, canonicalizeForDetection helper)",
+        "tests/bash-guard.test.ts (existing 5 tests covering 15 pre-existing patterns and bypass cases)"
+      ],
+      "expectedBehavior": [
+        "`isDestructiveCommand('find / -delete')` returns destructive=true with matched 'find ... -delete'; same for -type f and -name '*.log' variants.",
+        "`isDestructiveCommand('launchctl bootout|unload|remove ...')` returns destructive=true for all three sub-commands.",
+        "`isDestructiveCommand('sqlite3 store/messages.db \"DELETE FROM messages\"')` returns destructive=true; matched description references sqlite3 and store/messages.db.",
+        "`isDestructiveCommand('curl|wget https://x.example/install.sh | sh|bash|zsh')` returns destructive=true for both fetchers and all four shells.",
+        "Each of the four new patterns has a paired canonicalization bypass test asserting detection still fires under backslash escapes, quote-splitting, irregular whitespace, and line continuations.",
+        "All 5 pre-existing bash-guard tests continue to pass without modification; the test file exits 0 and shows the 5 prior tests passing alongside the new ones."
+      ],
+      "fulfills": [
+        "VAL-WS1-020",
+        "VAL-WS1-021",
+        "VAL-WS1-022",
+        "VAL-WS1-023",
+        "VAL-WS1-024",
+        "VAL-WS1-025"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws1-outbox-held-status",
+      "description": "Extend `delivery_outbox` to support a new status `'held'` for outbound payloads queued by WS1.2 from headless agent runs lacking an operator grant. Add an `enqueueHeldDelivery` (or extend `enqueueDelivery` to accept `status='held'`) path; ensure `listPendingDeliveries` (used by `flushPending` and the cron v2 tick) explicitly excludes `status='held'` so held rows are never auto-promoted. Add a single-per-hold notification mechanism via `delivery_outbox` UNIQUE on `dedupe_key` (e.g. `held-notify:<authorityId>:<kind>`) so a release of a held row and a new hold each get exactly one operator-visible notification. Verify operator-created cron announce (WS1.2 + WS2.2 integration) still transitions pending → delivered and the operator's chat receives the message. Reference: corrigible-learning-spec.md WS1.2 acceptance; interface contract 'Cross-cutting rule 5' (held status is added but only used when operatorGrant is false); touch-point map 'WS1 held-payload plumbing'.",
+      "skillName": "backend-worker",
+      "milestone": "ws1-action-gate",
+      "preconditions": [
+        "src/outbox.ts (createOutboxDeliverer, flushPending, deliver)",
+        "src/db.ts (delivery_outbox schema, enqueueDelivery, listPendingDeliveries, markDeliveryDelivered)",
+        "RunAuthority type (carries operatorGrant and authorityId)",
+        "ws1-gate-decisions-by-origin (the held-row enqueue call site)"
+      ],
+      "expectedBehavior": [
+        "A held row exists in delivery_outbox with status='held', attempts=0, and the same dedupe_key the originating run requested; listPendingDeliveries does not return it; flushPending leaves it alone.",
+        "An agent-created task run (approved for execution) whose agent then calls an outbound IPC action still produces a held row, not a pending row — approval is execution-only and does not silently grant outbound authority (VAL-XARE-001).",
+        "A held row appears in the existing operator surface (a `/delivery-status` list, `/tasks` panel, or delivery_outbox inspector) with metadata naming origin, authorityId, optional taskId, and a body preview; an operator-only release action promotes the row to status='pending'.",
+        "An operator-created cron announce (created_by='operator') continues to transition pending → delivered; the chat receives the message; the regression test for 'operator-created cron announce flows unchanged' passes (VAL-XARE-005).",
+        "Exactly one operator notification per held row: a second call from the same run for the same logical message must not produce a second notification; after release, a new hold with a different dedupe_key does notify (VAL-XARE-006)."
+      ],
+      "fulfills": [
+        "VAL-XARE-001",
+        "VAL-XARE-002",
+        "VAL-XARE-005",
+        "VAL-XARE-006",
+        "VAL-XARE-007"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "inv1-run-authority",
+      "description": "Implement the Run Authority interface contract (corrigible-learning-interfaces.md Contract 1) — the host-issued, unpredictable authority that the WS1.2 gate, the WS2 approval surface, the WS3 senderRole flow, and the JSONL audit stamps all consume. `runContainerAgent` in `src/pi-runner.ts` is the single spawn entry and the only place that mints a `RunAuthority` (via the new `mintRunAuthority` helper in `src/run-authority.ts`). The authority wraps an existing `requestId`, carries origin (interactive-main|subagent|headless|evaluator), an effective tool set, `operatorGrant` (set exclusively by the host: true for interactive-main and operator-created tasks, false for agent-created schedule_task outputs and any agent-spawned outbound until approved), `senderRole` (operator|member|unknown), and `startedDuringPause`. The subprocess sees only `FFT_NANO_RUN_AUTHORITY_ID` (a random ID) via env and cannot influence the host-side authority object. I4 is enforced here: the `operatorGrant` flag is not settable by the agent. Reference: interface contract Contract 1; handoff INV.1.",
+      "skillName": "backend-worker",
+      "milestone": "ws1-action-gate",
+      "preconditions": [
+        "corrigible-learning-interfaces.md Contract 1 (RunAuthority type)",
+        "src/pi-runner.ts (runContainerAgent spawn entry)",
+        "src/types.ts (additive new exported type)",
+        "ws1-gate-decisions-by-origin (consumes authority fields)"
+      ],
+      "expectedBehavior": [
+        "mintRunAuthority produces a RunAuthority with crypto.randomUUID()-based authorityId wrapping the requestId; effectiveToolSet is computed from toolMode + codingHint + default branch; operatorGrant is computed from isMain/isSubagent/isScheduledTask/isEvaluatorRun/created_by.",
+        "The IPC watcher records authorityId on the most-recent authority for the group folder so async IPC actions can be attributed after the fact.",
+        "evaluatePermissionGate consumes runAuthority.origin and runAuthority.operatorGrant; an IPC payload with a forged created_by='operator' field is ignored because the gate only reads host-state fields (VAL-XARE-009).",
+        "An approved agent-created task run has runAuthority.operatorGrant === false; an outbound message from that run produces a held row, not a pending row (I4 enforcement; VAL-INV-I4-001).",
+        "The subprocess cannot set operatorGrant by exporting process.env.FFT_NANO_OPERATOR_GRANT=1 or writing a file; a security-style test asserts the host's computed operatorGrant is unaffected by the env (VAL-INV-I4-002).",
+        "JSONL audit writers (recordSelfImproveEvent, recordTaskAuditEvent, recordLearningInjection) stamp authorityId on every line so the authority can be traced to a specific run for forensic review."
+      ],
+      "fulfills": [
+        "VAL-XARE-009",
+        "VAL-INV-I4-001",
+        "VAL-INV-I4-002"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws2-schema-migration",
+      "description": "Add two new columns to `scheduled_tasks` in `src/db.ts` (per spec WS2.1): `created_by TEXT DEFAULT 'operator'` (values 'operator' | 'agent') and a new status value `'pending_approval'` (extending the existing `status` union). Use the existing idempotent `ALTER TABLE ... try/catch` migration pattern. Update the `ScheduledTask` TypeScript union in `src/types.ts` to include `'pending_approval'`. The migration must succeed on both pre-WS2 databases and fresh ones; pragma_table_info('scheduled_tasks') must show the new column on both, and the picker (`getDueTasks`) is unchanged because it already filters `status='active'`. Reference: corrigible-learning-spec.md WS2.1; touch-point map 'WS2.1 Schema' and 'WS2.3 Idempotent migration pattern'.",
+      "skillName": "schema-worker",
+      "milestone": "ws2-approval-scheduling",
+      "preconditions": [
+        "src/db.ts (scheduled_tasks CREATE TABLE block and migration array pattern at lines 147-172)",
+        "src/types.ts (ScheduledTask interface, status union to extend)",
+        "src/db.ts:createTask (insert list to add created_by column)"
+      ],
+      "expectedBehavior": [
+        "A pre-WS2 database opened by the host reports a `created_by` column on `scheduled_tasks` with dflt_value='operator'; a fresh DB shows the same.",
+        "Re-running startup migrations on the same DB does not error and does not duplicate the column (the try/catch swallows the 'column already exists' error).",
+        "A scheduled_tasks row can have status='pending_approval' without violating any CHECK constraint; getDueTasks does not return the row; getAllTasks still returns it (visible to the operator panel).",
+        "updateTask accepts status: 'pending_approval' without runtime error; the TypeScript ScheduledTask union includes 'pending_approval'.",
+        "createTask insert writes the created_by field (defaulting to 'operator' in callers; the IPC overrides to 'agent')."
+      ],
+      "fulfills": [
+        "VAL-WS2-001",
+        "VAL-WS2-002"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws2-pending-approval-IPC",
+      "description": "Modify the `schedule_task` IPC handler in `src/host-coordination.ts` (around line 915) so that agent-created tasks (origin derived from the run authority: headless or subagent) are inserted with `status='pending_approval'` and `created_by='agent'`, while operator-created tasks (origin interactive-main or operator-created cron) continue to be inserted with `status='active'` and `created_by='operator'`. The scheduler (`src/task-scheduler.ts` and `src/cron/service.ts`) only picks `status='active'`, so `pending_approval` rows are never run. Host sets `created_by` authoritatively from the run authority, never from agent-supplied fields. Reference: corrigible-learning-spec.md WS2.2; touch-point map 'WS2 IPC handler'.",
+      "skillName": "backend-worker",
+      "milestone": "ws2-approval-scheduling",
+      "preconditions": [
+        "ws2-schema-migration (created_by column and pending_approval status exist)",
+        "RunAuthority type (origin, senderRole, operatorGrant)",
+        "src/host-coordination.ts:processTaskIpc (schedule_task case at lines 915-994)",
+        "src/db.ts:createTask (insert with created_by)"
+      ],
+      "expectedBehavior": [
+        "An agent's schedule_task IPC inserts a row with status='pending_approval' and created_by='agent' carrying the full payload (prompt, schedule_type/value/json, delivery_*, delete_after_run, next_run); the row is not in getDueTasks(); the IPC reply (if any) contains the assigned taskId.",
+        "An operator-created schedule_task (e.g. via /task_create) inserts a row with status='active' and created_by='operator'; the row is picked up by the scheduler on its next_run time and the announcement flow runs.",
+        "Two consecutive processDueTasksOnce ticks with the same agent-created pending_approval task do not invoke runContainerAgent for that task; the task's next_run is unchanged; last_run and last_result remain null.",
+        "The IPC does not accept a created_by field from the agent; the host sets it authoritatively based on the run authority's origin (agent IPC with origin headless/subagent → 'agent'; operator IPC or operator-created cron → 'operator')."
+      ],
+      "fulfills": [
+        "VAL-WS2-003",
+        "VAL-WS2-004",
+        "VAL-WS2-005"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws2-telegram-approval-surface",
+      "description": "Add the main-chat operator approval surface to the existing Telegram task panel in `src/telegram-commands.ts` (per spec WS2.3). New `panel:pending-tasks` callback lists pending agent-created tasks with prompt preview (truncated), schedule, delivery_to/delivery_mode, delete_after_run flag, and created_at timestamp, plus inline Approve/Reject buttons per row. Approve (`task:approve:<id>`) flips status to 'active' and writes a `task-audit.jsonl` line of kind 'approve'; Reject (`task:reject:<id>`) deletes the row and writes 'reject'. Both buttons restricted to the main chat (isMainChat guard); the callback_data token is a non-guessable id, not the raw taskId. A separate test asserts the WS3 senderRole of the approving JID is logged in the audit line for forensic review (VAL-XARE-008). Reference: corrigible-learning-spec.md WS2.3; touch-point map 'WS2 Telegram task panel'.",
+      "skillName": "ui-worker",
+      "milestone": "ws2-approval-scheduling",
+      "preconditions": [
+        "ws2-pending-approval-IPC (pending_approval rows exist)",
+        "ws2-task-audit-jsonl (recordTaskAuditEvent helper)",
+        "src/telegram-commands.ts (existing task panel + coder-approve-plan callback pattern at lines 969-1110)",
+        "src/telegram-delivery.ts (summarizeTask, formatTasksText — extend with 'pending_approval' mode)"
+      ],
+      "expectedBehavior": [
+        "The operator issues a callback (panel:pending-tasks) in the main chat; the rendered list shows taskId, prompt preview, schedule, delivery_to, delivery_mode, delete_after_run, created_at — one row per pending task with inline Approve/Reject buttons.",
+        "Approve in the main chat flips the row to status='active' and the row becomes eligible for getDueTasks(); an audit line of kind 'approve' is appended to groups/<folder>/logs/task-audit.jsonl with taskId, approving chat JID, and ISO timestamp; the row runs at next_run like any operator-created task.",
+        "Reject in the main chat deletes the row and appends a 'reject' audit line; getTaskById returns null after the click; the agent does not see an error in its IPC reply (rejection is operator-only).",
+        "A non-main chat's callback with task:approve:<id> or task:reject:<id> is refused with a permission message; the row is unchanged; an audit line records the denial with the chat JID.",
+        "Approve and Reject write distinct task-audit.jsonl kinds; the audit file is append-only and a subsequent query (e.g. the future WS6 /learning digest) can reconstruct the lifecycle of any task from creation through deletion.",
+        "When WS3 lands, the audit line records senderRole of the approving JID alongside the chat JID; a non-operator sender in a non-main chat cannot approve or reject (VAL-XARE-008)."
+      ],
+      "fulfills": [
+        "VAL-WS2-006",
+        "VAL-WS2-007",
+        "VAL-WS2-008",
+        "VAL-WS2-009",
+        "VAL-WS2-010",
+        "VAL-XARE-008"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws2-task-audit-jsonl",
+      "description": "Implement `recordTaskAuditEvent` in a new `src/task-audit.ts` (or alongside the existing `recordSelfImproveEvent` in `src/self-improve-signals.ts`) that mirrors its sibling exactly (per spec WS2.4). The audit file is `groups/<groupFolder>/logs/task-audit.jsonl`; the writer uses `fs.appendFileSync` after `fs.mkdirSync(path.dirname(filePath), { recursive: true })`, wraps the call in `try/catch + logger.warn`, and never truncates. The writer is called from: the schedule_task IPC handler (kind 'create'), the approve_task/reject_task IPC handlers (kind 'approve'/'reject'), the cancel_task IPC handler (kind 'cancel'), and the cron v2 path's deleteTask branch for `delete_after_run: true` (kind 'delete_after_run' and 'delete'). The audit line includes prior status, new status (or null for delete), authorityId (from the run authority), and taskId. The audit line survives `delete_after_run`: the row is removed but the line is not. Reference: corrigible-learning-spec.md WS2.4; touch-point map 'WS2 audit log pattern'.",
+      "skillName": "backend-worker",
+      "milestone": "ws2-approval-scheduling",
+      "preconditions": [
+        "src/self-improve-signals.ts:recordSelfImproveEvent (the file/appendFile pattern to mirror)",
+        "RunAuthority type (carries authorityId for stamping)",
+        "ws2-pending-approval-IPC (schedule_task IPC handler)",
+        "src/cron/service.ts:runScheduledTaskV2 (the delete_after_run deleteTask branch around line 477)"
+      ],
+      "expectedBehavior": [
+        "Every successful schedule_task IPC appends one JSONL line to groups/<folder>/logs/task-audit.jsonl with kind 'create' and the full payload (prompt preview, schedule, delivery config, delete_after_run, created_by, status, taskId, authorityId).",
+        "Approve, reject, cancel, and delete transitions each append exactly one JSONL line with the corresponding kind; the audit file is append-only and timestamped (one line per state transition).",
+        "When a delete_after_run: true task completes successfully, the host calls deleteTask(taskId) and appends a kind='delete_after_run' line; getTaskById(taskId) returns null after the deletion; the audit file's prior content is unchanged (one new line, no lines removed).",
+        "A writer error is caught and logged as a warn, never thrown; the host continues to operate when the audit write fails; the file is never truncated, rewritten, or removed by the host.",
+        "Running the full cron-v2 path with a delete_after_run: true task produces 4 audit lines (create, ran, delete, delete_after_run) in chronological order with the schedule row gone."
+      ],
+      "fulfills": [
+        "VAL-WS2-011",
+        "VAL-WS2-012",
+        "VAL-WS2-013",
+        "VAL-WS2-014"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws2-forced-evaluator-and-routing",
+      "description": "Wire agent-created task runs to invoke the evaluator with `forceEvaluate: true` (per spec WS2.5). Modify `src/cron/service.ts:runScheduledTaskV2` and `src/task-scheduler.ts:runLegacyTask` so that when a row with `created_by='agent'` runs (status flipped to 'active' after approval), the cron path passes `forceEvaluate: true` to `runEvaluatorPass`. Invert the `shouldEvaluate` early-return in `src/evaluator.ts:56-110` so that `forceEvaluate` short-circuits the runType check (the existing 4 tests at tests/evaluator.test.ts:131/156/181/208 are updated to reflect the inversion). The verdict is recorded through the WS4.5 chokepoint (`recordVerdictOutcome`) into `evaluator_verdicts` with `run_type='cron'` (or `'agent-task'`) and the run's request_id; if WS4.5 lands later, an inline `INSERT INTO evaluator_verdicts` with the forward-compatible shape (skipped, skip_reason defaulted) is acceptable. Operator-created tasks continue to use the existing cron rubric without `forceEvaluate` plumbing. Reference: corrigible-learning-spec.md WS2.5; touch-point map 'WS2.5 forced evaluation' and 'WS2 evaluator plumbing'.",
+      "skillName": "backend-worker",
+      "milestone": "ws2-approval-scheduling",
+      "preconditions": [
+        "ws2-pending-approval-IPC (created_by column populated)",
+        "RunAuthority type (carries requestId for the verdict row)",
+        "src/evaluator.ts:shouldEvaluate (early-return on runType to be inverted)",
+        "src/cron/service.ts:runScheduledTaskV2 (the cron v2 path)",
+        "src/task-scheduler.ts:runLegacyTask (the legacy scheduler)",
+        "ws4-record-verdict-chokepoint (recordVerdictOutcome chokepoint, or inline INSERT until WS4 lands)"
+      ],
+      "expectedBehavior": [
+        "An agent-created task run (status='active', created_by='agent') invokes runEvaluatorPass with forceEvaluate: true; the returned verdict has skipped === false (a real evaluation, not a threshold-skip).",
+        "The verdict is recorded to evaluator_verdicts (via recordVerdictOutcome or inline INSERT) with run_type='cron' (or 'agent-task'), pass, score, issues, request_id matching the run, and group_folder matching the task; getEvaluatorStats(groupFolder) returns the row in its results.",
+        "Operator-created tasks (created_by='operator') continue to call runEvaluatorPass with the same parameters as before; the evaluator_verdicts row is recorded identically with no regression on the existing evaluator tests.",
+        "An agent-created task run that calls runEvaluatorPass with forceEvaluate: true produces a row that the WS4.5 chokepoint records with skipped=0 and the matching request_id (VAL-XARE-003).",
+        "The four existing tests at tests/evaluator.test.ts:131/156/181/208 are updated to reflect the inverted forceEvaluate short-circuit; the operator-created cron runs regression-test path is preserved."
+      ],
+      "fulfills": [
+        "VAL-WS2-015",
+        "VAL-WS2-016",
+        "VAL-WS2-017",
+        "VAL-XARE-003"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws2-autoapprove-config",
+      "description": "Add `PARITY_CONFIG.cron.agentTasks.autoApprove: boolean` (default `false`) and its env override `FFT_NANO_CRON_AGENT_TASKS_AUTO_APPROVE` (per spec WS2.6). When the flag is `false` (default), agent-created schedule_task IPC produces a `pending_approval` row — the new safe default. When the flag is `true`, the agent-created schedule_task IPC inserts `status='active'`, `created_by='agent'`; the scheduler picks it up; the cron rubric is invoked; the audit lines are still written. With `autoApprove: true`, operator-created tasks continue to work exactly as before (status='active', created_by='operator') — the flag never affects the operator-originated path. Update the `CronParityConfig` interface and `DEFAULTS.cron` in `src/parity-config.ts`; add the env-override block in `applyEnvOverrides` (mirroring the FFT_NANO_CRON_ISOLATED_DEFAULT_DELIVERY pattern at lines 360-374). Reference: corrigible-learning-spec.md WS2.6; touch-point map 'WS2.6 autoApprove parity flag' and 'PARITY_CONFIG cron block'.",
+      "skillName": "backend-worker",
+      "milestone": "ws2-approval-scheduling",
+      "preconditions": [
+        "ws2-pending-approval-IPC (the IPC handler that respects autoApprove)",
+        "src/parity-config.ts:CronParityConfig (to be extended with agentTasks.autoApprove)",
+        "src/parity-config.ts:applyEnvOverrides (env-override pattern to extend)"
+      ],
+      "expectedBehavior": [
+        "With PARITY_CONFIG.cron.agentTasks.autoApprove defaulting to false, an agent schedule_task IPC produces a pending_approval row; the scheduler does not pick it up; the operator panel shows the row.",
+        "Setting cron.agentTasks.autoApprove: true in config/runtime.parity.json (or FFT_NANO_CRON_AGENT_TASKS_AUTO_APPROVE=1) flips the agent-created schedule_task IPC to insert status='active', created_by='agent'; the scheduler picks it up on next_run; the audit file still has a 'create' line for the task.",
+        "With autoApprove: true, a test creates one task from each origin (operator and agent) and both rows are status='active' with created_by='operator' and 'agent' respectively; the two origins are tracked independently.",
+        "The autoApprove flag never affects the operator-originated path; operator-created tasks continue to work as before regardless of the flag value."
+      ],
+      "fulfills": [
+        "VAL-WS2-018",
+        "VAL-WS2-019",
+        "VAL-WS2-020"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws3-sender-role-allowlist",
+      "description": "Thread `senderRole: 'operator' | 'member' | 'unknown'` through the message-dispatch pipeline into `extractLearningSignals` (per spec WS3.1 and WS3.2). The resolver in `src/pipeline/message-dispatch-pipeline.ts:resolveInboundOrigin` (or a new helper) maps `msg.sender` to senderRole: the main-chat owner is always operator; a JID in `PARITY_CONFIG.skills.selfImprove.operators` (default `[]`) is operator in the configured group; a JID in a registered group but not in the allowlist is member; a JID with no registered group is unknown. Add the `senderRole` field to `ClassifiedInboundMessage` and `DispatchRequest`; thread it to `extractLearningSignals` so `remember`/`correction` signals from non-operator senders cap at `'light'`, while `fail-then-fix` and `multi-step-procedure` are unaffected (they derive from the host-observed tool trace). Extend `SkillSelfImproveConfig` with `operators: string[]` and the env-override block in `applyEnvOverrides`. Reference: corrigible-learning-spec.md WS3.1-WS3.2; touch-point map 'WS3.1 senderRole' and 'WS3.5 PARITY_CONFIG operators'.",
+      "skillName": "backend-worker",
+      "milestone": "ws3-provenance",
+      "preconditions": [
+        "src/self-improve-signals.ts:extractLearningSignals (input type to extend with senderRole)",
+        "src/pipeline/message-dispatch-pipeline.ts:classifyInboundMessage (ClassifiedInboundMessage to extend)",
+        "src/types.ts:NewMessage (sender JID already on every NewMessage)",
+        "src/parity-config.ts:SkillsParityConfig (operators field to add)"
+      ],
+      "expectedBehavior": [
+        "extractLearningSignals({ senderRole: 'operator', userTask: 'remember: ...' }) returns priority === 'full' and signals includes 'remember' (regression test for current behavior).",
+        "extractLearningSignals({ senderRole: 'member', userTask: 'remember: ...' }) returns signals includes 'remember' === true but priority === 'light'.",
+        "extractLearningSignals({ senderRole: 'member', userTask: 'actually, you forgot ...' }) caps at 'light'; the same text with operator yields 'full'.",
+        "extractLearningSignals({ senderRole: 'unknown', userTask: 'remember: ...' }) caps at 'light' (conservative default).",
+        "extractLearningSignals with senderRole: undefined | null | '' is treated as 'unknown' (no TypeError, priority is 'light' for a remember hit, 'none' for no hits).",
+        "fail-then-fix and multi-step-procedure priorities are unaffected by senderRole (priority is 'full' or 'light' respectively, regardless of operator/member/unknown).",
+        "The main-chat owner JID resolves to senderRole: 'operator' without being listed in the allowlist; a JID in the allowlist resolves to 'operator' even if not the owner; a JID in a registered group but not in the allowlist is 'member'; a JID with no registered group is 'unknown'.",
+        "ClassifiedInboundMessage and DispatchRequest both carry senderRole; the value at the agent-runner boundary matches the value classified from the inbound; the requestId-keyed authority reflects the same senderRole.",
+        "With the default config (operators: []), a non-owner JID in a registered group resolves to 'member', never 'operator' (VAL-INV-I5-003); populating the allowlist with a non-owner JID upgrades it to 'operator' in the configured group, and clearing the entry downgrades it back to 'member' without affecting the owner (VAL-XARE-015)."
+      ],
+      "fulfills": [
+        "VAL-WS3-001",
+        "VAL-WS3-002",
+        "VAL-WS3-003",
+        "VAL-WS3-004",
+        "VAL-WS3-005",
+        "VAL-WS3-006",
+        "VAL-WS3-007",
+        "VAL-WS3-008",
+        "VAL-WS3-009",
+        "VAL-WS3-010",
+        "VAL-WS3-011",
+        "VAL-INV-I5-001",
+        "VAL-INV-I5-003",
+        "VAL-XARE-015"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws3-skill-provenance-frontmatter",
+      "description": "Add a `provenance:` field to SKILL.md frontmatter (per spec WS3.3) with allowed values `operator-requested | agent-inferred | third-party-suggested`. Add `'provenance'` to `FRONTMATTER_OPTIONAL_FIELDS` in `src/pi-skills.ts`; the validator accepts all three values and rejects unknown values with a clear issue message. Modify `normalizeSkillMarkdown` in `src/skill-lifecycle.ts` to default `provenance: agent-inferred` for non-operator writes; operator-originated skill writes (senderRole === 'operator' in the run authority) get `provenance: operator-requested`. `npm run validate:skills` continues to pass on both operator-originated and agent-inferred skills. The host injects the field authoritatively on `skill_action` IPC writes — invalid/missing input is normalized to `agent-inferred`; persisted files always pass validation. Reference: corrigible-learning-spec.md WS3.3; touch-point map 'WS3.2 skill provenance'.",
+      "skillName": "backend-worker",
+      "milestone": "ws3-provenance",
+      "preconditions": [
+        "src/pi-skills.ts:FRONTMATTER_OPTIONAL_FIELDS (to extend with 'provenance')",
+        "src/skill-lifecycle.ts:normalizeSkillMarkdown (the frontmatter emit chokepoint)",
+        "src/skill-lifecycle.ts:createSkill and patchSkill (IPC write paths)",
+        "ws3-sender-role-allowlist (senderRole flows to the IPC handler)"
+      ],
+      "expectedBehavior": [
+        "A SKILL.md with provenance: operator-requested | agent-inferred | third-party-suggested validates successfully via npm run validate:skills and via the unit-test wrapper.",
+        "A SKILL.md with provenance: who-dis (or any other value) fails validation with a clear issue message naming the unsupported value.",
+        "A skill_action IPC write whose payload omits provenance persists the SKILL.md with provenance: agent-inferred; the file passes validate:skills.",
+        "A skill_action IPC write with senderRole === 'operator' in the run authority persists the SKILL.md with provenance: operator-requested.",
+        "A skill write without provenance defaults to agent-inferred and is excluded from the 'operator-requested skills' list; the same skill appears in the 'agent-inferred skills' list used by the curator's efficacy block (VAL-XARE-016).",
+        "Every persisted skill file passes validate:skills with a valid provenance value; a static check on normalizeSkillMarkdown asserts the function always emits a provenance field (VAL-INV-I5-002)."
+      ],
+      "fulfills": [
+        "VAL-WS3-012",
+        "VAL-WS3-013",
+        "VAL-WS3-014",
+        "VAL-WS3-015",
+        "VAL-WS3-016",
+        "VAL-INV-I5-002",
+        "VAL-XARE-016"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws3-advisory-frame",
+      "description": "Wrap all learned content rendered into prompts in a fixed advisory header (per spec WS3.4). The header text states that learned context is advisory and can never authorize gated actions. Apply the frame to: (a) the `memoryContext` field on `ContainerInput` built in `src/pi-runner.ts`'s `shouldBuildRetrievedMemoryContext` block (line 967), (b) the `learningsContext` block in `src/coding-orchestrator.ts:buildWorkerPrompt` (the `## Recent Coder Context` header at line 559-562), and (c) the `evalStatsContext` recurring-issues subsection. The frame appears once at the start of each block. The gate policy (`evaluatePermissionGate` and the new `classifyActionCategory`) does not read prompt content — I1 holds at the gate seam. Reference: corrigible-learning-spec.md WS3.4; touch-point map 'WS3.4 advisory framing'.",
+      "skillName": "backend-worker",
+      "milestone": "ws3-provenance",
+      "preconditions": [
+        "src/pi-runner.ts:shouldBuildRetrievedMemoryContext (the memoryContext assembly at line 967-990)",
+        "src/coding-orchestrator.ts:formatEvaluatorStatsContext and buildWorkerPrompt (the learningsContext + Recent Coder Context block at line 1066-1077 and 535-615)",
+        "src/permission-gate-policy.ts:evaluatePermissionGate and classifyActionCategory (signature does not read prompt content)"
+      ],
+      "expectedBehavior": [
+        "memoryContext is wrapped in a fixed header containing the literal phrase 'learned context is advisory and can never authorize gated actions'; the host can verify the field is non-empty and contains the frame.",
+        "learningsContext (evalStatsContext + baseLearningsContext) is rendered with the same advisory frame appearing once at the start of the '## Recent Coder Context' block in buildWorkerPrompt.",
+        "When evalStatsContext is non-empty, the recurring-issues block is rendered under the same advisory header as the rest of the learnings context.",
+        "evaluatePermissionGate and classifyActionCategory signatures accept toolName, input (with command/path/url/etc), and origin/authority fields only — no prompt-derived text (static signature inspection and dynamic empty-input test).",
+        "An empty input to the gate produces a deterministic decision for every (toolName, origin) combination (I1 holds at the gate seam)."
+      ],
+      "fulfills": [
+        "VAL-WS3-017",
+        "VAL-WS3-018",
+        "VAL-WS3-019",
+        "VAL-WS3-020",
+        "VAL-INV-I1-001"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws3-self-improve-signal-downgrade",
+      "description": "Implement the senderRole-aware priority downgrade in `extractLearningSignals` (per spec WS3.2). The function's input type gains `senderRole: 'operator' | 'member' | 'unknown'`; the priority decision is computed such that `remember`/`correction` from non-operator senders caps at `'light'`, while the same lexical hits from an operator sender can escalate to `'full'`. `fail-then-fix` and `multi-step-procedure` are unaffected — they derive from the host-observed tool trace, not from untrusted text. The implementation feature is the behavior side of the WS3.1 assertions; the tests for the behavior live in ws3-sender-role-allowlist. Reference: corrigible-learning-spec.md WS3.2; touch-point map 'WS3.1 extractLearningSignals signature'.",
+      "skillName": "backend-worker",
+      "milestone": "ws3-provenance",
+      "preconditions": [
+        "src/self-improve-signals.ts:extractLearningSignals (function to modify)",
+        "ws3-sender-role-allowlist (the resolver that provides senderRole)",
+        "RunAuthority type (carries senderRole)"
+      ],
+      "expectedBehavior": [
+        "extractLearningSignals with senderRole='operator' escalates a remember hit to 'full'; the same hit with senderRole='member' or 'unknown' caps at 'light'.",
+        "fail-then-fix priority is 'full' for any senderRole; multi-step-procedure priority is 'light' for any senderRole (the role is ignored for tool-trace-derived signals).",
+        "Empty/null/undefined senderRole defaults to 'unknown' and never crashes the function; no path in the function produces 'full' for a non-operator sender.",
+        "The signals array is recorded for observability regardless of downgrade (lexical detection is independent of the role)."
+      ],
+      "fulfills": [],
+      "status": "pending"
+    },
+    {
+      "id": "ws3-jsonl-downgrade-events",
+      "description": "Add `sender_role` and `noop_reason` to the `SelfImproveEvent` written to `groups/<folder>/logs/self-improve-events.jsonl` (per spec WS3.5). For a downgraded non-operator signal, the recorder carries `sender_role: 'member' | 'unknown'` and `noop_reason: 'non-operator-signal-downgraded'`; the `signals_detected` array still contains the original lexical hits ('remember' / 'correction'). For an operator-sourced full review, the JSONL event has `sender_role: 'operator'` and no `noop_reason` (or `noop_reason: null`). For a pause-driven no-op (WS6.3), the recorder writes `noop_reason: 'learning-paused'` and `review_fired: false`. The recorder follows the existing `recordSelfImproveEvent` pattern (fs.appendFileSync + try/catch + logger.warn) and is best-effort. Reference: corrigible-learning-spec.md WS3.5; touch-point map 'WS3.5 self-improve audit'.",
+      "skillName": "backend-worker",
+      "milestone": "ws3-provenance",
+      "preconditions": [
+        "src/self-improve-signals.ts:recordSelfImproveEvent (pattern to extend with sender_role and noop_reason)",
+        "ws3-sender-role-allowlist (senderRole available at the recorder call site)",
+        "ws6-global-pause-flag (the pause-driven noop_reason is a cross-cutting concern)"
+      ],
+      "expectedBehavior": [
+        "A downgraded non-operator signal's JSONL event parses to an object with sender_role: 'member' | 'unknown', noop_reason: 'non-operator-signal-downgraded', and signals_detected still containing the original hits.",
+        "An operator-sourced remember or correction signal's JSONL event has sender_role: 'operator' and no noop_reason key (or noop_reason: null); the event is a real review, not a no-op.",
+        "When the global pause is in effect and a full-priority signal would otherwise fire, the recorder writes a JSONL line with noop_reason: 'learning-paused' and review_fired: false.",
+        "A writer error is caught and logged as a warn, never thrown; the host continues to operate when the JSONL write fails; the file is never truncated."
+      ],
+      "fulfills": [
+        "VAL-WS3-021",
+        "VAL-WS3-022",
+        "VAL-WS3-023",
+        "VAL-WS3-024"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "inv4-third-party-candidate-only",
+      "description": "Enforce the handoff's INV.4 invariant (third-party textual learning remains candidate-only) by coordinating WS3's provenance tiers with the gate and the recorder. The behavior: third-party-suggested learning (senderRole other than operator, OR skill provenance=third-party-suggested) may only become a learning *candidate*; the host-observed tool trace (`fail-then-fix` / `multi-step-procedure`) is the only path to durable, agent-inferred learning. No code path lets third-party text become a full-priority review or a durable skill/memory mutation. The downstream enforcement uses ws3-self-improve-signal-downgrade (signal cap), ws3-skill-provenance-frontmatter (validator default), and ws3-jsonl-downgrade-events (observability). The handoff INV.4 has no separate validation IDs in the contract; the I5 assertions (VAL-INV-I5-001..003) and the WS3.* assertions are the proof. Reference: handoff INV.4; corrigible-learning-spec.md invariant I5.",
+      "skillName": "backend-worker",
+      "milestone": "ws3-provenance",
+      "preconditions": [
+        "ws3-sender-role-allowlist",
+        "ws3-skill-provenance-frontmatter",
+        "ws3-self-improve-signal-downgrade",
+        "ws3-jsonl-downgrade-events"
+      ],
+      "expectedBehavior": [
+        "No code path in extractLearningSignals or its callers produces 'full' priority for a non-operator sender (3x3 matrix test of signal types × sender roles proves this; VAL-INV-I5-001).",
+        "Every skill write through the host's IPC paths has a provenance value in its frontmatter; the default for non-operator writes is 'agent-inferred' (VAL-INV-I5-002).",
+        "With the default config (operators: []), the only operator is the main-chat owner; a non-owner JID in a registered group resolves to 'member', never 'operator' (VAL-INV-I5-003).",
+        "Third-party textual signals create candidates or light review signals, but never become durable state directly; the I5 enforcement is exhaustive across the signal extraction and skill write paths."
+      ],
+      "fulfills": [],
+      "status": "pending"
+    },
+    {
+      "id": "ws4-evaluator-schema-and-stats",
+      "description": "Add `skipped INTEGER DEFAULT 0` and `skip_reason TEXT` columns to `evaluator_verdicts` (per spec WS4.1) using the idempotent `ALTER TABLE` migration pattern in `src/db.ts`. Update the `EvaluatorStats` interface to carry `recentSkips: number`; modify `getEvaluatorStats(groupFolder, limit)` to count skipped rows separately and exclude them from `passRate` (numerator and denominator both filter `skipped = 0`; I3 holds at the query). When all rows in the window are skipped, `passRate = 0` and `recentSkips = N`. The function is unchanged for the existing fields; only the new column projection and arithmetic change. Reference: corrigible-learning-spec.md WS4.1, WS4.2; touch-point map 'WS4.1 evaluator_verdicts schema' and 'WS4.3 getEvaluatorStats'.",
+      "skillName": "schema-worker",
+      "milestone": "ws4-evaluator-integrity",
+      "preconditions": [
+        "src/db.ts:evaluator_verdicts CREATE TABLE block (lines 109-121)",
+        "src/db.ts:EvaluatorStats interface (lines 991-996)",
+        "src/db.ts:getEvaluatorStats (lines 1030-1094)"
+      ],
+      "expectedBehavior": [
+        "evaluator_verdicts reports a `skipped` column with default 0 on a fresh DB and on a DB created before WS4; the migration is idempotent (re-running startup does not error).",
+        "evaluator_verdicts reports a `skip_reason` column with null default; the migration is idempotent.",
+        "EvaluatorStats carries recentSkips alongside total/passes/passRate/recentIssues; the function returns recentSkips matching the count of skipped rows in the last `limit` rows.",
+        "passRate excludes skipped rows: a mix of skipped and non-skipped rows yields a passRate reflecting only the non-skipped rows; an all-skipped window returns passRate = 0 and recentSkips = N (I3 holds).",
+        "A static check on the recording code asserts pass/score are written from the verdict, not from prose (VAL-INV-I3-001); a unit test seeds a pass=1, score=7 row with misleading 'failed' prose and asserts the efficacy join returns passRateWith reflecting pass=1 (VAL-INV-I3-002)."
+      ],
+      "fulfills": [
+        "VAL-WS4-001",
+        "VAL-WS4-002",
+        "VAL-WS4-008",
+        "VAL-WS4-009",
+        "VAL-INV-I3-001",
+        "VAL-INV-I3-002"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws4-record-verdict-chokepoint",
+      "description": "Extract verdict recording into a single helper `recordVerdictOutcome(authority, outcome, ...)` in `src/evaluator.ts` (or alongside it) per spec WS4.5. The helper takes the full `EvaluatorOutcome` discriminated union (verdict | eligible-skip | threshold-skip from interface contract Contract 2) and the `RunAuthority`. `verdict` writes a row with `skipped=0` and pass/score/issues/refinements; `eligible-skip` writes `skipped=1`, `pass=0`, `score=0`, `skip_reason=<reason>`; `threshold-skip` is a no-op. The chokepoint becomes the single point through which coding orchestrator, cron v2 (operator + agent-created), legacy task scheduler, and the new chat-sampling path (WS4.4) all write their rows. Replace the inline `if (!lastVerdict.skipped) { recordEvaluatorVerdict(...) }` at `src/coding-orchestrator.ts:1317-1341` with a `recordVerdictOutcome` call. A test stub exercises a hypothetical new `runType: 'foo'` through the chokepoint to prove future run types cannot silently skip recording. Reference: corrigible-learning-spec.md WS4.5; interface contract Contract 2; touch-point map 'WS4.4 verdict recording chokepoint'.",
+      "skillName": "backend-worker",
+      "milestone": "ws4-evaluator-integrity",
+      "preconditions": [
+        "ws4-evaluator-schema-and-stats (skipped and skip_reason columns exist)",
+        "RunAuthority type (carries requestId, groupFolder, runType)",
+        "EvaluatorOutcome discriminated union from corrigible-learning-interfaces.md Contract 2",
+        "src/coding-orchestrator.ts:1317-1341 (the inline recorder to replace)",
+        "src/cron/service.ts:407-432 (the cron v2 path to converge)",
+        "src/task-scheduler.ts:119-144 (the legacy scheduler path to converge)"
+      ],
+      "expectedBehavior": [
+        "recordVerdictOutcome(authority, verdict, ...) writes a row with skipped=0 and pass/score/issues/refinements; with eligible-skip writes skipped=1, pass=0, score=0, skip_reason=<reason>; with threshold-skip is a no-op (no DB write).",
+        "src/coding-orchestrator.ts:1317-1341 invokes recordVerdictOutcome with a real EvaluatorOutcome and the run authority; the inline `if (!lastVerdict.skipped)` guard is removed; one row is written per orchestration run.",
+        "src/cron/service.ts (cron v2) and src/task-scheduler.ts (legacy) both invoke recordVerdictOutcome after runEvaluatorPass; the chokepoint is called once for each run regardless of origin (operator-created or agent-created).",
+        "A test stub for a hypothetical new runType='foo' confirms the chokepoint writes a row for verdict and eligible-skip outcomes and writes nothing for threshold-skip (future-proofing).",
+        "The full cron-v2 tick with both task origins (operator and agent) calls recordVerdictOutcome once each; the recorded rows have runType='cron' (or 'agent-task') and the matching request_id from the authority."
+      ],
+      "fulfills": [
+        "VAL-WS4-003",
+        "VAL-WS4-004",
+        "VAL-WS4-005",
+        "VAL-WS4-006",
+        "VAL-WS4-007"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws4-degraded-signal-alert",
+      "description": "Add the 24h-deduped degraded-signal alert (per spec WS4.3) on top of `getEvaluatorStats`. When more than half of the last 10 eligible rows in a group are `skipped=1`, the chokepoint returns `{ shouldAlert: true }` and writes a `delivery_outbox` row with `dedupe_key='eval-degraded:<groupFolder>'` (UNIQUE on `dedupe_key` provides persistence across restarts). The operator notice text contains the group name and a phrase like 'evaluation is degraded; learning signal is currently blind'. The 24h dedupe is keyed on the group folder (per-group, not global). A second skip-streak within 24h does not write a second row (the UNIQUE constraint prevents it); advancing the clock 25h and seeding a new streak writes a fresh row. Reference: corrigible-learning-spec.md WS4.3; touch-point map 'WS4.3 degraded-signal alert'.",
+      "skillName": "backend-worker",
+      "milestone": "ws4-evaluator-integrity",
+      "preconditions": [
+        "ws4-evaluator-schema-and-stats (recentSkips on EvaluatorStats)",
+        "ws4-record-verdict-chokepoint (the chokepoint is the call site for the alert check)",
+        "src/outbox.ts + src/db.ts:delivery_outbox (UNIQUE on dedupe_key for persistence)"
+      ],
+      "expectedBehavior": [
+        "Seeding 6 of 10 rows as skipped=1 returns shouldAlert: true and writes a delivery_outbox row with the eval-degraded:<group> dedupe_key.",
+        "A second seeding of 7 skipped rows within 24h does not write a second delivery_outbox row (the UNIQUE constraint prevents it).",
+        "Advancing the simulated clock by 25h and seeding a new 6-of-10 skip pattern writes a fresh row.",
+        "Group A's alert and Group B's alert are independent — the dedupe_key is per-group, not global; seeding 6 skipped rows in each of two groups writes two delivery_outbox rows with distinct dedupe_key values."
+      ],
+      "fulfills": [
+        "VAL-WS4-010",
+        "VAL-WS4-011"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws4-sampled-chat-eval",
+      "description": "Add `PARITY_CONFIG.evaluator.chatSampleRate: number` (default `0.1`; `0` disables) and implement auditable sampled chat evaluation (per spec WS4.4). For each chat run, apply `isActionfulChatTask` first; an explain-only run (e.g. 'what does X mean?') does not invoke `runEvaluatorPass` regardless of rate. Actionful chat runs enter the sampling decision; `chatSampleRate: 0` means zero invocations and zero `chat` rows; `chatSampleRate: 1.0` means every actionful chat run invokes `runEvaluatorPass` with `forceEvaluate: true` and records the verdict through the WS4.5 chokepoint with `runType: 'chat'`. Each per-run decision is logged (`chat_sample_decision: 'evaluate' | 'skip'`) so it is auditable. When the global pause is in effect, the sampling path is a hard no-op regardless of rate — no `runEvaluatorPass` call, no `chat` row written. Reference: corrigible-learning-spec.md WS4.4; touch-point map 'WS4.4 chat sampling'.",
+      "skillName": "backend-worker",
+      "milestone": "ws4-evaluator-integrity",
+      "preconditions": [
+        "ws4-record-verdict-chokepoint (the chokepoint is the recording path)",
+        "src/evaluator.ts:isActionfulChatTask (the predicate at line 327)",
+        "src/evaluator.ts:shouldEvaluate (forceEvaluate must short-circuit the runType check; updated by ws2-forced-evaluator-and-routing)",
+        "src/parity-config.ts:ParityConfig (evaluator sub-block to add)",
+        "ws6-global-pause-flag (pause is a hard short-circuit)"
+      ],
+      "expectedBehavior": [
+        "With chatSampleRate: 0, 10 actionful chat runs produce 0 runEvaluatorPass invocations and 0 chat rows in evaluator_verdicts.",
+        "With chatSampleRate: 1.0, 5 actionful chat runs produce 5 runEvaluatorPass invocations and 5 chat rows; one log line per chat run records chat_sample_decision: 'evaluate'.",
+        "A property-style test running 200 chat runs at chatSampleRate: 0.5 produces an evaluate count between 70 and 130; every run's decision is logged.",
+        "isActionfulChatTask('what is...') returns false; isActionfulChatTask('schedule a meeting...') returns true; isActionfulChatTask('create a new skill...') returns true; isActionfulChatTask('explain the difference...') returns false (the four canonical examples).",
+        "With the pause flag on and chatSampleRate: 1.0, 10 actionful chat runs produce 0 runEvaluatorPass invocations and 0 chat rows (VAL-XARE-019).",
+        "The chat-sampling path's rate-limiting is independent of the coding/subagent path; chat samples do not affect the coding/subagent recording rate."
+      ],
+      "fulfills": [
+        "VAL-WS4-012",
+        "VAL-WS4-013",
+        "VAL-WS4-014",
+        "VAL-WS4-015",
+        "VAL-WS4-016",
+        "VAL-XARE-019"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws4-eligible-skip-recording",
+      "description": "Wire the WS4.5 chokepoint so that eligible-but-failed evaluator runs (threw, error, unparseable) are recorded as skipped rows (per spec WS4.2). When `runContainerAgent` throws, when `evalOutput.status === 'error'`, or when `parseVerdict` returns null, the chokepoint produces an `eligible-skip` EvaluatorOutcome with the appropriate `skipReason` ('evaluator-threw' | 'evaluator-error' | 'unparseable-verdict' | 'artifact-missing') and writes a row with `skipped=1`, `pass=0`, `score=0`, and the reason in `skip_reason`. Threshold-skips (trivially short, run-type not eligible, no changed files) are no-ops in the chokepoint — the run was never eligible, so no signal exists. `getEvaluatorStats` reflects the skip with `recentSkips` incremented; `passRate` is unchanged. Reference: corrigible-learning-spec.md WS4.2; touch-point map 'WS4.1 four skipped paths'.",
+      "skillName": "backend-worker",
+      "milestone": "ws4-evaluator-integrity",
+      "preconditions": [
+        "ws4-record-verdict-chokepoint (the chokepoint itself)",
+        "src/evaluator.ts:runEvaluatorPass (the four skipped-paths return points to wrap)",
+        "ws4-degraded-signal-alert (the alert check uses recentSkips)"
+      ],
+      "expectedBehavior": [
+        "Killing the provider mid-eval in a test produces an evaluator_verdicts row with skipped=1, skip_reason='evaluator-threw'; recentSkips is incremented; passRate is unchanged.",
+        "parseVerdict returning null produces a row with skipped=1, skip_reason='unparseable-verdict'; recentSkips is incremented.",
+        "A threshold-skip (trivially short, run-type not eligible) is a no-op in the chokepoint: no row is written; getEvaluatorStats returns the same counts as before the run; the run's own log line records the threshold-skip reason (I6: silence is observable).",
+        "An artifact-missing case (where the agent claims files that don't exist) is recorded as an eligible-skip with skip_reason='artifact-missing' and pass=0 (separate from prose-derived 'verdict' outcomes)."
+      ],
+      "fulfills": [
+        "VAL-WS4-017",
+        "VAL-WS4-018",
+        "VAL-WS4-019"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "inv5-no-op-events",
+      "description": "Enforce the handoff's INV.5 invariant (every autonomous loop records meaningful no-op events) by coordinating WS4's chokepoint, WS3's JSONL recorder, and WS6's pause flag. The behavior: when an autonomous loop short-circuits (paused, debounced, threshold-skipped, or downgraded), it emits an observable event — a JSONL line, an audit entry, or a structured return value — so the operator can audit it. The three loops covered are: (a) the self-improve trigger (writes a noop_reason to the JSONL line), (b) the curator loop (returns false from shouldRunSkillManager), and (c) the WS2 auto-approve path (treats autoApprove=true as false while paused; produces a pending_approval row + audit line). The /learning digest (WS6.2) is the single operator surface that surfaces the pause state, recentSkips, and pending approvals. The handoff INV.5 has no separate validation IDs; the I6 assertions (VAL-INV-I6-001..003) and the WS4/WS6/WS3 pause assertions are the proof. Reference: handoff INV.5; corrigible-learning-spec.md invariant I6.",
+      "skillName": "backend-worker",
+      "milestone": "ws4-evaluator-integrity",
+      "preconditions": [
+        "ws3-jsonl-downgrade-events (the JSONL recorder with noop_reason)",
+        "ws4-record-verdict-chokepoint (the chokepoint that records skips)",
+        "ws6-global-pause-flag (the pause flag)",
+        "ws6-pause-checks-three-loops (the three-loop short-circuit)",
+        "ws6-learning-digest (the operator surface that surfaces the state)"
+      ],
+      "expectedBehavior": [
+        "When paused, the self-improve trigger writes a JSONL line with noop_reason: 'learning-paused' and review_fired: false (VAL-WS3-023).",
+        "When paused, the curator loop returns false from shouldRunSkillManager before its existing config.enabled and idle checks; the curator tick in app.ts is a no-op while paused (VAL-WS6-018).",
+        "When paused, the WS2 schedule_task IPC treats autoApprove=true as if it were false; the resulting row is pending_approval; the audit line records the learning-paused no-op reason; the scheduler does not pick the row up (VAL-WS6-019).",
+        "The /learning digest renders a 'Pause status' line — 'Learning is paused' when on, 'Learning is active' when off (VAL-INV-I6-002).",
+        "Threshold-skip runs are observable through the run's own log line (one log line per run); the chokepoint's no-op for threshold-skip is by design (no signal to record); a 100-character chat task produces no chokepoint row and a threshold-skip log line (VAL-INV-I6-003).",
+        "Three independent no-op events are recorded under combined conditions: paused + non-operator sender + autoApprove: true all short-circuit (VAL-XARE-014)."
+      ],
+      "fulfills": [
+        "VAL-INV-I6-001",
+        "VAL-INV-I6-002",
+        "VAL-INV-I6-003"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws5-learning-injections-table",
+      "description": "Create the `learning_injections` table in `src/db.ts` per the spec WS5.1 schema (`id, request_id, group_folder, kind, item, created_at`) and the `idx_learning_injections_request` index on `(request_id)`. Use the existing `CREATE TABLE IF NOT EXISTS` pattern (alongside `delivery_outbox`) and the idempotent `CREATE INDEX IF NOT EXISTS` line. The table is the join target for WS5.2 (efficacy) and the marker for what was actually injected. The migration is idempotent: re-running startup does not error; pragma_table_info lists the six expected columns with their declared types. Reference: corrigible-learning-spec.md WS5.1; touch-point map 'WS5.3 CREATE TABLE pattern'.",
+      "skillName": "schema-worker",
+      "milestone": "ws5-efficacy-loop",
+      "preconditions": [
+        "src/db.ts:db.exec block (the multi-table CREATE block at lines 92-134)",
+        "ws5-injection-stamping (the recorder that writes to this table)"
+      ],
+      "expectedBehavior": [
+        "A fresh DB created by WS5 has the learning_injections table with six columns (id, request_id, group_folder, kind, item, created_at) and the idx_learning_injections_request index on (request_id).",
+        "Re-running startup on the same DB does not error (CREATE TABLE IF NOT EXISTS is idempotent).",
+        "pragma_table_info('learning_injections') lists the six expected columns with their declared types; pragma_index_list('learning_injections') confirms the index.",
+        "Rows are recorded only for content actually injected (per the handoff's item 12) — items the backend considered but did not render are not written."
+      ],
+      "fulfills": [
+        "VAL-WS5-001",
+        "VAL-WS5-005",
+        "VAL-XARE-011"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws5-injection-stamping",
+      "description": "Stamp one `learning_injections` row per actually-injected item at the two assembly points (per spec WS5.1). At the retrieved-memory assembly in `src/pi-runner.ts:shouldBuildRetrievedMemoryContext` (line 967-990), write one row per item the backend selected with `kind: 'memory'`, `item: <memory identifier>`, `request_id: input.requestId`, `group_folder: group.folder`. At the coder-learnings assembly in `src/coding-orchestrator.ts:1066-1089`, write one row per `getCoderLearningsForContext` entry with `kind: 'memory'` and `item: <memory file>`; when `evalStatsContext` is non-empty, write one row with `kind: 'verdict-issues'`, `item: 'recurring-issues'`. Both writers are best-effort: a failure is caught and logged, never thrown; the run is never aborted by a recorder failure. Rows describe only items present in the final rendered prompt after selection and truncation. Reference: corrigible-learning-spec.md WS5.1; touch-point map 'WS5.1 pi-runner.ts' and 'WS5.2 coding-orchestrator.ts'.",
+      "skillName": "backend-worker",
+      "milestone": "ws5-efficacy-loop",
+      "preconditions": [
+        "ws5-learning-injections-table (the table to write to)",
+        "src/pi-runner.ts:shouldBuildRetrievedMemoryContext (the assembly block at line 967-990)",
+        "src/coding-orchestrator.ts:learningsContext assembly (lines 1066-1089)",
+        "src/memory-backend.ts (buildContext returns chunksTotal and selectedK; the worker needs the actual selected items list)"
+      ],
+      "expectedBehavior": [
+        "A pi-runner assembly where the memory backend selected 3 items writes exactly 3 learning_injections rows with kind='memory' sharing the same request_id.",
+        "A coding-orchestrator assembly where getCoderLearningsForContext returns N entries writes N rows with kind='memory' sharing the same request_id; when evalStatsContext is non-empty, exactly 1 row with kind='verdict-issues' is added.",
+        "A synthetically failing recorder does not abort the run; the call site returns successfully to its caller; the warn log is emitted.",
+        "A run whose memory backend returns 5 chunks but renders 3 in the final context produces exactly 3 learning_injections rows (handoff item 12: only content actually injected)."
+      ],
+      "fulfills": [
+        "VAL-WS5-002",
+        "VAL-WS5-003",
+        "VAL-WS5-004"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws5-skill-efficacy-helper",
+      "description": "Implement `getSkillEfficacy(groupFolder)` in `src/db.ts` (per spec WS5.2) joining `learning_injections` (kind='skill') against `evaluator_verdicts` on `request_id`. The helper returns, per skill with >= 5 matching rows: `runsWith` (count of joined rows), `passRateWith` (passes/total over non-skipped joined rows), and `groupBaseline` (getEvaluatorStats(groupFolder).passRate over the same window). Under the sample floor of 5, the helper returns nothing for that skill — no number is published. The join is scoped on `group_folder` (group A's efficacy is not contaminated by group B's rows). The function is read-only — a snapshot of the table counts before and after the call is unchanged. Reference: corrigible-learning-spec.md WS5.2; touch-point map 'WS5.4 getSkillEfficacy'.",
+      "skillName": "backend-worker",
+      "milestone": "ws5-efficacy-loop",
+      "preconditions": [
+        "ws5-learning-injections-table (the join target)",
+        "ws4-evaluator-schema-and-stats (passRate is computed over non-skipped rows)",
+        "src/db.ts:getEvaluatorStats (the groupBaseline source)"
+      ],
+      "expectedBehavior": [
+        "Seeding 4 rows for skill X returns no efficacy row for X (under the sample floor).",
+        "Seeding 8 rows for skill X with 5 passes returns runsWith: 8, passRateWith: 0.625, groupBaseline: <matching baseline>; the math is passes / total over non-skipped rows.",
+        "Seeding matching rows in two groups with different pass rates returns each group's helper call with its own groupBaseline; group A's rows are not visible to group B's call.",
+        "A snapshot of the learning_injections and evaluator_verdicts table counts before and after the call is unchanged (read-only helper).",
+        "The efficacy join reads `pass` from the column, not from JSONL prose — a row with pass=1, score=7 and misleading 'failed' issues text returns passRateWith reflecting pass=1 (VAL-INV-I3-002)."
+      ],
+      "fulfills": [
+        "VAL-WS5-006",
+        "VAL-WS5-007",
+        "VAL-WS5-008",
+        "VAL-WS5-009",
+        "VAL-XARE-018"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws5-curator-receives-efficacy",
+      "description": "Append efficacy lines to the skill-manager review prompt in `src/skill-service.ts:maybeRunSkillManager` (per spec WS5.3). For each agent-created skill with efficacy data above the sample floor, add a line in the form '<skill>: injected N times, pass rate with X% vs baseline Y%' to the prompt array, immediately before the existing 'Do not mutate source-owned project or personal skills.' line. The lines appear only for skills with `provenance: agent-inferred` — operator-requested and third-party-suggested skills do not appear. The lines are advisory (I1); the reviewer still owns the archive/patch decision; the skill-manager is not pre-empted by efficacy data. The reviewer is the actuator, not a host mutator; only skill_status / skill_view / skill_patch / skill_archive IPC actions are permitted. Reference: corrigible-learning-spec.md WS5.3; touch-point map 'WS5.4 review prompt construction'.",
+      "skillName": "backend-worker",
+      "milestone": "ws5-efficacy-loop",
+      "preconditions": [
+        "ws5-skill-efficacy-helper (getSkillEfficacy returns the data)",
+        "ws3-skill-provenance-frontmatter (provenance is on every skill)",
+        "src/skill-service.ts:maybeRunSkillManager (the prompt array at lines 354-361)"
+      ],
+      "expectedBehavior": [
+        "Seeding two skills with efficacy data produces two efficacy lines in the prompt with the correct numbers, appearing before the 'Do not mutate source-owned project or personal skills.' line; skills under the sample floor do not appear.",
+        "Seeding three skills with the three provenance values (operator-requested, agent-inferred, third-party-suggested) shows only the agent-inferred skill in the efficacy block.",
+        "Running the reviewer with seeded 'useless' efficacy (0% pass rate) does not make an automatic archive call — the reviewer still inspects the library and decides; the efficacy line is advisory (VAL-XARE-018).",
+        "The skill-manager review prompt includes both the efficacy lines (per WS5.4) and operates on a .history/ directory governed by the new time-based retention (per WS6.1) — an integration test asserts both (VAL-XARE-013).",
+        "The reviewer mock's call list shows only skill_status / skill_view / skill_patch / skill_archive IPC actions; no bash / edit / write actions targeting host code paths (VAL-INV-I1-002)."
+      ],
+      "fulfills": [
+        "VAL-WS5-010",
+        "VAL-WS5-011",
+        "VAL-WS5-012",
+        "VAL-XARE-013",
+        "VAL-INV-I1-002"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws6-time-floored-retention",
+      "description": "Make `pruneHistory` in `src/skill-history.ts` time-floored (per spec WS6.1). Add `PARITY_CONFIG.skills.historyRetentionDays: number` (default `14`) and the env override `FFT_NANO_SKILL_HISTORY_RETENTION_DAYS`. The new keep-set is the union of (a) the newest 10 snapshots and (b) any snapshot whose embedded version timestamp (`YYYYMMDDTHHMMSSfffZ-SEQ`) parses to within the retention window. The version is parsed, not stat'ed — a test that constructs synthetic snapshots with arbitrary mtime and a fixed real timestamp in the version string asserts the prune follows the parsed timestamp, not the file mtime. `rollbackSkillFile` to a pre-spree version succeeds after 30 rapid mutations when retention=14. The prune is a no-op on the live `SKILL.md`; only `.history/` snapshots are touched. Reference: corrigible-learning-spec.md WS6.1; touch-point map 'WS6.1 pruneHistory'.",
+      "skillName": "backend-worker",
+      "milestone": "ws6-corrigibility-digest",
+      "preconditions": [
+        "src/skill-history.ts:pruneHistory (lines 56-68), snapshotSkillFile (lines 78-95), parseSnapshot (lines 33-46)",
+        "src/parity-config.ts:SkillsParityConfig (historyRetentionDays field to add)",
+        "src/parity-config.ts:applyEnvOverrides (env override block to extend)"
+      ],
+      "expectedBehavior": [
+        "Seeding 15 snapshots and calling pruneHistory (with no retentionDays config) keeps the 10 newest; the 5 oldest are removed (regression test for the existing MAX_SNAPSHOTS invariant).",
+        "With historyRetentionDays=14 and 12 snapshots spanning 1-30 days: all in-window snapshots are kept, and only the 2 out-of-window snapshots that are not in the newest 10 are pruned.",
+        "With historyRetentionDays=14 and 30 rapid mutations in a single day, the .history/ contains at least 30 snapshots (all in-window, all kept); rollbackSkillFile to the 25th-from-newest succeeds and the target file matches the pre-spree content.",
+        "A snapshot with file mtime in 2020 and version in 2026 is kept because the parsed timestamp is in-window; the prune decision follows the parsed timestamp, not the filesystem mtime.",
+        "With historyRetentionDays unset, the helper uses 14 as the retention floor.",
+        "With env var FFT_NANO_SKILL_HISTORY_RETENTION_DAYS=7 set, the effective retention is 7 (env override honored).",
+        "A live SKILL.md with an empty .history/ is a no-op for the prune; the live file is unchanged. A .history/ of 30-day-old snapshots prunes the snapshots but the live SKILL.md is unchanged (VAL-XARE-020)."
+      ],
+      "fulfills": [
+        "VAL-WS6-001",
+        "VAL-WS6-002",
+        "VAL-WS6-003",
+        "VAL-WS6-004",
+        "VAL-WS6-005",
+        "VAL-WS6-006",
+        "VAL-INV-I2-001",
+        "VAL-INV-I2-002",
+        "VAL-XARE-020"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws6-learning-digest",
+      "description": "Add the `/learning` command to `src/telegram-commands.ts` and the catalog in `src/telegram-command-spec.ts` (per spec WS6.2). The handler dispatches to a `handleLearningCommand` helper that returns a multi-line text digest built from existing stores only (no LLM call, no DB writes, no new storage): self-improve JSONL, `task-audit.jsonl`, `evaluator_verdicts` (via `getEvaluatorStats` for the pass-rate trend and `recentSkips`), `learning_injections`, and the pending-approval query against `scheduled_tasks`. Sections in fixed order: skills created/patched/archived in the last 7 days, memory writes, pass-rate trend (this week vs prior), recent skips, pending agent-task approvals, pause status. The handler is main-chat only (isMainGroup guard, like `/skill-manager`). Empty-state messages name the empty sections ('No skills created in the last 7 days.'). The handler is read-only — no spawn, no DB write occurs during `/learning` handling. Reference: corrigible-learning-spec.md WS6.2; touch-point map 'WS6.3 /learning command'.",
+      "skillName": "ui-worker",
+      "milestone": "ws6-corrigibility-digest",
+      "preconditions": [
+        "src/telegram-commands.ts (handler dispatch chain; /skill-manager as the model at lines 2459-2537)",
+        "src/telegram-command-spec.ts (catalog at lines 21-53)",
+        "src/db.ts:getEvaluatorStats (recentSkips)",
+        "ws5-learning-injections-table (memory writes section)",
+        "ws2-task-audit-jsonl (task lifecycle audit)",
+        "ws3-jsonl-downgrade-events (skill manager JSONL for skills section)",
+        "ws6-global-pause-flag (pause status line)"
+      ],
+      "expectedBehavior": [
+        "src/telegram-command-spec.ts has an entry with command: 'learning'; /help reports it; the dispatcher chain in telegram-commands.ts has an `if (cmd === '/learning')` block returning true (handled).",
+        "A /learning invocation from a non-main chat is refused with a permission message; the main chat receives the digest.",
+        "The rendered digest contains all required sections (skills created/patched/archived, memory writes, pass-rate trend, recent skips, pending agent-task approvals, pause status) in fixed order; content is rendered from existing stores only.",
+        "A group with no learning history (no JSONL events, no evaluator verdicts, no injections, no pending tasks) renders a friendly empty-state with 'no ...' lines; not blank, not a crash.",
+        "The 'recent skips' section shows the same `recentSkips` value returned by getEvaluatorStats(groupFolder) — a group with 4 skips in the last 20 runs shows 'Recent skips: 4 / 20' (VAL-WS6-011).",
+        "The 'pending agent-task approvals' section lists the same pending rows surfaced by the WS2 approval panel (scheduled_tasks with status='pending_approval'); the digest is read-only and does not duplicate the approval buttons.",
+        "The handler is read-only: a test asserts no spawn and no DB write occurs during /learning handling (VAL-WS6-013).",
+        "A group with 6 skipped rows in evaluator_verdicts shows the same count in both the degraded-eval alert path (delivery_outbox row written) and the /learning digest (VAL-XARE-012)."
+      ],
+      "fulfills": [
+        "VAL-WS6-007",
+        "VAL-WS6-008",
+        "VAL-WS6-009",
+        "VAL-WS6-010",
+        "VAL-WS6-011",
+        "VAL-WS6-012",
+        "VAL-WS6-013",
+        "VAL-XARE-012"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws6-global-pause-flag",
+      "description": "Add the persisted `learning_paused` flag (per spec WS6.3). The flag round-trips through `state-persistence.ts` (`data/router_state.json`); the default is `false`. New `/learning pause` and `/learning resume` subcommands in `src/telegram-commands.ts` set `state.learningPaused = true | false` and call `saveState()`. The handler replies with a confirmation message naming the flag ('Learning paused. All autonomous loops will short-circuit.' or 'Learning resumed.'). The state file is updated and reload-survives-restart. The pause flag is read by the self-improve trigger (ws3-self-improve-signal-downgrade), the curator loop (ws6-pause-checks-three-loops), and the WS2 auto-approve path. The flag does NOT affect operator-created cron tasks or interactive-main chat runs — it gates *learning loops* only. Reference: corrigible-learning-spec.md WS6.3; touch-point map 'WS6.2 state-persistence.ts' and 'WS6.4 pause site'.",
+      "skillName": "backend-worker",
+      "milestone": "ws6-corrigibility-digest",
+      "preconditions": [
+        "src/state-persistence.ts:loadState / saveState (lines 49-95)",
+        "src/app-state.ts:state (the global mutable state object to extend)",
+        "src/telegram-commands.ts (handler dispatch for /learning pause and /learning resume)"
+      ],
+      "expectedBehavior": [
+        "loadState reads learning_paused with default false; saveState writes learning_paused; a fresh loadState after saveState with the flag set reads true.",
+        "/learning pause sets the flag, persists, and replies with a confirmation message; a subsequent /learning command confirms the same.",
+        "/learning resume clears the flag, persists, and replies with a confirmation; symmetric to pause.",
+        "Operator-created cron tasks and interactive-main chat runs are unaffected by the pause: a paused state still allows an operator cron announce (delivery row → delivered) and a main chat message; the pause is still in effect afterward."
+      ],
+      "fulfills": [
+        "VAL-WS6-014",
+        "VAL-WS6-015",
+        "VAL-WS6-016"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws6-pause-checks-three-loops",
+      "description": "Wire the global pause flag into the three autonomous loops (per spec WS6.3, integration). In `src/skill-service.ts:shouldTriggerSkillSelfImprove`, the first check after `PARITY_CONFIG.skills.selfImprove.enabled` is `if (state.learningPaused) return { due: false, triggerReason: 'learning-paused' }`; the agent subprocess is not spawned; a JSONL no-op is recorded with `noop_reason: 'learning-paused'`. In `src/skill-lifecycle.ts:shouldRunSkillManager`, the function returns `false` when `state.learningPaused` is true, before the existing `config.enabled`, `state.paused`, and idle checks; the curator tick in `app.ts:runCuratorTick` is therefore a no-op while paused. In the WS2 schedule_task IPC handler, when paused, the `autoApprove` flag is treated as `false` regardless of the config; the resulting row is `status='pending_approval'` and the audit line records the `learning-paused` no-op reason. Reference: corrigible-learning-spec.md WS6.3 acceptance; touch-point map 'WS6.4 self-improve trigger', 'curator loop', 'WS2 auto-approve site'.",
+      "skillName": "backend-worker",
+      "milestone": "ws6-corrigibility-digest",
+      "preconditions": [
+        "ws6-global-pause-flag (state.learningPaused is read at the three sites)",
+        "src/skill-service.ts:shouldTriggerSkillSelfImprove (lines 122-165)",
+        "src/skill-lifecycle.ts:shouldRunSkillManager (lines 843-870)",
+        "ws2-autoapprove-config (the autoApprove config to short-circuit)",
+        "ws3-jsonl-downgrade-events (the JSONL no-op recorder)"
+      ],
+      "expectedBehavior": [
+        "With learningPaused: true, shouldTriggerSkillSelfImprove returns { due: false, triggerReason: 'learning-paused' }; no agent subprocess is started; a JSONL line is written with noop_reason: 'learning-paused' and review_fired: false.",
+        "With learningPaused: true, shouldRunSkillManager returns false (before any other check); the curator tick is a no-op; no JSONL line is written for the curator tick (the per-tick self-improve JSONL is for maybeRunSkillSelfImprovement, not the curator's hourly tick).",
+        "With learningPaused: true and cron.agentTasks.autoApprove: true, the WS2 schedule_task IPC handler inserts a scheduled_tasks row with status='pending_approval' (not 'active'); the audit line records the learning-paused no-op reason; the scheduler does not pick the row up.",
+        "A test with the pause flag on triggers one of each loop and asserts the corresponding no-op event is recorded (JSONL line for self-improve, the in-process return value for curator, the audit line for auto-approve).",
+        "When paused, an inbound non-operator message with a remember signal AND autoApprove: true config still produces a no-op; three independent no-op events are recorded (self-improve JSONL, task-audit.jsonl schedule_task IPC, and a final summary line indicating the auto-approve override was ignored); no agent subprocess is spawned (VAL-XARE-014).",
+        "An operator-created cron announce with delivery_to is not affected by the pause; the task runs, the outbound message is delivered (operatorGrant=true), and the audit file records the lifecycle (VAL-XARE-017)."
+      ],
+      "fulfills": [
+        "VAL-WS6-017",
+        "VAL-WS6-018",
+        "VAL-WS6-019",
+        "VAL-WS6-020",
+        "VAL-XARE-014",
+        "VAL-XARE-017"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "ws6-rate-limit-and-mutation-budgets",
+      "description": "Implement host-enforced learning mutation budgets (per handoff INV.2 and the spec's I2 rate-bounded requirement). Add per-run and rolling mutation budgets at the host mutation gateways (`skill_action` IPC, memory writes, schedule_task creates) — a single reviewer run cannot issue many skill or memory mutations in one pass. The budgets are enforced in the host code, not in prompts, and the per-group `minIntervalMinutes` debounce continues to apply between runs. The mutation budget is additive to the existing time-based debounce; it caps the *per-run* mutation count. Memory mutations also gain attribution (the writer JID / authorityId) and a versioned snapshot mechanism so writes are reversible within the time-based window. Reference: handoff INV.2, INV.3, finding 7 ('I2 needs host-enforced mutation bounds'); corrigible-learning-spec.md invariants I2, I5.",
+      "skillName": "backend-worker",
+      "milestone": "ws6-corrigibility-digest",
+      "preconditions": [
+        "src/skill-lifecycle.ts:createSkill / patchSkill (the skill mutation gateways)",
+        "src/memory-backend.ts (the memory write gateway)",
+        "src/host-coordination.ts:processTaskIpc (the schedule_task IPC)",
+        "ws3-skill-provenance-frontmatter (provenance is stamped on every write)",
+        "ws6-time-floored-retention (the time-based reversibility window)"
+      ],
+      "expectedBehavior": [
+        "A single reviewer run cannot issue more than the per-run mutation budget (configurable) skill or memory mutations; mutations beyond the budget are rejected with a logged reason and a JSONL no-op event.",
+        "A per-group rolling mutation budget caps total mutations per time window; exceeding the rolling budget debounces subsequent runs (the per-group minIntervalMinutes continues to apply as the inter-run debounce).",
+        "Memory writes include attribution (writer JID, authorityId) and a versioned snapshot (so writes are reversible within the historyRetentionDays window); third-party textual signals may not directly become durable memory — host-observed tool evidence is the only path to durable agent-inferred learning.",
+        "The mutation budgets are enforced in the host code, not in prompts — prompt bypass is not possible.",
+        "The I2 rate-bounded requirement holds: the per-group minIntervalMinutes debounce is exercised by VAL-INV-I2-003 (two signals within 1 minute → only one review spawned; the second records noop_reason: 'debounced')."
+      ],
+      "fulfills": [],
+      "status": "pending"
+    },
+    {
+      "id": "inv2-mutation-budgets",
+      "description": "Enforce the handoff's INV.2 invariant (host-enforced learning mutation budgets) by coordinating ws6-rate-limit-and-mutation-budgets (the budgets themselves) with the per-group minIntervalMinutes debounce in `PARITY_CONFIG.skills.selfImprove`. The behavior: a single reviewer run cannot exceed the per-run mutation budget; the rolling window caps total mutations; the inter-run debounce caps trigger frequency. The combined effect is that a misbehaving reviewer cannot flush the corrigibility window in a short period. The handoff INV.2 has no separate validation IDs; the I2 assertion for rate-limit (VAL-INV-I2-003) and the WS6 time-floored retention tests are the proof. Reference: handoff INV.2; corrigible-learning-spec.md invariant I2 rate-bounded.",
+      "skillName": "backend-worker",
+      "milestone": "ws6-corrigibility-digest",
+      "preconditions": [
+        "ws6-rate-limit-and-mutation-budgets (the budgets themselves)",
+        "src/skill-service.ts (per-group minIntervalMinutes debounce in shouldTriggerSkillSelfImprove)",
+        "ws6-time-floored-retention (the time-based floor complements the rate-limit)"
+      ],
+      "expectedBehavior": [
+        "Triggering two full-priority signals within 1 minute results in only one review spawned; the JSONL records the first as a real review and the second with noop_reason: 'debounced' (VAL-INV-I2-003).",
+        "The per-run mutation budget caps a single reviewer run's skill + memory mutations; the rolling window caps total mutations per group; the inter-run debounce caps trigger frequency.",
+        "The combined enforcement means a misbehaving reviewer cannot flush the corrigibility window in hours; the 14-day time floor plus the rate limits hold I2."
+      ],
+      "fulfills": [
+        "VAL-INV-I2-003"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "inv3-memory-mutations",
+      "description": "Enforce the handoff's INV.3 invariant (attributed, versioned, reversible memory mutations) by coordinating ws5-injection-stamping (the recording of what was injected), ws6-time-floored-retention (the reversibility window for memory snapshots, mirroring the skill history pattern), and the static check that memory writes do not alter evaluator rubrics (I1 at the memory seam). The behavior: every memory write is attributed (writer JID, authorityId), versioned (a snapshot is taken so the write is reversible), and the snapshot retention is time-floored (I2's time-based reversibility window). Third-party textual signals may not become durable memory directly — only host-observed tool evidence can produce agent-inferred durable learning. Reference: handoff INV.3, finding 8 ('Memory mutations need attribution and reversibility'); corrigible-learning-spec.md invariants I1, I2, I5.",
+      "skillName": "backend-worker",
+      "milestone": "ws6-corrigibility-digest",
+      "preconditions": [
+        "ws5-injection-stamping (records what was injected)",
+        "ws6-time-floored-retention (the time-floored retention pattern, applied to memory snapshots)",
+        "src/memory-backend.ts:writeMemory (the memory write gateway)",
+        "ws3-skill-provenance-frontmatter (the I5 third-party-as-candidate-only enforcement)"
+      ],
+      "expectedBehavior": [
+        "Every call to snapshotSkillFile (or its memory-write equivalent) is paired with an audit entry preserved by the time-floored retention; for 5 mutations of a skill, 5 snapshot files exist and the live SKILL.md matches the most recent (VAL-INV-I2-001).",
+        "A mutation from yesterday is reversible for at least 14 days regardless of how many newer mutations occurred (VAL-INV-I2-002).",
+        "Memory writes target only groups/<folder>/memory/ and the embeddings cache; a static check confirms no memory write targets a .ts source file in evaluator.ts, permission-gate-policy.ts, or any other host code path (VAL-INV-I1-003).",
+        "Third-party textual signals may create candidates or light review signals, but never become durable memory directly; host-observed tool evidence (fail-then-fix / multi-step-procedure) is the only path to durable agent-inferred learning."
+      ],
+      "fulfills": [
+        "VAL-INV-I1-003"
+      ],
+      "status": "pending"
+    }
+  ]
+}
