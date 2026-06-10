@@ -335,16 +335,23 @@ export async function finalizeTelegramToolProgress(
 export async function deleteTelegramPreviewMessage(
   chatJid: string,
   messageId: number,
+  messageIds?: number[],
 ): Promise<void> {
   if (!state.telegramBot) return;
-  try {
-    await state.telegramBot.deleteMessage(chatJid, messageId);
-    logger.info({ chatJid, messageId }, 'Telegram streaming preview deleted');
-  } catch (err) {
-    logger.warn(
-      { chatJid, messageId, err },
-      'Failed to delete Telegram streaming preview',
-    );
+  const ids = messageIds && messageIds.length ? messageIds : [messageId];
+  for (const id of ids) {
+    try {
+      await state.telegramBot.deleteMessage(chatJid, id);
+      logger.info(
+        { chatJid, messageId: id },
+        'Telegram streaming preview deleted',
+      );
+    } catch (err) {
+      logger.warn(
+        { chatJid, messageId: id, err },
+        'Failed to delete Telegram streaming preview',
+      );
+    }
   }
 }
 
@@ -352,16 +359,23 @@ export async function finalizeTelegramPreviewMessage(
   chatJid: string,
   messageId: number,
   text: string,
+  messageIds?: number[],
 ): Promise<boolean> {
   if (!state.telegramBot) return false;
+
+  const ids = messageIds && messageIds.length ? messageIds : [messageId];
 
   const extracted = extractTelegramAttachmentHintsFromReply(text);
   if (extracted.hints.length > 0) {
     const sent = await sendTelegramAgentReply(chatJid, text);
+    // The reply carries attachments and is delivered as fresh messages, so the
+    // transient preview bubbles must be removed to avoid orphaned leading text.
+    await deleteTelegramPreviewMessage(chatJid, ids[0], ids);
     logger.info(
       {
         chatJid,
         messageId,
+        previewCount: ids.length,
         finalizeMode: 'send-full-reply',
         textLength: text.length,
       },
@@ -379,8 +393,20 @@ export async function finalizeTelegramPreviewMessage(
     return true;
   }
 
+  // Reconcile final chunks against the existing preview bubbles: edit each
+  // bubble in place, send extra chunks as new messages, and delete any preview
+  // bubbles left over when the final has fewer chunks than the live preview.
   try {
-    await state.telegramBot.editStreamMessage(chatJid, messageId, chunks[0]);
+    const reconcileCount = Math.max(chunks.length, ids.length);
+    for (let i = 0; i < reconcileCount; i++) {
+      if (i < chunks.length && i < ids.length) {
+        await state.telegramBot.editStreamMessage(chatJid, ids[i], chunks[i]);
+      } else if (i < chunks.length) {
+        await state.telegramBot.sendMessage(chatJid, chunks[i]);
+      } else {
+        await deleteTelegramPreviewMessage(chatJid, ids[i]);
+      }
+    }
   } catch (err) {
     logger.warn(
       { chatJid, messageId, err },
@@ -389,14 +415,11 @@ export async function finalizeTelegramPreviewMessage(
     return await sendMessage(chatJid, text);
   }
 
-  for (const chunk of chunks.slice(1)) {
-    await state.telegramBot.sendMessage(chatJid, chunk);
-  }
-
   logger.info(
     {
       chatJid,
       messageId,
+      previewCount: ids.length,
       finalizeMode: chunks.length > 1 ? 'edit-plus-followups' : 'edit-in-place',
       chunkCount: chunks.length,
       textLength: text.length,

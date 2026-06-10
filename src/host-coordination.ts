@@ -62,6 +62,7 @@ export interface HostCoordinationDeps {
     chatJid: string,
     messageId: number,
     text: string,
+    messageIds?: number[],
   ) => Promise<boolean>;
   sendAgentResultMessage: (
     chatJid: string,
@@ -222,6 +223,7 @@ export async function deliverRuntimeAgentMessage(
         params.chatJid,
         previewState.messageId,
         params.text,
+        previewState.messageIds,
       );
       if (!finalized) {
         await deps.sendTelegramAgentReply(params.chatJid, params.text);

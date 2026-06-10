@@ -110,18 +110,29 @@ test('normalizeTelegramDraftText keeps short text unchanged', () => {
   assert.equal(normalizeTelegramDraftText('hello draft'), 'hello draft');
 });
 
-test('normalizeTelegramDraftText truncates to Telegram limit with prefix', () => {
+test('normalizeTelegramDraftText truncates to Telegram limit keeping the head', () => {
   const long = 'a'.repeat(5000);
   const normalized = normalizeTelegramDraftText(long);
   assert.equal(normalized.length, 4096);
-  assert.equal(normalized.startsWith('...'), true);
-  assert.equal(normalized.endsWith('a'), true);
+  assert.equal(normalized.startsWith('a'), true);
+  assert.equal(normalized.endsWith('…'), true);
 });
 
 test('normalizeTelegramPreviewText is preview-only truncation helper', () => {
   const long = 'b'.repeat(5000);
-  assert.equal(normalizeTelegramPreviewText(long).length, 4096);
+  const normalized = normalizeTelegramPreviewText(long);
+  assert.equal(normalized.length, 4096);
+  // Head-preserving: a single overflowing bubble keeps its start and marks the
+  // cut with a trailing ellipsis instead of dropping the head.
+  assert.equal(normalized.startsWith('bbbb'), true);
+  assert.equal(normalized.endsWith('…'), true);
   assert.deepEqual(splitTelegramText(long).join(''), long);
+});
+
+test('normalizeTelegramPreviewText keeps the head for a long real reply', () => {
+  const reply = 'Here is the answer. ' + 'word '.repeat(1200);
+  const normalized = normalizeTelegramPreviewText(reply);
+  assert.equal(normalized.startsWith('Here is the answer.'), true);
 });
 
 test('markdownToTelegramHtml renders fenced code as Telegram pre/code', () => {

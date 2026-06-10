@@ -46,11 +46,13 @@ export interface FinalizeCompletedRunParams {
   deleteTelegramPreviewMessage: (
     chatJid: string,
     messageId: number,
+    messageIds?: number[],
   ) => Promise<void>;
   finalizeTelegramPreviewMessage: (
     chatJid: string,
     messageId: number,
     text: string,
+    messageIds?: number[],
   ) => Promise<boolean>;
   sendAgentResultMessage: (
     chatJid: string,
@@ -298,11 +300,13 @@ export interface MessageDispatcherDeps {
   deleteTelegramPreviewMessage: (
     chatJid: string,
     messageId: number,
+    messageIds?: number[],
   ) => Promise<void>;
   finalizeTelegramPreviewMessage: (
     chatJid: string,
     messageId: number,
     text: string,
+    messageIds?: number[],
   ) => Promise<boolean>;
   sendAgentResultMessage: (
     chatJid: string,
@@ -733,6 +737,7 @@ export async function finalizeCompletedRun(
       await params.deleteTelegramPreviewMessage(
         params.chatJid,
         params.telegramPreviewState.messageId,
+        params.telegramPreviewState.messageIds,
       );
     }
     params.emitTuiChatEvent({
@@ -754,6 +759,7 @@ export async function finalizeCompletedRun(
       await params.deleteTelegramPreviewMessage(
         params.chatJid,
         params.telegramPreviewState.messageId,
+        params.telegramPreviewState.messageIds,
       );
     }
     params.emitTuiAgentEvent({
@@ -793,6 +799,7 @@ export async function finalizeCompletedRun(
         params.chatJid,
         params.telegramPreviewState!.messageId,
         streamedText,
+        params.telegramPreviewState!.messageIds,
       );
       if (!finalizedPreview && params.deliverToChat !== false) {
         await params.sendAgentResultMessage(params.chatJid, streamedText, {
@@ -855,6 +862,7 @@ export async function finalizeCompletedRun(
                 params.chatJid,
                 params.telegramPreviewState.messageId,
                 streamedText,
+                params.telegramPreviewState.messageIds,
               )
             : false;
         if (
@@ -877,6 +885,7 @@ export async function finalizeCompletedRun(
         await params.deleteTelegramPreviewMessage(
           params.chatJid,
           params.telegramPreviewState.messageId,
+          params.telegramPreviewState.messageIds,
         );
       }
       params.emitTuiAgentEvent({
@@ -907,6 +916,7 @@ export async function finalizeCompletedRun(
         params.chatJid,
         params.telegramPreviewState.messageId,
         shouldPreserveStreamedTimeoutPreview ? streamedText : effectiveResult,
+        params.telegramPreviewState.messageIds,
       );
       if (
         finalizedPreview &&
@@ -971,6 +981,7 @@ export async function finalizeCompletedRun(
     await params.deleteTelegramPreviewMessage(
       params.chatJid,
       params.telegramPreviewState.messageId,
+      params.telegramPreviewState.messageIds,
     );
   }
   params.emitTuiAgentEvent({
