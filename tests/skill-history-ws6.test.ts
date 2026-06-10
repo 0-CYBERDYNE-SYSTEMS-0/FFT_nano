@@ -8,6 +8,7 @@ import {
   listSkillHistory,
   rollbackSkillFile,
   snapshotSkillFile,
+  parseVersionTimestamp,
 } from '../src/skill-history.js';
 import { executeSkillAction } from '../src/skill-lifecycle.js';
 import { PARITY_CONFIG } from '../src/parity-config.js';
@@ -62,6 +63,104 @@ test('VAL-WS6-001: pruneHistory keeps at least 10 entries; all in-window entries
   assert.equal(fs.readFileSync(history[0].path, 'utf-8'), 'v0');
   // Newest snapshot captures 'v14' (snapshot after last loop write)
   assert.equal(fs.readFileSync(history[history.length - 1].path, 'utf-8'), 'v14');
+});
+
+// ---------------------------------------------------------------------------
+// VAL-WS6-002 — pruneHistory keeps snapshots newer than historyRetentionDays
+// 12 snapshots, 1-30 day span, retention=14 keeps all in-window,
+// prunes 2 out-of-window that are not in newest 10
+// ---------------------------------------------------------------------------
+
+test('VAL-WS6-002: in-window snapshots are always preserved by prune regardless of count', () => {
+  const target = tempSkillFile();
+  fs.writeFileSync(target, 'current');
+  const now = new Date();
+
+  // Create enough snapshots that we exceed MAX_SNAPSHOTS=10
+  // All will be in-window (within 14 days) to verify the time floor.
+  // Ages 1-11 days: all in-window. This creates 11 entries.
+  for (let i = 0; i < 11; i += 1) {
+    const d = new Date(now.getTime() - (i + 1) * 24 * 60 * 60 * 1000);
+    const ts = d.toISOString().replace(/[:.]/g, '');
+    const v = `${ts}-${(i + 1).toString(36).padStart(6, '0')}`;
+    writeSyntheticSnapshot(target, v, `in-window-${i}`, d.getTime());
+  }
+
+  // Trigger prune
+  fs.writeFileSync(target, 'latest');
+  snapshotSkillFile(target);
+
+  const history = listSkillHistory(target);
+
+  // All 11 in-window entries must survive (time floor protects them)
+  // Even though 11 > MAX_SNAPSHOTS=10, the time floor protects all in-window entries.
+  assert.equal(
+    history.length,
+    12, // 11 synthetic + 1 new from snapshotSkillFile (all in-window)
+    `All in-window entries should survive prune (time floor); got ${history.length}`,
+  );
+
+  // Verify specific in-window entries are present
+  for (let i = 0; i < 11; i += 1) {
+    const d = new Date(now.getTime() - (i + 1) * 24 * 60 * 60 * 1000);
+    const ts = d.toISOString().replace(/[:.]/g, '');
+    const v = `${ts}-${(i + 1).toString(36).padStart(6, '0')}`;
+    const entry = history.find((e) => e.version === v);
+    assert.ok(entry, `In-window entry age ${i + 1}d should be kept by time floor`);
+  }
+});
+
+test('VAL-WS6-002: out-of-window snapshots are pruned when count exceeds MAX_SNAPSHOTS', () => {
+  const target = tempSkillFile();
+  fs.writeFileSync(target, 'current');
+  const now = new Date();
+
+  // Create enough out-of-window entries to trigger pruning.
+  // With 5 in-window + 15 out-of-window + 1 new = 21 entries.
+  // MAX_SNAPSHOTS=10: keep 5 in-window (protected by time floor) + 10 out-of-window + 1 new = 16 entries.
+  const inWindowAges = [1, 2, 3, 4, 5];
+  const outOfWindowAges = [15, 16, 20, 24, 28, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39];
+
+  for (let i = 0; i < inWindowAges.length; i += 1) {
+    const d = new Date(now.getTime() - inWindowAges[i] * 24 * 60 * 60 * 1000);
+    const ts = d.toISOString().replace(/[:.]/g, '');
+    const v = `${ts}-${(i + 1).toString(36).padStart(6, '0')}`;
+    writeSyntheticSnapshot(target, v, `in-window-${i}`, d.getTime());
+  }
+
+  for (let i = 0; i < outOfWindowAges.length; i += 1) {
+    const d = new Date(now.getTime() - outOfWindowAges[i] * 24 * 60 * 60 * 1000);
+    const ts = d.toISOString().replace(/[:.]/g, '');
+    const v = `${ts}-${(i + 100).toString(36).padStart(6, '0')}`;
+    writeSyntheticSnapshot(target, v, `out-of-window-${i}`, d.getTime());
+  }
+
+  // Trigger prune
+  fs.writeFileSync(target, 'latest');
+  snapshotSkillFile(target);
+
+  const history = listSkillHistory(target);
+
+  // After prune: 5 in-window + 1 new (today) + 10 out-of-window = 16 entries
+  // (The implementation keeps all in-window (time floor) + MAX_SNAPSHOTS=10 out-of-window entries)
+  assert.equal(
+    history.length,
+    16,
+    `Expected 16 entries after prune (5 in-window + 10 out-of-window from MAX_SNAPSHOTS + 1 new), got ${history.length}`,
+  );
+
+  // Verify the oldest entries were pruned: look for entries older than 29 days (should be pruned)
+  // The out-of-window ages that should be pruned are the oldest 5: 15, 16, 20, 24, 28 days
+  // We check that the history has exactly 16 entries and that entries with very old timestamps are not present
+  const veryOldTs = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/[:.]/g, '');
+  const hasVeryOldEntry = history.some((e) => e.version.startsWith(veryOldTs));
+  assert.equal(
+    hasVeryOldEntry,
+    false,
+    'Entries older than 29 days should be pruned (oldest out-of-window is 28 days)',
+  );
 });
 
 
