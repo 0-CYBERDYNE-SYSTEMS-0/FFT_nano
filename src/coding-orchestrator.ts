@@ -17,6 +17,7 @@ import type {
   ExtensionUIResponse,
   ContainerRuntimeEvent,
 } from './pi-runner.js';
+import { ADVISORY_FRAME_HEADER } from './pi-runner.js';
 import { createHostEventId, type HostEvent } from './runtime/host-events.js';
 import { getCoderLearningsForContext } from './coder-learnings.js';
 import {
@@ -1077,13 +1078,19 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       const learningsContext = [evalStatsContext, baseLearningsContext]
         .filter(Boolean)
         .join('\n\n');
+      // VAL-WS3-018 + VAL-WS3-019: Wrap entire learnings block (eval stats +
+      // base learnings) in advisory frame so neither sub-section can authorize
+      // a gated action.
+      const framedLearningsContext = learningsContext
+        ? `${ADVISORY_FRAME_HEADER}\n\n${learningsContext}`
+        : '';
 
       const output = await deps.runContainerAgent(
         request.group,
         {
           prompt: buildWorkerPrompt(
             request,
-            learningsContext,
+            framedLearningsContext,
             executionContract,
           ),
           groupFolder: request.group.folder,
