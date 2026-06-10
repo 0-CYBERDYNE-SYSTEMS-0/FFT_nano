@@ -261,7 +261,29 @@ export function maybeRunSkillSelfImprovement(params: {
       ? `signal:${signals.join(',')}`
       : decision.triggerReason;
 
+  // WS6.3: if global pause is active and a full-priority signal would fire,
+  // suppress the spawn and record a pause-driven noop.
+  if (state.learningPaused && priority === 'full' && decision.due) {
+    recordSelfImproveEvent(params.group.folder, {
+      run_id: runId,
+      authorityId: runId,
+      sender_role: senderRole,
+      review_type: 'skill-self-improve',
+      trigger_reason: triggerReason,
+      signals_detected: signals,
+      review_fired: false,
+      noop_reason: 'learning-paused',
+      success: true,
+    });
+    return;
+  }
+
   if (!decision.due) {
+    // WS3.5: detect downgrade — signals were found but priority was capped at
+    // 'light' because the sender is not the operator. Record the downgrade reason
+    // so the JSONL event is observable without requiring DB state.
+    const wasDowngraded =
+      signals.length > 0 && priority === 'light' && senderRole !== 'operator';
     recordSelfImproveEvent(params.group.folder, {
       run_id: runId,
       authorityId: runId, // INV.1: stamped for forensic traceability (VAL-XARE-009)
@@ -270,9 +292,11 @@ export function maybeRunSkillSelfImprovement(params: {
       trigger_reason: triggerReason,
       signals_detected: signals,
       review_fired: false,
-      noop_reason: decision.triggerReason.includes('debounced')
-        ? 'min-interval debounce'
-        : 'cadence threshold not reached',
+      noop_reason: wasDowngraded
+        ? 'non-operator-signal-downgraded'
+        : decision.triggerReason.includes('debounced')
+          ? 'min-interval debounce'
+          : 'cadence threshold not reached',
       success: true,
     });
     return;

@@ -348,3 +348,152 @@ test('VAL-WS3-007: empty/null/undefined senderRole defaults to unknown', () => {
   });
   assert.equal(noHitResult.priority, 'none', 'no hit with unknown sender is none');
 });
+
+// ---------------------------------------------------------------------------
+// WS3.5 — JSONL observability for downgrades (VAL-WS3-021..024)
+// ---------------------------------------------------------------------------
+
+test('VAL-WS3-021: downgraded non-operator signal carries sender_role and noop_reason', () => {
+  const group = `ws3021-${Date.now().toString(36)}`;
+  const groupDir = resolveGroupFolderPath(group);
+  try {
+    // Simulate a non-operator 'member' remember signal that was downgraded.
+    // A member remember produces priority=light (not full), so it does NOT
+    // fire a review — it becomes a downgrade noop.
+    recordSelfImproveEvent(group, {
+      run_id: 'r-downgrade',
+      authorityId: 'auth-downgrade',
+      sender_role: 'member',
+      review_type: 'skill-self-improve',
+      trigger_reason: 'signal:remember',
+      signals_detected: ['remember'],
+      review_fired: false,
+      noop_reason: 'non-operator-signal-downgraded',
+      success: true,
+    });
+    const logPath = path.join(groupDir, 'logs', 'self-improve-events.jsonl');
+    assert.ok(fs.existsSync(logPath), `expected log at ${logPath}`);
+    const lines = fs.readFileSync(logPath, 'utf-8').trim().split('\n');
+    assert.equal(lines.length, 1);
+    const parsed = JSON.parse(lines[0]);
+    assert.equal(parsed.sender_role, 'member');
+    assert.equal(parsed.noop_reason, 'non-operator-signal-downgraded');
+    assert.deepEqual(parsed.signals_detected, ['remember']);
+    assert.equal(parsed.review_fired, false);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS3-021: unknown sender role downgraded signal carries noop_reason', () => {
+  const group = `ws3021b-${Date.now().toString(36)}`;
+  const groupDir = resolveGroupFolderPath(group);
+  try {
+    recordSelfImproveEvent(group, {
+      run_id: 'r-downgrade-unknown',
+      authorityId: 'auth-downgrade-unknown',
+      sender_role: 'unknown',
+      review_type: 'skill-self-improve',
+      trigger_reason: 'signal:correction',
+      signals_detected: ['correction'],
+      review_fired: false,
+      noop_reason: 'non-operator-signal-downgraded',
+      success: true,
+    });
+    const logPath = path.join(groupDir, 'logs', 'self-improve-events.jsonl');
+    const lines = fs.readFileSync(logPath, 'utf-8').trim().split('\n');
+    const parsed = JSON.parse(lines[0]);
+    assert.equal(parsed.sender_role, 'unknown');
+    assert.equal(parsed.noop_reason, 'non-operator-signal-downgraded');
+    assert.deepEqual(parsed.signals_detected, ['correction']);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS3-022: operator-signal full review does not carry noop_reason', () => {
+  const group = `ws3022-${Date.now().toString(36)}`;
+  const groupDir = resolveGroupFolderPath(group);
+  try {
+    recordSelfImproveEvent(group, {
+      run_id: 'r-operator-full',
+      authorityId: 'auth-operator-full',
+      sender_role: 'operator',
+      review_type: 'skill-self-improve',
+      trigger_reason: 'signal:remember',
+      signals_detected: ['remember'],
+      review_fired: true,
+      success: true,
+    });
+    const logPath = path.join(groupDir, 'logs', 'self-improve-events.jsonl');
+    const lines = fs.readFileSync(logPath, 'utf-8').trim().split('\n');
+    const parsed = JSON.parse(lines[0]);
+    assert.equal(parsed.sender_role, 'operator');
+    assert.equal(parsed.review_fired, true);
+    // noop_reason must be absent or null for a real review
+    assert.ok(
+      parsed.noop_reason === undefined || parsed.noop_reason === null,
+      'operator full review must not have noop_reason',
+    );
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS3-023: pause-driven noop carries learning-paused noop_reason', () => {
+  const group = `ws3023-${Date.now().toString(36)}`;
+  const groupDir = resolveGroupFolderPath(group);
+  try {
+    // When global pause is active, a full-priority signal records noop with
+    // 'learning-paused' and review_fired: false.
+    recordSelfImproveEvent(group, {
+      run_id: 'r-paused',
+      authorityId: 'auth-paused',
+      sender_role: 'operator',
+      review_type: 'skill-self-improve',
+      trigger_reason: 'signal:remember',
+      signals_detected: ['remember'],
+      review_fired: false,
+      noop_reason: 'learning-paused',
+      success: true,
+    });
+    const logPath = path.join(groupDir, 'logs', 'self-improve-events.jsonl');
+    const lines = fs.readFileSync(logPath, 'utf-8').trim().split('\n');
+    const parsed = JSON.parse(lines[0]);
+    assert.equal(parsed.noop_reason, 'learning-paused');
+    assert.equal(parsed.review_fired, false);
+    assert.deepEqual(parsed.signals_detected, ['remember']);
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS3-024: JSONL writer errors are caught and never thrown', () => {
+  // Inject a read-only directory so appendFileSync fails — the host must not throw.
+  const group = `ws3024-${Date.now().toString(36)}`;
+  const groupDir = resolveGroupFolderPath(group);
+  // Pre-create the logs dir as a file (not a directory) to cause write failure.
+  const logFileAsDir = path.join(groupDir, 'logs');
+  fs.mkdirSync(groupDir, { recursive: true });
+  fs.writeFileSync(logFileAsDir, 'will fail'); // logs is a file, not a dir
+
+  // recordSelfImproveEvent must not throw — it catches and logs the error.
+  let threw = false;
+  try {
+    recordSelfImproveEvent(group, {
+      run_id: 'r-fail',
+      authorityId: 'auth-fail',
+      sender_role: 'member',
+      review_type: 'skill-self-improve',
+      trigger_reason: 'signal:remember',
+      signals_detected: ['remember'],
+      review_fired: false,
+      noop_reason: 'non-operator-signal-downgraded',
+      success: true,
+    });
+  } catch {
+    threw = true;
+  }
+  assert.equal(threw, false, 'recordSelfImproveEvent must not throw on write error');
+  fs.rmSync(groupDir, { recursive: true, force: true });
+});

@@ -246,6 +246,10 @@ export const state = {
   tuiGatewayServer: null as TuiGatewayServer | null,
   webControlCenterServer: null as WebControlCenterServer | null,
   piModelsCache: null as { entries: PiModelEntry[]; loadedAt: number } | null,
+  // WS6.3: global kill-switch for all learning loops. Checked by
+  // maybeRunSkillSelfImprovement, maybeRunSkillManager, and the WS2
+  // auto-approve path. Wired to state-persistence.ts by WS6.3.
+  learningPaused: false,
 };
 
 // ---------------------------------------------------------------------------
