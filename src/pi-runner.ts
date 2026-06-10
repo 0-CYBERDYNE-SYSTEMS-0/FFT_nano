@@ -1484,6 +1484,12 @@ export async function runContainerAgent(
         FFT_NANO_CHAT_JID: input.chatJid,
         FFT_NANO_REQUEST_ID: input.requestId || '',
         FFT_NANO_RUN_AUTHORITY_ID: runAuthority.authorityId,
+        // WS1: Push the full RunAuthority snapshot into the subprocess env so the
+        // fft-permission-gate extension can call evaluatePermissionGate (not the legacy
+        // isSubagent/hasUI overload). The authority is JSON-serialized here; the
+        // extension parses it and uses it directly. This avoids an IPC round-trip
+        // for every tool call.
+        FFT_NANO_RUN_AUTHORITY_JSON: JSON.stringify(runAuthority),
         FFT_NANO_CODING_HINT: codingHint,
         FFT_NANO_IS_MAIN: isMain ? '1' : '0',
         FFT_NANO_IPC_DIR: wp.ipcDir,

@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-import { evaluatePermissionGateLegacy } from '../permission-gate-policy.js';
+import { evaluatePermissionGate } from '../permission-gate-policy.js';
+import type { RunAuthority } from '../types.js';
 
 type ExtensionAPI = any;
 
@@ -78,24 +79,58 @@ function writeHeldMarker(
   }
 }
 
-export default function (pi: ExtensionAPI) {
-  const isSubagent = process.env.FFT_NANO_SUBAGENT === '1';
+/**
+ * Parse the RunAuthority from the environment.
+ *
+ * The host pushes a JSON snapshot of the RunAuthority into the subprocess env
+ * via FFT_NANO_RUN_AUTHORITY_JSON. This is the authoritative source for the
+ * gate decision (origin, operatorGrant, effectiveToolSet).
+ *
+ * If the env var is missing or malformed, we fall back to a conservative
+ * block to maintain the security invariant (I1: gate never allows based on
+ * missing authority).
+ */
+function parseRunAuthority(): RunAuthority | null {
+  const raw = process.env.FFT_NANO_RUN_AUTHORITY_JSON;
+  if (!raw) {
+    console.error('[fft-permission-gate] FFT_NANO_RUN_AUTHORITY_JSON is not set');
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as RunAuthority;
+  } catch (err) {
+    console.error('[fft-permission-gate] Failed to parse FFT_NANO_RUN_AUTHORITY_JSON:', err);
+    return null;
+  }
+}
 
+export default function (pi: ExtensionAPI) {
   pi.on('tool_call', async (event: any, ctx: any) => {
     const toolName = String(event.toolName ?? '');
 
-    // Try the RunAuthority-based gate first (preferred path).
-    // The subprocess receives FFT_NANO_RUN_AUTHORITY_ID but not the full
-    // RunAuthority object — for now the extension uses the legacy signature
-    // which maps isSubagent/hasUI to origin equivalently.
-    const decision = evaluatePermissionGateLegacy({
+    // Read the RunAuthority snapshot pushed into the subprocess env by the host.
+    // This contains origin, operatorGrant, and effectiveToolSet — all host-derived
+    // fields that the agent subprocess cannot influence (I1 invariant).
+    const runAuthority = parseRunAuthority();
+    if (!runAuthority) {
+      // Conservative fallback: block if we cannot verify the authority.
+      // This maintains the security invariant — missing authority means no trust.
+      return { block: true, reason: 'RunAuthority not available; refusing tool call' };
+    }
+
+    const input =
+      event.input && typeof event.input === 'object'
+        ? (event.input as Record<string, unknown>)
+        : {};
+
+    // WS1: Use the RunAuthority-based gate. This replaces the legacy
+    // isSubagent/hasUI signature. The extension now consumes the same
+    // authority the host uses, so bash-guard and write/edit confirm/block
+    // decisions are consistent with the host-side (category, origin) policy table.
+    const decision = evaluatePermissionGate({
       toolName,
-      input:
-        event.input && typeof event.input === 'object'
-          ? (event.input as Record<string, unknown>)
-          : {},
-      isSubagent,
-      hasUI: ctx.hasUI,
+      input,
+      runAuthority,
     });
 
     if (decision.action === 'allow') {

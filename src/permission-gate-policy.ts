@@ -113,10 +113,37 @@ export function evaluatePermissionGate(params: {
   const classification = classifyActionCategory(toolName, input);
 
   // VAL-WS1-007: read and local-mutate always allow regardless of origin
+  // BUT: protected paths for write/edit require confirm on interactive-main,
+  // block on headless/subagent/evaluator.
   if (
     classification.category === 'read' ||
     classification.category === 'local-mutate'
   ) {
+    // Protected path check for edit/write tools
+    if (
+      (toolName === 'edit' || toolName === 'write') &&
+      typeof input.path === 'string' &&
+      isProtectedPath(input.path)
+    ) {
+      if (
+        origin === 'interactive-main' &&
+        runAuthority.operatorGrant
+      ) {
+        return {
+          action: 'confirm',
+          title: 'Protected Path',
+          message: `The agent wants to ${toolName}:\n\n  ${input.path}\n\nThis is a protected path. Allow?`,
+        };
+      }
+      return {
+        action: 'block',
+        reason: `Write to protected path blocked: ${input.path}. ${
+          origin === 'subagent'
+            ? 'Subagents cannot modify protected files.'
+            : 'Headless/evaluator runs cannot modify protected paths.'
+        }`,
+      };
+    }
     return { action: 'allow' };
   }
 
@@ -171,71 +198,5 @@ export function evaluatePermissionGate(params: {
   }
 
   // Fallback: conservative deny for unknown categories
-  return { action: 'allow' };
-}
-
-/**
- * Evaluate the permission gate using the legacy isSubagent/hasUI parameters.
- * This overload exists for backward compatibility with existing call sites
- * that have not yet been migrated to use RunAuthority.
- *
- * The origin mapping mirrors the RunAuthority derivation:
- *   isSubagent=true           → origin='subagent'
- *   isSubagent=false, hasUI   → origin='interactive-main'
- *   isSubagent=false, !hasUI  → origin='headless'
- */
-export function evaluatePermissionGateLegacy(params: {
-  toolName: string;
-  input: Record<string, unknown>;
-  isSubagent: boolean;
-  hasUI: boolean;
-}): PermissionGateDecision {
-  const { toolName, input, isSubagent, hasUI } = params;
-
-  if (toolName === 'bash') {
-    const command = String(input.command ?? '');
-    const result = isDestructiveCommand(command);
-    if (!result.destructive) return { action: 'allow' };
-
-    if (isSubagent || !hasUI) {
-      return {
-        action: 'block',
-        reason: `Destructive command blocked (${result.matched}). ${
-          isSubagent
-            ? 'Subagents cannot execute destructive commands.'
-            : 'No confirmation UI is available.'
-        }`,
-      };
-    }
-
-    return {
-      action: 'confirm',
-      title: 'Destructive Command',
-      message: `The agent wants to run:\n\n  ${command}\n\nMatched: ${result.matched}\n\nAllow this command?`,
-    };
-  }
-
-  if (toolName === 'write' || toolName === 'edit') {
-    const filePath = String(input.path ?? '');
-    if (!isProtectedPath(filePath)) return { action: 'allow' };
-
-    if (isSubagent || !hasUI) {
-      return {
-        action: 'block',
-        reason: `Write to protected path blocked: ${filePath}. ${
-          isSubagent
-            ? 'Subagents cannot modify protected files.'
-            : 'No confirmation UI is available.'
-        }`,
-      };
-    }
-
-    return {
-      action: 'confirm',
-      title: 'Protected Path',
-      message: `The agent wants to ${toolName}:\n\n  ${filePath}\n\nThis is a protected path. Allow?`,
-    };
-  }
-
   return { action: 'allow' };
 }
