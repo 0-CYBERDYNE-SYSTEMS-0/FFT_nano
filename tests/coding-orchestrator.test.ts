@@ -10,6 +10,11 @@ import {
   pruneRetainedWorktrees,
   type CodingWorkerRequest,
 } from '../src/coding-orchestrator.js';
+import {
+  closeDatabase,
+  getDb,
+  initDatabaseAtPath,
+} from '../src/db.js';
 
 const passingEvaluator = async () => ({
   pass: true,
@@ -769,5 +774,139 @@ test.skip('createDefaultEphemeralWorktree handles unborn repository (no commits)
     // Cleanup
     await worktree.cleanup();
     fs.rmSync(sourceDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// VAL-WS4-004: Coding orchestrator routes through recordVerdictOutcome
+// ---------------------------------------------------------------------------
+
+test.afterEach(() => {
+  closeDatabase();
+});
+
+function makeTmpDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'fft-coder-chokepoint-'));
+}
+
+test('VAL-WS4-004: coding orchestrator writes evaluator_verdicts row with runType=coding', async () => {
+  const tmpRoot = makeTmpDir();
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    initDatabaseAtPath(dbPath);
+
+    const evaluator = async () => ({
+      pass: true,
+      score: 9,
+      issues: [],
+      feedback: 'Good work',
+      skipped: false,
+    });
+
+    const orchestrator = createCodingOrchestrator({
+      activeRuns: new Map(),
+      createEphemeralWorktree: async () => ({
+        worktreePath: '/tmp/coder-verdict-coding',
+        cleanup: async () => {},
+        listChangedFiles: () => ['src/app.ts'],
+        getDiffSummary: () => '1 file changed',
+      }),
+      runContainerAgent: async () => ({
+        status: 'success',
+        result: 'Implemented feature.',
+        usage: { totalTokens: 10 },
+        toolExecutions: [
+          { index: 1, toolName: 'bash', status: 'ok', args: '{"command":"npm test"}' },
+        ],
+      }),
+      publishEvent: () => {},
+      runEvaluatorPass: evaluator,
+    });
+
+    const result = await orchestrator.runTask(
+      makeRequest({
+        requestId: 'verdict-coding-test',
+        config: { toolMode: 'full', isSubagent: false, workspaceMode: 'ephemeral_worktree' },
+      }),
+    );
+
+    assert.equal(result.ok, true);
+
+    // Verify the evaluator_verdicts row was written with runType='coding'
+    const db = getDb();
+    const rows = db!
+      .prepare(`SELECT request_id, run_type, pass, score FROM evaluator_verdicts WHERE group_folder = 'test-group'`)
+      .all() as Array<{ request_id: string; run_type: string; pass: number; score: number }>;
+
+    const codingRow = rows.find((r) => r.run_type === 'coding');
+    assert.ok(codingRow, `Expected a row with run_type='coding', got: ${JSON.stringify(rows)}`);
+    assert.equal(codingRow!.request_id, 'verdict-coding-test');
+    assert.equal(codingRow!.pass, 1);
+    assert.equal(codingRow!.score, 9);
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS4-004: coding orchestrator writes evaluator_verdicts row with runType=subagent when isSubagent=true', async () => {
+  const tmpRoot = makeTmpDir();
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    initDatabaseAtPath(dbPath);
+
+    const evaluator = async () => ({
+      pass: true,
+      score: 8,
+      issues: [],
+      feedback: 'Subagent work satisfactory',
+      skipped: false,
+    });
+
+    const orchestrator = createCodingOrchestrator({
+      activeRuns: new Map(),
+      createEphemeralWorktree: async () => ({
+        worktreePath: '/tmp/coder-verdict-subagent',
+        cleanup: async () => {},
+        listChangedFiles: () => ['src/subagent.ts'],
+        getDiffSummary: () => '1 file changed',
+      }),
+      runContainerAgent: async () => ({
+        status: 'success',
+        result: 'Subagent completed.',
+        usage: { totalTokens: 8 },
+        toolExecutions: [],
+      }),
+      publishEvent: () => {},
+      runEvaluatorPass: evaluator,
+    });
+
+    const result = await orchestrator.runTask(
+      makeRequest({
+        requestId: 'verdict-subagent-test',
+        config: { toolMode: 'full', isSubagent: true, workspaceMode: 'ephemeral_worktree' },
+      }),
+    );
+
+    assert.equal(result.ok, true);
+
+    // Verify the evaluator_verdicts row was written with runType='subagent'
+    const db = getDb();
+    const rows = db!
+      .prepare(`SELECT request_id, run_type, pass, score FROM evaluator_verdicts WHERE group_folder = 'test-group'`)
+      .all() as Array<{ request_id: string; run_type: string; pass: number; score: number }>;
+
+    const subagentRow = rows.find((r) => r.run_type === 'subagent');
+    assert.ok(subagentRow, `Expected a row with run_type='subagent', got: ${JSON.stringify(rows)}`);
+    assert.equal(subagentRow!.request_id, 'verdict-subagent-test');
+    assert.equal(subagentRow!.pass, 1);
+    assert.equal(subagentRow!.score, 8);
+
+    // Also verify no 'coding' row was written for this subagent run
+    const codingRow = rows.find((r) => r.run_type === 'coding');
+    assert.ok(!codingRow, `Expected no row with run_type='coding' for subagent run, got: ${JSON.stringify(rows)}`);
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
