@@ -389,4 +389,5 @@ export type RunType =
   | 'scheduled'
   | 'cron'
   | 'heartbeat'
-  | 'subagent';
+  | 'subagent'
+  | 'agent-task';

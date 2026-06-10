@@ -900,6 +900,29 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVe
 }
 
 /**
+ * Normalize a skip reason from the spaced format returned by runEvaluatorPass
+ * to the hyphenated format required by EvaluatorOutcome.
+ *
+ * runEvaluatorPass returns reasons like 'evaluator threw' (space-separated),
+ * but EvaluatorOutcome requires 'evaluator-threw' (hyphenated).
+ * Similarly, 'trivially short run' → 'trivially-short-run' and
+ * '<runType> run type not eligible for evaluation' → 'run-type-not-eligible'.
+ */
+function normalizeSkipReason(reason: string): string {
+  // Specific known mappings for runEvaluatorPass outputs
+  if (reason === 'evaluator threw') return 'evaluator-threw';
+  if (reason === 'evaluator error') return 'evaluator-error';
+  if (reason === 'unparseable verdict') return 'unparseable-verdict';
+  if (reason === 'empty output') return 'empty-output';
+  if (reason === 'trivially short run') return 'trivially-short-run';
+  if (reason.endsWith(' run type not eligible for evaluation')) {
+    return 'run-type-not-eligible';
+  }
+  // Generic fallback: replace spaces with hyphens and lowercase
+  return reason.replace(/ /g, '-').toLowerCase();
+}
+
+/**
  * Convert an EvaluatorVerdict (legacy flat shape) to an EvaluatorOutcome verdict variant.
  */
 export function verdictToOutcome(
@@ -917,9 +940,11 @@ export function verdictToOutcome(
       'artifact-missing',
     ]);
 
-    const reason = verdict.skippedReason ?? 'unknown';
+    const rawReason = verdict.skippedReason ?? 'unknown';
+    // Normalize to the hyphenated format required by EvaluatorOutcome
+    const reason = normalizeSkipReason(rawReason);
 
-    if (ELIGIBLE_SKIP_REASONS.has(reason)) {
+    if (ELIGIBLE_SKIP_REASONS.has(rawReason)) {
       return {
         kind: 'eligible-skip',
         runType,

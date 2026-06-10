@@ -196,7 +196,7 @@ test('verdictToOutcome converts verdict with skipped=true (eligible) to eligible
   const outcome = verdictToOutcome('cron', verdict, 0);
 
   assert.equal(outcome.kind, 'eligible-skip');
-  assert.equal(outcome.skipReason, 'evaluator threw');
+  assert.equal(outcome.skipReason, 'evaluator-threw');
   assert.equal(outcome.skipped, true);
 });
 
@@ -213,7 +213,7 @@ test('verdictToOutcome converts verdict with skipped=true (threshold) to thresho
   const outcome = verdictToOutcome('cron', verdict, 0);
 
   assert.equal(outcome.kind, 'threshold-skip');
-  assert.equal(outcome.skipReason, 'trivially short run');
+  assert.equal(outcome.skipReason, 'trivially-short-run');
   assert.equal(outcome.skipped, true);
 });
 
