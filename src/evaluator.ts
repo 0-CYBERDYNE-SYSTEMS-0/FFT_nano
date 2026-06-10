@@ -5,7 +5,9 @@ import type { RegisteredGroup, RunAuthority, RunType } from './types.js';
 import type { ContainerInput, ContainerOutput } from './pi-runner.js';
 import { runContainerAgent } from './pi-runner.js';
 import { logger } from './logger.js';
-import { recordEvaluatorVerdict } from './db.js';
+import { recordEvaluatorVerdict, enqueueDelivery, getEvaluatorStats } from './db.js';
+import { findMainChatJid } from './telegram-group-mgmt.js';
+import { state } from './app-state.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -761,19 +763,34 @@ export interface RecordVerdictOutcomeInput {
 }
 
 /**
+ * Result of recording a verdict outcome through the chokepoint.
+ * `shouldAlert` is true when an eligible-skip streak triggers the
+ * degraded-signal alert (WS4.3).
+ */
+export interface RecordVerdictOutcomeResult {
+  shouldAlert: boolean;
+}
+
+/**
  * Single chokepoint for recording evaluator outcomes to the database.
  *
  * Behavior:
  *   - `verdict` → INSERT row with skipped=0, pass, score, issues, refinements
- *   - `eligible-skip` → INSERT row with skipped=1, pass=0, score=0, skip_reason=<reason>
+ *   - `eligible-skip` → INSERT row with skipped=1, pass=0, score=0, skip_reason=<reason>;
+ *     also checks WS4.3 degraded-signal alert (more than half of last 10 rows skipped)
  *   - `threshold-skip` → no-op (no signal to record)
+ *
+ * Returns `{ shouldAlert: true }` when the degraded-signal alert fires.
+ * The alert is persisted via delivery_outbox UNIQUE dedupe_key='eval-degraded:<groupFolder>'
+ * so host restart does not reset the 24h cooldown.
  *
  * This is the single point through which coding orchestrator, cron v2,
  * legacy task scheduler, and chat-sampling path (WS4.4) all write rows.
  * Future run types cannot silently skip recording.
  */
-export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): void {
+export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): RecordVerdictOutcomeResult {
   const { authority, outcome } = input;
+  let shouldAlert = false;
 
   // threshold-skip: no-op (run was never eligible, no signal to record)
   if (outcome.kind === 'threshold-skip') {
@@ -781,7 +798,7 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): void {
       { runType: outcome.runType, skipReason: outcome.skipReason, requestId: authority.requestId },
       'Threshold-skip outcome: no verdict row written',
     );
-    return;
+    return { shouldAlert };
   }
 
   if (outcome.kind === 'verdict') {
@@ -839,7 +856,43 @@ export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): void {
     } catch (err) {
       logger.warn({ err, requestId: authority.requestId }, 'Failed to record eligible-skip outcome');
     }
+
+    // WS4.3: Check degraded-signal alert
+    // If more than half of the last 10 eligible rows are skipped, fire the alert.
+    // The 24h dedupe is persisted via delivery_outbox UNIQUE dedupe_key.
+    const stats = getEvaluatorStats(authority.groupFolder, 10);
+    if (stats.recentSkips > 5) {
+      logger.info(
+        { groupFolder: authority.groupFolder, recentSkips: stats.recentSkips },
+        'Degraded signal alert triggered',
+      );
+
+      // Find the main chat JID for the operator notice destination
+      const mainChatJid = findMainChatJid();
+      if (mainChatJid) {
+        const dedupeKey = `eval-degraded:${authority.groupFolder}`;
+        const body = `[FFT_nano] Evaluation degraded in ${authority.groupFolder}: evaluation is degraded; learning signal is currently blind.`;
+
+        try {
+          enqueueDelivery({
+            dedupeKey,
+            destination: mainChatJid,
+            body,
+            maxAttempts: 3,
+          });
+          shouldAlert = true;
+          logger.info(
+            { dedupeKey, destination: mainChatJid },
+            'Degraded signal alert enqueued',
+          );
+        } catch (err) {
+          logger.warn({ err, dedupeKey }, 'Failed to enqueue degraded signal alert');
+        }
+      }
+    }
   }
+
+  return { shouldAlert };
 }
 
 /**
