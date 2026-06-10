@@ -453,7 +453,7 @@ test('buildSystemPrompt blocks suspicious injected markdown and records layer me
   assert.equal(typeof report.basePromptHash, 'string');
   assert.match(
     text,
-    /\[BLOCKED: NANO\.md contained potential prompt injection/,
+    /\[REDACTED: override_previous_instructions\]/,
   );
   assert.equal(
     report.contextEntries.some(
@@ -770,4 +770,261 @@ test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cac
   } finally {
     (fs as { statSync: typeof fs.statSync }).statSync = originalStatSync;
   }
+});
+
+// ---------------------------------------------------------------------------
+// A0: Renderer version bumps invalidate stale cached stable layers
+// ---------------------------------------------------------------------------
+
+test('buildSystemPrompt cache misses when renderer version changes (A0)', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+  ]);
+
+  const first = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+    readFileIfExists: (p) => files.get(p) ?? null,
+  });
+
+  const stableLayer = first.report.layers.find((l) => l.id === 'stable');
+  assert.ok(stableLayer);
+
+  // Simulate a cached layer whose key was computed under an older renderer
+  // version (missing rendererVersion field entirely).
+  const oldKey = JSON.parse(
+    JSON.stringify({ ...stableLayer.key }),
+  ) as string;
+  const { text, report } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
+    readFileIfExists: (p) => files.get(p) ?? null,
+    cachedStableLayer: {
+      key: oldKey,
+      hash: stableLayer.hash,
+      content: first.stableText,
+      mtimeMap: stableLayer.mtimeMap,
+    },
+  });
+
+  assert.equal(report.cacheHit, false);
+  assert.ok(text.length > 0);
+});
+
+// ---------------------------------------------------------------------------
+// A1: Context Map appears in stable text for main runs
+// ---------------------------------------------------------------------------
+
+test('buildSystemPrompt includes Context Map in stable layer for main runs (A1)', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\nStable identity.\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+  ]);
+
+  const { stableText, report } = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      readFileIfExists: (p) => files.get(p) ?? null,
+    },
+  );
+
+  assert.match(stableText, /## Context Map/);
+  assert.match(
+    stableText,
+    /before claiming you don't know or remember something, use memory_search/,
+  );
+  assert.match(
+    stableText,
+    /Injected EVERY turn \(trust these over conversation history\)/,
+  );
+  assert.match(
+    stableText,
+    /Injected ONCE at session start \(already in your history/,
+  );
+
+  const stableLayer = report.layers.find((l) => l.id === 'stable');
+  assert.ok(stableLayer);
+  assert.ok(
+    stableLayer.chars < 12_000,
+    `stable layer is ${stableLayer.chars} chars, expected < 12k`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A2: Two-tier skill catalog — index never truncated, summaries budgeted
+// ---------------------------------------------------------------------------
+
+test('buildSystemPrompt renders two-tier skill catalog with intact index under budget (A2)', () => {
+  const skills: SkillCatalogEntry[] = [];
+  for (let i = 1; i <= 60; i++) {
+    skills.push({
+      name: `skill-${i}`,
+      description: `Description for skill number ${i}.`,
+      allowedTools: i % 2 === 0 ? ['read', 'bash'] : [],
+      whenToUse: `Use skill-${i} when you need to do thing ${i}.`,
+      source: 'project',
+    });
+  }
+
+  const { text, report } = buildSystemPrompt(
+    makeInput({ noContinue: true, skillCatalog: skills }),
+    DEFAULT_PATHS,
+    {
+      readFileIfExists: () => null,
+      skillCatalogMaxChars: 2_000,
+    },
+  );
+
+  assert.match(text, /## Skills Catalog/);
+  assert.match(text, /Available skills: skill-1, skill-2, skill-3/);
+  // The index line must contain ALL 60 skill names
+  for (let i = 1; i <= 60; i++) {
+    assert.match(text, new RegExp(`skill-${i}`));
+  }
+
+  // Truncation marker must reference skill_view
+  assert.match(
+    text,
+    /\[\d+ more skill.*listed above have no summary — use skill_view for details\.\]/,
+  );
+
+  assert.equal(report.skillsCatalog.count, 60);
+});
+
+// ---------------------------------------------------------------------------
+// A3: Scaffold bootstrap files are skipped
+// ---------------------------------------------------------------------------
+
+test('buildSystemPrompt skips scaffold USER.md, IDENTITY.md, and TOOLS.md (A3)', () => {
+  const scaffoldUser = [
+    '# FarmFriend Terminal - User Profile',
+    '',
+    '- Name:',
+    '- Operation / Farm:',
+    '- Preferences:',
+    '- Safety notes:',
+  ].join('\n');
+
+  const scaffoldIdentity = [
+    '# FarmFriend Terminal - Agent Identity',
+    '',
+    'Name: FarmFriend Terminal',
+    'Role: Local-first assistant for agriculture and operations',
+  ].join('\n');
+
+  const scaffoldTools = [
+    '# FarmFriend Terminal - Tool Policy',
+    '',
+    'This file documents tool access policy. It is used as a pre-session tool manifest.',
+    '',
+    'Allowed tools (example):',
+    'allowed-tools:',
+    '',
+    'Notes:',
+    '- If no allowed-tools list is present, all tools remain available.',
+    '- ALWAYS_ALLOWED tools (skill_loader, skill_documentation, skill_sequencer, skill_draft, skill_apply) are always permitted.',
+  ].join('\n');
+
+  const filledUser = [
+    '# FarmFriend Terminal - User Profile',
+    '',
+    '- Name: TD',
+    '- Operation / Farm:',
+    '- Preferences:',
+    '- Safety notes:',
+  ].join('\n');
+
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+    ['/workspace/group/MEMORY.md', '# MEMORY\n'],
+    ['/workspace/group/USER.md', scaffoldUser],
+    ['/workspace/group/IDENTITY.md', scaffoldIdentity],
+    ['/workspace/group/TOOLS.md', scaffoldTools],
+  ]);
+
+  const { text, report } = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      readFileIfExists: (p) => files.get(p) ?? null,
+    },
+  );
+
+  assert.doesNotMatch(text, /## \/workspace\/group\/USER\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/IDENTITY\.md/);
+  assert.doesNotMatch(text, /## \/workspace\/group\/TOOLS\.md/);
+  assert.equal(
+    report.contextEntries.some((e) => e.path === '/workspace/group/USER.md'),
+    false,
+  );
+  assert.equal(
+    report.contextEntries.some((e) => e.path === '/workspace/group/IDENTITY.md'),
+    false,
+  );
+  assert.equal(
+    report.contextEntries.some((e) => e.path === '/workspace/group/TOOLS.md'),
+    false,
+  );
+
+  // A filled USER.md IS injected
+  files.set('/workspace/group/USER.md', filledUser);
+  const filled = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      readFileIfExists: (p) => files.get(p) ?? null,
+    },
+  );
+  assert.match(filled.text, /## \/workspace\/group\/USER\.md/);
+  assert.ok(
+    filled.report.contextEntries.some((e) => e.path === '/workspace/group/USER.md'),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A4: Line-level redaction preserves non-matching lines
+// ---------------------------------------------------------------------------
+
+test('buildSystemPrompt redacts prompt-injection lines individually and preserves the rest (A4)', () => {
+  const files = new Map<string, string>([
+    [
+      '/workspace/group/MEMORY.md',
+      '# MEMORY\n\nDurable facts.\n\nA line about prompt injection awareness.\n\nMore durable facts.',
+    ],
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+  ]);
+
+  const { text, report } = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      readFileIfExists: (p) => files.get(p) ?? null,
+    },
+  );
+
+  const memoryEntry = report.contextEntries.find(
+    (e) => e.path === '/workspace/group/MEMORY.md',
+  );
+  assert.ok(memoryEntry);
+  assert.equal(memoryEntry.blocked, true);
+  assert.ok(memoryEntry.blockedPatterns.length > 0);
+
+  // The redacted line should appear as [REDACTED: ...]
+  assert.match(text, /\[REDACTED: .*\]/);
+
+  // Non-matching lines must survive intact
+  assert.match(text, /Durable facts\./);
+  assert.match(text, /More durable facts\./);
+
+  // Whole-file block message must NOT appear
+  assert.doesNotMatch(
+    text,
+    /\[BLOCKED: MEMORY\.md contained potential prompt injection/,
+  );
 });
