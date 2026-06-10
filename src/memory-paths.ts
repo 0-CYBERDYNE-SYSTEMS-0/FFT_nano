@@ -75,6 +75,41 @@ const DEFAULT_CANONICAL_BODIES: Record<string, string> = {
     '# projects\n\nLong-lived project context and architecture notes.\n',
 };
 
+const DEFAULT_USER_BODY = [
+  '# FarmFriend Terminal - User Profile',
+  '',
+  '- Name:',
+  '- Operation / Farm:',
+  '- Preferences:',
+  '- Safety notes:',
+].join('\n');
+
+const DEFAULT_IDENTITY_BODY = [
+  '# FarmFriend Terminal - Agent Identity',
+  '',
+  'Name: FarmFriend Terminal',
+  'Role: Local-first assistant for agriculture and operations',
+].join('\n');
+
+const DEFAULT_TOOLS_BODY = [
+  '# FarmFriend Terminal - Tool Policy',
+  '',
+  'This file documents tool access policy. It is used as a pre-session tool manifest.',
+  '',
+  'Allowed tools (example):',
+  'allowed-tools:',
+  '',
+  'Notes:',
+  '- If no allowed-tools list is present, all tools remain available.',
+  '- ALWAYS_ALLOWED tools (skill_loader, skill_documentation, skill_sequencer, skill_draft, skill_apply) are always permitted.',
+].join('\n');
+
+const DEFAULT_BOOTSTRAP_BODIES: Record<string, string> = {
+  'USER.md': DEFAULT_USER_BODY,
+  'IDENTITY.md': DEFAULT_IDENTITY_BODY,
+  'TOOLS.md': DEFAULT_TOOLS_BODY,
+};
+
 export const DEFAULT_CANONICAL_FILE_NAMES = Object.freeze(
   Object.keys(DEFAULT_CANONICAL_BODIES),
 );
@@ -192,6 +227,15 @@ export function isCanonicalScaffoldContent(
   content: string,
 ): boolean {
   const defaultBody = DEFAULT_CANONICAL_BODIES[fileName];
+  if (!defaultBody) return false;
+  return content.trim() === defaultBody.trim();
+}
+
+export function isBootstrapScaffoldContent(
+  fileName: string,
+  content: string,
+): boolean {
+  const defaultBody = DEFAULT_BOOTSTRAP_BODIES[fileName];
   if (!defaultBody) return false;
   return content.trim() === defaultBody.trim();
 }
