@@ -7,10 +7,14 @@ import {
   extractLearningSignals,
   recordSelfImproveEvent,
 } from '../src/self-improve-signals.js';
-import { shouldTriggerSkillSelfImprove } from '../src/skill-service.js';
+import {
+  maybeRunSkillSelfImprovement,
+  shouldTriggerSkillSelfImprove,
+} from '../src/skill-service.js';
 import { resolveGroupFolderPath } from '../src/group-folder.js';
 import { resolveGroupPiHomeDir } from '../src/skill-lifecycle.js';
 import { state } from '../src/app-state.js';
+import type { RegisteredGroup } from '../src/types.js';
 import type { PiToolExecution } from '../src/pi-json-parser.js';
 
 function exec(
@@ -564,6 +568,103 @@ test.describe('VAL-WS6-017: Self-improve trigger short-circuits on pause', () =>
       });
       assert.equal(decision.triggerReason, 'learning-paused');
       // The actual JSONL recording is tested in maybeRunSkillSelfImprovement integration tests
+    } finally {
+      state.learningPaused = false;
+      fs.rmSync(groupDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// INV.2 — Mutation budget rate-limit debounce (VAL-INV-I2-003)
+// ---------------------------------------------------------------------------
+
+test.describe('VAL-INV-I2-003: Self-improve rate-limit debounce', () => {
+  test.beforeEach(() => {
+    state.learningPaused = false;
+  });
+
+  test('two full-priority signals within 1 minute: only one review spawned, JSONL records second with noop_reason: debounced', async () => {
+    const group = `inv2-${Date.now().toString(36)}`;
+    const groupDir = resolveGroupFolderPath(group);
+    const logPath = path.join(groupDir, 'logs', 'self-improve-events.jsonl');
+    try {
+      const t0 = Date.now();
+
+      // Pre-seed the state so the first call treats lastReviewAt as t0.
+      // Then the second call (at t0 + 60_000 = 1 minute later) will be inside
+      // the 15-minute debounce window and debounced.
+      const stateFile = path.join(
+        path.dirname(resolveGroupPiHomeDir(group)),
+        'skills',
+        '.self_improve_state.json',
+      );
+      fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+      fs.writeFileSync(
+        stateFile,
+        JSON.stringify({ turnsSinceReview: 0, toolsSinceReview: 0, lastReviewAt: new Date(t0).toISOString() }),
+      );
+
+      const fakeGroup: RegisteredGroup = {
+        folder: group,
+        chatId: `test-${group}`,
+        isMain: true,
+      };
+      const fakePrefs = {
+        provider: 'test' as const,
+        model: 'test',
+        thinkLevel: 'off' as const,
+        reasoningLevel: 'off' as const,
+      };
+
+      // First call at t0: should fire (state has lastReviewAt = t0, which is "just now").
+      maybeRunSkillSelfImprovement({
+        group: fakeGroup,
+        chatJid: `test-${group}`,
+        originalTask: 'remember: always run the linter',
+        agentOutput: 'Understood.',
+        toolsInvoked: 0,
+        runtimePrefs: fakePrefs,
+        requestId: `${group}-r1`,
+        senderRole: 'operator',
+      });
+
+      // Give the JSONL write time to complete, then simulate the second signal
+      // 1 minute after the first. The state now has lastReviewAt = "just now" (from
+      // the first call), so t0+60_000 - lastMs will be ~60000ms < 15min -> debounced.
+      await new Promise((r) => setTimeout(r, 20));
+
+      maybeRunSkillSelfImprovement({
+        group: fakeGroup,
+        chatJid: `test-${group}`,
+        originalTask: 'remember: also check types',
+        agentOutput: 'Got it.',
+        toolsInvoked: 0,
+        runtimePrefs: fakePrefs,
+        requestId: `${group}-r2`,
+        senderRole: 'operator',
+      });
+
+      // Verify JSONL: first event is a real review, second is a debounced noop.
+      assert.ok(fs.existsSync(logPath), `expected JSONL at ${logPath}`);
+      const lines = fs.readFileSync(logPath, 'utf-8').trim().split('\n').filter(Boolean);
+      assert.equal(lines.length, 2, `expected 2 JSONL lines, got ${lines.length}`);
+
+      const first = JSON.parse(lines[0]);
+      assert.equal(first.review_fired, true, 'first signal should have fired');
+      assert.ok(
+        first.noop_reason === undefined || first.noop_reason === null,
+        'first event must not have noop_reason',
+      );
+
+      const second = JSON.parse(lines[1]);
+      assert.equal(second.review_fired, false, 'second signal should not have fired');
+      // VAL-INV-I2-003 requires exactly 'debounced' as the noop_reason.
+      assert.equal(
+        second.noop_reason,
+        'debounced',
+        `second event noop_reason must be 'debounced', got '${second.noop_reason}'`,
+      );
     } finally {
       state.learningPaused = false;
       fs.rmSync(groupDir, { recursive: true, force: true });

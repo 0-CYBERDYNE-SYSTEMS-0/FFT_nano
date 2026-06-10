@@ -302,7 +302,7 @@ export function maybeRunSkillSelfImprovement(params: {
       noop_reason: wasDowngraded
         ? 'non-operator-signal-downgraded'
         : decision.triggerReason.includes('debounced')
-          ? 'min-interval debounce'
+          ? 'debounced'
           : 'cadence threshold not reached',
       success: true,
     });
