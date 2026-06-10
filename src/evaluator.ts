@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import type { RegisteredGroup, RunType } from './types.js';
+import type { RegisteredGroup, RunAuthority, RunType } from './types.js';
 import type { ContainerInput, ContainerOutput } from './pi-runner.js';
 import { runContainerAgent } from './pi-runner.js';
 import { logger } from './logger.js';
+import { recordEvaluatorVerdict } from './db.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +36,57 @@ export interface EvaluatorVerdict {
   skipped: boolean;
   skippedReason?: string;
 }
+
+// ---------------------------------------------------------------------------
+// EvaluatorOutcome discriminated union (Contract 2 - WS4.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated union for all possible evaluator outcomes.
+ * Used by the recordVerdictOutcome chokepoint to determine how to record verdicts.
+ */
+export type EvaluatorOutcome =
+  | {
+      kind: 'verdict';
+      runType: RunType;
+      pass: boolean;
+      score: number;
+      issues: string[];
+      feedback: string;
+      refinements: number;
+      skipped: false;
+      skipReason?: never;
+    }
+  | {
+      kind: 'eligible-skip';
+      runType: RunType;
+      pass: false;
+      score: 0;
+      issues: string[];
+      feedback: string;
+      refinements: number;
+      skipReason:
+        | 'evaluator-threw'
+        | 'evaluator-error'
+        | 'unparseable-verdict'
+        | 'artifact-missing';
+      skipped: true;
+    }
+  | {
+      kind: 'threshold-skip';
+      runType: RunType;
+      skipReason:
+        | 'empty-output'
+        | 'run-type-not-eligible'
+        | 'trivially-short-run'
+        | 'no-changed-files';
+      skipped: true;
+      pass?: never;
+      score?: never;
+      issues?: never;
+      feedback?: never;
+      refinements?: never;
+    };
 
 export interface ArtifactVerification {
   workspaceDir?: string;
@@ -694,4 +746,153 @@ export function buildRefinementPrompt(
   ]
     .filter((l) => l !== undefined)
     .join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Verdict recording chokepoint (WS4.5 - Contract 2)
+// ---------------------------------------------------------------------------
+
+export interface RecordVerdictOutcomeInput {
+  authority: RunAuthority;
+  outcome: EvaluatorOutcome;
+  rawArtifactClaims?: string[];
+  durationMs?: number;
+  toolsInvoked?: number;
+}
+
+/**
+ * Single chokepoint for recording evaluator outcomes to the database.
+ *
+ * Behavior:
+ *   - `verdict` → INSERT row with skipped=0, pass, score, issues, refinements
+ *   - `eligible-skip` → INSERT row with skipped=1, pass=0, score=0, skip_reason=<reason>
+ *   - `threshold-skip` → no-op (no signal to record)
+ *
+ * This is the single point through which coding orchestrator, cron v2,
+ * legacy task scheduler, and chat-sampling path (WS4.4) all write rows.
+ * Future run types cannot silently skip recording.
+ */
+export function recordVerdictOutcome(input: RecordVerdictOutcomeInput): void {
+  const { authority, outcome } = input;
+
+  // threshold-skip: no-op (run was never eligible, no signal to record)
+  if (outcome.kind === 'threshold-skip') {
+    logger.debug(
+      { runType: outcome.runType, skipReason: outcome.skipReason, requestId: authority.requestId },
+      'Threshold-skip outcome: no verdict row written',
+    );
+    return;
+  }
+
+  if (outcome.kind === 'verdict') {
+    // verdict: write row with skipped=0 and pass/score/issues/refinements
+    logger.info(
+      {
+        runType: outcome.runType,
+        pass: outcome.pass,
+        score: outcome.score,
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+      },
+      'Recording verdict outcome (verdict)',
+    );
+
+    try {
+      recordEvaluatorVerdict({
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+        chatJid: authority.origin === 'interactive-main' ? authority.requestId : undefined,
+        runType: outcome.runType,
+        pass: outcome.pass,
+        score: outcome.score,
+        issues: outcome.issues,
+        refinements: outcome.refinements,
+      });
+    } catch (err) {
+      logger.warn({ err, requestId: authority.requestId }, 'Failed to record verdict outcome');
+    }
+  } else if (outcome.kind === 'eligible-skip') {
+    // eligible-skip: write row with skipped=1, pass=0, score=0, skip_reason=<reason>
+    logger.info(
+      {
+        runType: outcome.runType,
+        skipReason: outcome.skipReason,
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+      },
+      'Recording verdict outcome (eligible-skip)',
+    );
+
+    try {
+      recordEvaluatorVerdict({
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+        chatJid: authority.origin === 'interactive-main' ? authority.requestId : undefined,
+        runType: outcome.runType,
+        pass: false, // pass = 0 for eligible-skip
+        score: 0, // score = 0 for eligible-skip
+        issues: outcome.issues,
+        refinements: outcome.refinements ?? 0,
+        skipped: true,
+        skipReason: outcome.skipReason,
+      });
+    } catch (err) {
+      logger.warn({ err, requestId: authority.requestId }, 'Failed to record eligible-skip outcome');
+    }
+  }
+}
+
+/**
+ * Convert an EvaluatorVerdict (legacy flat shape) to an EvaluatorOutcome verdict variant.
+ */
+export function verdictToOutcome(
+  runType: RunType,
+  verdict: EvaluatorVerdict,
+  refinements: number,
+): EvaluatorOutcome {
+  if (verdict.skipped) {
+    // Determine if this is an eligible-skip or threshold-skip
+    // Eligible skips have a reason like 'evaluator threw', 'evaluator error', 'unparseable verdict'
+    const ELIGIBLE_SKIP_REASONS = new Set([
+      'evaluator threw',
+      'evaluator error',
+      'unparseable verdict',
+      'artifact-missing',
+    ]);
+
+    const reason = verdict.skippedReason ?? 'unknown';
+
+    if (ELIGIBLE_SKIP_REASONS.has(reason)) {
+      return {
+        kind: 'eligible-skip',
+        runType,
+        pass: false,
+        score: 0,
+        issues: verdict.issues,
+        feedback: verdict.feedback,
+        refinements,
+        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R } ? R : never,
+        skipped: true,
+      };
+    } else {
+      // threshold-skip
+      return {
+        kind: 'threshold-skip',
+        runType,
+        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R } ? R : never,
+        skipped: true,
+      };
+    }
+  }
+
+  return {
+    kind: 'verdict',
+    runType,
+    pass: verdict.pass,
+    score: verdict.score,
+    issues: verdict.issues,
+    feedback: verdict.feedback,
+    refinements,
+    skipped: false,
+  };
 }

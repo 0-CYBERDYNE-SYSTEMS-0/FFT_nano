@@ -11,7 +11,7 @@ import {
   TIMEZONE,
 } from '../config.js';
 import { runContainerAgent, writeTasksSnapshot } from '../pi-runner.js';
-import { runEvaluatorPass } from '../evaluator.js';
+import { runEvaluatorPass, recordVerdictOutcome, verdictToOutcome } from '../evaluator.js';
 import {
   deleteTask,
   getAllTasks,
@@ -19,11 +19,11 @@ import {
   getNextDueTaskTime,
   getTaskById,
   logTaskRun,
-  recordEvaluatorVerdict,
   updateTaskAfterRunV2,
 } from '../db.js';
 import { logger } from '../logger.js';
-import { RegisteredGroup, ScheduledTask } from '../types.js';
+import { RegisteredGroup, ScheduledTask, RunAuthority } from '../types.js';
+import { mintRunAuthority, deriveEffectiveToolSet } from '../run-authority.js';
 import { recordTaskAuditEvent } from '../task-audit.js';
 import { resolveNoContinueForTask } from './adapters.js';
 import { getEffectiveTimezone } from '../time-context.js';
@@ -447,13 +447,19 @@ export async function runScheduledTaskV2(
           // Best-effort: recording failure does not break the run
           if (verdict) {
             try {
-              recordEvaluatorVerdict({
+              // Construct RunAuthority for the chokepoint (WS4.5)
+              const runAuthority: RunAuthority = mintRunAuthority({
+                requestId: `cron-${task.id}-${startedAt}`,
                 groupFolder: task.group_folder,
-                chatJid: task.chat_jid ?? null,
-                runType: 'cron',
-                pass: verdict.pass,
-                score: verdict.score,
-                issues: verdict.issues,
+                isMain,
+                isScheduledTask: true,
+                effectiveToolSet: deriveEffectiveToolSet({}),
+                senderRole: 'operator',
+              });
+              const outcome = verdictToOutcome('cron', verdict, 0);
+              recordVerdictOutcome({
+                authority: runAuthority,
+                outcome,
               });
             } catch (err) {
               logger.warn(

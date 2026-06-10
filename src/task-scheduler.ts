@@ -8,19 +8,19 @@ import {
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
 import { runContainerAgent, writeTasksSnapshot } from './pi-runner.js';
-import { runEvaluatorPass } from './evaluator.js';
+import { runEvaluatorPass, recordVerdictOutcome, verdictToOutcome } from './evaluator.js';
 import {
   getAllTasks,
   getDueTasks,
   getTaskById,
   logTaskRun,
-  recordEvaluatorVerdict,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { RegisteredGroup, ScheduledTask, RunAuthority } from './types.js';
+import { mintRunAuthority, deriveEffectiveToolSet } from './run-authority.js';
 import { startCronV2Service } from './cron/service.js';
 import { resolveNoContinueForTask } from './cron/adapters.js';
 import type { OutboxDeliverer } from './outbox.js';
@@ -175,13 +175,19 @@ async function runLegacyTask(
         // Best-effort: recording failure does not break the run
         if (verdict) {
           try {
-            recordEvaluatorVerdict({
+            // Construct RunAuthority for the chokepoint (WS4.5)
+            const runAuthority: RunAuthority = mintRunAuthority({
+              requestId: `scheduled-${task.id}-${startTime}`,
               groupFolder: task.group_folder,
-              chatJid: task.chat_jid ?? null,
-              runType: 'scheduled',
-              pass: verdict.pass,
-              score: verdict.score,
-              issues: verdict.issues,
+              isMain,
+              isScheduledTask: true,
+              effectiveToolSet: deriveEffectiveToolSet({}),
+              senderRole: 'operator',
+            });
+            const outcome = verdictToOutcome('scheduled', verdict, 0);
+            recordVerdictOutcome({
+              authority: runAuthority,
+              outcome,
             });
           } catch (err) {
             logger.warn(

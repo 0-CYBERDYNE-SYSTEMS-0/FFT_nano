@@ -267,6 +267,11 @@ export function closeDatabase(): void {
   db = undefined;
 }
 
+/** Get the current database instance (for testing only) */
+export function getDb(): Database.Database | undefined {
+  return db;
+}
+
 /**
  * Store chat metadata only (no message content).
  * Used for all chats to enable group discovery without storing sensitive content.
@@ -1025,6 +1030,10 @@ export interface EvaluatorVerdictInput {
   score: number;
   issues: string[];
   refinements?: number;
+  /** WS4.1: Whether this was a skipped evaluation (eligible-skip only) */
+  skipped?: boolean;
+  /** WS4.1: Reason for skip (eligible-skip only) */
+  skipReason?: string;
 }
 
 export interface EvaluatorStats {
@@ -1044,8 +1053,8 @@ export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
   if (!db) return;
   db.prepare(
     `INSERT INTO evaluator_verdicts (
-       request_id, group_folder, chat_jid, run_type, pass, score, issues, refinements, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       request_id, group_folder, chat_jid, run_type, pass, score, issues, refinements, skipped, skip_reason, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.requestId ?? null,
     input.groupFolder,
@@ -1055,6 +1064,8 @@ export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
     Math.round(input.score),
     JSON.stringify(input.issues ?? []),
     input.refinements ?? 0,
+    input.skipped ? 1 : 0,
+    input.skipReason ?? null,
     new Date().toISOString(),
   );
 }

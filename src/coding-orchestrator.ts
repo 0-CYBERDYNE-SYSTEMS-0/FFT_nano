@@ -6,6 +6,8 @@ import path from 'path';
 import {
   runEvaluatorPass as defaultRunEvaluatorPass,
   buildRefinementPrompt,
+  recordVerdictOutcome,
+  verdictToOutcome,
 } from './evaluator.js';
 
 import type { RegisteredGroup } from './types.js';
@@ -27,6 +29,11 @@ import {
 } from './db.js';
 import { createRunProgressReporter } from './run-progress.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import {
+  mintRunAuthority,
+  deriveEffectiveToolSet,
+} from './run-authority.js';
+import type { RunAuthority } from './types.js';
 
 export interface CodingRunConfig {
   toolMode: 'read_only' | 'full';
@@ -1325,22 +1332,33 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
             refinements,
           };
           // Persist the verdict so the scoring feeds future runs (closes the
-          // self-improvement loop). Skipped verdicts carry no signal.
-          if (!lastVerdict.skipped) {
-            try {
-              recordEvaluatorVerdict({
-                requestId: request.requestId,
-                groupFolder: request.originGroupFolder,
-                chatJid: request.originChatJid,
-                runType: request.config.isSubagent ? 'subagent' : 'coding',
-                pass: lastVerdict.pass,
-                score: lastVerdict.score,
-                issues: lastVerdict.issues,
-                refinements,
-              });
-            } catch {
-              /* verdict persistence is best-effort */
-            }
+          // self-improvement loop). The chokepoint decides whether to write a row
+          // based on the EvaluatorOutcome discriminator (verdict vs eligible-skip vs
+          // threshold-skip). VAL-WS4-004.
+          try {
+            // Construct RunAuthority for the chokepoint (WS4.5)
+            const isMain = request.group.folder === request.originGroupFolder;
+            const runAuthority: RunAuthority = mintRunAuthority({
+              requestId: request.requestId,
+              groupFolder: request.originGroupFolder,
+              isMain,
+              isSubagent: request.config.isSubagent,
+              effectiveToolSet: deriveEffectiveToolSet({
+                toolMode: request.config.toolMode,
+              }),
+              senderRole: 'operator',
+            });
+            const outcome = verdictToOutcome(
+              request.config.isSubagent ? 'subagent' : 'coding',
+              lastVerdict,
+              refinements,
+            );
+            recordVerdictOutcome({
+              authority: runAuthority,
+              outcome,
+            });
+          } catch {
+            /* verdict persistence is best-effort */
           }
           qaReportPath = writeCoderArtifact(
             request,
