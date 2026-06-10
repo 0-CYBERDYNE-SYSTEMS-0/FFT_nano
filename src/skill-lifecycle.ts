@@ -17,7 +17,7 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import type { RegisteredGroup, SkillActionRequest } from './types.js';
-import { runAuthorityRegistry } from './app-state.js';
+import { runAuthorityRegistry, state } from './app-state.js';
 
 export const SKILL_USAGE_FILE = '.usage.json';
 export const SKILL_MANAGER_STATE_FILE = '.skill_manager_state.json';
@@ -871,9 +871,11 @@ export function shouldRunSkillManager(
   now = new Date(),
   lastInboundAt?: number,
 ): boolean {
+  // WS6.3: Global pause short-circuits the curator loop before any other check.
+  if (state.learningPaused) return false;
   if (!config.enabled) return false;
-  const state = loadSkillManagerState(skillsDir);
-  if (state.paused) return false;
+  const skillState = loadSkillManagerState(skillsDir);
+  if (skillState.paused) return false;
   // Idle gate: don't run curator maintenance while the host is actively in use.
   if (
     config.minIdleHours > 0 &&
@@ -883,14 +885,14 @@ export function shouldRunSkillManager(
   ) {
     return false;
   }
-  if (!state.lastRunAt) {
-    state.lastRunAt = now.toISOString();
-    state.lastRunSummary =
+  if (!skillState.lastRunAt) {
+    skillState.lastRunAt = now.toISOString();
+    skillState.lastRunSummary =
       'deferred first run; manager seeded and will run after one full interval';
-    saveSkillManagerState(skillsDir, state);
+    saveSkillManagerState(skillsDir, skillState);
     return false;
   }
-  const last = parseDate(state.lastRunAt);
+  const last = parseDate(skillState.lastRunAt);
   if (!last) return true;
   return (
     now.getTime() - last.getTime() >= config.intervalHours * 60 * 60 * 1000

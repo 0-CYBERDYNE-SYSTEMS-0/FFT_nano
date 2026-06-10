@@ -498,6 +498,7 @@ import {
   formatTaskRunsText as tdFormatTaskRunsText,
   formatTasksText as tdFormatTasksText,
   formatPendingTasksText as tdFormatPendingTasksText,
+  formatLearningDigest as tdFormatLearningDigest,
   runGatewayServiceCommand as tdRunGatewayServiceCommand,
   resolveKnowledgeRuntimeSnapshot as tdResolveKnowledgeRuntimeSnapshot,
   handleKnowledgeCommand as tdHandleKnowledgeCommand,
@@ -1282,6 +1283,10 @@ function formatTasksText(mode: 'list' | 'due' = 'list'): string {
   return tdFormatTasksText(mode);
 }
 
+function formatLearningDigest(): string {
+  return tdFormatLearningDigest();
+}
+
 function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
   return tsBuildAdminPanelKeyboard();
 }
@@ -1469,6 +1474,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   formatTasksText,
   formatGroupsText,
   formatStatusText,
+  formatLearningDigest,
   formatHelpText,
   formatUsageText,
   formatActiveSubagentsText,

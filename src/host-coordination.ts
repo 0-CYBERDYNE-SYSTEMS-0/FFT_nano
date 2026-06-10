@@ -6,6 +6,7 @@ import {
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
+  PARITY_CONFIG,
 } from './config.js';
 import { logger } from './logger.js';
 import { enqueueHeldDelivery, markHeldDeliveryNotified } from './db.js';
@@ -1152,7 +1153,12 @@ export async function processTaskIpc(
           !runAuthority ||
           runAuthority.origin === 'headless' ||
           runAuthority.origin === 'subagent';
-        const taskStatus = isAgentOrigin ? 'pending_approval' : 'active';
+        // WS6.3: When learning is paused, autoApprove is ignored and agent tasks
+        // always go to pending_approval (VAL-WS6-019, VAL-XARE-014).
+        const effectiveAutoApprove =
+          state.learningPaused ? false : PARITY_CONFIG.cron.agentTasks.autoApprove;
+        const taskStatus =
+          isAgentOrigin && !effectiveAutoApprove ? 'pending_approval' : 'active';
         const createdBy = isAgentOrigin ? 'agent' : 'operator';
 
         createTask({

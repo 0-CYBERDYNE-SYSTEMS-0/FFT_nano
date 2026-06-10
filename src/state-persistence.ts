@@ -59,9 +59,11 @@ export function loadState(): void {
     last_agent_timestamp?: Record<string, string>;
     chat_run_preferences?: Record<string, ChatRunPreferences>;
     chat_usage_stats?: Record<string, ChatUsageStats>;
+    learning_paused?: boolean;
   }>(statePath, {});
   state.lastTimestamp = loaded.last_timestamp || '';
   state.lastAgentTimestamp = loaded.last_agent_timestamp || {};
+  state.learningPaused = loaded.learning_paused ?? false;
   state.chatRunPreferences = Object.fromEntries(
     Object.entries(loaded.chat_run_preferences || {}).map(
       ([chatJid, prefs]) => {
@@ -106,6 +108,7 @@ export function saveState(): void {
     last_agent_timestamp: state.lastAgentTimestamp,
     chat_run_preferences: state.chatRunPreferences,
     chat_usage_stats: state.chatUsageStats,
+    learning_paused: state.learningPaused,
   });
 }
 

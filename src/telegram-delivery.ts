@@ -52,6 +52,7 @@ import {
   getPendingTasks,
   getTaskById,
   getTaskRunLogs,
+  getEvaluatorStats,
   listActiveAgentRuns,
 } from './db.js';
 import { APP_VERSION, SERVICE_STARTED_AT } from './app-state.js';
@@ -935,6 +936,53 @@ function formatPendingTaskRow(
     `  Delete after run: ${deleteAfterRun}`,
     `  Created: ${createdAt}`,
   ].join('\n');
+}
+
+// --- Learning digest ---
+// WS6.2: /learning digest command - single operator surface summarizing learning
+// activity, pause state, recent skips, and pending approvals.
+
+export function formatLearningDigest(): string {
+  const lines: string[] = ['## Learning Status'];
+
+  // Pause status (VAL-INV-I6-002)
+  lines.push(`Pause status: ${state.learningPaused ? 'Learning is paused' : 'Learning is active'}`);
+
+  // Recent evaluator stats
+  const stats = getEvaluatorStats(MAIN_GROUP_FOLDER, 20);
+  if (stats.total === 0) {
+    lines.push('Evaluator: No runs evaluated yet.');
+  } else {
+    const passPct = Math.round(stats.passRate * 100);
+    lines.push(
+      `Evaluator (last 20 runs): ${stats.passes}/${stats.total} passed (${passPct}%)`,
+    );
+    lines.push(`Recent skips: ${stats.recentSkips} / ${stats.total}`);
+    if (stats.recentIssues.length > 0) {
+      lines.push('Recurring issues:');
+      for (const issue of stats.recentIssues.slice(0, 5)) {
+        lines.push(`  - ${issue}`);
+      }
+    }
+  }
+
+  // Pending approvals (VAL-WS2-003)
+  const pendingTasks = getPendingTasks();
+  lines.push(`Pending agent-task approvals: ${pendingTasks.length}`);
+  if (pendingTasks.length > 0) {
+    for (const task of pendingTasks.slice(0, 5)) {
+      const promptPreview =
+        task.prompt.length > 50
+          ? `${task.prompt.slice(0, 50)}…`
+          : task.prompt;
+      lines.push(`  - ${task.id}: ${promptPreview}`);
+    }
+    if (pendingTasks.length > 5) {
+      lines.push(`  ... and ${pendingTasks.length - 5} more`);
+    }
+  }
+
+  return lines.join('\n');
 }
 
 // --- Gateway service command ---
