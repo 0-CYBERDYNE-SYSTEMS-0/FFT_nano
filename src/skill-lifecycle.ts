@@ -11,12 +11,20 @@ import {
   snapshotSkillFile,
 } from './skill-history.js';
 import { DATA_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
+import { PARITY_CONFIG } from './parity-config.js';
+import {
+  checkMutationBudget,
+  recordMutation,
+  type MutationAttribution,
+} from './mutation-budget.js';
+import { recordMutationAuditEvent } from './mutation-audit.js';
 import {
   assertValidGroupFolder,
   resolveGroupFolderPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
 import type { RegisteredGroup, SkillActionRequest } from './types.js';
+import { runAuthorityRegistry, state } from './app-state.js';
 
 export const SKILL_USAGE_FILE = '.usage.json';
 export const SKILL_MANAGER_STATE_FILE = '.skill_manager_state.json';
@@ -75,6 +83,7 @@ export interface SkillActionExecutionContext {
   sourceGroup: string;
   isMain: boolean;
   registeredGroups: Record<string, RegisteredGroup>;
+  senderRole?: 'operator' | 'member' | 'unknown';
 }
 
 export interface SkillActionResult {
@@ -368,10 +377,12 @@ function normalizeSkillMarkdown(params: {
   name: string;
   description: string;
   body: string;
+  provenance: string;
 }): string {
   const frontmatter = YAML.stringify({
     name: params.name,
     description: params.description.trim() || params.name,
+    provenance: params.provenance,
   }).trim();
   const body = params.body.trim() || `# ${params.name}\n`;
   return `---\n${frontmatter}\n---\n\n${body.trimEnd()}\n`;
@@ -595,6 +606,7 @@ function createSkill(params: {
   name: string;
   description: string;
   content?: string;
+  provenance: string;
 }): SkillReportEntry {
   const parsedName = skillNameSchema.parse(params.name);
   const dir = skillDir(params.skillsDir, parsedName);
@@ -611,6 +623,7 @@ function createSkill(params: {
         name: parsedName,
         description: params.description || parsedName,
         body: `# ${parsedName}\n\n## When to use this skill\n\n- Use when this workflow comes up again.\n`,
+        provenance: params.provenance,
       });
   const parsed = readSkillMarkdownFromContent(content);
   const description =
@@ -622,8 +635,9 @@ function createSkill(params: {
     name: parsedName,
     description,
     body,
+    provenance: params.provenance,
   });
-  snapshotSkillFile(path.join(dir, 'SKILL.md'));
+  snapshotSkillFile(path.join(dir, 'SKILL.md'), PARITY_CONFIG.skills.historyRetentionDays);
   writeTextFileAtomic(path.join(dir, 'SKILL.md'), normalized, {
     backupPath: defaultBackupPath(path.join(dir, 'SKILL.md')),
   });
@@ -661,6 +675,7 @@ function patchSkill(params: {
   skillsDir: string;
   name: string;
   content: string;
+  provenance: string;
 }): SkillReportEntry {
   const name = skillNameSchema.parse(params.name);
   assertMutableAgentSkill(params.skillsDir, name);
@@ -675,11 +690,12 @@ function patchSkill(params: {
     name,
     description,
     body: parsed.body || params.content,
+    provenance: params.provenance,
   });
   const target = path.join(dir, 'SKILL.md');
   // Version the prior SKILL.md before overwriting so a bad self-patch can be
   // rolled back.
-  snapshotSkillFile(target);
+  snapshotSkillFile(target, PARITY_CONFIG.skills.historyRetentionDays);
   writeTextFileAtomic(target, normalized, {
     backupPath: defaultBackupPath(target),
   });
@@ -694,6 +710,7 @@ function writeSkillFile(params: {
   name: string;
   filePath: string;
   fileContent: string;
+  provenance: string;
 }): SkillReportEntry {
   const name = skillNameSchema.parse(params.name);
   assertMutableAgentSkill(params.skillsDir, name);
@@ -702,8 +719,25 @@ function writeSkillFile(params: {
   const target = path.join(dir, rel);
   assertInside(target, dir);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  snapshotSkillFile(target);
-  writeTextFileAtomic(target, params.fileContent, {
+  snapshotSkillFile(target, PARITY_CONFIG.skills.historyRetentionDays);
+
+  // WS3.3: if writing SKILL.md, normalize provenance into frontmatter
+  let fileContent = params.fileContent;
+  if (rel === 'SKILL.md') {
+    const parsed = readSkillMarkdownFromContent(params.fileContent);
+    const description =
+      typeof parsed.frontmatter.description === 'string'
+        ? parsed.frontmatter.description
+        : name;
+    fileContent = normalizeSkillMarkdown({
+      name,
+      description,
+      body: parsed.body || params.fileContent,
+      provenance: params.provenance,
+    });
+  }
+
+  writeTextFileAtomic(target, fileContent, {
     backupPath: defaultBackupPath(target),
   });
   bumpUsage(params.skillsDir, name, 'patch');
@@ -844,9 +878,11 @@ export function shouldRunSkillManager(
   now = new Date(),
   lastInboundAt?: number,
 ): boolean {
+  // WS6.3: Global pause short-circuits the curator loop before any other check.
+  if (state.learningPaused) return false;
   if (!config.enabled) return false;
-  const state = loadSkillManagerState(skillsDir);
-  if (state.paused) return false;
+  const skillState = loadSkillManagerState(skillsDir);
+  if (skillState.paused) return false;
   // Idle gate: don't run curator maintenance while the host is actively in use.
   if (
     config.minIdleHours > 0 &&
@@ -856,14 +892,14 @@ export function shouldRunSkillManager(
   ) {
     return false;
   }
-  if (!state.lastRunAt) {
-    state.lastRunAt = now.toISOString();
-    state.lastRunSummary =
+  if (!skillState.lastRunAt) {
+    skillState.lastRunAt = now.toISOString();
+    skillState.lastRunSummary =
       'deferred first run; manager seeded and will run after one full interval';
-    saveSkillManagerState(skillsDir, state);
+    saveSkillManagerState(skillsDir, skillState);
     return false;
   }
-  const last = parseDate(state.lastRunAt);
+  const last = parseDate(skillState.lastRunAt);
   if (!last) return true;
   return (
     now.getTime() - last.getTime() >= config.intervalHours * 60 * 60 * 1000
@@ -1030,7 +1066,65 @@ export async function executeSkillAction(
     const skillsDir = resolveGroupSkillsDir(groupFolder);
     fs.mkdirSync(skillsDir, { recursive: true });
 
+    // WS3.3: determine senderRole and provenance for skill writes
+    // Prefer explicit senderRole from context; fall back to runAuthority registry.
+    let senderRole: 'operator' | 'member' | 'unknown' = 'unknown';
+    let authorityId = 'unknown';
+    let chatJid: string | undefined;
+
+    if (context.senderRole) {
+      senderRole = context.senderRole;
+    }
+    const authority = runAuthorityRegistry.get(context.sourceGroup);
+    if (authority) {
+      if (!context.senderRole && authority.senderRole) {
+        senderRole = authority.senderRole;
+      }
+      authorityId = authority.authorityId;
+    }
+    // Find the chat JID for this group from registeredGroups
+    for (const [jid, group] of Object.entries(context.registeredGroups)) {
+      if (group.folder === groupFolder) {
+        chatJid = jid;
+        break;
+      }
+    }
+
+    const attribution: MutationAttribution = { authorityId, senderRole, jid: chatJid };
+    const provenance =
+      senderRole === 'operator' ? 'operator-requested' : 'agent-inferred';
+
+    // Mutation-budget check: only for mutation-type actions
+    const isMutationAction = [
+      'skill_create', 'skill_patch', 'skill_write_file',
+      'skill_archive', 'skill_restore', 'skill_rollback',
+    ].includes(parsed.action);
+
+    if (isMutationAction) {
+      const budgetResult = checkMutationBudget({ groupFolder, attribution, mutationType: 'skill' });
+      if (!budgetResult.allowed) {
+        // Record no-op event
+        recordMutationAuditEvent(groupFolder, {
+          kind: 'noop',
+          authorityId,
+          senderRole,
+          mutationType: 'skill',
+          action: parsed.action,
+          targetName: parsed.params.name,
+          noopReason: budgetResult.reason,
+          success: false,
+        });
+        return {
+          requestId: parsed.requestId,
+          status: 'error',
+          error: `Skill mutation rejected: ${budgetResult.reason}`,
+          executedAt,
+        };
+      }
+    }
+
     const name = parsed.params.name?.trim();
+    let mutationRecorded = false;
     const result = (() => {
       switch (parsed.action) {
         case 'skill_list':
@@ -1061,6 +1155,7 @@ export async function executeSkillAction(
             name,
             description: parsed.params.description || name,
             content: parsed.params.content,
+            provenance,
           });
         case 'skill_patch':
           if (!name) throw new Error('skill_patch requires params.name');
@@ -1070,6 +1165,7 @@ export async function executeSkillAction(
             skillsDir,
             name,
             content: parsed.params.content,
+            provenance,
           });
         case 'skill_write_file':
           if (!name) throw new Error('skill_write_file requires params.name');
@@ -1083,6 +1179,7 @@ export async function executeSkillAction(
             name,
             filePath: parsed.params.filePath,
             fileContent: parsed.params.fileContent,
+            provenance,
           });
         case 'skill_archive':
           if (!name) throw new Error('skill_archive requires params.name');
@@ -1106,6 +1203,21 @@ export async function executeSkillAction(
           return setPinned(skillsDir, name, false);
       }
     })();
+
+    // Record successful mutation
+    if (isMutationAction) {
+      recordMutation({ groupFolder, attribution, mutationType: 'skill' });
+      recordMutationAuditEvent(groupFolder, {
+        kind: 'mutation',
+        authorityId,
+        senderRole,
+        mutationType: 'skill',
+        action: parsed.action,
+        targetName: name,
+        success: true,
+      });
+    }
+
     return {
       requestId: parsed.requestId,
       status: 'success',

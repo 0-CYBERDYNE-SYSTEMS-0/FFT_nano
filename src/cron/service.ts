@@ -11,7 +11,11 @@ import {
   TIMEZONE,
 } from '../config.js';
 import { runContainerAgent, writeTasksSnapshot } from '../pi-runner.js';
-import { runEvaluatorPass } from '../evaluator.js';
+import {
+  runEvaluatorPass,
+  recordVerdictOutcome,
+  verdictToOutcome,
+} from '../evaluator.js';
 import {
   deleteTask,
   getAllTasks,
@@ -22,7 +26,9 @@ import {
   updateTaskAfterRunV2,
 } from '../db.js';
 import { logger } from '../logger.js';
-import { RegisteredGroup, ScheduledTask } from '../types.js';
+import { RegisteredGroup, ScheduledTask, RunAuthority } from '../types.js';
+import { mintRunAuthority, deriveEffectiveToolSet } from '../run-authority.js';
+import { recordTaskAuditEvent } from '../task-audit.js';
 import { resolveNoContinueForTask } from './adapters.js';
 import { getEffectiveTimezone } from '../time-context.js';
 import type { OutboxDeliverer } from '../outbox.js';
@@ -415,6 +421,7 @@ export async function runScheduledTaskV2(
         outputResult = output.result;
 
         // Evaluator pass for cron tasks — always runs
+        // WS2.5: agent-created tasks use forceEvaluate to force a real evaluation
         if (outputResult) {
           const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
           const verdict = await evaluateRun({
@@ -431,6 +438,7 @@ export async function runScheduledTaskV2(
               : path.join(GROUPS_DIR, task.group_folder),
             startedAtMs: startedAt,
             abortSignal: abortController.signal,
+            forceEvaluate: task.created_by === 'agent',
           }).catch((err) => {
             logger.warn(
               { err, taskId: task.id },
@@ -438,6 +446,33 @@ export async function runScheduledTaskV2(
             );
             return null;
           });
+
+          // Record verdict to evaluator_verdicts (WS2.5 / WS4.5 chokepoint)
+          // Best-effort: recording failure does not break the run
+          if (verdict) {
+            try {
+              // Construct RunAuthority for the chokepoint (WS4.5)
+              const runAuthority: RunAuthority = mintRunAuthority({
+                requestId: `cron-${task.id}-${startedAt}`,
+                groupFolder: task.group_folder,
+                isMain,
+                isScheduledTask: true,
+                effectiveToolSet: deriveEffectiveToolSet({}),
+                senderRole: 'operator',
+              });
+              const outcome = verdictToOutcome('cron', verdict, 0);
+              recordVerdictOutcome({
+                authority: runAuthority,
+                outcome,
+              });
+            } catch (err) {
+              logger.warn(
+                { err, taskId: task.id },
+                'Failed to record evaluator verdict',
+              );
+            }
+          }
+
           if (verdict && !verdict.skipped && !verdict.pass) {
             logger.warn(
               {
@@ -486,6 +521,13 @@ export async function runScheduledTaskV2(
   });
 
   if (task.schedule_type === 'once' && task.delete_after_run && !hadError) {
+    // WS2.4: Write audit line for delete_after_run before deleting the row
+    recordTaskAuditEvent(task.group_folder, {
+      taskId: task.id,
+      kind: 'delete_after_run',
+      priorStatus: task.status || null,
+      newStatus: null,
+    });
     deleteTask(task.id);
   } else {
     updateTaskAfterRunV2({

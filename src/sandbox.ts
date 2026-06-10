@@ -23,7 +23,12 @@ function commandExists(cmd: string): boolean {
   }
 }
 
-function getSandboxMode(): SandboxMode {
+/**
+ * Returns the current sandbox mode from the FFT_NANO_SANDBOX env var.
+ * Allowed values: 'bwrap' | 'docker' | 'none' (default).
+ * Exported for use by the spawn-refusal check (WS1.3) and doctor.ts.
+ */
+export function getSandboxMode(): SandboxMode {
   const raw = (process.env.FFT_NANO_SANDBOX || 'none').trim().toLowerCase();
   if (raw === 'bwrap') return 'bwrap';
   if (raw === 'docker') return 'docker';

@@ -76,6 +76,7 @@ export interface TelegramCommandDeps {
     chatRunPreferences: Record<string, Record<string, any>>;
     registeredGroups: Record<string, any>;
     chatUsageStats: Record<string, unknown>;
+    learningPaused: boolean;
   };
   constants: {
     assistantName: string;
@@ -148,11 +149,22 @@ export interface TelegramCommandDeps {
   formatTasksText: (mode?: 'list' | 'due') => string;
   formatGroupsText: () => string;
   formatStatusText: (chatJid?: string) => string;
+  formatLearningDigest: () => string;
   formatHelpText: (isMainChat: boolean) => string;
   formatUsageText: (chatJid: string, scope?: 'chat' | 'all') => string;
   formatActiveSubagentsText: () => string;
   summarizeTask: (taskId: string) => string;
   formatTaskRunsText: (taskId: string, limit: number) => string;
+  formatPendingTasksText: (deps: {
+    registerToken: (
+      taskId: string,
+      groupFolder: string,
+      action: 'approve' | 'reject',
+    ) => string;
+  }) => {
+    text: string;
+    keyboard: Array<Array<{ text: string; callbackData: string }>>;
+  };
   handleKnowledgeCommand?: (params: {
     action: string;
     input: string;
@@ -236,12 +248,41 @@ export interface TelegramCommandDeps {
     apiKeyEnv: string;
   };
   registerTelegramSettingsPanelAction: (chatJid: string, action: any) => string;
+  registerPendingTaskToken: (
+    taskId: string,
+    groupFolder: string,
+    action: 'approve' | 'reject',
+  ) => string;
   buildAdminPanelKeyboard: () => Array<
     Array<{ text: string; callbackData: string }>
   >;
   getTaskById: (taskId: string) => unknown;
   updateTask: (taskId: string, patch: Record<string, unknown>) => void;
   deleteTask: (taskId: string) => void;
+  getPendingTaskToken: (token: string) => {
+    taskId: string;
+    groupFolder: string;
+    action: 'approve' | 'reject';
+  } | null;
+  recordTaskAuditEvent: (
+    groupFolder: string,
+    event: {
+      taskId: string;
+      kind: string;
+      operatorJid?: string;
+      attemptedByJid?: string;
+      priorStatus?: string;
+      newStatus?: string | null;
+      promptPreview?: string;
+      scheduleType?: string;
+      scheduleValue?: string;
+      deliveryTo?: string | null;
+      deliveryMode?: string | null;
+      deleteAfterRun?: boolean;
+      createdBy?: 'operator' | 'agent';
+      senderRole?: 'operator' | 'member' | 'unknown';
+    },
+  ) => void;
   emitTuiChatEvent: (payload: any) => void;
   emitTuiAgentEvent: (payload: any) => void;
   emitRunProgress: (payload: {
@@ -1457,6 +1498,91 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return;
     }
 
+    // WS2.3: Handle pending task approve/reject callbacks
+    // These must be checked before the generic "not panel:" return
+    if (
+      q.data.startsWith('task:approve:') ||
+      q.data.startsWith('task:reject:')
+    ) {
+      // isMainChat guard - these are operator-only actions
+      if (!deps.isMainChat(q.chatJid)) {
+        deps.logTelegramCommandAudit(q.chatJid, q.data, false, 'non-main chat');
+        await deps.sendMessage(
+          q.chatJid,
+          `${deps.constants.assistantName}: task approval actions are only available in the main/admin chat.`,
+        );
+        return;
+      }
+
+      const colonIdx = q.data.indexOf(':');
+      const action = colonIdx >= 0 ? q.data.slice(0, colonIdx) : null; // 'task' or empty
+      const rest = colonIdx >= 0 ? q.data.slice(colonIdx + 1) : q.data;
+      const actionPartIdx = rest.indexOf(':');
+      if (actionPartIdx < 0) {
+        await deps.sendMessage(q.chatJid, 'Invalid task callback.');
+        return;
+      }
+      const taskAction = rest.slice(0, actionPartIdx); // 'approve' or 'reject'
+      const token = rest.slice(actionPartIdx + 1);
+
+      if (taskAction !== 'approve' && taskAction !== 'reject') {
+        await deps.sendMessage(q.chatJid, 'Invalid task callback action.');
+        return;
+      }
+
+      // Look up the token to get taskId and groupFolder
+      const tokenEntry = deps.getPendingTaskToken(token);
+      if (!tokenEntry) {
+        deps.logTelegramCommandAudit(
+          q.chatJid,
+          q.data,
+          false,
+          'token not found or expired',
+        );
+        await deps.sendMessage(
+          q.chatJid,
+          'This task approval button has expired. Run /tasks to refresh the pending list.',
+        );
+        return;
+      }
+
+      // Perform the action
+      if (taskAction === 'approve') {
+        // Flip status to 'active'
+        deps.updateTask(tokenEntry.taskId, { status: 'active' });
+        // Write audit line
+        deps.recordTaskAuditEvent(tokenEntry.groupFolder, {
+          taskId: tokenEntry.taskId,
+          kind: 'approve',
+          operatorJid: q.chatJid,
+          priorStatus: 'pending_approval',
+          newStatus: 'active',
+        });
+        deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'task approved');
+        await deps.sendMessage(
+          q.chatJid,
+          `Task ${tokenEntry.taskId} approved. It will run on its next scheduled time.`,
+        );
+      } else {
+        // Reject: delete the row
+        deps.deleteTask(tokenEntry.taskId);
+        // Write audit line
+        deps.recordTaskAuditEvent(tokenEntry.groupFolder, {
+          taskId: tokenEntry.taskId,
+          kind: 'reject',
+          operatorJid: q.chatJid,
+          priorStatus: 'pending_approval',
+          newStatus: null,
+        });
+        deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'task rejected');
+        await deps.sendMessage(
+          q.chatJid,
+          `Task ${tokenEntry.taskId} rejected and deleted.`,
+        );
+      }
+      return;
+    }
+
     if (!q.data.startsWith('panel:')) {
       return;
     }
@@ -1494,6 +1620,23 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           kind: 'show-groups',
         });
         return;
+      case 'panel:pending-tasks': {
+        deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
+        const pending = deps.formatPendingTasksText({
+          registerToken: (taskId, groupFolder, action) =>
+            deps.registerPendingTaskToken(taskId, groupFolder, action),
+        });
+        if (deps.state.telegramBot?.sendMessageWithKeyboard) {
+          await deps.state.telegramBot.sendMessageWithKeyboard(
+            q.chatJid,
+            pending.text,
+            pending.keyboard,
+          );
+        } else {
+          await deps.sendMessage(q.chatJid, pending.text);
+        }
+        return;
+      }
       case 'panel:health':
         deps.logTelegramCommandAudit(q.chatJid, q.data, true, 'ok');
         const healthResponse = deps.formatStatusText(q.chatJid);
@@ -2335,6 +2478,51 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         m.chatJid,
         'This chat is now the main/admin channel.',
       );
+      return true;
+    }
+
+    // WS6.2: /learning digest command - single operator surface for pause state,
+    // evaluator stats, recent skips, and pending task approvals.
+    if (cmd === '/learning') {
+      const sub = (rest[0] || '').toLowerCase();
+      // Main-chat only for all /learning commands (VAL-WS6-008)
+      if (!isMainGroup) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
+        await deps.sendMessage(
+          m.chatJid,
+          `${deps.constants.assistantName}: /learning is only available in the main/admin chat.`,
+        );
+        return true;
+      }
+      if (sub === 'pause' || sub === 'resume') {
+        const newState = sub === 'pause';
+        if (deps.state.learningPaused === newState) {
+          deps.logTelegramCommandAudit(
+            m.chatJid,
+            cmd,
+            true,
+            `already ${sub}ed`,
+          );
+          await deps.sendMessage(
+            m.chatJid,
+            `Learning is already ${newState ? 'paused' : 'active'}.`,
+          );
+          return true;
+        }
+        deps.state.learningPaused = newState;
+        deps.saveState?.();
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, sub);
+        await deps.sendMessage(
+          m.chatJid,
+          newState
+            ? 'Learning paused. All autonomous loops will short-circuit.'
+            : 'Learning resumed.',
+        );
+        return true;
+      }
+      // Digest view
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'digest');
+      await deps.sendMessage(m.chatJid, deps.formatLearningDigest());
       return true;
     }
 

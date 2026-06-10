@@ -344,3 +344,153 @@ test('skill manager transitions archive stale unpinned agent-created skills', ()
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+// ── WS3.3 Provenance lifecycle ────────────────────────────────────────────────
+
+test('VAL-WS3-015: skill write without provenance defaults to agent-inferred', async () => {
+  const groupFolder = `skill-test-${Date.now()}`;
+  const skillsDir = path.join(
+    process.cwd(),
+    'data',
+    'pi',
+    groupFolder,
+    '.pi',
+    'skills',
+  );
+  try {
+    const created = await executeSkillAction(
+      {
+        type: 'skill_action',
+        action: 'skill_create',
+        requestId: 'create-provenance-test',
+        params: {
+          groupFolder,
+          name: 'provenance-test-skill',
+          description: 'Testing provenance default.',
+        },
+      },
+      { sourceGroup: groupFolder, isMain: true, registeredGroups: {} },
+    );
+
+    assert.equal(created.status, 'success');
+
+    const skillPath = path.join(skillsDir, 'provenance-test-skill', 'SKILL.md');
+    const content = fs.readFileSync(skillPath, 'utf-8');
+    assert.match(content, /^provenance:\s*agent-inferred/m);
+  } finally {
+    fs.rmSync(path.join(process.cwd(), 'data', 'pi', groupFolder), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+test('VAL-INV-I5-002: normalizeSkillMarkdown always emits provenance field', async () => {
+  // VAL-INV-I5-002: every skill write through the host's IPC paths has a
+  // provenance value in its frontmatter. Test via executeSkillAction integration.
+  const groupFolder = `skill-test-${Date.now()}`;
+  const skillsDir = path.join(
+    process.cwd(),
+    'data',
+    'pi',
+    groupFolder,
+    '.pi',
+    'skills',
+  );
+  try {
+    // Create skill without explicit provenance
+    const created = await executeSkillAction(
+      {
+        type: 'skill_action',
+        action: 'skill_create',
+        requestId: 'provenance-check-1',
+        params: {
+          groupFolder,
+          name: 'provenance-always-skill',
+          description: 'Provenance must be present.',
+        },
+      },
+      { sourceGroup: groupFolder, isMain: true, registeredGroups: {} },
+    );
+    assert.equal(created.status, 'success');
+
+    // Patch skill without explicit provenance
+    const patched = await executeSkillAction(
+      {
+        type: 'skill_action',
+        action: 'skill_patch',
+        requestId: 'provenance-check-2',
+        params: {
+          groupFolder,
+          name: 'provenance-always-skill',
+          content: [
+            '---',
+            'name: provenance-always-skill',
+            'description: Provenance must be present after patch too.',
+            '---',
+            '',
+            '# provenance-always-skill',
+            '',
+          ].join('\n'),
+        },
+      },
+      { sourceGroup: groupFolder, isMain: true, registeredGroups: {} },
+    );
+    assert.equal(patched.status, 'success');
+
+    const skillPath = path.join(skillsDir, 'provenance-always-skill', 'SKILL.md');
+    const content = fs.readFileSync(skillPath, 'utf-8');
+    assert.match(content, /^provenance:\s*agent-inferred/m);
+  } finally {
+    fs.rmSync(path.join(process.cwd(), 'data', 'pi', groupFolder), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+test('VAL-XARE-016: skill without provenance excluded from operator-only review list', async () => {
+  // A skill with provenance: agent-inferred should not appear in any
+  // "operator-requested" context and should appear in "agent-inferred" context.
+  // The skill report classifySource() already marks agent-created skills
+  // with source === 'agent'. Provenance: agent-inferred confirms this.
+  const groupFolder = `skill-test-${Date.now()}`;
+  const skillsDir = path.join(
+    process.cwd(),
+    'data',
+    'pi',
+    groupFolder,
+    '.pi',
+    'skills',
+  );
+  try {
+    const created = await executeSkillAction(
+      {
+        type: 'skill_action',
+        action: 'skill_create',
+        requestId: 'agent-inferred-test',
+        params: {
+          groupFolder,
+          name: 'agent-inferred-skill',
+          description: 'Agent inferred skill for provenance test.',
+        },
+      },
+      { sourceGroup: groupFolder, isMain: true, registeredGroups: {} },
+    );
+    assert.equal(created.status, 'success');
+
+    const skillPath = path.join(skillsDir, 'agent-inferred-skill', 'SKILL.md');
+    const content = fs.readFileSync(skillPath, 'utf-8');
+    assert.match(content, /^provenance:\s*agent-inferred/m);
+
+    // The skill report marks it as 'agent' source
+    const report = buildSkillReport(skillsDir);
+    const entry = report.find((e) => e.name === 'agent-inferred-skill');
+    assert.equal(entry?.source, 'agent');
+  } finally {
+    fs.rmSync(path.join(process.cwd(), 'data', 'pi', groupFolder), {
+      recursive: true,
+      force: true,
+    });
+  }
+});

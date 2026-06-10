@@ -1,7 +1,7 @@
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { TelegramBot, TelegramInlineKeyboard } from './telegram.js';
 import { HostEventBus } from './runtime/host-events.js';
-import type { RegisteredGroup } from './types.js';
+import type { RegisteredGroup, RunAuthority } from './types.js';
 import { TelegramPreviewRegistry } from './telegram-streaming.js';
 import type { TuiGatewayServer } from './tui/gateway-server.js';
 import type { WebControlCenterServer } from './web/control-center-server.js';
@@ -246,6 +246,10 @@ export const state = {
   tuiGatewayServer: null as TuiGatewayServer | null,
   webControlCenterServer: null as WebControlCenterServer | null,
   piModelsCache: null as { entries: PiModelEntry[]; loadedAt: number } | null,
+  // WS6.3: global kill-switch for all learning loops. Checked by
+  // maybeRunSkillSelfImprovement, maybeRunSkillManager, and the WS2
+  // auto-approve path. Wired to state-persistence.ts by WS6.3.
+  learningPaused: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -279,7 +283,30 @@ export const telegramSetupInputStates = new Map<
   string,
   TelegramSetupInputState
 >();
+
+// WS2.3: Pending task approval tokens for the Telegram approval surface.
+// Maps token -> { taskId, groupFolder, action: 'approve' | 'reject', expiresAt }
+export const pendingTaskTokens = new Map<
+  string,
+  {
+    taskId: string;
+    groupFolder: string;
+    action: 'approve' | 'reject';
+    expiresAt: number;
+  }
+>();
 export const hostEventBus = new HostEventBus();
+
+/**
+ * Run authority registry — keyed by groupFolder.
+ * Stores the most-recent RunAuthority for each group so async IPC actions
+ * (messages, tasks, actions) can be attributed to the run that authored them.
+ *
+ * A stack (most-recent on top) per group is used so concurrent runs in
+ * different groups are not confused. For same-group concurrency, the most
+ * recent entry is used for attribution.
+ */
+export const runAuthorityRegistry = new Map<string, RunAuthority>();
 export const telegramToolProgressRuns = new Map<
   string,
   TelegramToolProgressState

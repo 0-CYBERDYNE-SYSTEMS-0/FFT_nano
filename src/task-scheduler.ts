@@ -8,7 +8,11 @@ import {
   SCHEDULER_POLL_INTERVAL,
 } from './config.js';
 import { runContainerAgent, writeTasksSnapshot } from './pi-runner.js';
-import { runEvaluatorPass } from './evaluator.js';
+import {
+  runEvaluatorPass,
+  recordVerdictOutcome,
+  verdictToOutcome,
+} from './evaluator.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -19,7 +23,8 @@ import {
 } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { RegisteredGroup, ScheduledTask, RunAuthority } from './types.js';
+import { mintRunAuthority, deriveEffectiveToolSet } from './run-authority.js';
 import { startCronV2Service } from './cron/service.js';
 import { resolveNoContinueForTask } from './cron/adapters.js';
 import type { OutboxDeliverer } from './outbox.js';
@@ -147,6 +152,7 @@ async function runLegacyTask(
       result = output.result;
 
       // Evaluator pass for scheduled tasks — always runs
+      // WS2.5: agent-created tasks use forceEvaluate to force a real evaluation
       if (result && group) {
         const evaluateRun = deps.runEvaluatorPass || runEvaluatorPass;
         const verdict = await evaluateRun({
@@ -160,6 +166,7 @@ async function runLegacyTask(
           isMain,
           workspaceDir: isMain ? MAIN_WORKSPACE_DIR : groupDir,
           startedAtMs: startTime,
+          forceEvaluate: task.created_by === 'agent',
         }).catch((err) => {
           logger.warn(
             { err, taskId: task.id },
@@ -167,6 +174,33 @@ async function runLegacyTask(
           );
           return null;
         });
+
+        // Record verdict to evaluator_verdicts (WS2.5 / WS4.5 chokepoint)
+        // Best-effort: recording failure does not break the run
+        if (verdict) {
+          try {
+            // Construct RunAuthority for the chokepoint (WS4.5)
+            const runAuthority: RunAuthority = mintRunAuthority({
+              requestId: `scheduled-${task.id}-${startTime}`,
+              groupFolder: task.group_folder,
+              isMain,
+              isScheduledTask: true,
+              effectiveToolSet: deriveEffectiveToolSet({}),
+              senderRole: 'operator',
+            });
+            const outcome = verdictToOutcome('scheduled', verdict, 0);
+            recordVerdictOutcome({
+              authority: runAuthority,
+              outcome,
+            });
+          } catch (err) {
+            logger.warn(
+              { err, taskId: task.id },
+              'Failed to record evaluator verdict',
+            );
+          }
+        }
+
         if (verdict && !verdict.skipped && !verdict.pass) {
           logger.warn(
             {

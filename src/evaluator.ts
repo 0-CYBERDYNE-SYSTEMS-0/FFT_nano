@@ -1,10 +1,18 @@
 import fs from 'fs';
 import path from 'path';
 
-import type { RegisteredGroup, RunType } from './types.js';
+import type { RegisteredGroup, RunAuthority, RunType } from './types.js';
 import type { ContainerInput, ContainerOutput } from './pi-runner.js';
 import { runContainerAgent } from './pi-runner.js';
 import { logger } from './logger.js';
+import {
+  recordEvaluatorVerdict,
+  enqueueDelivery,
+  getEvaluatorStats,
+} from './db.js';
+import { PARITY_CONFIG } from './parity-config.js';
+import { findMainChatJid } from './telegram-group-mgmt.js';
+import { state } from './app-state.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +44,57 @@ export interface EvaluatorVerdict {
   skippedReason?: string;
 }
 
+// ---------------------------------------------------------------------------
+// EvaluatorOutcome discriminated union (Contract 2 - WS4.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated union for all possible evaluator outcomes.
+ * Used by the recordVerdictOutcome chokepoint to determine how to record verdicts.
+ */
+export type EvaluatorOutcome =
+  | {
+      kind: 'verdict';
+      runType: RunType;
+      pass: boolean;
+      score: number;
+      issues: string[];
+      feedback: string;
+      refinements: number;
+      skipped: false;
+      skipReason?: never;
+    }
+  | {
+      kind: 'eligible-skip';
+      runType: RunType;
+      pass: false;
+      score: 0;
+      issues: string[];
+      feedback: string;
+      refinements: number;
+      skipReason:
+        | 'evaluator-threw'
+        | 'evaluator-error'
+        | 'unparseable-verdict'
+        | 'artifact-missing';
+      skipped: true;
+    }
+  | {
+      kind: 'threshold-skip';
+      runType: RunType;
+      skipReason:
+        | 'empty-output'
+        | 'run-type-not-eligible'
+        | 'trivially-short-run'
+        | 'no-changed-files';
+      skipped: true;
+      pass?: never;
+      score?: never;
+      issues?: never;
+      feedback?: never;
+      refinements?: never;
+    };
+
 export interface ArtifactVerification {
   workspaceDir?: string;
   claimedPaths: string[];
@@ -62,8 +121,14 @@ export function shouldEvaluate(ctx: EvaluatorContext): {
     return { evaluate: false, reason: 'empty output' };
   }
 
+  // forceEvaluate short-circuits the runType gate: agent-created task runs
+  // always go through the evaluator regardless of run type
+  if (ctx.forceEvaluate) {
+    return { evaluate: true, reason: 'forced evaluation' };
+  }
+
   // Only coding and subagent runs are eligible for evaluation
-  // chat, cron, scheduled, and heartbeat always skip
+  // chat, cron, scheduled, and heartbeat always skip unless forceEvaluate
   if (ctx.runType !== 'coding' && ctx.runType !== 'subagent') {
     return {
       evaluate: false,
@@ -73,10 +138,6 @@ export function shouldEvaluate(ctx: EvaluatorContext): {
 
   if (ctx.runType === 'coding' && (ctx.changedFiles?.length ?? 0) > 0) {
     return { evaluate: true, reason: 'coding run with changed files' };
-  }
-
-  if (ctx.forceEvaluate) {
-    return { evaluate: true, reason: 'forced evaluation' };
   }
 
   // Fast path: trivially short runs with no tools skip evaluation
@@ -262,6 +323,7 @@ const ACTIONFUL_VERBS = [
   'run',
   'save',
   'scan',
+  'schedule',
   'send',
   'setup',
   'test',
@@ -292,6 +354,7 @@ const ACTIONFUL_NOUNS = [
   'job',
   'knowledge',
   'log',
+  'meeting',
   'memory',
   'note',
   'page',
@@ -301,6 +364,7 @@ const ACTIONFUL_NOUNS = [
   'raw',
   'report',
   'scheduler',
+  'skill',
   'script',
   'site',
   'slide',
@@ -692,4 +756,390 @@ export function buildRefinementPrompt(
   ]
     .filter((l) => l !== undefined)
     .join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Verdict recording chokepoint (WS4.5 - Contract 2)
+// ---------------------------------------------------------------------------
+
+export interface RecordVerdictOutcomeInput {
+  authority: RunAuthority;
+  outcome: EvaluatorOutcome;
+  rawArtifactClaims?: string[];
+  durationMs?: number;
+  toolsInvoked?: number;
+}
+
+/**
+ * Result of recording a verdict outcome through the chokepoint.
+ * `shouldAlert` is true when an eligible-skip streak triggers the
+ * degraded-signal alert (WS4.3).
+ */
+export interface RecordVerdictOutcomeResult {
+  shouldAlert: boolean;
+}
+
+/**
+ * Single chokepoint for recording evaluator outcomes to the database.
+ *
+ * Behavior:
+ *   - `verdict` → INSERT row with skipped=0, pass, score, issues, refinements
+ *   - `eligible-skip` → INSERT row with skipped=1, pass=0, score=0, skip_reason=<reason>;
+ *     also checks WS4.3 degraded-signal alert (more than half of last 10 rows skipped)
+ *   - `threshold-skip` → no-op (no signal to record)
+ *
+ * Returns `{ shouldAlert: true }` when the degraded-signal alert fires.
+ * The alert is persisted via delivery_outbox UNIQUE dedupe_key='eval-degraded:<groupFolder>'
+ * so host restart does not reset the 24h cooldown.
+ *
+ * This is the single point through which coding orchestrator, cron v2,
+ * legacy task scheduler, and chat-sampling path (WS4.4) all write rows.
+ * Future run types cannot silently skip recording.
+ */
+export function recordVerdictOutcome(
+  input: RecordVerdictOutcomeInput,
+): RecordVerdictOutcomeResult {
+  const { authority, outcome } = input;
+  let shouldAlert = false;
+
+  // threshold-skip: no-op (run was never eligible, no signal to record)
+  if (outcome.kind === 'threshold-skip') {
+    logger.debug(
+      {
+        runType: outcome.runType,
+        skipReason: outcome.skipReason,
+        requestId: authority.requestId,
+      },
+      'Threshold-skip outcome: no verdict row written',
+    );
+    return { shouldAlert };
+  }
+
+  if (outcome.kind === 'verdict') {
+    // verdict: write row with skipped=0 and pass/score/issues/refinements
+    logger.info(
+      {
+        runType: outcome.runType,
+        pass: outcome.pass,
+        score: outcome.score,
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+      },
+      'Recording verdict outcome (verdict)',
+    );
+
+    try {
+      recordEvaluatorVerdict({
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+        chatJid:
+          authority.origin === 'interactive-main'
+            ? authority.requestId
+            : undefined,
+        runType: outcome.runType,
+        pass: outcome.pass,
+        score: outcome.score,
+        issues: outcome.issues,
+        refinements: outcome.refinements,
+      });
+    } catch (err) {
+      logger.warn(
+        { err, requestId: authority.requestId },
+        'Failed to record verdict outcome',
+      );
+    }
+  } else if (outcome.kind === 'eligible-skip') {
+    // eligible-skip: write row with skipped=1, pass=0, score=0, skip_reason=<reason>
+    logger.info(
+      {
+        runType: outcome.runType,
+        skipReason: outcome.skipReason,
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+      },
+      'Recording verdict outcome (eligible-skip)',
+    );
+
+    try {
+      recordEvaluatorVerdict({
+        requestId: authority.requestId,
+        groupFolder: authority.groupFolder,
+        chatJid:
+          authority.origin === 'interactive-main'
+            ? authority.requestId
+            : undefined,
+        runType: outcome.runType,
+        pass: false, // pass = 0 for eligible-skip
+        score: 0, // score = 0 for eligible-skip
+        issues: outcome.issues,
+        refinements: outcome.refinements ?? 0,
+        skipped: true,
+        skipReason: outcome.skipReason,
+      });
+    } catch (err) {
+      logger.warn(
+        { err, requestId: authority.requestId },
+        'Failed to record eligible-skip outcome',
+      );
+    }
+
+    // WS4.3: Check degraded-signal alert
+    // If more than half of the last 10 eligible rows are skipped, fire the alert.
+    // The 24h dedupe is persisted via delivery_outbox UNIQUE dedupe_key.
+    const stats = getEvaluatorStats(authority.groupFolder, 10);
+    if (stats.recentSkips > 5) {
+      logger.info(
+        { groupFolder: authority.groupFolder, recentSkips: stats.recentSkips },
+        'Degraded signal alert triggered',
+      );
+
+      // Find the main chat JID for the operator notice destination
+      const mainChatJid = findMainChatJid();
+      if (mainChatJid) {
+        const dedupeKey = `eval-degraded:${authority.groupFolder}`;
+        const body = `[FFT_nano] Evaluation degraded in ${authority.groupFolder}: evaluation is degraded; learning signal is currently blind.`;
+
+        try {
+          enqueueDelivery({
+            dedupeKey,
+            destination: mainChatJid,
+            body,
+            maxAttempts: 3,
+          });
+          shouldAlert = true;
+          logger.info(
+            { dedupeKey, destination: mainChatJid },
+            'Degraded signal alert enqueued',
+          );
+        } catch (err) {
+          logger.warn(
+            { err, dedupeKey },
+            'Failed to enqueue degraded signal alert',
+          );
+        }
+      }
+    }
+  }
+
+  return { shouldAlert };
+}
+
+/**
+ * Normalize a skip reason from the spaced format returned by runEvaluatorPass
+ * to the hyphenated format required by EvaluatorOutcome.
+ *
+ * runEvaluatorPass returns reasons like 'evaluator threw' (space-separated),
+ * but EvaluatorOutcome requires 'evaluator-threw' (hyphenated).
+ * Similarly, 'trivially short run' → 'trivially-short-run' and
+ * '<runType> run type not eligible for evaluation' → 'run-type-not-eligible'.
+ */
+function normalizeSkipReason(reason: string): string {
+  // Specific known mappings for runEvaluatorPass outputs
+  if (reason === 'evaluator threw') return 'evaluator-threw';
+  if (reason === 'evaluator error') return 'evaluator-error';
+  if (reason === 'unparseable verdict') return 'unparseable-verdict';
+  if (reason === 'empty output') return 'empty-output';
+  if (reason === 'trivially short run') return 'trivially-short-run';
+  if (reason.endsWith(' run type not eligible for evaluation')) {
+    return 'run-type-not-eligible';
+  }
+  // Generic fallback: replace spaces with hyphens and lowercase
+  return reason.replace(/ /g, '-').toLowerCase();
+}
+
+/**
+ * Convert an EvaluatorVerdict (legacy flat shape) to an EvaluatorOutcome verdict variant.
+ */
+export function verdictToOutcome(
+  runType: RunType,
+  verdict: EvaluatorVerdict,
+  refinements: number,
+): EvaluatorOutcome {
+  if (verdict.skipped) {
+    // Determine if this is an eligible-skip or threshold-skip
+    // Eligible skips have a reason like 'evaluator threw', 'evaluator error', 'unparseable verdict'
+    const ELIGIBLE_SKIP_REASONS = new Set([
+      'evaluator threw',
+      'evaluator error',
+      'unparseable verdict',
+      'artifact-missing',
+    ]);
+
+    const rawReason = verdict.skippedReason ?? 'unknown';
+    // Normalize to the hyphenated format required by EvaluatorOutcome
+    const reason = normalizeSkipReason(rawReason);
+
+    if (ELIGIBLE_SKIP_REASONS.has(rawReason)) {
+      return {
+        kind: 'eligible-skip',
+        runType,
+        pass: false,
+        score: 0,
+        issues: verdict.issues,
+        feedback: verdict.feedback,
+        refinements,
+        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R }
+          ? R
+          : never,
+        skipped: true,
+      };
+    } else {
+      // threshold-skip
+      return {
+        kind: 'threshold-skip',
+        runType,
+        skipReason: reason as EvaluatorOutcome extends { skipReason: infer R }
+          ? R
+          : never,
+        skipped: true,
+      };
+    }
+  }
+
+  return {
+    kind: 'verdict',
+    runType,
+    pass: verdict.pass,
+    score: verdict.score,
+    issues: verdict.issues,
+    feedback: verdict.feedback,
+    refinements,
+    skipped: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Chat sampling (WS4.4)
+// ---------------------------------------------------------------------------
+
+export interface RunSampledChatEvaluationParams {
+  authority: RunAuthority;
+  originalTask: string;
+  agentOutput: string;
+  group: RegisteredGroup;
+  chatJid: string;
+  startedAtMs?: number;
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * Result of a chat sampling decision.
+ */
+export interface ChatSampleDecision {
+  decision: 'evaluate' | 'skip';
+  reason: string;
+}
+
+/**
+ * WS4.4: Sampled chat evaluation.
+ *
+ * For each chat run:
+ * 1. Check global pause (state.learningPaused) - if paused, hard no-op
+ * 2. Apply isActionfulChatTask first - explain-only runs skip regardless of rate
+ * 3. If chatSampleRate === 0, skip
+ * 4. Otherwise, sample: Math.random() < chatSampleRate
+ * 5. If sampled: call runEvaluatorPass with forceEvaluate: true and runType: 'chat'
+ * 6. Record verdict through recordVerdictOutcome with runType: 'chat'
+ *
+ * Each per-run decision is logged for auditability.
+ */
+export async function runSampledChatEvaluation(
+  params: RunSampledChatEvaluationParams,
+): Promise<ChatSampleDecision> {
+  const {
+    authority,
+    originalTask,
+    agentOutput,
+    group,
+    chatJid,
+    startedAtMs,
+    abortSignal,
+  } = params;
+
+  // 1. Global pause check: if paused, hard no-op
+  if (state.learningPaused) {
+    logger.debug(
+      { chatJid, requestId: authority.requestId },
+      'Chat sampling skipped: learning paused',
+    );
+    return { decision: 'skip', reason: 'learning-paused' };
+  }
+
+  // 2. isActionfulChatTask check first
+  if (!isActionfulChatTask(originalTask)) {
+    logger.info(
+      { chatJid, requestId: authority.requestId },
+      'chat_sample_decision: skip (explain-only task)',
+    );
+    return { decision: 'skip', reason: 'explain-only-task' };
+  }
+
+  // 3. chatSampleRate === 0 means disabled
+  const chatSampleRate = PARITY_CONFIG.evaluator.chatSampleRate;
+  if (chatSampleRate === 0) {
+    logger.info(
+      { chatJid, requestId: authority.requestId, chatSampleRate },
+      'chat_sample_decision: skip (chatSampleRate is 0)',
+    );
+    return { decision: 'skip', reason: 'chat-sample-rate-disabled' };
+  }
+
+  // 4. Sample decision
+  const shouldEvaluate = Math.random() < chatSampleRate;
+
+  if (!shouldEvaluate) {
+    logger.info(
+      { chatJid, requestId: authority.requestId, chatSampleRate },
+      'chat_sample_decision: skip (not sampled)',
+    );
+    return { decision: 'skip', reason: 'not-sampled' };
+  }
+
+  // 5. Evaluate: call runEvaluatorPass with forceEvaluate: true
+  logger.info(
+    { chatJid, requestId: authority.requestId, chatSampleRate },
+    'chat_sample_decision: evaluate',
+  );
+
+  try {
+    const verdict = await runEvaluatorPass({
+      runType: 'chat',
+      originalTask,
+      agentOutput,
+      durationMs: 0, // Not tracked for chat runs
+      toolsInvoked: 0,
+      group,
+      chatJid,
+      startedAtMs,
+      forceEvaluate: true,
+      abortSignal,
+    });
+
+    // 6. Record verdict through chokepoint
+    const outcome = verdictToOutcome('chat', verdict, 0);
+    recordVerdictOutcome({
+      authority,
+      outcome,
+      durationMs: 0,
+      toolsInvoked: 0,
+    });
+
+    logger.info(
+      {
+        chatJid,
+        requestId: authority.requestId,
+        pass: verdict.pass,
+        score: verdict.score,
+        skipped: verdict.skipped,
+      },
+      'Chat evaluation completed',
+    );
+  } catch (err) {
+    logger.warn(
+      { err, chatJid, requestId: authority.requestId },
+      'Chat evaluation failed',
+    );
+  }
+
+  return { decision: 'evaluate', reason: 'sampled-and-evaluated' };
 }

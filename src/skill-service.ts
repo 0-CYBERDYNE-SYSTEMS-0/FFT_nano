@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import YAML from 'yaml';
 
 import {
   ASSISTANT_NAME,
@@ -21,6 +22,7 @@ import {
   writeSkillManagerReport,
   type SkillManagerConfig,
 } from './skill-lifecycle.js';
+import { getSkillEfficacy, type SkillEfficacy } from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import {
   captureKnowledgeRawNote,
@@ -119,6 +121,10 @@ export function shouldTriggerSkillSelfImprove(params: {
 }): SkillSelfImproveDecision {
   if (!PARITY_CONFIG.skills.selfImprove.enabled) {
     return { due: false, triggerReason: 'disabled' };
+  }
+  // WS6.3: Global pause short-circuits before any other check. VAL-WS6-017
+  if (state.learningPaused) {
+    return { due: false, triggerReason: 'learning-paused' };
   }
   const now = params.now ?? Date.now();
   const current = readSkillSelfImproveState(params.groupFolder);
@@ -239,12 +245,15 @@ export function maybeRunSkillSelfImprovement(params: {
   toolExecutions?: PiToolExecution[];
   runtimePrefs: ChatRunPreferences;
   requestId?: string;
+  senderRole?: 'operator' | 'member' | 'unknown';
 }): void {
   const runId = params.requestId || 'run';
+  const senderRole = params.senderRole ?? 'unknown';
   const { signals, priority } = extractLearningSignals({
     userTask: params.originalTask,
     agentOutput: params.agentOutput,
     toolExecutions: params.toolExecutions,
+    senderRole,
   });
 
   const decision = shouldTriggerSkillSelfImprove({
@@ -258,16 +267,43 @@ export function maybeRunSkillSelfImprovement(params: {
       ? `signal:${signals.join(',')}`
       : decision.triggerReason;
 
-  if (!decision.due) {
+  // WS6.3: global pause short-circuits the self-improve trigger. VAL-WS6-017,
+  // VAL-XARE-014. shouldTriggerSkillSelfImprove returns
+  // { due: false, triggerReason: 'learning-paused' } when paused.
+  if (decision.triggerReason === 'learning-paused') {
     recordSelfImproveEvent(params.group.folder, {
       run_id: runId,
+      authorityId: runId,
+      sender_role: senderRole,
       review_type: 'skill-self-improve',
       trigger_reason: triggerReason,
       signals_detected: signals,
       review_fired: false,
-      noop_reason: decision.triggerReason.includes('debounced')
-        ? 'min-interval debounce'
-        : 'cadence threshold not reached',
+      noop_reason: 'learning-paused',
+      success: true,
+    });
+    return;
+  }
+
+  if (!decision.due) {
+    // WS3.5: detect downgrade — signals were found but priority was capped at
+    // 'light' because the sender is not the operator. Record the downgrade reason
+    // so the JSONL event is observable without requiring DB state.
+    const wasDowngraded =
+      signals.length > 0 && priority === 'light' && senderRole !== 'operator';
+    recordSelfImproveEvent(params.group.folder, {
+      run_id: runId,
+      authorityId: runId, // INV.1: stamped for forensic traceability (VAL-XARE-009)
+      sender_role: senderRole,
+      review_type: 'skill-self-improve',
+      trigger_reason: triggerReason,
+      signals_detected: signals,
+      review_fired: false,
+      noop_reason: wasDowngraded
+        ? 'non-operator-signal-downgraded'
+        : decision.triggerReason.includes('debounced')
+          ? 'debounced'
+          : 'cadence threshold not reached',
       success: true,
     });
     return;
@@ -275,6 +311,8 @@ export function maybeRunSkillSelfImprovement(params: {
 
   recordSelfImproveEvent(params.group.folder, {
     run_id: runId,
+    authorityId: runId, // INV.1: stamped for forensic traceability (VAL-XARE-009)
+    sender_role: senderRole,
     review_type: 'skill-self-improve',
     trigger_reason: triggerReason,
     signals_detected: signals,
@@ -312,6 +350,71 @@ export function maybeRunSkillSelfImprovement(params: {
 // ---------------------------------------------------------------------------
 // Skill manager auto-run
 // ---------------------------------------------------------------------------
+
+/**
+ * Read the provenance field from a skill's SKILL.md frontmatter.
+ * Returns 'agent-inferred' as the conservative default when the field is absent
+ * (e.g. legacy skills created before WS3.3).
+ */
+function readSkillProvenance(skillsDir: string, skillName: string): string {
+  const skillPath = path.join(skillsDir, skillName, 'SKILL.md');
+  if (!fs.existsSync(skillPath)) return 'agent-inferred';
+  try {
+    const content = fs.readFileSync(skillPath, 'utf-8');
+    const normalized = content.replace(/\r\n/g, '\n');
+    if (!normalized.startsWith('---\n')) return 'agent-inferred';
+    const end = normalized.indexOf('\n---\n', 4);
+    if (end === -1) return 'agent-inferred';
+    const raw = normalized.slice(4, end);
+    const parsed = YAML.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const frontmatter = parsed as Record<string, unknown>;
+      if (typeof frontmatter.provenance === 'string') {
+        return frontmatter.provenance;
+      }
+    }
+  } catch {
+    // Fall through to default
+  }
+  return 'agent-inferred';
+}
+
+/**
+ * Build efficacy prompt lines for skills with efficacy data above the sample floor,
+ * filtered to only include skills with provenance === 'agent-inferred'.
+ *
+ * Returns an array of prompt lines that are inserted before the
+ * "Do not mutate source-owned project or personal skills." line.
+ *
+ * The function is read-only — it only reads DB efficacy data and skill frontmatter.
+ */
+export function buildSkillEfficacyPromptLines(
+  groupFolder: string,
+  skillsDir: string,
+): string[] {
+  const efficacyMap = getSkillEfficacy(groupFolder);
+  if (efficacyMap.size === 0) {
+    return ['Do not mutate source-owned project or personal skills.'];
+  }
+
+  const efficacyLines: string[] = [];
+  for (const [skillName, efficacy] of efficacyMap) {
+    const provenance = readSkillProvenance(skillsDir, skillName);
+    if (provenance !== 'agent-inferred') continue;
+
+    const passRatePct = (efficacy.passRateWith * 100).toFixed(2);
+    const baselinePct = (efficacy.groupBaseline * 100).toFixed(2);
+    efficacyLines.push(
+      `${skillName}: injected ${efficacy.runsWith} times, pass rate with ${passRatePct}% vs baseline ${baselinePct}%`,
+    );
+  }
+
+  // Sort for deterministic output
+  efficacyLines.sort();
+
+  efficacyLines.push('Do not mutate source-owned project or personal skills.');
+  return efficacyLines;
+}
 
 export function maybeRunSkillManager(params: {
   group: RegisteredGroup;
@@ -351,6 +454,12 @@ export function maybeRunSkillManager(params: {
   smState.runCount += 1;
   saveSkillManagerState(skillsDir, smState);
 
+  // WS5.4: build efficacy prompt lines for agent-inferred skills above the sample floor
+  const efficacyLines = buildSkillEfficacyPromptLines(
+    params.group.folder,
+    skillsDir,
+  );
+
   runQuietSkillAgent({
     group: params.group,
     chatJid: params.chatJid,
@@ -361,7 +470,7 @@ export function maybeRunSkillManager(params: {
       'Use skill_status and skill_view to inspect the active library.',
       'Goal: keep farm/operator skills lean, organized, and valid. Clean frontmatter issues for agent-created skills by patching them. Report source-owned frontmatter issues in your final summary.',
       'Consolidate near-duplicate agent-created skills into class-level umbrella skills when useful. Archive only agent-created skills that are stale, duplicate, or fully absorbed.',
-      'Do not mutate source-owned project or personal skills.',
+      ...efficacyLines, // WS5.4: efficacy lines (agent-inferred only, above sample floor) appear before the "Do not mutate" line
     ].join('\n'),
   });
 }
