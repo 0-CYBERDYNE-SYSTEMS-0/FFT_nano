@@ -2481,6 +2481,51 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
+    // WS6.2: /learning digest command - single operator surface for pause state,
+    // evaluator stats, recent skips, and pending task approvals.
+    if (cmd === '/learning') {
+      const sub = (rest[0] || '').toLowerCase();
+      // Main-chat only for all /learning commands (VAL-WS6-008)
+      if (!isMainGroup) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
+        await deps.sendMessage(
+          m.chatJid,
+          `${deps.constants.assistantName}: /learning is only available in the main/admin chat.`,
+        );
+        return true;
+      }
+      if (sub === 'pause' || sub === 'resume') {
+        const newState = sub === 'pause';
+        if (deps.state.learningPaused === newState) {
+          deps.logTelegramCommandAudit(
+            m.chatJid,
+            cmd,
+            true,
+            `already ${sub}ed`,
+          );
+          await deps.sendMessage(
+            m.chatJid,
+            `Learning is already ${newState ? 'paused' : 'active'}.`,
+          );
+          return true;
+        }
+        deps.state.learningPaused = newState;
+        deps.saveState?.();
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, sub);
+        await deps.sendMessage(
+          m.chatJid,
+          newState
+            ? 'Learning is paused. All autonomous loops will short-circuit until /learning resume is issued.'
+            : 'Learning is active. Autonomous loops will resume.',
+        );
+        return true;
+      }
+      // Digest view
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'digest');
+      await deps.sendMessage(m.chatJid, deps.formatLearningDigest());
+      return true;
+    }
+
     if (!isMainGroup) {
       deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
       await deps.sendMessage(
@@ -2816,51 +2861,6 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         m.chatJid,
         'Usage: /tasks [list|due|detail <taskId>|runs <taskId> [limit]]',
       );
-      return true;
-    }
-
-    // WS6.2: /learning digest command - single operator surface for pause state,
-    // evaluator stats, recent skips, and pending task approvals.
-    if (cmd === '/learning') {
-      const sub = (rest[0] || '').toLowerCase();
-      // Main-chat only for pause/resume (VAL-WS6-015, VAL-WS6-016)
-      if (sub === 'pause' || sub === 'resume') {
-        if (!isMainGroup) {
-          deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
-          await deps.sendMessage(
-            m.chatJid,
-            `${deps.constants.assistantName}: /learning pause/resume is only available in the main/admin chat.`,
-          );
-          return true;
-        }
-        const newState = sub === 'pause';
-        if (deps.state.learningPaused === newState) {
-          deps.logTelegramCommandAudit(
-            m.chatJid,
-            cmd,
-            true,
-            `already ${sub}ed`,
-          );
-          await deps.sendMessage(
-            m.chatJid,
-            `Learning is already ${newState ? 'paused' : 'active'}.`,
-          );
-          return true;
-        }
-        deps.state.learningPaused = newState;
-        deps.saveState?.();
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, sub);
-        await deps.sendMessage(
-          m.chatJid,
-          newState
-            ? 'Learning is paused. All autonomous loops will short-circuit until /learning resume is issued.'
-            : 'Learning is active. Autonomous loops will resume.',
-        );
-        return true;
-      }
-      // Digest view (available in any chat)
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'digest');
-      await deps.sendMessage(m.chatJid, deps.formatLearningDigest());
       return true;
     }
 

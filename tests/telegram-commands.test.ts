@@ -1598,3 +1598,325 @@ test('VAL-WS2-010 approve and reject have separate audit kinds', async () => {
   assert.equal(auditEvents[1].event.kind, 'reject');
   assert.notEqual(auditEvents[0].event.taskId, auditEvents[1].event.taskId);
 });
+
+// ---------------------------------------------------------------------------
+// WS6.2 /learning digest command tests
+// ---------------------------------------------------------------------------
+
+test('VAL-WS6-008 /learning digest is refused in non-main chat', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  // Non-main chat
+  deps.isMainChat = () => false;
+  deps.formatLearningDigest = () => '## Learning Status\nSkills: ...';
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:123',
+    chatName: 'NonMainChat',
+    content: '/learning',
+  });
+
+  assert.equal(handled, true);
+  // The message should indicate it's only available in main chat
+  assert.match(deps.sent[0]?.text || '', /main\/admin|main chat/i);
+  assert.deepEqual(deps.audits.at(-1), {
+    chatJid: 'telegram:123',
+    command: '/learning',
+    allowed: false,
+    reason: 'not main/admin',
+  });
+});
+
+test('VAL-WS6-008 /learning digest works in main chat', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  // Main chat
+  deps.isMainChat = () => true;
+  deps.formatLearningDigest = () =>
+    '## Learning Status\nSkills: No skills created or modified in the last 7 days.\nMemory writes: No memory writes in the last 20 injections.\nPass-rate: No runs evaluated yet.\nRecent skips: 0 / 0\nPending agent-task approvals: None.\nPause status: Learning is active';
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning',
+  });
+
+  assert.equal(handled, true);
+  assert.match(deps.sent[0]?.text || '', /Learning Status/);
+  assert.deepEqual(deps.audits.at(-1), {
+    chatJid: 'telegram:main',
+    command: '/learning',
+    allowed: true,
+    reason: 'digest',
+  });
+});
+
+test('VAL-WS6-009 /learning digest renders all required sections', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.formatLearningDigest = () =>
+    [
+      '## Learning Status',
+      'Skills (last 7 days): 2 skill review(s) triggered.',
+      'Memory writes: 3 memory write(s) in last 20 injections.',
+      'Pass-rate (last 20 runs): 8/10 passed (80%)',
+      'Recent skips: 2 / 10',
+      'Recurring issues:',
+      '  - forgot to save',
+      'Pending agent-task approvals: 1 pending.',
+      '  - task-abc: do something',
+      'Pause status: Learning is active',
+    ].join('\n');
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning',
+  });
+
+  const text = deps.sent[0]?.text || '';
+  assert.match(text, /Skills.*last 7 days/i);
+  assert.match(text, /Memory writes/i);
+  assert.match(text, /Pass-rate/i);
+  assert.match(text, /Recent skips/i);
+  assert.match(text, /Pending agent-task approvals/i);
+  assert.match(text, /Pause status/i);
+});
+
+test('VAL-WS6-010 /learning renders empty state when no history exists', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.formatLearningDigest = () =>
+    [
+      '## Learning Status',
+      'Skills (last 7 days): No skills created or modified in the last 7 days.',
+      'Memory writes: No memory writes in the last 20 injections.',
+      'Pass-rate trend: No runs evaluated yet.',
+      'Recent skips: 0 / 0',
+      'Pending agent-task approvals: None.',
+      'Pause status: Learning is active',
+    ].join('\n');
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning',
+  });
+
+  const text = deps.sent[0]?.text || '';
+  // Should contain "No skills created" and "No memory writes" and "None" for pending
+  assert.match(text, /No skills created or modified/i);
+  assert.match(text, /No memory writes/i);
+  assert.match(text, /None\./);
+});
+
+test('VAL-WS6-011 /learning shows recent skips count', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.formatLearningDigest = () =>
+    '## Learning Status\nSkills: ...\nMemory writes: ...\nPass-rate (last 20 runs): 16/20 passed (80%)\nRecent skips: 4 / 20\nPending agent-task approvals: None.\nPause status: Learning is active';
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning',
+  });
+
+  const text = deps.sent[0]?.text || '';
+  // Should show "4 / 20" skips
+  assert.match(text, /Recent skips: 4 \/ 20/);
+});
+
+test('VAL-WS6-012 /learning shows pending agent-task approvals', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.formatLearningDigest = () =>
+    '## Learning Status\nSkills: ...\nMemory writes: ...\nPass-rate: ...\nRecent skips: 0 / 0\nPending agent-task approvals: 2 pending.\n  - task-1: do the thing\n  - task-2: do another thing\nPause status: Learning is active';
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning',
+  });
+
+  const text = deps.sent[0]?.text || '';
+  assert.match(text, /Pending agent-task approvals: 2 pending\./);
+  assert.match(text, /task-1: do the thing/);
+  assert.match(text, /task-2: do another thing/);
+});
+
+test('VAL-WS6-015 /learning pause sets the pause flag', async () => {
+  const savedStates: boolean[] = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.saveState = () => {
+    savedStates.push(deps.state.learningPaused);
+  };
+
+  // Start as not paused
+  Object.defineProperty(deps.state, 'learningPaused', {
+    value: false,
+    writable: true,
+    configurable: true,
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning pause',
+  });
+
+  assert.equal(deps.state.learningPaused, true);
+  assert.match(deps.sent[0]?.text || '', /paused/i);
+  // saveState should have been called
+  assert.equal(savedStates.length, 1);
+  assert.equal(savedStates[0], true);
+});
+
+test('VAL-WS6-016 /learning resume clears the pause flag', async () => {
+  const savedStates: boolean[] = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.saveState = () => {
+    savedStates.push(deps.state.learningPaused);
+  };
+
+  // Start as paused
+  Object.defineProperty(deps.state, 'learningPaused', {
+    value: true,
+    writable: true,
+    configurable: true,
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning resume',
+  });
+
+  assert.equal(deps.state.learningPaused, false);
+  assert.match(deps.sent[0]?.text || '', /active|resumed/i);
+  // saveState should have been called
+  assert.equal(savedStates.length, 1);
+  assert.equal(savedStates[0], false);
+});
+
+test('VAL-WS6-016 /learning resume when not paused shows already active message', async () => {
+  const savedStates: boolean[] = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.saveState = () => {
+    savedStates.push(deps.state.learningPaused);
+  };
+
+  // Already active
+  Object.defineProperty(deps.state, 'learningPaused', {
+    value: false,
+    writable: true,
+    configurable: true,
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'MainChat',
+    content: '/learning resume',
+  });
+
+  // Should not change and should indicate already active
+  assert.equal(deps.state.learningPaused, false);
+  assert.match(deps.sent[0]?.text || '', /already.*active/i);
+  // saveState should NOT have been called since no change
+  assert.equal(savedStates.length, 0);
+});
+
+test('VAL-WS6-015 /learning pause from non-main chat is refused', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => false;
+
+  Object.defineProperty(deps.state, 'learningPaused', {
+    value: false,
+    writable: true,
+    configurable: true,
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:123',
+    chatName: 'NonMainChat',
+    content: '/learning pause',
+  });
+
+  // State should not have changed
+  assert.equal(deps.state.learningPaused, false);
+  // Should be refused
+  assert.match(deps.sent[0]?.text || '', /main\/admin|main chat/i);
+  assert.deepEqual(deps.audits.at(-1), {
+    chatJid: 'telegram:123',
+    command: '/learning',
+    allowed: false,
+    reason: 'not main/admin',
+  });
+});

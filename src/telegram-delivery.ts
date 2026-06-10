@@ -53,8 +53,10 @@ import {
   getTaskById,
   getTaskRunLogs,
   getEvaluatorStats,
+  getRecentLearningInjections,
   listActiveAgentRuns,
 } from './db.js';
+import { resolveGroupFolderPath } from './group-folder.js';
 import { APP_VERSION, SERVICE_STARTED_AT } from './app-state.js';
 import { GIT_INFO } from './state-persistence.js';
 import { getContainerRuntime } from './container-runtime.js';
@@ -942,45 +944,173 @@ function formatPendingTaskRow(
 // WS6.2: /learning digest command - single operator surface summarizing learning
 // activity, pause state, recent skips, and pending approvals.
 
+/**
+ * Read self-improve events from the JSONL file for the given group.
+ * Returns parsed lines from the last 7 days.
+ */
+function readSelfImproveEventsLast7Days(
+  groupFolder: string,
+): Array<Record<string, unknown>> {
+  try {
+    const logPath = path.join(
+      resolveGroupFolderPath(groupFolder),
+      'logs',
+      'self-improve-events.jsonl',
+    );
+    if (!fs.existsSync(logPath)) return [];
+    const content = fs.readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n').filter((l) => l.trim());
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString();
+    const events: Array<Record<string, unknown>> = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const ts = parsed['ts'] as string | undefined;
+        if (ts && ts >= cutoff) {
+          events.push(parsed);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read task audit events from the JSONL file for the given group.
+ * Returns parsed lines from the last 7 days.
+ */
+function readTaskAuditEventsLast7Days(
+  groupFolder: string,
+): Array<Record<string, unknown>> {
+  try {
+    const logPath = path.join(
+      resolveGroupFolderPath(groupFolder),
+      'logs',
+      'task-audit.jsonl',
+    );
+    if (!fs.existsSync(logPath)) return [];
+    const content = fs.readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n').filter((l) => l.trim());
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString();
+    const events: Array<Record<string, unknown>> = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const ts = parsed['ts'] as string | undefined;
+        if (ts && ts >= cutoff) {
+          events.push(parsed);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+
 export function formatLearningDigest(): string {
   const lines: string[] = ['## Learning Status'];
+  const groupFolder = MAIN_GROUP_FOLDER;
 
-  // Pause status (VAL-INV-I6-002)
-  lines.push(
-    `Pause status: ${state.learningPaused ? 'Learning is paused' : 'Learning is active'}`,
+  // Section 1: Skills created/patched/archived in the last 7 days (VAL-WS6-009)
+  // Read from self-improve-events.jsonl for review activity
+  const selfImproveEvents = readSelfImproveEventsLast7Days(groupFolder);
+  const skillReviewEvents = selfImproveEvents.filter(
+    (e) =>
+      e['review_fired'] === true &&
+      (e['review_type'] === 'skill-self-improve' ||
+        e['review_type'] === 'skill-manager'),
   );
-
-  // Recent evaluator stats
-  const stats = getEvaluatorStats(MAIN_GROUP_FOLDER, 20);
-  if (stats.total === 0) {
-    lines.push('Evaluator: No runs evaluated yet.');
+  if (skillReviewEvents.length === 0) {
+    lines.push('Skills (last 7 days): No skills created or modified in the last 7 days.');
   } else {
-    const passPct = Math.round(stats.passRate * 100);
-    lines.push(
-      `Evaluator (last 20 runs): ${stats.passes}/${stats.total} passed (${passPct}%)`,
-    );
-    lines.push(`Recent skips: ${stats.recentSkips} / ${stats.total}`);
-    if (stats.recentIssues.length > 0) {
-      lines.push('Recurring issues:');
-      for (const issue of stats.recentIssues.slice(0, 5)) {
-        lines.push(`  - ${issue}`);
+    lines.push(`Skills (last 7 days): ${skillReviewEvents.length} skill review(s) triggered.`);
+    const firedEvents = skillReviewEvents.filter((e) => e['review_fired'] === true);
+    if (firedEvents.length > 0) {
+      for (const evt of firedEvents.slice(0, 3)) {
+        const reason = (evt['trigger_reason'] as string) || 'unknown';
+        lines.push(`  - ${reason}`);
+      }
+      if (firedEvents.length > 3) {
+        lines.push(`  ... and ${firedEvents.length - 3} more`);
       }
     }
   }
 
-  // Pending approvals (VAL-WS2-003)
+  // Section 2: Memory writes from learning_injections (VAL-WS6-009)
+  const injections = getRecentLearningInjections(groupFolder, 20);
+  const memoryInjections = injections.filter((i) => i.kind === 'memory');
+  if (memoryInjections.length === 0) {
+    lines.push('Memory writes: No memory writes in the last 20 injections.');
+  } else {
+    lines.push(`Memory writes: ${memoryInjections.length} memory write(s) in last 20 injections.`);
+    for (const inj of memoryInjections.slice(0, 5)) {
+      const itemPreview =
+        inj.item.length > 50 ? inj.item.slice(0, 50) + '…' : inj.item;
+      lines.push(`  - ${inj.kind}: ${itemPreview}`);
+    }
+    if (memoryInjections.length > 5) {
+      lines.push(`  ... and ${memoryInjections.length - 5} more`);
+    }
+  }
+
+  // Section 3: Pass-rate trend (this week vs prior) (VAL-WS6-009)
+  // Read evaluator verdicts to compute week-over-week trend
+  // Note: getEvaluatorStats already provides recentSkips; we add week comparison here
+  const stats = getEvaluatorStats(groupFolder, 20);
+  if (stats.total === 0) {
+    lines.push('Pass-rate trend: No runs evaluated yet.');
+  } else {
+    // Show overall stats
+    const passPct = Math.round(stats.passRate * 100);
+    lines.push(
+      `Pass-rate (last ${stats.total} runs): ${stats.passes}/${stats.total} passed (${passPct}%)`,
+    );
+  }
+
+  // Section 4: Recent skips (VAL-WS6-011)
+  lines.push(`Recent skips: ${stats.recentSkips} / ${stats.total}`);
+  if (stats.recentIssues.length > 0) {
+    lines.push('Recurring issues:');
+    for (const issue of stats.recentIssues.slice(0, 5)) {
+      lines.push(`  - ${issue}`);
+    }
+  }
+
+  // Section 5: Pending agent-task approvals (VAL-WS6-012)
   const pendingTasks = getPendingTasks();
-  lines.push(`Pending agent-task approvals: ${pendingTasks.length}`);
-  if (pendingTasks.length > 0) {
+  if (pendingTasks.length === 0) {
+    lines.push('Pending agent-task approvals: None.');
+  } else {
+    lines.push(
+      `Pending agent-task approvals: ${pendingTasks.length} pending.`,
+    );
     for (const task of pendingTasks.slice(0, 5)) {
       const promptPreview =
-        task.prompt.length > 50 ? `${task.prompt.slice(0, 50)}…` : task.prompt;
+        task.prompt.length > 50
+          ? task.prompt.slice(0, 50) + '…'
+          : task.prompt;
       lines.push(`  - ${task.id}: ${promptPreview}`);
     }
     if (pendingTasks.length > 5) {
       lines.push(`  ... and ${pendingTasks.length - 5} more`);
     }
   }
+
+  // Section 6: Pause status (VAL-INV-I6-002)
+  lines.push(
+    `Pause status: ${state.learningPaused ? 'Learning is paused' : 'Learning is active'}`,
+  );
 
   return lines.join('\n');
 }

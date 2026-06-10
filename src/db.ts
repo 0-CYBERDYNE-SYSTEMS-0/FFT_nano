@@ -1203,7 +1203,13 @@ export function recordLearningInjection(input: LearningInjectionInput): void {
     );
   } catch (err) {
     logger.warn(
-      { err, requestId: input.requestId, groupFolder: input.groupFolder, kind: input.kind, item: input.item },
+      {
+        err,
+        requestId: input.requestId,
+        groupFolder: input.groupFolder,
+        kind: input.kind,
+        item: input.item,
+      },
       'Failed to record learning injection',
     );
   }
@@ -1239,7 +1245,9 @@ export interface SkillEfficacy {
  * Excludes skipped evaluator_verdicts from both the passRateWith numerator
  * and denominator (I3: only ground truth gates).
  */
-export function getSkillEfficacy(groupFolder: string): Map<string, SkillEfficacy> {
+export function getSkillEfficacy(
+  groupFolder: string,
+): Map<string, SkillEfficacy> {
   if (!db) return new Map();
 
   // Get overall group baseline from evaluator stats (covers all evaluator_verdicts
@@ -1249,8 +1257,9 @@ export function getSkillEfficacy(groupFolder: string): Map<string, SkillEfficacy
 
   // Join learning_injections (kind='skill') with evaluator_verdicts on request_id.
   // Both sides are filtered by group_folder to ensure per-group isolation.
-  const rows = db.prepare(
-    `
+  const rows = db
+    .prepare(
+      `
     SELECT
       li.item AS skill_name,
       ev.pass,
@@ -1261,7 +1270,8 @@ export function getSkillEfficacy(groupFolder: string): Map<string, SkillEfficacy
       AND li.kind = 'skill'
       AND ev.group_folder = ?
     `,
-  ).all(groupFolder, groupFolder) as Array<{
+    )
+    .all(groupFolder, groupFolder) as Array<{
     skill_name: string;
     pass: number;
     skipped: number | null;
@@ -1291,7 +1301,10 @@ export function getSkillEfficacy(groupFolder: string): Map<string, SkillEfficacy
 
   // Build result map: only skills with >= 5 non-skipped matching rows get a published entry.
   const result = new Map<string, SkillEfficacy>();
-  for (const [skillName, { totalNonSkipped, passesNonSkipped }] of skillGroups) {
+  for (const [
+    skillName,
+    { totalNonSkipped, passesNonSkipped },
+  ] of skillGroups) {
     if (totalNonSkipped < 5) continue;
     result.set(skillName, {
       runsWith: totalNonSkipped,
@@ -1302,6 +1315,42 @@ export function getSkillEfficacy(groupFolder: string): Map<string, SkillEfficacy
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// WS5.2 / WS6.2 — Learning injections (read-only)
+// ---------------------------------------------------------------------------
+
+export interface LearningInjection {
+  id: number;
+  request_id: string | null;
+  group_folder: string;
+  kind: string;
+  item: string;
+  created_at: string;
+}
+
+/**
+ * Get recent learning injections for a group, ordered by created_at descending.
+ * Used by the /learning digest to show memory writes and other injections.
+ */
+export function getRecentLearningInjections(
+  groupFolder: string,
+  limit = 20,
+): LearningInjection[] {
+  if (!db) return [];
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(100, Math.floor(limit)))
+    : 20;
+  return db
+    .prepare(
+      `SELECT id, request_id, group_folder, kind, item, created_at
+       FROM learning_injections
+       WHERE group_folder = ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(groupFolder, safeLimit) as LearningInjection[];
 }
 
 // ---------------------------------------------------------------------------
