@@ -4,6 +4,7 @@ import fs from 'fs';
 import { DESTRUCTIVE_COMMAND_NAMES } from './bash-guard.js';
 import {
   DEFAULT_CANONICAL_FILE_NAMES,
+  isBootstrapScaffoldContent,
   isCanonicalScaffoldContent,
 } from './memory-paths.js';
 import {
@@ -86,9 +87,9 @@ export interface PromptLayer {
 /**
  * The stable layer is the byte-identical prefix the provider caches for the
  * life of a session: identity, safety, IPC, delegation, and stable SOUL
- * identity/policy context. Action-triggering material like skills, NANO,
- * TODOS, MEMORY, canonical files, and daily memory belongs in the ephemeral
- * suffix.
+ * identity/policy context. Session bootstrap material like NANO, MEMORY,
+ * skills, canonical files, and daily memory belongs in the session_bootstrap
+ * layer. Per-turn volatile metadata belongs in the ephemeral suffix.
  */
 export interface StablePromptLayer {
   id: 'stable';
@@ -179,8 +180,9 @@ const DEFAULT_FILE_MAX_CHARS = 24_000;
 const DEFAULT_TOTAL_MAX_CHARS = 96_000;
 const DEFAULT_MEMORY_CONTEXT_MAX_CHARS = 20_000;
 const DEFAULT_SKILL_CATALOG_MAX_CHARS = 20_000;
+const STABLE_PROMPT_RENDERER_VERSION = 2;
 
-const MAIN_ALWAYS_INJECTED_FILES = [
+const MAIN_CONTEXT_FILES = [
   'NANO.md',
   'SOUL.md',
   'TODOS.md',
@@ -301,6 +303,26 @@ function classifyPromptInjection(content: string): string[] {
   return Array.from(findings);
 }
 
+function redactPromptInjectionLines(content: string): {
+  redacted: string;
+  blockedPatterns: string[];
+} {
+  const blockedPatterns = new Set<string>();
+  const lines = content.split('\n');
+  const redacted = lines
+    .map((line) => {
+      for (const entry of PROMPT_INJECTION_PATTERNS) {
+        if (entry.pattern.test(line)) {
+          blockedPatterns.add(entry.label);
+          return `[REDACTED: ${entry.label}]`;
+        }
+      }
+      return line;
+    })
+    .join('\n');
+  return { redacted, blockedPatterns: Array.from(blockedPatterns) };
+}
+
 function buildBlockedContent(label: string, patterns: string[]): string {
   return `[BLOCKED: ${label} contained potential prompt injection (${patterns.join(', ')}). Content not loaded.]`;
 }
@@ -313,6 +335,7 @@ function addContextEntry(params: {
   fileMaxChars: number;
   remainingTotalChars: number;
   includeMissing?: boolean;
+  lineLevelRedaction?: boolean;
 }): number {
   const content = params.readFileIfExists(params.path);
   if (content === null) {
@@ -337,9 +360,15 @@ function addContextEntry(params: {
   const normalized = trimAndNormalize(content);
   const blockedPatterns = classifyPromptInjection(normalized);
   const blocked = blockedPatterns.length > 0;
-  const effectiveContent = blocked
-    ? buildBlockedContent(params.label, blockedPatterns)
-    : normalized;
+  let effectiveContent = normalized;
+  let entryBlockedPatterns = blockedPatterns;
+  if (blocked && params.lineLevelRedaction) {
+    const redaction = redactPromptInjectionLines(normalized);
+    effectiveContent = redaction.redacted;
+    entryBlockedPatterns = redaction.blockedPatterns;
+  } else if (blocked) {
+    effectiveContent = buildBlockedContent(params.label, blockedPatterns);
+  }
   const fitted = fitContentToBudget(
     effectiveContent,
     params.label,
@@ -356,7 +385,7 @@ function addContextEntry(params: {
     truncated: fitted.truncated || injected.length < effectiveContent.length,
     missing: false,
     blocked,
-    blockedPatterns,
+    blockedPatterns: entryBlockedPatterns,
     content: injected,
   });
   return Math.max(0, params.remainingTotalChars - injected.length);
@@ -369,6 +398,7 @@ function addOptionalNonEmptyContextEntry(params: {
   path: string;
   fileMaxChars: number;
   remainingTotalChars: number;
+  lineLevelRedaction?: boolean;
 }): number {
   const content = params.readFileIfExists(params.path);
   if (!content || !trimAndNormalize(content)) {
@@ -395,7 +425,7 @@ function buildMainContextEntries(params: {
   const entries: ContextEntry[] = [];
   let remaining = params.totalMaxChars;
 
-  for (const name of MAIN_ALWAYS_INJECTED_FILES) {
+  for (const name of MAIN_CONTEXT_FILES) {
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
@@ -403,19 +433,24 @@ function buildMainContextEntries(params: {
       path: `${params.groupDir}/${name}`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+      lineLevelRedaction: true,
     });
   }
 
   for (const name of MAIN_SESSION_BOOTSTRAP_FILES) {
     if (remaining <= 0) break;
+    const path = `${params.groupDir}/${name}`;
+    const content = params.readFileIfExists(path);
+    if (!content || isBootstrapScaffoldContent(name, content)) continue;
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
       label: name,
-      path: `${params.groupDir}/${name}`,
+      path,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -427,6 +462,7 @@ function buildMainContextEntries(params: {
       path: `${params.groupDir}/BOOTSTRAP.md`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+      lineLevelRedaction: true,
     });
   }
 
@@ -443,6 +479,7 @@ function buildMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -459,6 +496,7 @@ function buildMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -471,6 +509,7 @@ function buildMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -498,6 +537,7 @@ function buildNonMainContextEntries(params: {
     path: `${params.globalDir}/NANO.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
+    lineLevelRedaction: true,
   });
   if (remaining > 0) {
     remaining = addContextEntry({
@@ -508,6 +548,7 @@ function buildNonMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -518,6 +559,7 @@ function buildNonMainContextEntries(params: {
     path: `${params.globalDir}/SOUL.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
+    lineLevelRedaction: true,
   });
   if (remaining > 0) {
     remaining = addContextEntry({
@@ -527,6 +569,7 @@ function buildNonMainContextEntries(params: {
       path: `${params.groupDir}/SOUL.md`,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
+      lineLevelRedaction: true,
     });
   }
 
@@ -539,6 +582,7 @@ function buildNonMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -551,6 +595,7 @@ function buildNonMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -563,6 +608,7 @@ function buildNonMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -583,6 +629,7 @@ function buildNonMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -603,6 +650,7 @@ function buildNonMainContextEntries(params: {
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
+      lineLevelRedaction: true,
     });
   }
 
@@ -629,28 +677,81 @@ function renderSkillCatalog(
   if (entries.length === 0) {
     return { text: '', injectedChars: 0, count: 0, truncated: false };
   }
-  const lines = [
+
+  const header = [
     '## Skills Catalog',
     'These are compact skill summaries only. Read full SKILL.md bodies on demand when needed.',
     '',
   ];
+
+  // Tier 1: never-truncated name index
+  const indexLine = `Available skills: ${entries.map((e) => e.name).join(', ')}`;
+
+  // Tier 2: per-entry summaries until budget
+  const summaryLines: string[] = [];
   for (const entry of entries) {
     const toolText =
       entry.allowedTools.length > 0
         ? ` Allowed tools: ${entry.allowedTools.join(', ')}.`
         : '';
-    lines.push(
-      `- ${entry.name} [${entry.source}]: ${entry.description}.${toolText} When to use: ${entry.whenToUse}`,
+    // Merge description + whenToUse when they are redundant
+    const when = entry.whenToUse.trim();
+    const desc = entry.description.trim();
+    const combined =
+      when && !desc.toLowerCase().includes(when.toLowerCase())
+        ? `${desc} When to use: ${when}`
+        : desc;
+    summaryLines.push(`- ${entry.name} [${entry.source}]: ${combined}.${toolText}`);
+  }
+
+  const headerText = header.join('\n');
+  const indexBudget = indexLine.length + 1; // +1 for newline
+  const summaryBudget = maxChars - headerText.length - indexBudget;
+
+  let summariesText = '';
+  let truncated = false;
+  let omittedCount = 0;
+
+  if (summaryBudget > 0) {
+    const rawSummaries = summaryLines.join('\n');
+    const fitted = fitContentToBudget(
+      rawSummaries,
+      'skills catalog',
+      summaryBudget,
+      summaryBudget,
+    );
+    if (fitted) {
+      summariesText = fitted.injected;
+      truncated = fitted.truncated;
+      if (fitted.truncated) {
+        // Count how many summary lines were fully omitted
+        const injectedLineCount = summariesText.split('\n').filter((l) =>
+          l.startsWith('- '),
+        ).length;
+        omittedCount = entries.length - injectedLineCount;
+      }
+    }
+  } else {
+    omittedCount = entries.length;
+    truncated = true;
+  }
+
+  const parts: string[] = [headerText, indexLine];
+  if (summariesText) {
+    parts.push(summariesText);
+  }
+  if (omittedCount > 0) {
+    parts.push(
+      `[${omittedCount} more skill${omittedCount === 1 ? '' : 's'} listed above have no summary — use skill_view for details.]`,
     );
   }
-  const raw = lines.join('\n').trim();
-  const fitted = fitContentToBudget(raw, 'skills catalog', maxChars, maxChars);
-  const text = fitted?.injected || '';
+
+  const text = parts.join('\n').trim();
   return {
     text,
     injectedChars: text.length,
     count: entries.length,
-    truncated: fitted?.truncated || false,
+    truncated: truncated || omittedCount > 0,
   };
 }
 
@@ -668,6 +769,7 @@ function buildStableCacheKey(params: {
     .sort()
     .map((k) => [k, params.mtimeMap[k]]);
   const payload = {
+    rendererVersion: STABLE_PROMPT_RENDERER_VERSION,
     assistantName: params.assistantName,
     promptMode: params.promptMode,
     isMain: params.isMain,
@@ -721,6 +823,7 @@ function renderBasePrompt(params: {
   canDelegateToCoder: boolean;
   autoDelegationEnabled: boolean;
   isEvaluatorRun: boolean;
+  isMain: boolean;
 }): string {
   const lines: string[] = [];
   lines.push(
@@ -768,6 +871,42 @@ function renderBasePrompt(params: {
     `- Daily staging and compaction notes belong in ${params.paths.groupDir}/memory/*.md.`,
   );
   lines.push('- Keep SOUL.md stable; do not use it as compaction log storage.');
+  lines.push('');
+
+  lines.push('## Context Map');
+  lines.push(
+    'Injected EVERY turn (trust these over conversation history):',
+  );
+  lines.push(
+    '- SOUL.md (identity/values), TODOS.md (active mission state), retrieved memory snippets.',
+  );
+  lines.push(
+    'Injected ONCE at session start (already in your history — do NOT re-read unless you suspect they changed on disk):',
+  );
+  lines.push(
+    '- NANO.md (operating contract), MEMORY.md (durable facts), skill catalog, USER.md, daily memory files.',
+  );
+  lines.push('On disk only — fetch on demand:');
+  lines.push(
+    '- memory/YYYY-MM-DD.md → daily journal (append-only; create today\'s if missing)',
+  );
+  lines.push(
+    '- knowledge/raw/ → capture staging for the nightly librarian',
+  );
+  lines.push(
+    '- canonical/*.md → durable structured memory',
+  );
+  lines.push(
+    '- skills via skill_list / skill_view (catalog above shows summaries only)',
+  );
+  lines.push(
+    'Recall rule: before claiming you don\'t know or remember something, use memory_search.',
+  );
+  if (!params.isMain) {
+    lines.push(
+      'Non-main runs: group/global MEMORY.md is injected at session start only. Use memory_search for broader recall.',
+    );
+  }
   lines.push('');
 
   if (params.canDelegateToCoder) {
@@ -825,9 +964,6 @@ function renderBasePrompt(params: {
     lines.push('- Main-only: {"type":"refresh_groups"}');
     lines.push(
       `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${params.assistantName}"}`,
-    );
-    lines.push(
-      `Read task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
     );
     lines.push('');
     lines.push('## Memory Action IPC');
@@ -1248,7 +1384,7 @@ export function buildSystemPrompt(
   const stableSourcePaths: string[] = [];
   if (input.isMain) {
     stableSourcePaths.push(
-      ...MAIN_ALWAYS_INJECTED_FILES.map((n) => `${paths.groupDir}/${n}`),
+      ...MAIN_CONTEXT_FILES.map((n) => `${paths.groupDir}/${n}`),
     );
     stableSourcePaths.push(
       ...MAIN_SESSION_BOOTSTRAP_FILES.map((n) => `${paths.groupDir}/${n}`),
@@ -1333,6 +1469,7 @@ export function buildSystemPrompt(
       canDelegateToCoder,
       autoDelegationEnabled,
       isEvaluatorRun: input.isEvaluatorRun === true,
+      isMain: input.isMain,
     });
     const stableOverlay = renderContextOverlay({
       contextEntries: stableContextEntries,
