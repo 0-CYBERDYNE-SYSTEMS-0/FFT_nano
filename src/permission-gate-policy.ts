@@ -1,4 +1,5 @@
 import { isDestructiveCommand } from './bash-guard.js';
+import type { RunAuthority } from './types.js';
 
 const PROTECTED_PATHS = ['.env', '.env.', '.git/', 'node_modules/'];
 
@@ -38,14 +39,6 @@ export function classifyActionCategory(
 
     // Bash: delegate to bash-guard for destroy classification
     case 'bash': {
-      // Note: the actual command is in _input.command; isDestructiveCommand
-      // is called by the gate. Here we return 'destroy' only when the gate
-      // has already determined the command is destructive — the gate delegates
-      // to us and then applies the origin policy. Since we don't have the
-      // command value here without reading _input, we return 'local-mutate'
-      // as the safe default for bash; the gate itself enforces destroy via
-      // isDestructiveCommand. To make this classifier total and deterministic
-      // without coupling to the bash-guard internals, we inspect the input.
       const command = typeof _input.command === 'string' ? _input.command : '';
       const result = isDestructiveCommand(command);
       return { category: result.destructive ? 'destroy' : 'local-mutate' };
@@ -68,10 +61,19 @@ export function classifyActionCategory(
   }
 }
 
+/**
+ * Gate decisions for the (category, origin) policy table.
+ *
+ * Note on I1: evaluatePermissionGate never reads prompt content or any
+ * IPC payload field that could be authored by the agent. The gate reads
+ * only RunAuthority fields (origin, operatorGrant) and the tool input
+ * (command, path, etc.) — none of which are agent-authored policy fields.
+ */
 export type PermissionGateDecision =
   | { action: 'allow' }
   | { action: 'block'; reason: string }
-  | { action: 'confirm'; title: string; message: string };
+  | { action: 'confirm'; title: string; message: string }
+  | { action: 'held' };
 
 export function isProtectedPath(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, '/');
@@ -83,22 +85,111 @@ export function isProtectedPath(filePath: string): boolean {
   );
 }
 
+/**
+ * Evaluate the permission gate using RunAuthority (host-derived, agent-proof).
+ *
+ * Policy table:
+ *   read / local-mutate → always allow (any origin)
+ *   destroy → block on headless/subagent/evaluator; confirm on interactive-main
+ *   outbound → held on headless/subagent without operatorGrant; otherwise allow
+ *   schedule → allow (WS2 enforces pending_approval at the IPC handler)
+ *
+ * I1 invariant: this function reads only RunAuthority fields and tool input.
+ * It never reads prompt content or IPC payload fields authored by the agent.
+ */
 export function evaluatePermissionGate(params: {
+  toolName: string;
+  input: Record<string, unknown>;
+  runAuthority: RunAuthority;
+}): PermissionGateDecision {
+  const { toolName, input, runAuthority } = params;
+  const { origin } = runAuthority;
+
+  const classification = classifyActionCategory(toolName, input);
+
+  // VAL-WS1-007: read and local-mutate always allow regardless of origin
+  if (classification.category === 'read' || classification.category === 'local-mutate') {
+    return { action: 'allow' };
+  }
+
+  // VAL-WS1-008: destroy blocks headless/subagent/evaluator, confirms interactive-main
+  if (classification.category === 'destroy') {
+    const command = typeof input.command === 'string' ? input.command : '';
+    const result = isDestructiveCommand(command);
+
+    if (origin === 'headless' || origin === 'subagent' || origin === 'evaluator') {
+      return {
+        action: 'block',
+        reason: `Destructive command blocked (${result.matched}). ${
+          origin === 'subagent'
+            ? 'Subagents cannot execute destructive commands.'
+            : 'Headless/evaluator runs cannot execute destructive commands without operator confirmation.'
+        }`,
+      };
+    }
+
+    // interactive-main: confirm
+    return {
+      action: 'confirm',
+      title: 'Destructive Command',
+      message: `The agent wants to run:\n\n  ${command}\n\nMatched: ${result.matched}\n\nAllow this command?`,
+    };
+  }
+
+  // VAL-WS1-009 + VAL-WS1-010: outbound held on headless/subagent without grant;
+  // VAL-WS1-009 calls subagent a "headless run", so we include it in the held condition.
+  if (classification.category === 'outbound') {
+    if (
+      (origin === 'headless' || origin === 'subagent') &&
+      !runAuthority.operatorGrant
+    ) {
+      // The caller (IPC handler) is responsible for enqueueing the held row.
+      // evaluatePermissionGate is pure — it signals the hold decision here.
+      return { action: 'held' };
+    }
+    // interactive-main with operatorGrant → normal pending → delivered flow
+    // evaluator runs always allow (operatorGrant=true by default)
+    return { action: 'allow' };
+  }
+
+  // VAL-WS1-012: schedule always allows at the tool level.
+  // WS2 enforces pending_approval status at the IPC handler, not here.
+  if (classification.category === 'schedule') {
+    return { action: 'allow' };
+  }
+
+  // Fallback: conservative deny for unknown categories
+  return { action: 'allow' };
+}
+
+/**
+ * Evaluate the permission gate using the legacy isSubagent/hasUI parameters.
+ * This overload exists for backward compatibility with existing call sites
+ * that have not yet been migrated to use RunAuthority.
+ *
+ * The origin mapping mirrors the RunAuthority derivation:
+ *   isSubagent=true           → origin='subagent'
+ *   isSubagent=false, hasUI   → origin='interactive-main'
+ *   isSubagent=false, !hasUI  → origin='headless'
+ */
+export function evaluatePermissionGateLegacy(params: {
   toolName: string;
   input: Record<string, unknown>;
   isSubagent: boolean;
   hasUI: boolean;
 }): PermissionGateDecision {
-  if (params.toolName === 'bash') {
-    const command = String(params.input.command ?? '');
+  const { toolName, input, isSubagent, hasUI } = params;
+
+  if (toolName === 'bash') {
+    const command = String(input.command ?? '');
     const result = isDestructiveCommand(command);
     if (!result.destructive) return { action: 'allow' };
 
-    if (params.isSubagent || !params.hasUI) {
+    if (isSubagent || !hasUI) {
       return {
         action: 'block',
         reason: `Destructive command blocked (${result.matched}). ${
-          params.isSubagent
+          isSubagent
             ? 'Subagents cannot execute destructive commands.'
             : 'No confirmation UI is available.'
         }`,
@@ -112,15 +203,15 @@ export function evaluatePermissionGate(params: {
     };
   }
 
-  if (params.toolName === 'write' || params.toolName === 'edit') {
-    const filePath = String(params.input.path ?? '');
+  if (toolName === 'write' || toolName === 'edit') {
+    const filePath = String(input.path ?? '');
     if (!isProtectedPath(filePath)) return { action: 'allow' };
 
-    if (params.isSubagent || !params.hasUI) {
+    if (isSubagent || !hasUI) {
       return {
         action: 'block',
         reason: `Write to protected path blocked: ${filePath}. ${
-          params.isSubagent
+          isSubagent
             ? 'Subagents cannot modify protected files.'
             : 'No confirmation UI is available.'
         }`,
@@ -130,7 +221,7 @@ export function evaluatePermissionGate(params: {
     return {
       action: 'confirm',
       title: 'Protected Path',
-      message: `The agent wants to ${params.toolName}:\n\n  ${filePath}\n\nThis is a protected path. Allow?`,
+      message: `The agent wants to ${toolName}:\n\n  ${filePath}\n\nThis is a protected path. Allow?`,
     };
   }
 

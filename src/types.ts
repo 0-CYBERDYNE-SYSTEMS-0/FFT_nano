@@ -33,6 +33,40 @@ export interface ContainerConfig {
   env?: Record<string, string>;
 }
 
+/**
+ * RunAuthority — host-issued, immutable authority for a single agent run.
+ *
+ * Produced by mintRunAuthority() at spawn time; consumed by the permission gate,
+ * the outbox hold logic, and JSONL audit stampers. The agent subprocess never
+ * sees anything but FFT_NANO_RUN_AUTHORITY_ID (a random ID, not the authorityId).
+ *
+ * Invariants:
+ *   I1: nothing in RunAuthority is writable by the agent subprocess.
+ *   I4: operatorGrant is set exclusively by the host; the agent cannot influence it.
+ */
+export type RunOrigin = 'interactive-main' | 'subagent' | 'headless' | 'evaluator';
+
+export interface RunAuthority {
+  authorityId: string;          // crypto.randomUUID() — host-issued, unpredictable
+  requestId: string;            // existing per-run id; the authority wraps it
+  origin: RunOrigin;
+  groupFolder: string;
+  startedAt: string;           // ISO timestamp
+  effectiveToolSet: readonly (
+    | 'read' | 'bash' | 'edit' | 'write'
+    | 'grep' | 'find' | 'ls' | 'agent'
+  )[];
+  // True for interactive-main runs and operator-created cron tasks; false for
+  // agent-created schedule_task outputs and any agent-spawned outbound until
+  // approved.
+  operatorGrant: boolean;
+  // Provenance (WS3)
+  senderRole: 'operator' | 'member' | 'unknown';
+  // Global pause stamp captured at run start — a mid-run pause applies to the
+  // next loop tick, not to the in-flight run.
+  startedDuringPause: boolean;
+}
+
 export interface RegisteredGroup {
   name: string;
   folder: string;

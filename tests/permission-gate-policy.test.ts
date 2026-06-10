@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  evaluatePermissionGate,
+  evaluatePermissionGateLegacy as evaluatePermissionGate,
   isProtectedPath,
 } from '../src/permission-gate-policy.js';
 

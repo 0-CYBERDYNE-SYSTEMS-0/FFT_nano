@@ -192,6 +192,18 @@ export function initDatabaseAtPath(dbPath: string): void {
     }
   }
 
+  // WS1.2 held-payload + operator-notification columns on delivery_outbox
+  const outboxMigrations = [
+    `ALTER TABLE delivery_outbox ADD COLUMN operator_notified_at TEXT`,
+  ];
+  for (const migration of outboxMigrations) {
+    try {
+      db.exec(migration);
+    } catch {
+      /* column already exists */
+    }
+  }
+
   const hadMessagesFts = !!db
     .prepare(
       `SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='messages_fts'`,
@@ -1099,7 +1111,7 @@ export function getEvaluatorStats(
 // Delivery outbox (at-least-once + dedupe for non-interactive finals/cron)
 // ---------------------------------------------------------------------------
 
-export type DeliveryOutboxStatus = 'pending' | 'delivered' | 'failed';
+export type DeliveryOutboxStatus = 'pending' | 'delivered' | 'failed' | 'held';
 
 export interface DeliveryOutboxRecord {
   id: number;
@@ -1113,6 +1125,8 @@ export interface DeliveryOutboxRecord {
   created_at: string;
   updated_at: string;
   delivered_at: string | null;
+  /** ISO timestamp when the operator was notified about this held entry. */
+  operator_notified_at: string | null;
 }
 
 /**
@@ -1150,8 +1164,85 @@ export function enqueueDelivery(input: {
 }
 
 /**
+ * Enqueue a held delivery_outbox row for an outbound action that was blocked
+ * at the gate because the run authority lacked operatorGrant.
+ *
+ * The dedupe_key is set to the IPC action's dedupe_key so that if the same
+ * logical message is re-submitted (e.g. a resumed run), the UNIQUE constraint
+ * makes the second insert a no-op — satisfying VAL-WS1-009's "single notification
+ * per hold" requirement without a separate dedupe table.
+ *
+ * Returns the row and whether it was a duplicate insert.
+ */
+export function enqueueHeldDelivery(input: {
+  dedupeKey: string;
+  destination: string;
+  body: string;
+}): { record: DeliveryOutboxRecord; duplicate: boolean } {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO delivery_outbox (
+         dedupe_key, destination, body, status, attempts, max_attempts,
+         operator_notified_at, created_at, updated_at
+       ) VALUES (?, ?, ?, 'held', 0, 0, NULL, ?, ?)`,
+    )
+    .run(input.dedupeKey, input.destination, input.body, now, now);
+  const record = db
+    .prepare(`SELECT * FROM delivery_outbox WHERE dedupe_key = ?`)
+    .get(input.dedupeKey) as DeliveryOutboxRecord;
+  return { record, duplicate: result.changes === 0 };
+}
+
+/**
+ * All held delivery_outbox rows, oldest first. Used by the operator surfaces
+ * (e.g. /tasks panel, /delivery-status) to display held payloads.
+ */
+export function listHeldDeliveries(): DeliveryOutboxRecord[] {
+  return db
+    .prepare(
+      `SELECT * FROM delivery_outbox
+       WHERE status = 'held'
+       ORDER BY created_at ASC`,
+    )
+    .all() as DeliveryOutboxRecord[];
+}
+
+/**
+ * Release a held delivery_outbox row back to 'pending' so it will be picked up
+ * by the next flushPending cycle. Used by the operator when they approve a
+ * held payload for delivery.
+ */
+export function releaseHeldDelivery(dedupeKey: string): DeliveryOutboxRecord | undefined {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE delivery_outbox
+     SET status = 'pending', max_attempts = 5, attempts = 0, updated_at = ?
+     WHERE dedupe_key = ? AND status = 'held'`,
+  ).run(now, dedupeKey);
+  return db
+    .prepare(`SELECT * FROM delivery_outbox WHERE dedupe_key = ?`)
+    .get(dedupeKey) as DeliveryOutboxRecord | undefined;
+}
+
+/**
+ * Mark a held row as having been notified to the operator. Idempotent — a
+ * second notify call for the same dedupe_key is a no-op because
+ * operator_notified_at is already set.
+ */
+export function markHeldDeliveryNotified(dedupeKey: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE delivery_outbox
+     SET operator_notified_at = COALESCE(operator_notified_at, ?), updated_at = ?
+     WHERE dedupe_key = ? AND status = 'held'`,
+  ).run(now, now, dedupeKey);
+}
+
+/**
  * Pending entries that still have attempts left, oldest first. Drives both the
  * inline delivery attempt and the startup/periodic flush.
+ * Note: held rows are explicitly excluded — they are never auto-promoted.
  */
 export function listPendingDeliveries(limit = 100): DeliveryOutboxRecord[] {
   const safeLimit = Number.isFinite(limit)
