@@ -30,6 +30,7 @@ import {
   activeCoderRuns,
   telegramSettingsPanelActions,
   telegramSetupInputStates,
+  pendingTaskTokens,
   TELEGRAM_SETTINGS_PANEL_PREFIX,
   TELEGRAM_SETTINGS_PANEL_TTL_MS,
   TELEGRAM_SETUP_INPUT_TTL_MS,
@@ -514,6 +515,54 @@ export function getTelegramSettingsPanelAction(
   const panelState = telegramSettingsPanelActions.get(token);
   if (!panelState || panelState.chatJid !== chatJid) return null;
   return panelState.action;
+}
+
+// WS2.3: Pending task approval token management
+const PENDING_TASK_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+export function prunePendingTaskTokens(): void {
+  const now = Date.now();
+  for (const [token, entry] of pendingTaskTokens.entries()) {
+    if (entry.expiresAt <= now) pendingTaskTokens.delete(token);
+  }
+}
+
+export function registerPendingTaskToken(
+  taskId: string,
+  groupFolder: string,
+  action: 'approve' | 'reject',
+): string {
+  prunePendingTaskTokens();
+  let token = '';
+  do {
+    token = Math.random().toString(36).slice(2, 10);
+  } while (pendingTaskTokens.has(token));
+  pendingTaskTokens.set(token, {
+    taskId,
+    groupFolder,
+    action,
+    expiresAt: Date.now() + PENDING_TASK_TTL_MS,
+  });
+  return token;
+}
+
+export interface PendingTaskTokenEntry {
+  taskId: string;
+  groupFolder: string;
+  action: 'approve' | 'reject';
+}
+
+export function getPendingTaskToken(
+  token: string,
+): PendingTaskTokenEntry | null {
+  prunePendingTaskTokens();
+  const entry = pendingTaskTokens.get(token);
+  if (!entry) return null;
+  return {
+    taskId: entry.taskId,
+    groupFolder: entry.groupFolder,
+    action: entry.action,
+  };
 }
 
 // --- Setup input state ---

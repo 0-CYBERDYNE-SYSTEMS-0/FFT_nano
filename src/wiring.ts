@@ -82,6 +82,7 @@ import {
   updateTask,
   updateChatName,
 } from './db.js';
+import { recordTaskAuditEvent, type TaskAuditKind } from './task-audit.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import {
   FarmActionRequest,
@@ -496,6 +497,7 @@ import {
   summarizeTask as tdSummarizeTask,
   formatTaskRunsText as tdFormatTaskRunsText,
   formatTasksText as tdFormatTasksText,
+  formatPendingTasksText as tdFormatPendingTasksText,
   runGatewayServiceCommand as tdRunGatewayServiceCommand,
   resolveKnowledgeRuntimeSnapshot as tdResolveKnowledgeRuntimeSnapshot,
   handleKnowledgeCommand as tdHandleKnowledgeCommand,
@@ -550,6 +552,8 @@ import {
   presentCoderSuggestion as tsPresentCoderSuggestion,
   prepareCoderTarget as tsPrepareCoderTarget,
   createCoderProject as tsCreateCoderProject,
+  registerPendingTaskToken as tsRegisterPendingTaskToken,
+  getPendingTaskToken as tsGetPendingTaskToken,
   type ResolvePanelDeps,
 } from './telegram-settings.js';
 
@@ -1513,6 +1517,11 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   getTaskById,
   updateTask,
   deleteTask,
+  formatPendingTasksText: tdFormatPendingTasksText,
+  registerPendingTaskToken: tsRegisterPendingTaskToken,
+  getPendingTaskToken: tsGetPendingTaskToken,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  recordTaskAuditEvent: recordTaskAuditEvent as any,
   emitTuiChatEvent,
   emitTuiAgentEvent,
   emitRunProgress: (payload) => {

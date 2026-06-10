@@ -49,6 +49,7 @@ import type { VerboseMode } from './verbose-mode.js';
 import {
   getAllTasks,
   getDueTasks,
+  getPendingTasks,
   getTaskById,
   getTaskRunLogs,
   listActiveAgentRuns,
@@ -856,6 +857,84 @@ export function formatTasksText(mode: 'list' | 'due' = 'list'): string {
   }
   const prefix = mode === 'due' ? 'Due tasks:' : 'Scheduled tasks:';
   return [prefix, ...lines].join('\n');
+}
+
+// WS2.3: Format pending agent-created tasks for the operator approval surface.
+// Returns an object with the rendered text and inline keyboard rows, one row per
+// pending task with Approve/Reject buttons. Uses the registerToken callback to
+// generate non-guessable callback_data tokens.
+export interface PendingTasksDeps {
+  registerToken: (
+    taskId: string,
+    groupFolder: string,
+    action: 'approve' | 'reject',
+  ) => string;
+}
+
+export function formatPendingTasksText(
+  deps: PendingTasksDeps,
+): {
+  text: string;
+  keyboard: Array<Array<{ text: string; callbackData: string }>>;
+} {
+  const tasks = getPendingTasks();
+  if (tasks.length === 0) {
+    return {
+      text: 'No pending tasks requiring approval.',
+      keyboard: [],
+    };
+  }
+
+  const lines: string[] = ['Pending agent-created tasks:'];
+  const keyboard: Array<Array<{ text: string; callbackData: string }>> = [];
+
+  for (const task of tasks.slice(0, 30)) {
+    const taskText = formatPendingTaskRow(task);
+    lines.push(taskText);
+
+    const approveCallbackData = `task:approve:${deps.registerToken(
+      task.id,
+      task.group_folder,
+      'approve',
+    )}`;
+    const rejectCallbackData = `task:reject:${deps.registerToken(
+      task.id,
+      task.group_folder,
+      'reject',
+    )}`;
+
+    keyboard.push([
+      { text: `✅ Approve`, callbackData: approveCallbackData },
+      { text: `❌ Reject`, callbackData: rejectCallbackData },
+    ]);
+  }
+
+  if (tasks.length > 30) {
+    lines.push(`... ${tasks.length - 30} more pending tasks`);
+  }
+
+  return { text: lines.join('\n'), keyboard };
+}
+
+function formatPendingTaskRow(task: ReturnType<typeof getPendingTasks>[0]): string {
+  const promptPreview =
+    task.prompt.length > 60 ? `${task.prompt.slice(0, 60)}…` : task.prompt;
+  const schedule = `${task.schedule_type} ${task.schedule_value}`;
+  const deliveryTo = task.delivery_to || 'n/a';
+  const deliveryMode = task.delivery_mode || 'none';
+  const deleteAfterRun = task.delete_after_run ? 'true' : 'false';
+  const createdAt = task.created_at
+    ? new Date(task.created_at).toLocaleString()
+    : 'n/a';
+
+  return [
+    `  ID: ${task.id}`,
+    `  Prompt: ${promptPreview}`,
+    `  Schedule: ${schedule}`,
+    `  Delivery: ${deliveryMode} → ${deliveryTo}`,
+    `  Delete after run: ${deleteAfterRun}`,
+    `  Created: ${createdAt}`,
+  ].join('\n');
 }
 
 // --- Gateway service command ---

@@ -143,6 +143,10 @@ function createBaseDeps(): TelegramCommandDeps {
     getTaskById: () => null,
     updateTask: () => {},
     deleteTask: () => {},
+    formatPendingTasksText: () => ({ text: 'No pending tasks.', keyboard: [] }),
+    registerPendingTaskToken: () => 'tok123',
+    getPendingTaskToken: () => null,
+    recordTaskAuditEvent: () => {},
     emitTuiChatEvent: () => {},
     emitTuiAgentEvent: () => {},
     emitRunProgress: (payload) => {
@@ -1279,4 +1283,318 @@ test('handleTelegramCallbackQuery trigger-new clears session title', async () =>
     deps.state.chatRunPreferences['telegram:1']?.sessionTitle,
     undefined,
   );
+});
+
+test('VAL-WS2-006 panel:pending-tasks renders empty state for main chat', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    keyboardMessages: Array<{
+      chatJid: string;
+      text: string;
+      keyboard: Array<Array<{ text: string; callbackData: string }>>;
+    }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.formatPendingTasksText = () => ({
+    text: 'No pending tasks requiring approval.',
+    keyboard: [],
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-pending-1',
+    chatJid: 'telegram:main',
+    messageId: 100,
+    data: 'panel:pending-tasks',
+  });
+
+  assert.equal(deps.sent.length, 0);
+  assert.equal(deps.keyboardMessages.length, 1);
+  assert.match(deps.keyboardMessages[0].text, /No pending tasks/);
+  assert.equal(deps.keyboardMessages[0].keyboard.length, 0);
+  assert.deepEqual(deps.audits[0], {
+    chatJid: 'telegram:main',
+    command: 'panel:pending-tasks',
+    allowed: true,
+    reason: 'ok',
+  });
+});
+
+test('VAL-WS2-006 panel:pending-tasks shows pending tasks with inline buttons', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    keyboardMessages: Array<{
+      chatJid: string;
+      text: string;
+      keyboard: Array<Array<{ text: string; callbackData: string }>>;
+    }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.formatPendingTasksText = () => ({
+    text: 'Pending agent-created tasks:\n  ID: task-1\n  Prompt: do something',
+    keyboard: [
+      [
+        { text: '✅ Approve', callbackData: 'task:approve:tok123' },
+        { text: '❌ Reject', callbackData: 'task:reject:tok123' },
+      ],
+    ],
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-pending-2',
+    chatJid: 'telegram:main',
+    messageId: 101,
+    data: 'panel:pending-tasks',
+  });
+
+  assert.equal(deps.keyboardMessages.length, 1);
+  assert.match(deps.keyboardMessages[0].text, /Pending agent-created tasks/);
+  assert.match(deps.keyboardMessages[0].text, /task-1/);
+  assert.equal(deps.keyboardMessages[0].keyboard[0][0].text, '✅ Approve');
+  assert.equal(deps.keyboardMessages[0].keyboard[0][1].text, '❌ Reject');
+});
+
+test('VAL-WS2-009 task:approve from non-main chat is refused', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  // non-main chat
+  deps.isMainChat = () => false;
+  deps.registerPendingTaskToken = () => 'tokdeny';
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-deny-1',
+    chatJid: 'telegram:group2',
+    messageId: 110,
+    data: 'task:approve:tokdeny',
+  });
+
+  assert.equal(deps.sent.length, 1);
+  assert.match(deps.sent[0].text, /main\/admin chat/);
+  assert.deepEqual(deps.audits[0], {
+    chatJid: 'telegram:group2',
+    command: 'task:approve:tokdeny',
+    allowed: false,
+    reason: 'non-main chat',
+  });
+});
+
+test('VAL-WS2-009 task:reject from non-main chat is refused', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => false;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-deny-2',
+    chatJid: 'telegram:group3',
+    messageId: 111,
+    data: 'task:reject:tokdeny2',
+  });
+
+  assert.equal(deps.sent.length, 1);
+  assert.match(deps.sent[0].text, /main\/admin chat/);
+});
+
+test('VAL-WS2-007 task:approve updates task to active and writes audit line', async () => {
+  const updatedTasks: Array<{ taskId: string; patch: Record<string, unknown> }> = [];
+  const auditEvents: Array<{ groupFolder: string; event: Record<string, unknown> }> = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.getPendingTaskToken = () => ({
+    taskId: 'task-approve-1',
+    groupFolder: 'main',
+    action: 'approve',
+  });
+  deps.updateTask = (taskId, patch) => {
+    updatedTasks.push({ taskId, patch });
+  };
+  deps.recordTaskAuditEvent = (groupFolder, event) => {
+    auditEvents.push({ groupFolder, event });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-appr-1',
+    chatJid: 'telegram:main',
+    messageId: 120,
+    data: 'task:approve:tokapprove',
+  });
+
+  assert.equal(updatedTasks.length, 1);
+  assert.equal(updatedTasks[0].taskId, 'task-approve-1');
+  assert.deepEqual(updatedTasks[0].patch, { status: 'active' });
+  assert.equal(auditEvents.length, 1);
+  assert.equal(auditEvents[0].groupFolder, 'main');
+  assert.equal(auditEvents[0].event.kind, 'approve');
+  assert.equal(auditEvents[0].event.taskId, 'task-approve-1');
+  assert.equal(auditEvents[0].event.operatorJid, 'telegram:main');
+  assert.equal(auditEvents[0].event.priorStatus, 'pending_approval');
+  assert.equal(auditEvents[0].event.newStatus, 'active');
+  assert.match(deps.sent[0].text, /approved/i);
+});
+
+test('VAL-WS2-008 task:reject deletes task and writes audit line', async () => {
+  const deletedTasks: string[] = [];
+  const auditEvents: Array<{ groupFolder: string; event: Record<string, unknown> }> = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.getPendingTaskToken = () => ({
+    taskId: 'task-reject-1',
+    groupFolder: 'main',
+    action: 'reject',
+  });
+  deps.deleteTask = (taskId) => {
+    deletedTasks.push(taskId);
+  };
+  deps.recordTaskAuditEvent = (groupFolder, event) => {
+    auditEvents.push({ groupFolder, event });
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-rej-1',
+    chatJid: 'telegram:main',
+    messageId: 121,
+    data: 'task:reject:tokreject',
+  });
+
+  assert.equal(deletedTasks.length, 1);
+  assert.equal(deletedTasks[0], 'task-reject-1');
+  assert.equal(auditEvents.length, 1);
+  assert.equal(auditEvents[0].groupFolder, 'main');
+  assert.equal(auditEvents[0].event.kind, 'reject');
+  assert.equal(auditEvents[0].event.taskId, 'task-reject-1');
+  assert.equal(auditEvents[0].event.operatorJid, 'telegram:main');
+  assert.equal(auditEvents[0].event.priorStatus, 'pending_approval');
+  assert.equal(auditEvents[0].event.newStatus, null);
+  assert.match(deps.sent[0].text, /rejected/i);
+});
+
+test('VAL-WS2-009 expired token is refused with guidance', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  // Token not found (expired)
+  deps.getPendingTaskToken = () => null;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-expired-1',
+    chatJid: 'telegram:main',
+    messageId: 130,
+    data: 'task:approve:oldexpired',
+  });
+
+  assert.match(deps.sent[0].text, /expired|run \/tasks/i);
+  assert.deepEqual(deps.audits[0], {
+    chatJid: 'telegram:main',
+    command: 'task:approve:oldexpired',
+    allowed: false,
+    reason: 'token not found or expired',
+  });
+});
+
+test('VAL-WS2-010 approve and reject have separate audit kinds', async () => {
+  const auditEvents: Array<{ groupFolder: string; event: Record<string, unknown> }> = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.recordTaskAuditEvent = (groupFolder, event) => {
+    auditEvents.push({ groupFolder, event });
+  };
+
+  // Simulate approve
+  deps.getPendingTaskToken = () => ({
+    taskId: 'task-1',
+    groupFolder: 'main',
+    action: 'approve',
+  });
+  deps.updateTask = () => {};
+  deps.deleteTask = () => {};
+
+  const handlers = createTelegramCommandHandlers(deps);
+
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-appr-kind',
+    chatJid: 'telegram:main',
+    messageId: 140,
+    data: 'task:approve:tok1',
+  });
+
+  // Simulate reject (token lookup returns different action)
+  deps.getPendingTaskToken = () => ({
+    taskId: 'task-2',
+    groupFolder: 'main',
+    action: 'reject',
+  });
+
+  await handlers.handleTelegramCallbackQuery({
+    id: 'cb-rej-kind',
+    chatJid: 'telegram:main',
+    messageId: 141,
+    data: 'task:reject:tok2',
+  });
+
+  assert.equal(auditEvents.length, 2);
+  assert.equal(auditEvents[0].event.kind, 'approve');
+  assert.equal(auditEvents[1].event.kind, 'reject');
+  assert.notEqual(auditEvents[0].event.taskId, auditEvents[1].event.taskId);
 });

@@ -279,6 +279,18 @@ export const telegramSetupInputStates = new Map<
   string,
   TelegramSetupInputState
 >();
+
+// WS2.3: Pending task approval tokens for the Telegram approval surface.
+// Maps token -> { taskId, groupFolder, action: 'approve' | 'reject', expiresAt }
+export const pendingTaskTokens = new Map<
+  string,
+  {
+    taskId: string;
+    groupFolder: string;
+    action: 'approve' | 'reject';
+    expiresAt: number;
+  }
+>();
 export const hostEventBus = new HostEventBus();
 
 /**

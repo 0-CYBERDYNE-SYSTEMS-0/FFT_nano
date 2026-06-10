@@ -581,6 +581,15 @@ export function getAllTasks(): ScheduledTask[] {
     .all() as ScheduledTask[];
 }
 
+// WS2.3: Get tasks pending operator approval (agent-created tasks)
+export function getPendingTasks(): ScheduledTask[] {
+  return db
+    .prepare(
+      `SELECT * FROM scheduled_tasks WHERE status = 'pending_approval' ORDER BY created_at DESC`,
+    )
+    .all() as ScheduledTask[];
+}
+
 export function updateTask(
   id: string,
   updates: Partial<
