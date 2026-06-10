@@ -438,6 +438,110 @@ test('memory_write memory_append rejects non-durable target paths', async () => 
   );
 });
 
+// VAL-INV-I1-003 — Memory writes do not alter evaluator rubrics
+// A static check confirms no memory write targets a .ts source file
+test('VAL-INV-I1-003 memory_write rejects .ts source files as memory targets', async () => {
+  // Host source files that must never be writable through memory writes
+  const tsFileAttempts = [
+    { path: 'evaluator.ts', description: 'evaluator.ts' },
+    { path: 'permission-gate-policy.ts', description: 'permission-gate-policy.ts' },
+    { path: 'src/evaluator.ts', description: 'src/evaluator.ts' },
+    { path: 'src/permission-gate-policy.ts', description: 'src/permission-gate-policy.ts' },
+    { path: '../../../src/evaluator.ts', description: 'path traversal to evaluator.ts' },
+    { path: 'memory/../../src/evaluator.ts', description: 'memory-prefixed path traversal' },
+    { path: 'canonical/../../../src/evaluator.ts', description: 'canonical-prefixed path traversal' },
+  ];
+
+  for (const attempt of tsFileAttempts) {
+    const result = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: `ts-reject-${attempt.path.replace(/[^a-z]/gi, '-')}`,
+        params: {
+          intent: 'memory_append',
+          payload: {
+            path: attempt.path,
+            content: 'malicious content',
+          },
+        },
+      },
+      {
+        sourceGroup: 'group-a',
+        isMain: false,
+        registeredGroups: makeRegisteredGroups([{ jid: 'chat-a', folder: 'group-a' }]),
+      },
+    );
+
+    assert.equal(
+      result.status,
+      'error',
+      `${attempt.description}: expected error status, got ${result.status}`,
+    );
+    assert.match(
+      result.error || '',
+      /not an allowed memory file|may not be written as memory|evaluator\.ts.*may not|\.ts.*source file/i,
+      `${attempt.description}: error message should reject the .ts path, got: ${result.error}`,
+    );
+  }
+});
+
+test('VAL-INV-I1-003 soul_patch and nano_patch use fixed paths only', async () => {
+  // soul_patch and nano_patch use hardcoded SOUL.md and NANO.md paths
+  // They must never accept a path parameter that could target a .ts file
+  // Test that these intents work when called correctly
+  const groupFolder = `soul-nano-test-${Date.now()}`;
+  const groupDir = path.join(process.cwd(), 'groups', groupFolder);
+  try {
+    fs.mkdirSync(groupDir, { recursive: true });
+    fs.writeFileSync(path.join(groupDir, 'SOUL.md'), '# SOUL\n\nExisting.\n', 'utf-8');
+    fs.writeFileSync(path.join(groupDir, 'NANO.md'), '# NANO\n\nExisting.\n', 'utf-8');
+    const registeredGroups = makeRegisteredGroups([{ jid: 'jid-a', folder: groupFolder }]);
+
+    // These should succeed - they target the fixed SOUL.md and NANO.md paths
+    const soulResult = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'soul-patch-test',
+        params: {
+          intent: 'soul_patch',
+          targetSection: 'Test',
+          payload: { content: 'Test content' },
+        },
+      },
+      { sourceGroup: groupFolder, isMain: false, registeredGroups },
+    );
+    assert.equal(soulResult.status, 'success', 'soul_patch should succeed for SOUL.md');
+    assert.equal(soulResult.result?.mutation?.targetPath, 'SOUL.md');
+
+    const nanoResult = await executeMemoryAction(
+      {
+        type: 'memory_action',
+        action: 'memory_write',
+        requestId: 'nano-patch-test',
+        params: {
+          intent: 'nano_patch',
+          targetSection: 'Test',
+          payload: { content: 'Test content' },
+        },
+      },
+      { sourceGroup: groupFolder, isMain: false, registeredGroups },
+    );
+    assert.equal(nanoResult.status, 'success', 'nano_patch should succeed for NANO.md');
+    assert.equal(nanoResult.result?.mutation?.targetPath, 'NANO.md');
+
+    // Verify the files were actually written to the memory files, not to .ts files
+    const soulBody = fs.readFileSync(path.join(groupDir, 'SOUL.md'), 'utf-8');
+    assert.match(soulBody, /Test content/, 'SOUL.md should contain the patched content');
+
+    const nanoBody = fs.readFileSync(path.join(groupDir, 'NANO.md'), 'utf-8');
+    assert.match(nanoBody, /Test content/, 'NANO.md should contain the patched content');
+  } finally {
+    fs.rmSync(groupDir, { recursive: true, force: true });
+  }
+});
+
 test('memory_write memory_append supports canonical durable targets', async () => {
   const groupFolder = `canonical-write-${Date.now()}`;
   const groupDir = path.join(process.cwd(), 'groups', groupFolder);

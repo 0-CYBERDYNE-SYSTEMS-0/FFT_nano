@@ -57,6 +57,16 @@ export function resolveAuthorizedGroupFolder(input: {
 export function assertDurableMemoryPath(relPath: string): void {
   const normalized = relPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
   const lower = normalized.toLowerCase();
+
+  // VAL-INV-I1-003: Explicitly reject .ts files — memory writes must not alter
+  // host code (evaluator rubrics, permission gate policy, or any other .ts source).
+  // This is a defense-in-depth static check layered on top of the extension check
+  // in isAllowedMemoryRelativePath and the workspace-escape check in
+  // resolveAllowedMemoryFilePath.
+  if (/\.ts$/i.test(lower)) {
+    throw new Error(`Path "${relPath}" is a .ts source file and may not be written as memory`);
+  }
+
   const isMemoryRoot = lower === 'memory.md';
   const isTodosRoot = lower === 'todos.md';
   const isMemoryNote = /^memory\/[^/].*\.md$/i.test(normalized);
