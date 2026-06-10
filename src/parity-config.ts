@@ -119,6 +119,10 @@ export interface PromptParityConfig {
   recentConversationMaxChars: number;
 }
 
+export interface EvaluatorParityConfig {
+  chatSampleRate: number; // 0 = disabled, 0.1 = 10% sampling, 1.0 = 100% sampling
+}
+
 export interface ParityConfig {
   memory: MemoryParityConfig;
   heartbeat: HeartbeatParityConfig;
@@ -127,6 +131,7 @@ export interface ParityConfig {
   workspace: WorkspaceParityConfig;
   doctor: DoctorParityConfig;
   prompt: PromptParityConfig;
+  evaluator: EvaluatorParityConfig;
 }
 
 const DEFAULTS: ParityConfig = {
@@ -197,6 +202,9 @@ const DEFAULTS: ParityConfig = {
     skillCatalogMaxChars: 20_000,
     recentConversationMaxMessages: 50,
     recentConversationMaxChars: 16_000,
+  },
+  evaluator: {
+    chatSampleRate: 0.1, // default 10% sampling; 0 disables
   },
 };
 
@@ -325,6 +333,10 @@ function mergeParityConfig(file: Partial<ParityConfig>): ParityConfig {
     workspace: { ...D.workspace, ...f.workspace },
     doctor: { ...D.doctor, ...f.doctor },
     prompt: { ...D.prompt, ...f.prompt },
+    evaluator: {
+      ...D.evaluator,
+      ...f.evaluator,
+    },
   };
 
   merged.memory.backend = sanitizeBackend(merged.memory.backend, 'lexical');
@@ -418,6 +430,12 @@ function mergeParityConfig(file: Partial<ParityConfig>): ParityConfig {
     merged.prompt.recentConversationMaxChars,
     4_000,
     200,
+  );
+  // chatSampleRate: 0 = disabled, 0.1 = 10% sampling, 1.0 = 100% sampling
+  merged.evaluator.chatSampleRate = clamp(
+    merged.evaluator.chatSampleRate,
+    0.1, // default
+    0,
   );
 
   return merged;
@@ -664,6 +682,15 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     200,
     200_000,
   );
+
+  // WS4.4: evaluator.chatSampleRate env override
+  // FFT_NANO_EVALUATOR_CHAT_SAMPLE_RATE=0 disables; 0.1 = 10%; 1.0 = 100%
+  const chatSampleRate = parseFloat(
+    e.FFT_NANO_EVALUATOR_CHAT_SAMPLE_RATE || '',
+  );
+  if (isFinite(chatSampleRate)) {
+    c.evaluator.chatSampleRate = Math.max(0, Math.min(1, chatSampleRate));
+  }
 
   return c;
 }

@@ -4,6 +4,8 @@ import { sanitizeUserFacingVerdictLeak } from '../runtime/boundary-ipc.js';
 import type { TelegramMessagePreviewState } from '../telegram-streaming.js';
 import type { NewMessage } from '../types.js';
 import type { CodingWorkerResult } from '../coding-orchestrator.js';
+import { mintRunAuthority, deriveEffectiveToolSet } from '../run-authority.js';
+import { runSampledChatEvaluation } from '../evaluator.js';
 
 export interface FinalizeCompletedRunParams {
   chatJid: string;
@@ -1415,6 +1417,44 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
             );
           });
       };
+
+      // WS4.4: Fire-and-forget chat sampling after run completes
+      // Only for agent route (not coding_worker which has its own evaluation)
+      if (params.route === 'agent' && result !== null) {
+        const chatAuthority = mintRunAuthority({
+          requestId: params.requestId,
+          groupFolder: params.group.folder,
+          isMain: false, // Chat runs are not interactive-main for authority purposes
+          isSubagent: false,
+          isScheduledTask: false,
+          isHeartbeat: false,
+          isEvaluatorRun: false,
+          effectiveToolSet: deriveEffectiveToolSet({
+            toolMode: 'default',
+            codingHint: 'none',
+          }),
+          senderRole: params.senderRole,
+          startedDuringPause: false,
+        });
+
+        void (async () => {
+          try {
+            await runSampledChatEvaluation({
+              authority: chatAuthority,
+              originalTask: params.latestUserText,
+              agentOutput: result ?? '',
+              group: params.group,
+              chatJid: params.chatJid,
+              abortSignal: abortController.signal,
+            });
+          } catch (err) {
+            deps.logger?.warn?.(
+              { err, chatJid: params.chatJid, requestId: params.requestId },
+              'Chat sampling failed',
+            );
+          }
+        })();
+      }
 
       if (ok) {
         await finalizeRun({

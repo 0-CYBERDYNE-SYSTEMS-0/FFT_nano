@@ -6,6 +6,7 @@ import type { ContainerInput, ContainerOutput } from './pi-runner.js';
 import { runContainerAgent } from './pi-runner.js';
 import { logger } from './logger.js';
 import { recordEvaluatorVerdict, enqueueDelivery, getEvaluatorStats } from './db.js';
+import { PARITY_CONFIG } from './parity-config.js';
 import { findMainChatJid } from './telegram-group-mgmt.js';
 import { state } from './app-state.js';
 
@@ -318,6 +319,7 @@ const ACTIONFUL_VERBS = [
   'run',
   'save',
   'scan',
+  'schedule',
   'send',
   'setup',
   'test',
@@ -348,6 +350,7 @@ const ACTIONFUL_NOUNS = [
   'job',
   'knowledge',
   'log',
+  'meeting',
   'memory',
   'note',
   'page',
@@ -357,6 +360,7 @@ const ACTIONFUL_NOUNS = [
   'raw',
   'report',
   'scheduler',
+  'skill',
   'script',
   'site',
   'slide',
@@ -948,4 +952,132 @@ export function verdictToOutcome(
     refinements,
     skipped: false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Chat sampling (WS4.4)
+// ---------------------------------------------------------------------------
+
+export interface RunSampledChatEvaluationParams {
+  authority: RunAuthority;
+  originalTask: string;
+  agentOutput: string;
+  group: RegisteredGroup;
+  chatJid: string;
+  startedAtMs?: number;
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * Result of a chat sampling decision.
+ */
+export interface ChatSampleDecision {
+  decision: 'evaluate' | 'skip';
+  reason: string;
+}
+
+/**
+ * WS4.4: Sampled chat evaluation.
+ *
+ * For each chat run:
+ * 1. Check global pause (state.learningPaused) - if paused, hard no-op
+ * 2. Apply isActionfulChatTask first - explain-only runs skip regardless of rate
+ * 3. If chatSampleRate === 0, skip
+ * 4. Otherwise, sample: Math.random() < chatSampleRate
+ * 5. If sampled: call runEvaluatorPass with forceEvaluate: true and runType: 'chat'
+ * 6. Record verdict through recordVerdictOutcome with runType: 'chat'
+ *
+ * Each per-run decision is logged for auditability.
+ */
+export async function runSampledChatEvaluation(
+  params: RunSampledChatEvaluationParams,
+): Promise<ChatSampleDecision> {
+  const { authority, originalTask, agentOutput, group, chatJid, startedAtMs, abortSignal } = params;
+
+  // 1. Global pause check: if paused, hard no-op
+  if (state.learningPaused) {
+    logger.debug(
+      { chatJid, requestId: authority.requestId },
+      'Chat sampling skipped: learning paused',
+    );
+    return { decision: 'skip', reason: 'learning-paused' };
+  }
+
+  // 2. isActionfulChatTask check first
+  if (!isActionfulChatTask(originalTask)) {
+    logger.info(
+      { chatJid, requestId: authority.requestId },
+      'chat_sample_decision: skip (explain-only task)',
+    );
+    return { decision: 'skip', reason: 'explain-only-task' };
+  }
+
+  // 3. chatSampleRate === 0 means disabled
+  const chatSampleRate = PARITY_CONFIG.evaluator.chatSampleRate;
+  if (chatSampleRate === 0) {
+    logger.info(
+      { chatJid, requestId: authority.requestId, chatSampleRate },
+      'chat_sample_decision: skip (chatSampleRate is 0)',
+    );
+    return { decision: 'skip', reason: 'chat-sample-rate-disabled' };
+  }
+
+  // 4. Sample decision
+  const shouldEvaluate = Math.random() < chatSampleRate;
+
+  if (!shouldEvaluate) {
+    logger.info(
+      { chatJid, requestId: authority.requestId, chatSampleRate },
+      'chat_sample_decision: skip (not sampled)',
+    );
+    return { decision: 'skip', reason: 'not-sampled' };
+  }
+
+  // 5. Evaluate: call runEvaluatorPass with forceEvaluate: true
+  logger.info(
+    { chatJid, requestId: authority.requestId, chatSampleRate },
+    'chat_sample_decision: evaluate',
+  );
+
+  try {
+    const verdict = await runEvaluatorPass({
+      runType: 'chat',
+      originalTask,
+      agentOutput,
+      durationMs: 0, // Not tracked for chat runs
+      toolsInvoked: 0,
+      group,
+      chatJid,
+      startedAtMs,
+      forceEvaluate: true,
+      abortSignal,
+    });
+
+    // 6. Record verdict through chokepoint
+    const outcome = verdictToOutcome('chat', verdict, 0);
+    recordVerdictOutcome({
+      authority,
+      outcome,
+      durationMs: 0,
+      toolsInvoked: 0,
+    });
+
+    logger.info(
+      {
+        chatJid,
+        requestId: authority.requestId,
+        pass: verdict.pass,
+        score: verdict.score,
+        skipped: verdict.skipped,
+      },
+      'Chat evaluation completed',
+    );
+  } catch (err) {
+    logger.warn(
+      { err, chatJid, requestId: authority.requestId },
+      'Chat evaluation failed',
+    );
+  }
+
+  return { decision: 'evaluate', reason: 'sampled-and-evaluated' };
 }
