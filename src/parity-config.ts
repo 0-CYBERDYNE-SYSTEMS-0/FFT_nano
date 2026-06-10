@@ -92,6 +92,7 @@ export interface SkillManagerParityConfig {
 export interface SkillsParityConfig {
   selfImprove: SkillSelfImproveConfig;
   curator: SkillManagerParityConfig;
+  historyRetentionDays: number;
 }
 
 export interface WorkspaceParityConfig {
@@ -182,6 +183,7 @@ const DEFAULTS: ParityConfig = {
       archiveAfterDays: 90,
       backup: { enabled: true, keep: 5 },
     },
+    historyRetentionDays: 14,
   },
   workspace: {
     skipBootstrap: false,
@@ -329,6 +331,8 @@ function mergeParityConfig(file: Partial<ParityConfig>): ParityConfig {
         ...f.skills?.curator,
         backup: { ...D.skills.curator.backup, ...f.skills?.curator?.backup },
       },
+      historyRetentionDays:
+        f.skills?.historyRetentionDays ?? D.skills.historyRetentionDays,
     },
     workspace: { ...D.workspace, ...f.workspace },
     doctor: { ...D.doctor, ...f.doctor },
@@ -396,6 +400,11 @@ function mergeParityConfig(file: Partial<ParityConfig>): ParityConfig {
   merged.skills.curator.backup.keep = clamp(
     merged.skills.curator.backup.keep,
     5,
+    1,
+  );
+  merged.skills.historyRetentionDays = clamp(
+    merged.skills.historyRetentionDays,
+    14,
     1,
   );
   merged.workspace.bootstrapMaxChars = clamp(
@@ -604,6 +613,12 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     c.skills.curator.backup.keep,
     1,
     1000,
+  );
+  c.skills.historyRetentionDays = envInt(
+    e.FFT_NANO_SKILL_HISTORY_RETENTION_DAYS,
+    c.skills.historyRetentionDays,
+    1,
+    3650,
   );
 
   c.workspace.skipBootstrap = envBool(

@@ -11,6 +11,7 @@ import {
   snapshotSkillFile,
 } from './skill-history.js';
 import { DATA_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
+import { PARITY_CONFIG } from './parity-config.js';
 import {
   assertValidGroupFolder,
   resolveGroupFolderPath,
@@ -630,7 +631,7 @@ function createSkill(params: {
     body,
     provenance: params.provenance,
   });
-  snapshotSkillFile(path.join(dir, 'SKILL.md'));
+  snapshotSkillFile(path.join(dir, 'SKILL.md'), PARITY_CONFIG.skills.historyRetentionDays);
   writeTextFileAtomic(path.join(dir, 'SKILL.md'), normalized, {
     backupPath: defaultBackupPath(path.join(dir, 'SKILL.md')),
   });
@@ -688,7 +689,7 @@ function patchSkill(params: {
   const target = path.join(dir, 'SKILL.md');
   // Version the prior SKILL.md before overwriting so a bad self-patch can be
   // rolled back.
-  snapshotSkillFile(target);
+  snapshotSkillFile(target, PARITY_CONFIG.skills.historyRetentionDays);
   writeTextFileAtomic(target, normalized, {
     backupPath: defaultBackupPath(target),
   });
@@ -712,7 +713,7 @@ function writeSkillFile(params: {
   const target = path.join(dir, rel);
   assertInside(target, dir);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  snapshotSkillFile(target);
+  snapshotSkillFile(target, PARITY_CONFIG.skills.historyRetentionDays);
 
   // WS3.3: if writing SKILL.md, normalize provenance into frontmatter
   let fileContent = params.fileContent;
