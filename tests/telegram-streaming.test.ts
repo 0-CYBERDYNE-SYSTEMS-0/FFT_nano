@@ -55,6 +55,61 @@ test('updateTelegramPreview sends then edits one visible preview message', async
   assert.deepEqual(edited, [{ messageId: 777, text: longerText }]);
 });
 
+test('updateTelegramPreview paginates a reply that exceeds one Telegram message', async () => {
+  const registry = new TelegramPreviewRegistry(60_000);
+  const sent: string[] = [];
+  const edited: Array<{ messageId: number; text: string }> = [];
+  let nextId = 100;
+  const bot = {
+    sendStreamMessage: async (_chatJid: string, text: string) => {
+      sent.push(text);
+      return nextId++;
+    },
+    editStreamMessage: async (
+      _chatJid: string,
+      messageId: number,
+      text: string,
+    ) => {
+      edited.push({ messageId, text });
+    },
+  };
+
+  // First tick: short text → one bubble (head, never truncated).
+  const head = 'Intro line. ' + 'A'.repeat(3000);
+  const first = await updateTelegramPreview({
+    bot,
+    registry,
+    chatJid: 'telegram:1',
+    requestId: 'run-page',
+    text: head,
+  });
+  assert.equal(first.sent, true);
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].startsWith('Intro line.'), 'first bubble keeps the head');
+
+  // Second tick: text now exceeds 4096 → a second bubble is opened.
+  const full = head + '\n\n' + 'B'.repeat(3000);
+  const second = await updateTelegramPreview({
+    bot,
+    registry,
+    chatJid: 'telegram:1',
+    requestId: 'run-page',
+    text: full,
+  });
+  assert.equal(second.sent, true);
+  assert.equal(sent.length, 2, 'a second preview bubble was created');
+
+  const state = registry.getPreviewState(
+    getTelegramPreviewRunKey('telegram:1', 'run-page'),
+  );
+  assert.equal(state?.messageIds.length, 2);
+  assert.equal(state?.lastText, full, 'full untruncated text is retained');
+  assert.ok(
+    state?.bubbleTexts[0].startsWith('Intro line.'),
+    'head bubble still begins at the real start',
+  );
+});
+
 test('updateTelegramPreview retries with backoff before disabling after repeated failures', async () => {
   const registry = new TelegramPreviewRegistry(60_000);
   let calls = 0;
@@ -324,6 +379,8 @@ test('resolveTelegramStreamCompletionState returns active preview state', () => 
   const runKey = getTelegramPreviewRunKey('telegram:1', 'run-3');
   registry.setPreviewState(runKey, {
     messageId: 444,
+    messageIds: [444],
+    bubbleTexts: ['preview'],
     lastText: 'preview',
     updatedAt: 1000,
   });
@@ -336,6 +393,8 @@ test('resolveTelegramStreamCompletionState returns active preview state', () => 
   assert.equal(resolved.effectiveStreamed, true);
   assert.deepEqual(resolved.messagePreviewState, {
     messageId: 444,
+    messageIds: [444],
+    bubbleTexts: ['preview'],
     lastText: 'preview',
     updatedAt: 1000,
   });
@@ -348,6 +407,8 @@ test('consumePreviewState is atomic - second consume returns null (VAL-STATE-001
   // Set up preview state
   registry.setPreviewState(runKey, {
     messageId: 555,
+    messageIds: [555],
+    bubbleTexts: ['atomic test'],
     lastText: 'atomic test',
     updatedAt: 2000,
   });

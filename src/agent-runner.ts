@@ -738,6 +738,8 @@ export async function runAgent(
             );
             telegramPreviewRegistry.setPreviewState(streamKey, {
               messageId: Number(preview.messageId),
+              messageIds: [Number(preview.messageId)],
+              bubbleTexts: [preview.lastText],
               lastText: preview.lastText,
               updatedAt: Date.now(),
             });

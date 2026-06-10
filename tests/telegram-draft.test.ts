@@ -18,7 +18,10 @@ test('normalizeTelegramDraftText keeps text within 4096 chars', () => {
   const long = 'x'.repeat(5000);
   const normalized = normalizeTelegramDraftText(long);
   assert.equal(normalized.length, 4096);
-  assert.equal(normalized.startsWith('...'), true);
+  // Head-preserving overflow guard: keep the start, mark the cut with a
+  // trailing ellipsis (never drop the head to a leading "...").
+  assert.equal(normalized.startsWith('xxxx'), true);
+  assert.equal(normalized.endsWith('…'), true);
 });
 
 test('normalizeTelegramDraftText returns placeholder for empty text', () => {
