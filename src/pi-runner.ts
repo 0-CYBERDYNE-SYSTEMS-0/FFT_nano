@@ -61,7 +61,8 @@ import { ensureOpenCodeGoModels } from './opencode-go-models.js';
 import { ensureLocalProviderModels } from './local-provider-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
-import { wrapWithSandbox } from './sandbox.js';
+import { wrapWithSandbox, getSandboxMode } from './sandbox.js';
+import { deriveRunOrigin, deriveEffectiveToolSet } from './run-authority.js';
 import type { RegisteredGroup } from './types.js';
 export interface ContainerInput {
   prompt: string;
@@ -948,6 +949,53 @@ export async function runContainerAgent(
   const startTime = Date.now();
   const projectRoot = process.cwd();
   const codingHint = normalizeCodingHint(input.codingHint);
+
+  // WS1.3: Sandbox is the boundary, not the regex list.
+  // Refuse headless/subagent runs with full tool set when sandbox is none
+  // and the override is not set.
+  {
+    const mode = getSandboxMode();
+    const overrideSet = process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS === '1';
+    const origin = deriveRunOrigin({
+      isEvaluatorRun: input.isEvaluatorRun,
+      isMain: input.isMain,
+      isSubagent: input.isSubagent,
+      isScheduledTask: input.isScheduledTask,
+      isHeartbeat: (input.requestId || '').startsWith('heartbeat-'),
+      requestId: input.requestId,
+    });
+    const effectiveToolSet = deriveEffectiveToolSet({
+      toolMode: input.toolMode,
+      codingHint,
+    });
+    const hasMutatingTools = effectiveToolSet.some((t) =>
+      ['bash', 'edit', 'write'].includes(t),
+    );
+
+    if (
+      mode === 'none' &&
+      !overrideSet &&
+      hasMutatingTools &&
+      (origin === 'headless' || origin === 'subagent')
+    ) {
+      const envVar = 'FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS';
+      logger.warn(
+        {
+          group: group.name,
+          origin,
+          effectiveToolSet,
+          mode,
+        },
+        `Sandbox refusal: headless/subagent run with sandbox=none and no override refused. Set ${envVar}=1 to permit.`,
+      );
+      return {
+        status: 'error',
+        result: null,
+        error: `Sandbox refusal: run with origin=${origin} and effective tool set [${effectiveToolSet.join(',')}] is refused when FFT_NANO_SANDBOX=none and ${envVar} is not set. To permit this run, set ${envVar}=1.`,
+      };
+    }
+  }
+
   let extendHardTimeoutForWait:
     | ((requestTimeoutMs: number | undefined) => void)
     | null = null;

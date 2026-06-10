@@ -21,6 +21,7 @@ import {
 } from './pi-executable.js';
 import type { SystemPromptReport } from './system-prompt.js';
 import { readWatchdogStatus } from './watchdog.js';
+import { getSandboxMode } from './sandbox.js';
 import { readMainWorkspaceState } from './workspace-bootstrap.js';
 
 type CheckLevel = 'pass' | 'warn' | 'fail';
@@ -436,6 +437,37 @@ function checkRuntimeProfile(): CheckResult {
   };
 }
 
+function checkSandboxMode(): CheckResult {
+  const mode = getSandboxMode();
+  const overrideSet = process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS === '1';
+  const overrideVar = 'FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS';
+
+  // pass: sandbox is active (bwrap/docker) OR override is set
+  // warn: sandbox=none with no override
+  //
+  // Note: The fail condition ("autonomous loop configured to spawn without override")
+  // requires PARITY_CONFIG.cron.agentTasks.autoApprove which is part of WS2.6.
+  // Once WS2.6 is implemented, this check should be updated to:
+  //   if (mode === 'none' && !overrideSet && autoApproveEnabled) → fail
+
+  if (mode !== 'none' || overrideSet) {
+    return {
+      id: 'runtime.sandbox_mode',
+      level: 'pass',
+      summary: `Sandbox mode: ${mode}${overrideSet ? ' (override active)' : ''}`,
+      detail: `mode=${mode} ${overrideVar}=${overrideSet ? '1' : '(not set)'}`,
+    };
+  }
+
+  // sandbox=none without override: warn
+  return {
+    id: 'runtime.sandbox_mode',
+    level: 'warn',
+    summary: `Sandbox mode: ${mode} (no override active)`,
+    detail: `mode=${mode} ${overrideVar}=(not set)`,
+  };
+}
+
 function checkPiRuntime(): CheckResult {
   const piPath = resolvePiExecutable();
   if (!piPath) {
@@ -477,6 +509,7 @@ export function buildDoctorReport(): DoctorReport {
   const checks: CheckResult[] = [
     checkStateDirs(),
     checkRuntimeProfile(),
+    checkSandboxMode(),
     checkPiRuntime(),
     checkWorkspaceFiles(),
     checkLegacyWorkspaceFiles(),
