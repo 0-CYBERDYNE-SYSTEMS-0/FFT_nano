@@ -3,7 +3,11 @@ import type { RunAuthority, RunOrigin } from './types.js';
 
 interface ToolSetInput {
   toolMode?: 'default' | 'read_only' | 'full';
-  codingHint?: 'none' | 'auto' | 'force_delegate_execute' | 'force_delegate_plan';
+  codingHint?:
+    | 'none'
+    | 'auto'
+    | 'force_delegate_execute'
+    | 'force_delegate_plan';
 }
 
 /**
@@ -11,7 +15,9 @@ interface ToolSetInput {
  * This must match the logic in buildPiArgs so the gate sees the same set
  * the subprocess receives.
  */
-export function deriveEffectiveToolSet(input: ToolSetInput): readonly RunAuthority['effectiveToolSet'][number][] {
+export function deriveEffectiveToolSet(
+  input: ToolSetInput,
+): readonly RunAuthority['effectiveToolSet'][number][] {
   const { toolMode, codingHint } = input;
 
   if (toolMode === 'read_only') {
@@ -24,14 +30,29 @@ export function deriveEffectiveToolSet(input: ToolSetInput): readonly RunAuthori
   if (codingHint === 'force_delegate_plan') {
     return ['read', 'grep', 'find', 'ls'] as const;
   }
-  if (
-    codingHint === 'force_delegate_execute' ||
-    codingHint === 'auto'
-  ) {
-    return ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'agent'] as const;
+  if (codingHint === 'force_delegate_execute' || codingHint === 'auto') {
+    return [
+      'read',
+      'bash',
+      'edit',
+      'write',
+      'grep',
+      'find',
+      'ls',
+      'agent',
+    ] as const;
   }
   // Default branch (no toolMode, no codingHint) — cron/subagent/heartbeat path
-  return ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'agent'] as const;
+  return [
+    'read',
+    'bash',
+    'edit',
+    'write',
+    'grep',
+    'find',
+    'ls',
+    'agent',
+  ] as const;
 }
 
 /**
@@ -108,14 +129,31 @@ export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
   // Note: operator-created cron tasks get operatorGrant=true from the scheduler
   // when it sets created_by='operator'. The mint here handles the default for
   // the run authority; the outbox hold path uses operatorGrant to decide.
-  const operatorGrant =
-    origin === 'interactive-main' || origin === 'evaluator';
+  const operatorGrant = origin === 'interactive-main' || origin === 'evaluator';
 
   const toolSet =
     explicitToolSet ??
     (isMain
-      ? (['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'agent'] as const)
-      : (['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'agent'] as const));
+      ? ([
+          'read',
+          'bash',
+          'edit',
+          'write',
+          'grep',
+          'find',
+          'ls',
+          'agent',
+        ] as const)
+      : ([
+          'read',
+          'bash',
+          'edit',
+          'write',
+          'grep',
+          'find',
+          'ls',
+          'agent',
+        ] as const));
 
   return {
     authorityId: randomUUID(),

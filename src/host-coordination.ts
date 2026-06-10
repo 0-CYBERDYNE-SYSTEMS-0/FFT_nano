@@ -8,10 +8,7 @@ import {
   MAIN_WORKSPACE_DIR,
 } from './config.js';
 import { logger } from './logger.js';
-import {
-  enqueueHeldDelivery,
-  markHeldDeliveryNotified,
-} from './db.js';
+import { enqueueHeldDelivery, markHeldDeliveryNotified } from './db.js';
 import {
   state,
   telegramPreviewRegistry,
@@ -629,13 +626,23 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
               }
               fs.unlinkSync(markerPath);
             } catch (err) {
-              logger.warn({ err, markerPath: markerPath }, 'Failed to process held marker');
-              try { fs.unlinkSync(markerPath); } catch { /* ignore */ }
+              logger.warn(
+                { err, markerPath: markerPath },
+                'Failed to process held marker',
+              );
+              try {
+                fs.unlinkSync(markerPath);
+              } catch {
+                /* ignore */
+              }
             }
           }
         }
       } catch (err) {
-        logger.error({ err, sourceGroup }, 'Error processing held markers in messages');
+        logger.error(
+          { err, sourceGroup },
+          'Error processing held markers in messages',
+        );
       }
 
       try {
@@ -648,7 +655,11 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
             const requestId = file.replace(/\.json$/, '');
             if (heldMessageIds.has(requestId)) {
               // Message was held — suppress delivery, already enqueued
-              try { fs.unlinkSync(path.join(messagesDir, file)); } catch { /* ignore */ }
+              try {
+                fs.unlinkSync(path.join(messagesDir, file));
+              } catch {
+                /* ignore */
+              }
               continue;
             }
 
@@ -733,8 +744,15 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
               }
               fs.unlinkSync(markerPath);
             } catch (err) {
-              logger.warn({ err, markerPath }, 'Failed to process held marker in actions');
-              try { fs.unlinkSync(markerPath); } catch { /* ignore */ }
+              logger.warn(
+                { err, markerPath },
+                'Failed to process held marker in actions',
+              );
+              try {
+                fs.unlinkSync(markerPath);
+              } catch {
+                /* ignore */
+              }
             }
           }
 
@@ -833,7 +851,10 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
             // Check for a .held marker for this deliver_file.
             // The marker is written to deliver_files/ (same dir) by the extension
             // so we can detect it before processing the file.
-            const markerPath = path.join(deliverFilesDir, `${requestIdFromFile}.held`);
+            const markerPath = path.join(
+              deliverFilesDir,
+              `${requestIdFromFile}.held`,
+            );
             if (fs.existsSync(markerPath)) {
               try {
                 const content = fs.readFileSync(markerPath, 'utf-8');
@@ -849,14 +870,30 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
                 enqueueHeldDelivery({ dedupeKey, destination, body });
                 markHeldDeliveryNotified(dedupeKey);
                 logger.info(
-                  { sourceGroup, requestId: marker.requestId, action: marker.action, ts },
+                  {
+                    sourceGroup,
+                    requestId: marker.requestId,
+                    action: marker.action,
+                    ts,
+                  },
                   'Held marker detected for deliver_file: enqueued held delivery',
                 );
               } catch (err) {
-                logger.warn({ err, markerPath }, 'Failed to process held marker for deliver_file');
+                logger.warn(
+                  { err, markerPath },
+                  'Failed to process held marker for deliver_file',
+                );
               }
-              try { fs.unlinkSync(markerPath); } catch { /* ignore */ }
-              try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+              try {
+                fs.unlinkSync(markerPath);
+              } catch {
+                /* ignore */
+              }
+              try {
+                fs.unlinkSync(filePath);
+              } catch {
+                /* ignore */
+              }
               continue; // Skip processing — delivery is held
             }
 

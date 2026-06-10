@@ -257,9 +257,11 @@ export interface TelegramCommandDeps {
   getTaskById: (taskId: string) => unknown;
   updateTask: (taskId: string, patch: Record<string, unknown>) => void;
   deleteTask: (taskId: string) => void;
-  getPendingTaskToken: (
-    token: string,
-  ) => { taskId: string; groupFolder: string; action: 'approve' | 'reject' } | null;
+  getPendingTaskToken: (token: string) => {
+    taskId: string;
+    groupFolder: string;
+    action: 'approve' | 'reject';
+  } | null;
   recordTaskAuditEvent: (
     groupFolder: string,
     event: {
@@ -1496,7 +1498,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     // WS2.3: Handle pending task approve/reject callbacks
     // These must be checked before the generic "not panel:" return
-    if (q.data.startsWith('task:approve:') || q.data.startsWith('task:reject:')) {
+    if (
+      q.data.startsWith('task:approve:') ||
+      q.data.startsWith('task:reject:')
+    ) {
       // isMainChat guard - these are operator-only actions
       if (!deps.isMainChat(q.chatJid)) {
         deps.logTelegramCommandAudit(q.chatJid, q.data, false, 'non-main chat');
@@ -1526,7 +1531,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       // Look up the token to get taskId and groupFolder
       const tokenEntry = deps.getPendingTaskToken(token);
       if (!tokenEntry) {
-        deps.logTelegramCommandAudit(q.chatJid, q.data, false, 'token not found or expired');
+        deps.logTelegramCommandAudit(
+          q.chatJid,
+          q.data,
+          false,
+          'token not found or expired',
+        );
         await deps.sendMessage(
           q.chatJid,
           'This task approval button has expired. Run /tasks to refresh the pending list.',

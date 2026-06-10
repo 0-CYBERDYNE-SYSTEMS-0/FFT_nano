@@ -1225,7 +1225,9 @@ export function listHeldDeliveries(): DeliveryOutboxRecord[] {
  * by the next flushPending cycle. Used by the operator when they approve a
  * held payload for delivery.
  */
-export function releaseHeldDelivery(dedupeKey: string): DeliveryOutboxRecord | undefined {
+export function releaseHeldDelivery(
+  dedupeKey: string,
+): DeliveryOutboxRecord | undefined {
   const now = new Date().toISOString();
   db.prepare(
     `UPDATE delivery_outbox

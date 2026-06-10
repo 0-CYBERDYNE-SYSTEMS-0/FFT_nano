@@ -63,7 +63,11 @@ import { ensureLocalProviderModels } from './local-provider-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox, getSandboxMode } from './sandbox.js';
-import { deriveRunOrigin, deriveEffectiveToolSet, mintRunAuthority } from './run-authority.js';
+import {
+  deriveRunOrigin,
+  deriveEffectiveToolSet,
+  mintRunAuthority,
+} from './run-authority.js';
 import type { RegisteredGroup, RunAuthority } from './types.js';
 export interface ContainerInput {
   prompt: string;
@@ -965,7 +969,10 @@ export async function runContainerAgent(
     isScheduledTask: input.isScheduledTask,
     isHeartbeat: (input.requestId || '').startsWith('heartbeat-'),
     isEvaluatorRun: input.isEvaluatorRun,
-    effectiveToolSet: deriveEffectiveToolSet({ toolMode: input.toolMode, codingHint }),
+    effectiveToolSet: deriveEffectiveToolSet({
+      toolMode: input.toolMode,
+      codingHint,
+    }),
     senderRole: 'unknown', // resolved separately via senderRole resolution (WS3)
     startedDuringPause: false, // resolved from PARITY_CONFIG.learning_paused at startup
   });

@@ -184,7 +184,10 @@ async function runLegacyTask(
               issues: verdict.issues,
             });
           } catch (err) {
-            logger.warn({ err, taskId: task.id }, 'Failed to record evaluator verdict');
+            logger.warn(
+              { err, taskId: task.id },
+              'Failed to record evaluator verdict',
+            );
           }
         }
 

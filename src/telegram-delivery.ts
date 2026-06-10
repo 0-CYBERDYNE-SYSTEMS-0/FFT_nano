@@ -871,9 +871,7 @@ export interface PendingTasksDeps {
   ) => string;
 }
 
-export function formatPendingTasksText(
-  deps: PendingTasksDeps,
-): {
+export function formatPendingTasksText(deps: PendingTasksDeps): {
   text: string;
   keyboard: Array<Array<{ text: string; callbackData: string }>>;
 } {
@@ -916,7 +914,9 @@ export function formatPendingTasksText(
   return { text: lines.join('\n'), keyboard };
 }
 
-function formatPendingTaskRow(task: ReturnType<typeof getPendingTasks>[0]): string {
+function formatPendingTaskRow(
+  task: ReturnType<typeof getPendingTasks>[0],
+): string {
   const promptPreview =
     task.prompt.length > 60 ? `${task.prompt.slice(0, 60)}…` : task.prompt;
   const schedule = `${task.schedule_type} ${task.schedule_value}`;

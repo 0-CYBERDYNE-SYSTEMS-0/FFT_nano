@@ -3,7 +3,12 @@ import type { RunAuthority } from './types.js';
 
 const PROTECTED_PATHS = ['.env', '.env.', '.git/', 'node_modules/'];
 
-export type ActionCategory = 'read' | 'local-mutate' | 'outbound' | 'schedule' | 'destroy';
+export type ActionCategory =
+  | 'read'
+  | 'local-mutate'
+  | 'outbound'
+  | 'schedule'
+  | 'destroy';
 
 export interface ClassifyResult {
   category: ActionCategory;
@@ -108,7 +113,10 @@ export function evaluatePermissionGate(params: {
   const classification = classifyActionCategory(toolName, input);
 
   // VAL-WS1-007: read and local-mutate always allow regardless of origin
-  if (classification.category === 'read' || classification.category === 'local-mutate') {
+  if (
+    classification.category === 'read' ||
+    classification.category === 'local-mutate'
+  ) {
     return { action: 'allow' };
   }
 
@@ -117,7 +125,11 @@ export function evaluatePermissionGate(params: {
     const command = typeof input.command === 'string' ? input.command : '';
     const result = isDestructiveCommand(command);
 
-    if (origin === 'headless' || origin === 'subagent' || origin === 'evaluator') {
+    if (
+      origin === 'headless' ||
+      origin === 'subagent' ||
+      origin === 'evaluator'
+    ) {
       return {
         action: 'block',
         reason: `Destructive command blocked (${result.matched}). ${

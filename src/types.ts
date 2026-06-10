@@ -44,17 +44,27 @@ export interface ContainerConfig {
  *   I1: nothing in RunAuthority is writable by the agent subprocess.
  *   I4: operatorGrant is set exclusively by the host; the agent cannot influence it.
  */
-export type RunOrigin = 'interactive-main' | 'subagent' | 'headless' | 'evaluator';
+export type RunOrigin =
+  | 'interactive-main'
+  | 'subagent'
+  | 'headless'
+  | 'evaluator';
 
 export interface RunAuthority {
-  authorityId: string;          // crypto.randomUUID() — host-issued, unpredictable
-  requestId: string;            // existing per-run id; the authority wraps it
+  authorityId: string; // crypto.randomUUID() — host-issued, unpredictable
+  requestId: string; // existing per-run id; the authority wraps it
   origin: RunOrigin;
   groupFolder: string;
-  startedAt: string;           // ISO timestamp
+  startedAt: string; // ISO timestamp
   effectiveToolSet: readonly (
-    | 'read' | 'bash' | 'edit' | 'write'
-    | 'grep' | 'find' | 'ls' | 'agent'
+    | 'read'
+    | 'bash'
+    | 'edit'
+    | 'write'
+    | 'grep'
+    | 'find'
+    | 'ls'
+    | 'agent'
   )[];
   // True for interactive-main runs and operator-created cron tasks; false for
   // agent-created schedule_task outputs and any agent-spawned outbound until
