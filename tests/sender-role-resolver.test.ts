@@ -98,3 +98,29 @@ test('sender in operators allowlist is operator (requires PARITY_CONFIG)', () =>
   // documented behavior verified in integration tests.
   assert.ok(true, 'operator allowlist logic verified in implementation');
 });
+
+test('VAL-INV-I5-003: with default operators:[], non-owner JID in registered group is member, never operator', () => {
+  // VAL-INV-I5-003: With the default config (operators: []), the only operator
+  // is the main-chat owner. A non-owner JID in a registered group resolves to
+  // 'member', never 'operator'.
+  //
+  // The default PARITY_CONFIG.skills.selfImprove.operators is [] (empty array).
+  // With an empty operators allowlist, only the main chat owner can be 'operator'.
+  // Any other JID in a registered group must be 'member', not 'operator'.
+  const mainChatJid = 'main@example.com';
+  const memberJid = 'member@example.com';
+  const groups = makeGroups(mainChatJid, [memberJid]);
+
+  // Main chat owner IS operator
+  const mainMsg = makeMsg({ sender: mainChatJid, chat_jid: mainChatJid });
+  assert.equal(resolveSenderRole(mainMsg, groups, MAIN_GROUP_FOLDER), 'operator',
+    'main chat owner must be operator');
+
+  // Non-owner member is 'member', NOT 'operator'
+  const memberMsg = makeMsg({ sender: memberJid, chat_jid: memberJid });
+  const memberRole = resolveSenderRole(memberMsg, groups, MAIN_GROUP_FOLDER);
+  assert.equal(memberRole, 'member',
+    'non-owner member must be member, not operator');
+  assert.notEqual(memberRole, 'operator',
+    'non-owner member must NEVER be operator');
+});
