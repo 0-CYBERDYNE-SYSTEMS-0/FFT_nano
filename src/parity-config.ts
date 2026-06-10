@@ -57,9 +57,14 @@ export interface CronDeterministicStaggerConfig {
   maxMs: number;
 }
 
+export interface CronAgentTasksConfig {
+  autoApprove: boolean;
+}
+
 export interface CronParityConfig {
   isolatedDefaultDelivery: 'none' | 'announce';
   deterministicTopOfHourStagger: CronDeterministicStaggerConfig;
+  agentTasks: CronAgentTasksConfig;
 }
 
 export interface SkillSelfImproveConfig {
@@ -153,6 +158,7 @@ const DEFAULTS: ParityConfig = {
   cron: {
     isolatedDefaultDelivery: 'announce',
     deterministicTopOfHourStagger: { enabled: false, maxMs: 5 * 60_000 },
+    agentTasks: { autoApprove: false },
   },
   skills: {
     selfImprove: {
@@ -507,6 +513,10 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     c.cron.deterministicTopOfHourStagger.maxMs,
     0,
     3_600_000,
+  );
+  c.cron.agentTasks.autoApprove = envBool(
+    e.FFT_NANO_CRON_AGENT_TASKS_AUTO_APPROVE,
+    c.cron.agentTasks.autoApprove,
   );
 
   c.skills.selfImprove.enabled = envBool(
