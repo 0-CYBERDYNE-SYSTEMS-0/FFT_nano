@@ -2515,8 +2515,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         await deps.sendMessage(
           m.chatJid,
           newState
-            ? 'Learning is paused. All autonomous loops will short-circuit until /learning resume is issued.'
-            : 'Learning is active. Autonomous loops will resume.',
+            ? 'Learning paused. All autonomous loops will short-circuit.'
+            : 'Learning resumed.',
         );
         return true;
       }

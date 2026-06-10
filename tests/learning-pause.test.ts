@@ -13,6 +13,8 @@ import {
 import { state } from '../src/app-state.js';
 import { formatLearningDigest } from '../src/telegram-delivery.js';
 import { closeDatabase, initDatabaseAtPath } from '../src/db.js';
+import { DATA_DIR } from '../src/config.js';
+import { loadState, saveState } from '../src/state-persistence.js';
 
 function baseConfig(
   overrides: Partial<SkillManagerConfig> = {},
@@ -160,5 +162,89 @@ test.describe('VAL-INV-I6-002: /learning summarizes the pause state', () => {
       digest.includes('Pause status:'),
       `Digest should contain "Pause status:" but got: ${digest}`,
     );
+  });
+});
+
+test.describe('VAL-WS6-014: learning_paused round-trips through state persistence', () => {
+  const statePath = path.join(DATA_DIR, 'router_state.json');
+
+  test.beforeEach(() => {
+    state.learningPaused = false;
+  });
+
+  test.afterEach(() => {
+    state.learningPaused = false;
+  });
+
+  test('loadState reads learning_paused with default false', () => {
+    // Create a state file with no learning_paused field
+    const backup = fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf-8') : null;
+    try {
+      // Write a state without learning_paused
+      fs.writeFileSync(statePath, JSON.stringify({ last_timestamp: 'test' }), 'utf-8');
+      loadState();
+      assert.equal(state.learningPaused, false, 'Default should be false when field is absent');
+    } finally {
+      // Restore original state
+      if (backup !== null) {
+        fs.writeFileSync(statePath, backup, 'utf-8');
+      } else if (fs.existsSync(statePath)) {
+        fs.unlinkSync(statePath);
+      }
+    }
+  });
+
+  test('saveState writes learning_paused and loadState reads it back as true', () => {
+    const backup = fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf-8') : null;
+    try {
+      // Ensure a clean starting state
+      state.learningPaused = false;
+      // Set the flag and save
+      state.learningPaused = true;
+      saveState();
+      // Verify the file contains learning_paused: true
+      const written = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(written.learning_paused, true, 'State file should contain learning_paused: true');
+      // Reset state and load fresh
+      state.learningPaused = false;
+      loadState();
+      assert.equal(state.learningPaused, true, 'After fresh loadState, learningPaused should be true');
+    } finally {
+      // Restore original state
+      if (backup !== null) {
+        fs.writeFileSync(statePath, backup, 'utf-8');
+      } else if (fs.existsSync(statePath)) {
+        fs.unlinkSync(statePath);
+      }
+    }
+  });
+
+  test('saveState writes learning_paused false and loadState reads it back as false', () => {
+    const backup = fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf-8') : null;
+    try {
+      // Set flag to true first, then save false
+      state.learningPaused = true;
+      saveState();
+      // Verify it was saved as true
+      let written = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(written.learning_paused, true);
+      // Now set to false and save
+      state.learningPaused = false;
+      saveState();
+      // Verify the file contains learning_paused: false
+      written = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(written.learning_paused, false, 'State file should contain learning_paused: false');
+      // Reset and load fresh
+      state.learningPaused = true;
+      loadState();
+      assert.equal(state.learningPaused, false, 'After fresh loadState, learningPaused should be false');
+    } finally {
+      // Restore original state
+      if (backup !== null) {
+        fs.writeFileSync(statePath, backup, 'utf-8');
+      } else if (fs.existsSync(statePath)) {
+        fs.unlinkSync(statePath);
+      }
+    }
   });
 });
