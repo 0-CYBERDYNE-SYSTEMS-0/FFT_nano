@@ -119,6 +119,9 @@ export function extractLearningSignals(
 export interface SelfImproveEvent {
   run_id: string;
   group_id: string;
+  // INV.1: authorityId stamped on every line so the authority can be traced
+  // back to a specific run for forensic review (VAL-XARE-009).
+  authorityId: string;
   review_type: 'skill-self-improve' | 'skill-manager';
   trigger_reason: string;
   signals_detected: string[];

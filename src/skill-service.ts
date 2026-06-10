@@ -261,6 +261,7 @@ export function maybeRunSkillSelfImprovement(params: {
   if (!decision.due) {
     recordSelfImproveEvent(params.group.folder, {
       run_id: runId,
+      authorityId: runId, // INV.1: stamped for forensic traceability (VAL-XARE-009)
       review_type: 'skill-self-improve',
       trigger_reason: triggerReason,
       signals_detected: signals,
@@ -275,6 +276,7 @@ export function maybeRunSkillSelfImprovement(params: {
 
   recordSelfImproveEvent(params.group.folder, {
     run_id: runId,
+    authorityId: runId, // INV.1: stamped for forensic traceability (VAL-XARE-009)
     review_type: 'skill-self-improve',
     trigger_reason: triggerReason,
     signals_detected: signals,

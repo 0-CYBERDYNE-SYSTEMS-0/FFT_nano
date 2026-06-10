@@ -1,7 +1,7 @@
 import type { WASocket } from '@whiskeysockets/baileys';
 import type { TelegramBot, TelegramInlineKeyboard } from './telegram.js';
 import { HostEventBus } from './runtime/host-events.js';
-import type { RegisteredGroup } from './types.js';
+import type { RegisteredGroup, RunAuthority } from './types.js';
 import { TelegramPreviewRegistry } from './telegram-streaming.js';
 import type { TuiGatewayServer } from './tui/gateway-server.js';
 import type { WebControlCenterServer } from './web/control-center-server.js';
@@ -280,6 +280,17 @@ export const telegramSetupInputStates = new Map<
   TelegramSetupInputState
 >();
 export const hostEventBus = new HostEventBus();
+
+/**
+ * Run authority registry — keyed by groupFolder.
+ * Stores the most-recent RunAuthority for each group so async IPC actions
+ * (messages, tasks, actions) can be attributed to the run that authored them.
+ *
+ * A stack (most-recent on top) per group is used so concurrent runs in
+ * different groups are not confused. For same-group concurrency, the most
+ * recent entry is used for attribution.
+ */
+export const runAuthorityRegistry = new Map<string, RunAuthority>();
 export const telegramToolProgressRuns = new Map<
   string,
   TelegramToolProgressState

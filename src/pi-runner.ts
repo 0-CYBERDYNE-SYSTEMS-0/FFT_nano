@@ -26,6 +26,7 @@ import {
   resolveGroupIpcPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
+import { runAuthorityRegistry } from './app-state.js';
 import { getMemoryBackend } from './memory-backend.js';
 import { MEMORY_RETRIEVAL_GATE_ENABLED } from './config.js';
 import {
@@ -62,8 +63,8 @@ import { ensureLocalProviderModels } from './local-provider-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
 import { resolvePiExecutable } from './pi-executable.js';
 import { wrapWithSandbox, getSandboxMode } from './sandbox.js';
-import { deriveRunOrigin, deriveEffectiveToolSet } from './run-authority.js';
-import type { RegisteredGroup } from './types.js';
+import { deriveRunOrigin, deriveEffectiveToolSet, mintRunAuthority } from './run-authority.js';
+import type { RegisteredGroup, RunAuthority } from './types.js';
 export interface ContainerInput {
   prompt: string;
   groupFolder: string;
@@ -106,6 +107,9 @@ export interface ContainerInput {
   attemptedProviders?: string[];
   // Marks this as an evaluator run — prevents recursive evaluation.
   isEvaluatorRun?: boolean;
+  // Run authority for this spawn — minted by runContainerAgent at spawn time.
+  // Consumers (gate, outbox, IPC watcher) use this for authorization and attribution.
+  runAuthority?: RunAuthority;
 }
 
 export interface ContainerOutput {
@@ -950,25 +954,31 @@ export async function runContainerAgent(
   const projectRoot = process.cwd();
   const codingHint = normalizeCodingHint(input.codingHint);
 
+  // INV.1: Mint the RunAuthority at spawn time. This is the single, authoritative
+  // source for origin, effectiveToolSet, and operatorGrant for this run.
+  // The IPC watcher records authorityId so async actions can be attributed.
+  const runAuthority = mintRunAuthority({
+    requestId: input.requestId || `run-${Date.now()}`,
+    groupFolder: group.folder,
+    isMain: input.isMain,
+    isSubagent: input.isSubagent,
+    isScheduledTask: input.isScheduledTask,
+    isHeartbeat: (input.requestId || '').startsWith('heartbeat-'),
+    isEvaluatorRun: input.isEvaluatorRun,
+    effectiveToolSet: deriveEffectiveToolSet({ toolMode: input.toolMode, codingHint }),
+    senderRole: 'unknown', // resolved separately via senderRole resolution (WS3)
+    startedDuringPause: false, // resolved from PARITY_CONFIG.learning_paused at startup
+  });
+  // Register so IPC watcher can attribute async actions to this run.
+  runAuthorityRegistry.set(group.folder, runAuthority);
+
   // WS1.3: Sandbox is the boundary, not the regex list.
   // Refuse headless/subagent runs with full tool set when sandbox is none
   // and the override is not set.
   {
     const mode = getSandboxMode();
     const overrideSet = process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS === '1';
-    const origin = deriveRunOrigin({
-      isEvaluatorRun: input.isEvaluatorRun,
-      isMain: input.isMain,
-      isSubagent: input.isSubagent,
-      isScheduledTask: input.isScheduledTask,
-      isHeartbeat: (input.requestId || '').startsWith('heartbeat-'),
-      requestId: input.requestId,
-    });
-    const effectiveToolSet = deriveEffectiveToolSet({
-      toolMode: input.toolMode,
-      codingHint,
-    });
-    const hasMutatingTools = effectiveToolSet.some((t) =>
+    const hasMutatingTools = runAuthority.effectiveToolSet.some((t) =>
       ['bash', 'edit', 'write'].includes(t),
     );
 
@@ -976,14 +986,14 @@ export async function runContainerAgent(
       mode === 'none' &&
       !overrideSet &&
       hasMutatingTools &&
-      (origin === 'headless' || origin === 'subagent')
+      (runAuthority.origin === 'headless' || runAuthority.origin === 'subagent')
     ) {
       const envVar = 'FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS';
       logger.warn(
         {
           group: group.name,
-          origin,
-          effectiveToolSet,
+          origin: runAuthority.origin,
+          effectiveToolSet: runAuthority.effectiveToolSet,
           mode,
         },
         `Sandbox refusal: headless/subagent run with sandbox=none and no override refused. Set ${envVar}=1 to permit.`,
@@ -991,7 +1001,7 @@ export async function runContainerAgent(
       return {
         status: 'error',
         result: null,
-        error: `Sandbox refusal: run with origin=${origin} and effective tool set [${effectiveToolSet.join(',')}] is refused when FFT_NANO_SANDBOX=none and ${envVar} is not set. To permit this run, set ${envVar}=1.`,
+        error: `Sandbox refusal: run with origin=${runAuthority.origin} and effective tool set [${runAuthority.effectiveToolSet.join(',')}] is refused when FFT_NANO_SANDBOX=none and ${envVar} is not set. To permit this run, set ${envVar}=1.`,
       };
     }
   }
@@ -1435,6 +1445,7 @@ export async function runContainerAgent(
         PI_CODING_AGENT_DIR: wp.piAgentDir,
         FFT_NANO_CHAT_JID: input.chatJid,
         FFT_NANO_REQUEST_ID: input.requestId || '',
+        FFT_NANO_RUN_AUTHORITY_ID: runAuthority.authorityId,
         FFT_NANO_CODING_HINT: codingHint,
         FFT_NANO_IS_MAIN: isMain ? '1' : '0',
         FFT_NANO_IPC_DIR: wp.ipcDir,

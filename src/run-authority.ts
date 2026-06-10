@@ -39,6 +39,10 @@ export function deriveEffectiveToolSet(input: ToolSetInput): readonly RunAuthori
  *
  * Priority:
  *   evaluator > interactive-main > subagent > headless
+ *
+ * Note: isHeartbeat is consulted BEFORE the interactive-main check because
+ * a heartbeat run is always headless regardless of isMain — the operator is
+ * not present at the keyboard.
  */
 export function deriveRunOrigin(params: {
   isEvaluatorRun?: boolean;
@@ -49,14 +53,16 @@ export function deriveRunOrigin(params: {
   requestId?: string;
 }): RunOrigin {
   if (params.isEvaluatorRun) return 'evaluator';
-  // interactive-main: not scheduled, not subagent, not heartbeat, and isMain
+  // Heartbeats are headless (checked first so isMain=true + heartbeat → headless)
+  if (params.isHeartbeat || params.requestId?.startsWith('heartbeat-')) {
+    return 'headless';
+  }
+  // interactive-main: isMain, not subagent, not scheduled, not heartbeat
   if (params.isMain && !params.isSubagent && !params.isScheduledTask) {
-    // Additional check: heartbeat requests have IDs starting with 'heartbeat-'
-    if (params.requestId?.startsWith('heartbeat-')) return 'headless';
     return 'interactive-main';
   }
   if (params.isSubagent) return 'subagent';
-  // Scheduled tasks and heartbeats are headless
+  // Scheduled tasks are headless
   return 'headless';
 }
 
