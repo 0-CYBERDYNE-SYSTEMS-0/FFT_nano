@@ -528,11 +528,10 @@ test('VAL-INV-I2-002: snapshot from 13 days ago survives prune with retentionDay
   const now = new Date();
 
   // Create a 13-day-old snapshot (in-window for 14-day retention)
-  const oldTs = new Date(now.getTime() - 13 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .replace(/[:.]/g, '');
+  const oldDate = new Date(now.getTime() - 13 * 24 * 60 * 60 * 1000);
+  const oldTs = oldDate.toISOString().replace(/[:.]/g, '');
   const oldVersion = `${oldTs}-000001`;
-  writeSyntheticSnapshot(target, oldVersion, '13-day-old-content', oldTs);
+  writeSyntheticSnapshot(target, oldVersion, '13-day-old-content', oldDate.getTime());
 
   // Add 10 newer snapshots to exceed MAX_SNAPSHOTS
   for (let i = 0; i < 10; i += 1) {
