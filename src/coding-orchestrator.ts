@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { logger } from './logger.js';
 import {
   runEvaluatorPass as defaultRunEvaluatorPass,
   buildRefinementPrompt,
@@ -25,6 +26,7 @@ import { getCoderLearningsForContext } from './coder-learnings.js';
 import {
   recordEvaluatorVerdict,
   getEvaluatorStats,
+  recordLearningInjection,
   type EvaluatorStats,
 } from './db.js';
 import { createRunProgressReporter } from './run-progress.js';
@@ -1070,10 +1072,11 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       activeRun.state = 'running';
 
       // Fetch coder learnings from MEMORY.md to prepend to context
-      const baseLearningsContext = await getCoderLearningsForContext(
-        request.originGroupFolder,
-        5, // maxEntries
-      );
+      const { formatted: baseLearningsContext, entriesCount } =
+        await getCoderLearningsForContext(
+          request.originGroupFolder,
+          5, // maxEntries
+        );
       // Close the loop: prepend prior evaluator outcomes for this workspace so
       // the next run is aware of how recent runs scored and what recurred.
       const evalStatsContext = formatEvaluatorStatsContext(
@@ -1082,6 +1085,40 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       const learningsContext = [evalStatsContext, baseLearningsContext]
         .filter(Boolean)
         .join('\n\n');
+      // WS5.1: Stamp learning injections (best-effort — recorder failure never aborts the run).
+      const reqId = request.requestId;
+      // One row per coder-learning entry with kind='memory', item='MEMORY.md'
+      for (let i = 0; i < entriesCount; i += 1) {
+        try {
+          recordLearningInjection({
+            requestId: reqId,
+            groupFolder: request.originGroupFolder,
+            kind: 'memory',
+            item: 'MEMORY.md',
+          });
+        } catch (err) {
+          logger.warn(
+            { err, requestId: reqId, groupFolder: request.originGroupFolder },
+            'Failed to record coder-learning injection stamp',
+          );
+        }
+      }
+      // One row for verdict-issues when evalStatsContext is non-empty
+      if (evalStatsContext) {
+        try {
+          recordLearningInjection({
+            requestId: reqId,
+            groupFolder: request.originGroupFolder,
+            kind: 'verdict-issues',
+            item: 'recurring-issues',
+          });
+        } catch (err) {
+          logger.warn(
+            { err, requestId: reqId, groupFolder: request.originGroupFolder },
+            'Failed to record verdict-issues injection stamp',
+          );
+        }
+      }
       // VAL-WS3-018 + VAL-WS3-019: Wrap entire learnings block (eval stats +
       // base learnings) in advisory frame so neither sub-section can authorize
       // a gated action.

@@ -6,6 +6,7 @@ import { proto } from '@whiskeysockets/baileys';
 
 import { STORE_DIR } from './config.js';
 import { NewMessage, ScheduledTask, TaskRunLog } from './types.js';
+import { logger } from './logger.js';
 
 let db: Database.Database;
 
@@ -1168,6 +1169,44 @@ export function getEvaluatorStats(
     recentIssues,
     recentSkips,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Learning injections (WS5 — efficacy loop)
+// ---------------------------------------------------------------------------
+
+export interface LearningInjectionInput {
+  requestId: string;
+  groupFolder: string;
+  kind: 'memory' | 'verdict-issues';
+  item: string;
+}
+
+/**
+ * Record that a learning item was injected into a prompt at an assembly point.
+ * Best-effort: failures are caught and logged, never thrown — the run must
+ * never be aborted by a recorder failure (VAL-WS5-002/003/004).
+ */
+export function recordLearningInjection(input: LearningInjectionInput): void {
+  if (!db) return;
+  try {
+    db.prepare(
+      `INSERT INTO learning_injections
+         (request_id, group_folder, kind, item, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      input.requestId,
+      input.groupFolder,
+      input.kind,
+      input.item,
+      new Date().toISOString(),
+    );
+  } catch (err) {
+    logger.warn(
+      { err, requestId: input.requestId, groupFolder: input.groupFolder, kind: input.kind, item: input.item },
+      'Failed to record learning injection',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

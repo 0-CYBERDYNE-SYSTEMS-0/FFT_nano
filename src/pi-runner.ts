@@ -27,6 +27,7 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import { runAuthorityRegistry } from './app-state.js';
+import { recordLearningInjection } from './db.js';
 import { getMemoryBackend } from './memory-backend.js';
 import { MEMORY_RETRIEVAL_GATE_ENABLED } from './config.js';
 import {
@@ -1061,6 +1062,23 @@ export async function runContainerAgent(
         },
         'Built retrieval-gated memory context',
       );
+      // WS5.1: Stamp one row per actually-injected memory item (best-effort).
+      const reqId = input.requestId ?? `run-${Date.now()}`;
+      for (const item of memory.selectedItems) {
+        try {
+          recordLearningInjection({
+            requestId: reqId,
+            groupFolder: group.folder,
+            kind: 'memory',
+            item: `${item.source}:${item.path}`,
+          });
+        } catch (err) {
+          logger.warn(
+            { err, requestId: reqId, groupFolder: group.folder },
+            'Failed to record memory injection stamp',
+          );
+        }
+      }
     } catch (err) {
       logger.warn({ group: group.name, err }, 'Failed to build memory context');
     }
