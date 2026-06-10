@@ -50,6 +50,9 @@ export type RunOrigin =
   | 'headless'
   | 'evaluator';
 
+// WS3: sender role for learning input provenance
+export type SenderRole = 'operator' | 'member' | 'unknown';
+
 export interface RunAuthority {
   authorityId: string; // crypto.randomUUID() — host-issued, unpredictable
   requestId: string; // existing per-run id; the authority wraps it
@@ -71,7 +74,7 @@ export interface RunAuthority {
   // approved.
   operatorGrant: boolean;
   // Provenance (WS3)
-  senderRole: 'operator' | 'member' | 'unknown';
+  senderRole: SenderRole;
   // Global pause stamp captured at run start — a mid-run pause applies to the
   // next loop tick, not to the in-flight run.
   startedDuringPause: boolean;

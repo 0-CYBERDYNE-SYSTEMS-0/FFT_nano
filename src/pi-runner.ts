@@ -68,7 +68,7 @@ import {
   deriveEffectiveToolSet,
   mintRunAuthority,
 } from './run-authority.js';
-import type { RegisteredGroup, RunAuthority } from './types.js';
+import type { RegisteredGroup, RunAuthority, SenderRole } from './types.js';
 export interface ContainerInput {
   prompt: string;
   groupFolder: string;
@@ -111,6 +111,9 @@ export interface ContainerInput {
   attemptedProviders?: string[];
   // Marks this as an evaluator run — prevents recursive evaluation.
   isEvaluatorRun?: boolean;
+  // WS3.3: senderRole for skill provenance — resolved at dispatch time and threaded
+  // through to runContainerAgent so the runAuthority carries the authoritative value.
+  senderRole?: SenderRole;
   // Run authority for this spawn — minted by runContainerAgent at spawn time.
   // Consumers (gate, outbox, IPC watcher) use this for authorization and attribution.
   runAuthority?: RunAuthority;
@@ -973,7 +976,7 @@ export async function runContainerAgent(
       toolMode: input.toolMode,
       codingHint,
     }),
-    senderRole: 'unknown', // resolved separately via senderRole resolution (WS3)
+    senderRole: input.senderRole ?? 'unknown', // threaded from DispatchRequest through runAgent
     startedDuringPause: false, // resolved from PARITY_CONFIG.learning_paused at startup
   });
   // Register so IPC watcher can attribute async actions to this run.

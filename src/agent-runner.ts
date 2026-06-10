@@ -693,6 +693,7 @@ export async function runAgent(
           noContinue: runPrefs.nextRunNoContinue === true,
           suppressPreviewStreaming:
             suppressPreviewStreaming || input.suppressPreviewStreaming,
+          senderRole: options.senderRole,
         },
         abortSignal,
         (event) => {

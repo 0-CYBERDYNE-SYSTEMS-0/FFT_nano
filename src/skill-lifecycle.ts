@@ -17,6 +17,7 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import type { RegisteredGroup, SkillActionRequest } from './types.js';
+import { runAuthorityRegistry } from './app-state.js';
 
 export const SKILL_USAGE_FILE = '.usage.json';
 export const SKILL_MANAGER_STATE_FILE = '.skill_manager_state.json';
@@ -75,6 +76,7 @@ export interface SkillActionExecutionContext {
   sourceGroup: string;
   isMain: boolean;
   registeredGroups: Record<string, RegisteredGroup>;
+  senderRole?: 'operator' | 'member' | 'unknown';
 }
 
 export interface SkillActionResult {
@@ -368,10 +370,12 @@ function normalizeSkillMarkdown(params: {
   name: string;
   description: string;
   body: string;
+  provenance: string;
 }): string {
   const frontmatter = YAML.stringify({
     name: params.name,
     description: params.description.trim() || params.name,
+    provenance: params.provenance,
   }).trim();
   const body = params.body.trim() || `# ${params.name}\n`;
   return `---\n${frontmatter}\n---\n\n${body.trimEnd()}\n`;
@@ -595,6 +599,7 @@ function createSkill(params: {
   name: string;
   description: string;
   content?: string;
+  provenance: string;
 }): SkillReportEntry {
   const parsedName = skillNameSchema.parse(params.name);
   const dir = skillDir(params.skillsDir, parsedName);
@@ -611,6 +616,7 @@ function createSkill(params: {
         name: parsedName,
         description: params.description || parsedName,
         body: `# ${parsedName}\n\n## When to use this skill\n\n- Use when this workflow comes up again.\n`,
+        provenance: params.provenance,
       });
   const parsed = readSkillMarkdownFromContent(content);
   const description =
@@ -622,6 +628,7 @@ function createSkill(params: {
     name: parsedName,
     description,
     body,
+    provenance: params.provenance,
   });
   snapshotSkillFile(path.join(dir, 'SKILL.md'));
   writeTextFileAtomic(path.join(dir, 'SKILL.md'), normalized, {
@@ -661,6 +668,7 @@ function patchSkill(params: {
   skillsDir: string;
   name: string;
   content: string;
+  provenance: string;
 }): SkillReportEntry {
   const name = skillNameSchema.parse(params.name);
   assertMutableAgentSkill(params.skillsDir, name);
@@ -675,6 +683,7 @@ function patchSkill(params: {
     name,
     description,
     body: parsed.body || params.content,
+    provenance: params.provenance,
   });
   const target = path.join(dir, 'SKILL.md');
   // Version the prior SKILL.md before overwriting so a bad self-patch can be
@@ -694,6 +703,7 @@ function writeSkillFile(params: {
   name: string;
   filePath: string;
   fileContent: string;
+  provenance: string;
 }): SkillReportEntry {
   const name = skillNameSchema.parse(params.name);
   assertMutableAgentSkill(params.skillsDir, name);
@@ -703,7 +713,24 @@ function writeSkillFile(params: {
   assertInside(target, dir);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   snapshotSkillFile(target);
-  writeTextFileAtomic(target, params.fileContent, {
+
+  // WS3.3: if writing SKILL.md, normalize provenance into frontmatter
+  let fileContent = params.fileContent;
+  if (rel === 'SKILL.md') {
+    const parsed = readSkillMarkdownFromContent(params.fileContent);
+    const description =
+      typeof parsed.frontmatter.description === 'string'
+        ? parsed.frontmatter.description
+        : name;
+    fileContent = normalizeSkillMarkdown({
+      name,
+      description,
+      body: parsed.body || params.fileContent,
+      provenance: params.provenance,
+    });
+  }
+
+  writeTextFileAtomic(target, fileContent, {
     backupPath: defaultBackupPath(target),
   });
   bumpUsage(params.skillsDir, name, 'patch');
@@ -1030,6 +1057,20 @@ export async function executeSkillAction(
     const skillsDir = resolveGroupSkillsDir(groupFolder);
     fs.mkdirSync(skillsDir, { recursive: true });
 
+    // WS3.3: determine senderRole and provenance for skill writes
+    // Prefer explicit senderRole from context; fall back to runAuthority registry.
+    let senderRole: 'operator' | 'member' | 'unknown' = 'unknown';
+    if (context.senderRole) {
+      senderRole = context.senderRole;
+    } else {
+      const authority = runAuthorityRegistry.get(context.sourceGroup);
+      if (authority?.senderRole) {
+        senderRole = authority.senderRole;
+      }
+    }
+    const provenance =
+      senderRole === 'operator' ? 'operator-requested' : 'agent-inferred';
+
     const name = parsed.params.name?.trim();
     const result = (() => {
       switch (parsed.action) {
@@ -1061,6 +1102,7 @@ export async function executeSkillAction(
             name,
             description: parsed.params.description || name,
             content: parsed.params.content,
+            provenance,
           });
         case 'skill_patch':
           if (!name) throw new Error('skill_patch requires params.name');
@@ -1070,6 +1112,7 @@ export async function executeSkillAction(
             skillsDir,
             name,
             content: parsed.params.content,
+            provenance,
           });
         case 'skill_write_file':
           if (!name) throw new Error('skill_write_file requires params.name');
@@ -1083,6 +1126,7 @@ export async function executeSkillAction(
             name,
             filePath: parsed.params.filePath,
             fileContent: parsed.params.fileContent,
+            provenance,
           });
         case 'skill_archive':
           if (!name) throw new Error('skill_archive requires params.name');
