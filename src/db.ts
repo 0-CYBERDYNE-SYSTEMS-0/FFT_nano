@@ -68,6 +68,7 @@ export function initDatabaseAtPath(dbPath: string): void {
       last_run TEXT,
       last_result TEXT,
       status TEXT DEFAULT 'active',
+      created_by TEXT DEFAULT 'operator',
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
@@ -156,6 +157,7 @@ export function initDatabaseAtPath(dbPath: string): void {
     `ALTER TABLE scheduled_tasks ADD COLUMN delete_after_run INTEGER DEFAULT 0`,
     `ALTER TABLE scheduled_tasks ADD COLUMN consecutive_errors INTEGER DEFAULT 0`,
     `ALTER TABLE scheduled_tasks ADD COLUMN subagent_type TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN created_by TEXT DEFAULT 'operator'`,
   ];
   for (const migration of scheduledTaskMigrations) {
     try {
@@ -528,9 +530,9 @@ export function createTask(
       id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode,
       schedule_json, session_target, wake_mode, delivery_mode, delivery_channel, delivery_to,
       delivery_webhook_url, timeout_seconds, stagger_ms, delete_after_run, consecutive_errors,
-      subagent_type, next_run, status, created_at
+      subagent_type, next_run, status, created_by, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -554,6 +556,7 @@ export function createTask(
     task.subagent_type ?? null,
     task.next_run,
     task.status,
+    task.created_by ?? 'operator',
     task.created_at,
   );
 }

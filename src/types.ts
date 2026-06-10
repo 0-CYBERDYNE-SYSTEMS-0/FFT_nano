@@ -108,7 +108,8 @@ export interface ScheduledTask {
   next_run: string | null;
   last_run: string | null;
   last_result: string | null;
-  status: 'active' | 'paused' | 'completed';
+  status: 'active' | 'paused' | 'completed' | 'pending_approval';
+  created_by?: 'operator' | 'agent';
   created_at: string;
 }
 
