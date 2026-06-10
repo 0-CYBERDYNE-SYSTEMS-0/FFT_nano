@@ -1437,6 +1437,7 @@ export async function runContainerAgent(
         FFT_NANO_REQUEST_ID: input.requestId || '',
         FFT_NANO_CODING_HINT: codingHint,
         FFT_NANO_IS_MAIN: isMain ? '1' : '0',
+        FFT_NANO_IPC_DIR: wp.ipcDir,
         ...(input.isSubagent ? { FFT_NANO_SUBAGENT: '1' } : {}),
       };
 

@@ -9,6 +9,10 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import {
+  enqueueHeldDelivery,
+  markHeldDeliveryNotified,
+} from './db.js';
+import {
   state,
   telegramPreviewRegistry,
   hostEventBus,
@@ -576,12 +580,76 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
       const isMain = sourceGroup === MAIN_GROUP_FOLDER;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
 
+      // Process held markers in messages/ before processing message files.
+      // A .held marker means the permission gate returned 'held' for that
+      // outbound action — the host must call enqueueHeldDelivery instead of
+      // delivering the message. VAL-XARE-001 / VAL-XARE-006.
+      const heldMessageIds = new Set<string>();
+      try {
+        if (fs.existsSync(messagesDir)) {
+          const markerFiles = fs
+            .readdirSync(messagesDir)
+            .filter((f) => f.endsWith('.held'));
+          for (const mf of markerFiles) {
+            const markerPath = path.join(messagesDir, mf);
+            try {
+              const content = fs.readFileSync(markerPath, 'utf-8');
+              const marker = JSON.parse(content) as {
+                requestId: string;
+                action: string;
+                ts: string;
+              };
+              const { requestId, action, ts } = marker;
+              if (requestId && action === 'send_message') {
+                // Read the corresponding message file to get destination + body
+                const msgFile = path.join(messagesDir, `${requestId}.json`);
+                let destination = '';
+                let body = '';
+                if (fs.existsSync(msgFile)) {
+                  try {
+                    const msgData = JSON.parse(
+                      fs.readFileSync(msgFile, 'utf-8'),
+                    ) as { chatJid?: string; text?: string };
+                    destination = msgData.chatJid ?? '';
+                    body = msgData.text ?? '';
+                  } catch {
+                    /* ignore parse errors */
+                  }
+                }
+                const dedupeKey = `held:${sourceGroup}:${requestId}`;
+                enqueueHeldDelivery({ dedupeKey, destination, body });
+                markHeldDeliveryNotified(dedupeKey);
+                heldMessageIds.add(requestId);
+                logger.info(
+                  { sourceGroup, requestId, action, ts },
+                  'Held marker detected: enqueued held delivery',
+                );
+              }
+              fs.unlinkSync(markerPath);
+            } catch (err) {
+              logger.warn({ err, markerPath: markerPath }, 'Failed to process held marker');
+              try { fs.unlinkSync(markerPath); } catch { /* ignore */ }
+            }
+          }
+        }
+      } catch (err) {
+        logger.error({ err, sourceGroup }, 'Error processing held markers in messages');
+      }
+
       try {
         if (fs.existsSync(messagesDir)) {
           const messageFiles = fs
             .readdirSync(messagesDir)
             .filter((f) => f.endsWith('.json'));
           for (const file of messageFiles) {
+            // Skip messages that were already handled via a .held marker
+            const requestId = file.replace(/\.json$/, '');
+            if (heldMessageIds.has(requestId)) {
+              // Message was held — suppress delivery, already enqueued
+              try { fs.unlinkSync(path.join(messagesDir, file)); } catch { /* ignore */ }
+              continue;
+            }
+
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -631,11 +699,53 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
       try {
         const actionsDir = path.join(ipcBaseDir, sourceGroup, 'actions');
         if (fs.existsSync(actionsDir)) {
+          // Process held markers in actions/ before processing action files.
+          // This covers deliver_file and send_webhook held decisions.
+          // VAL-XARE-001 / VAL-XARE-006.
+          const markerFiles = fs
+            .readdirSync(actionsDir)
+            .filter((f) => f.endsWith('.held'));
+          for (const mf of markerFiles) {
+            const markerPath = path.join(actionsDir, mf);
+            try {
+              const content = fs.readFileSync(markerPath, 'utf-8');
+              const marker = JSON.parse(content) as {
+                requestId: string;
+                action: string;
+                destination: string;
+                body: string;
+                ts: string;
+              };
+              const { requestId, action, destination, body, ts } = marker;
+              if (
+                requestId &&
+                (action === 'deliver_file' || action === 'send_webhook')
+              ) {
+                const dedupeKey = `held:${sourceGroup}:${requestId}`;
+                enqueueHeldDelivery({ dedupeKey, destination, body });
+                markHeldDeliveryNotified(dedupeKey);
+                logger.info(
+                  { sourceGroup, requestId, action, ts },
+                  'Held marker detected in actions: enqueued held delivery',
+                );
+              }
+              fs.unlinkSync(markerPath);
+            } catch (err) {
+              logger.warn({ err, markerPath }, 'Failed to process held marker in actions');
+              try { fs.unlinkSync(markerPath); } catch { /* ignore */ }
+            }
+          }
+
           const actionFiles = fs
             .readdirSync(actionsDir)
             .filter((f) => f.endsWith('.json'));
 
           for (const file of actionFiles) {
+            // Check if this action was already handled via a .held marker
+            const requestId = file.replace(/\.json$/, '');
+            // The held marker for this action would have been processed above
+            // and removed. If it still exists, it means it's not a held action.
+
             const filePath = path.join(actionsDir, file);
             try {
               const request = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as
@@ -716,6 +826,38 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
             .filter((f) => f.endsWith('.json'));
           for (const file of deliveryFiles) {
             const filePath = path.join(deliverFilesDir, file);
+            const requestIdFromFile = file.replace(/\.json$/, '');
+
+            // Check for a .held marker for this deliver_file.
+            // The marker is written to deliver_files/ (same dir) by the extension
+            // so we can detect it before processing the file.
+            const markerPath = path.join(deliverFilesDir, `${requestIdFromFile}.held`);
+            if (fs.existsSync(markerPath)) {
+              try {
+                const content = fs.readFileSync(markerPath, 'utf-8');
+                const marker = JSON.parse(content) as {
+                  requestId: string;
+                  action: string;
+                  destination: string;
+                  body: string;
+                  ts: string;
+                };
+                const { destination, body, ts } = marker;
+                const dedupeKey = `held:${sourceGroup}:${marker.requestId}`;
+                enqueueHeldDelivery({ dedupeKey, destination, body });
+                markHeldDeliveryNotified(dedupeKey);
+                logger.info(
+                  { sourceGroup, requestId: marker.requestId, action: marker.action, ts },
+                  'Held marker detected for deliver_file: enqueued held delivery',
+                );
+              } catch (err) {
+                logger.warn({ err, markerPath }, 'Failed to process held marker for deliver_file');
+              }
+              try { fs.unlinkSync(markerPath); } catch { /* ignore */ }
+              try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+              continue; // Skip processing — delivery is held
+            }
+
             let trackedRequestId: string | null = null;
             let trackedChatJid: string | null = null;
             let parsedRequestId: string | null = null;
