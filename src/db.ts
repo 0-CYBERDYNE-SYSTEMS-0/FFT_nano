@@ -206,6 +206,19 @@ export function initDatabaseAtPath(dbPath: string): void {
     }
   }
 
+  // WS4.1 evaluator_verdicts: skipped + skip_reason columns
+  const evaluatorVerdictMigrations = [
+    `ALTER TABLE evaluator_verdicts ADD COLUMN skipped INTEGER DEFAULT 0`,
+    `ALTER TABLE evaluator_verdicts ADD COLUMN skip_reason TEXT`,
+  ];
+  for (const migration of evaluatorVerdictMigrations) {
+    try {
+      db.exec(migration);
+    } catch {
+      /* column already exists */
+    }
+  }
+
   const hadMessagesFts = !!db
     .prepare(
       `SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='messages_fts'`,
@@ -1019,6 +1032,7 @@ export interface EvaluatorStats {
   passes: number;
   passRate: number;
   recentIssues: string[];
+  recentSkips: number;
 }
 
 /**
@@ -1050,29 +1064,37 @@ export function recordEvaluatorVerdict(input: EvaluatorVerdictInput): void {
  * next run awareness of how prior runs in the same workspace fared. Issues are
  * ranked by a recency- and failure-weighted score with decay (see below), not
  * pure recency, so stale one-offs drop out and persistent failures rise.
+ * Skipped rows are excluded from passRate (I3: only ground truth gates).
  */
 export function getEvaluatorStats(
   groupFolder: string,
   limit = 20,
 ): EvaluatorStats {
-  if (!db) return { total: 0, passes: 0, passRate: 0, recentIssues: [] };
+  if (!db) return { total: 0, passes: 0, passRate: 0, recentIssues: [], recentSkips: 0 };
   const safeLimit = Number.isFinite(limit)
     ? Math.max(1, Math.min(100, Math.floor(limit)))
     : 20;
   const rows = db
     .prepare(
-      `SELECT pass, issues FROM evaluator_verdicts
+      `SELECT pass, skipped, issues FROM evaluator_verdicts
        WHERE group_folder = ?
        ORDER BY created_at DESC
        LIMIT ?`,
     )
     .all(groupFolder, safeLimit) as Array<{
     pass: number;
+    skipped: number;
     issues: string | null;
   }>;
 
   const total = rows.length;
-  const passes = rows.filter((r) => r.pass === 1).length;
+  const recentSkips = rows.filter((r) => r.skipped === 1).length;
+
+  // I3: passRate is computed over non-skipped rows only.
+  // Both numerator (passes) and denominator (totalNonSkipped) filter skipped=0.
+  const nonSkippedRows = rows.filter((r) => r.skipped === 0);
+  const totalNonSkipped = nonSkippedRows.length;
+  const passes = nonSkippedRows.filter((r) => r.pass === 1).length;
 
   // Reliability-weighted recurring issues (rows are newest-first). Each
   // occurrence is scored by recency (newer verdicts count more, via geometric
@@ -1114,8 +1136,9 @@ export function getEvaluatorStats(
   return {
     total,
     passes,
-    passRate: total > 0 ? passes / total : 0,
+    passRate: totalNonSkipped > 0 ? passes / totalNonSkipped : 0,
     recentIssues,
+    recentSkips,
   };
 }
 

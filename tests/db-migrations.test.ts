@@ -156,3 +156,70 @@ test('updateTask accepts status: pending_approval without runtime error', () => 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('VAL-WS4-001: evaluator_verdicts.skipped column exists post-migration on fresh DB', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-migrations-'));
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    initDatabaseAtPath(dbPath);
+
+    // Verify column exists via PRAGMA table_info
+    const db2 = new Database(dbPath);
+    const info = db2.prepare(`PRAGMA table_info('evaluator_verdicts')`).all() as Array<{
+      name: string;
+      dflt_value: string | null;
+    }>;
+    db2.close();
+
+    const skippedCol = info.find((col) => col.name === 'skipped');
+    assert.ok(skippedCol, 'skipped column must exist');
+    assert.equal(skippedCol.dflt_value, '0', 'default value must be 0');
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS4-002: evaluator_verdicts.skip_reason column exists post-migration', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-migrations-'));
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    initDatabaseAtPath(dbPath);
+
+    // Verify column exists via PRAGMA table_info
+    const db2 = new Database(dbPath);
+    const info = db2.prepare(`PRAGMA table_info('evaluator_verdicts')`).all() as Array<{
+      name: string;
+      dflt_value: string | null;
+    }>;
+    db2.close();
+
+    const skipReasonCol = info.find((col) => col.name === 'skip_reason');
+    assert.ok(skipReasonCol, 'skip_reason column must exist');
+    // skip_reason has null default (no dflt_value means NULL)
+    assert.equal(skipReasonCol.dflt_value, null, 'skip_reason default should be null');
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('VAL-WS4-001/002: evaluator_verdicts migration is idempotent - running twice does not throw', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-migrations-'));
+  const dbPath = path.join(tmpRoot, 'messages.db');
+  try {
+    // First init
+    initDatabaseAtPath(dbPath);
+    closeDatabase();
+
+    // Second init (re-run migrations) - should not throw
+    initDatabaseAtPath(dbPath);
+    closeDatabase();
+
+    // Third init - still should not throw
+    initDatabaseAtPath(dbPath);
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
