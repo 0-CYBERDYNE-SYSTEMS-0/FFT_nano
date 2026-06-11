@@ -46,6 +46,10 @@ export interface StreamConsumerConfig {
   // (ephemeral) Activity bubble. Quick turns finish before this and stay a
   // single content bubble. Defaults to 2.5s.
   activitySpawnThresholdMs?: number;
+  // Minimum interval (ms) between draft edits for coalescing. Defaults based on
+  // chatId sign: positive (private) = 1000ms, negative (group) = 3000ms.
+  // Exposed for testing; prefer FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS env var.
+  draftMinIntervalMs?: number;
 }
 
 export interface StreamTuiEvent {
@@ -87,8 +91,7 @@ export class StreamConsumer {
   private activityCollapsed = false;
   private readonly runStartedAt = Date.now();
   private readonly activitySpawnThresholdMs: number;
-  // Two-block delivery (separate activity + content bubbles) applies only to
-  // `stream` mode. append/draft/off retain their existing single-path behavior.
+  // Status and answer content use separate delivery paths in every live mode.
   private readonly twoBlock: boolean;
 
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -101,7 +104,16 @@ export class StreamConsumer {
   private lastToolName: string | undefined;
   private toolProgressLines: string[] = [];
   private toolProgressMessageId: string | null = null;
-  private editChain: Promise<void> = Promise.resolve();
+  private answerChain: Promise<void> = Promise.resolve();
+  private activityChain: Promise<void> = Promise.resolve();
+
+  // One pending slot plus a non-resetting timer prevents continuous output
+  // from postponing every edit while still dropping stale intermediate frames.
+  private pendingText: string | null = null;
+  private flushTimer: NodeJS.Timeout | null = null;
+  private lastAnswerFlushAt = 0;
+  private flushSuppressed = false;
+  private readonly draftMinIntervalMs: number;
 
   private draftId: number | null = null;
   private draftMode = false;
@@ -113,15 +125,41 @@ export class StreamConsumer {
 
   constructor(private readonly config: StreamConsumerConfig) {
     this.label = config.label || 'Agent';
-    this.heartbeatMs = config.heartbeatMs ?? 15_000;
+    const configuredHeartbeat = config.heartbeatMs ?? 15_000;
+    this.heartbeatMs =
+      Number.isFinite(configuredHeartbeat) && configuredHeartbeat > 0
+        ? configuredHeartbeat
+        : 0;
     this.activitySpawnThresholdMs =
       config.activitySpawnThresholdMs ?? DEFAULT_ACTIVITY_SPAWN_THRESHOLD_MS;
+    // Compute draftMinIntervalMs: positive chatId (private) = 1000ms,
+    // negative chatId (group) = 3000ms. Override via config or env.
+    if (config.draftMinIntervalMs !== undefined) {
+      this.draftMinIntervalMs = Math.max(0, config.draftMinIntervalMs);
+    } else {
+      const chatIdNum = this.parseTelegramChatId();
+      if (!Number.isNaN(chatIdNum) && chatIdNum < 0) {
+        // Group chat (negative chatId)
+        const groupInterval = parseInt(
+          process.env.FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS || '3000',
+          10,
+        );
+        this.draftMinIntervalMs =
+          Number.isFinite(groupInterval) && groupInterval >= 0
+            ? groupInterval
+            : 3000;
+      } else {
+        // Private chat (positive or non-numeric chatId)
+        this.draftMinIntervalMs = 1000;
+      }
+    }
     this.appendMode = config.deliveryMode === 'append';
     this.draftMode =
       config.deliveryMode === 'draft' &&
+      this.parseTelegramChatId() > 0 &&
       typeof config.adapter.sendDraft === 'function' &&
       config.adapter.supportsDraftStreaming?.(config.chatId) !== false;
-    this.twoBlock = config.deliveryMode === 'stream';
+    this.twoBlock = config.deliveryMode !== 'off';
     this.draftId = this.draftMode
       ? config.draftId ||
         deriveStreamDraftId(`${config.chatId}:${config.runId}`)
@@ -131,12 +169,10 @@ export class StreamConsumer {
   async onDelta(text: string): Promise<void> {
     if (this.completed) return;
     if (this.config.deliveryMode === 'off') return;
-    if (this.isBackedOff()) return;
-
     const nextText = this.appendToolTrailFooter(text);
 
     if (this.appendMode) {
-      this.editChain = this.editChain
+      this.answerChain = this.answerChain
         .catch(() => {})
         .then(() => {
           const appendText = this.extractAppendText(nextText);
@@ -159,9 +195,8 @@ export class StreamConsumer {
       return;
     }
 
-    this.editChain = this.editChain
-      .catch(() => {})
-      .then(() => this.sendOrEdit(nextText));
+    this.pendingText = nextText;
+    this.scheduleAnswerFlush();
   }
 
   handleProgress(event: ContainerProgressEvent): void {
@@ -281,19 +316,30 @@ export class StreamConsumer {
     });
   }
 
+  handleExternalProgress(phase: string, text: string, detail?: string): void {
+    if (this.completed) return;
+    this.emitStatusText(phase, text, detail);
+  }
+
   async finish(finalText?: string): Promise<FinishResult> {
     this.completed = true;
     this.clearHeartbeat();
     this.clearActivityTimer();
+    this.clearFlushTimer();
+
+    await this.answerChain.catch(() => {});
+    if (this.pendingText !== null) {
+      const pending = this.pendingText;
+      this.pendingText = null;
+      await this.sendOrEdit(pending).catch(() => {});
+    }
 
     if (this.appendMode) {
-      await this.editChain.catch(() => {});
       await this.collapseActivity();
       return { previewState: null, completed: true };
     }
 
     if (finalText && this.messageId) {
-      await this.editChain.catch(() => {});
       const result = await this.config.adapter.editMessage(
         this.config.chatId,
         this.messageId,
@@ -305,7 +351,6 @@ export class StreamConsumer {
       }
     }
 
-    await this.editChain.catch(() => {});
     await this.collapseActivity();
 
     const previewState = this.getPreviewState();
@@ -321,7 +366,7 @@ export class StreamConsumer {
   async collapseActivity(summary?: string): Promise<void> {
     this.clearActivityTimer();
     this.pendingActivityText = '';
-    await this.editChain.catch(() => {});
+    await this.activityChain.catch(() => {});
     if (!this.activityMessageId || this.activityCollapsed) {
       this.activityCollapsed = true;
       return;
@@ -343,9 +388,12 @@ export class StreamConsumer {
 
   async abort(): Promise<void> {
     this.completed = true;
+    this.flushSuppressed = true;
     this.clearHeartbeat();
     this.clearActivityTimer();
-    await this.editChain.catch(() => {});
+    this.clearFlushTimer();
+    await this.answerChain.catch(() => {});
+    await this.activityChain.catch(() => {});
 
     // Non-destructive: collapse the activity bubble to an interrupted notice and
     // LEAVE the content bubble in place. A recoverable stop must never yank away
@@ -372,8 +420,10 @@ export class StreamConsumer {
   }
 
   stop(): void {
+    this.flushSuppressed = true;
     this.clearHeartbeat();
     this.clearActivityTimer();
+    this.clearFlushTimer();
   }
 
   // ── Internal ──────────────────────────────────────────────────────
@@ -387,10 +437,15 @@ export class StreamConsumer {
         if (result.success) {
           this.lastText = text;
           this.clearFailures();
+          return;
+        }
+        if (this.isUnsupportedDraftError(result.error)) {
+          this.draftMode = false;
+          this.draftId = null;
         } else {
           this.recordFailure();
+          return;
         }
-        return;
       }
 
       if (!this.messageId) {
@@ -438,7 +493,7 @@ export class StreamConsumer {
           this.activitySpawnTimer = null;
           const pending = this.pendingActivityText;
           if (!pending || this.completed || this.activityCollapsed) return;
-          this.editChain = this.editChain
+          this.activityChain = this.activityChain
             .catch(() => {})
             .then(() => this.sendOrEditActivity(pending));
         }, wait);
@@ -446,7 +501,7 @@ export class StreamConsumer {
       return;
     }
 
-    this.editChain = this.editChain
+    this.activityChain = this.activityChain
       .catch(() => {})
       .then(() => this.sendOrEditActivity(text));
   }
@@ -483,6 +538,52 @@ export class StreamConsumer {
       clearTimeout(this.activitySpawnTimer);
       this.activitySpawnTimer = null;
     }
+  }
+
+  private clearFlushTimer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
+  private scheduleAnswerFlush(): void {
+    if (this.flushSuppressed || this.completed || this.flushTimer) return;
+    const now = Date.now();
+    const cadenceDelay = Math.max(
+      0,
+      this.draftMinIntervalMs - (now - this.lastAnswerFlushAt),
+    );
+    const backoffDelay = this.disabled
+      ? Math.max(0, this.disabledUntil - now)
+      : 0;
+
+    this.flushTimer = setTimeout(
+      () => {
+        this.flushTimer = null;
+        if (this.flushSuppressed || this.completed) {
+          this.pendingText = null;
+          return;
+        }
+        const text = this.pendingText;
+        this.pendingText = null;
+        if (text === null) return;
+
+        this.answerChain = this.answerChain
+          .catch(() => {})
+          .then(async () => {
+            await this.sendOrEdit(text);
+            this.lastAnswerFlushAt = Date.now();
+            if (this.lastText !== text && this.pendingText === null) {
+              this.pendingText = text;
+            }
+          })
+          .finally(() => {
+            if (this.pendingText !== null) this.scheduleAnswerFlush();
+          });
+      },
+      Math.max(cadenceDelay, backoffDelay),
+    );
   }
 
   private handleToolTrail(event: ToolProgressEvent): void {
@@ -528,7 +629,7 @@ export class StreamConsumer {
       return;
     }
 
-    this.editChain = this.editChain
+    this.activityChain = this.activityChain
       .catch(() => {})
       .then(async () => {
         const { adapter, chatId } = this.config;
@@ -672,13 +773,21 @@ export class StreamConsumer {
     this.heartbeatStartedAt = 0;
   }
 
-  private isBackedOff(now = Date.now()): boolean {
-    if (this.disabled) {
-      if (this.disabledUntil > now) return true;
-      this.disabled = false;
-      this.disabledUntil = 0;
-    }
-    return false;
+  private parseTelegramChatId(): number {
+    const raw = this.config.chatId.startsWith('telegram:')
+      ? this.config.chatId.slice('telegram:'.length)
+      : this.config.chatId;
+    return Number(raw);
+  }
+
+  private isUnsupportedDraftError(error?: string): boolean {
+    const normalized = (error || '').toLowerCase();
+    return (
+      normalized.includes('sendmessagedraft') ||
+      normalized.includes('method not found') ||
+      normalized.includes('not supported') ||
+      normalized.includes('private chat')
+    );
   }
 
   private recordFailure(now = Date.now()): void {

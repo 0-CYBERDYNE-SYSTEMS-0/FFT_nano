@@ -226,6 +226,7 @@ test('Telegram /delivery modes propagate through dispatch, StreamConsumer, and f
             deliveryMode,
             verboseMode: 'off',
             heartbeatMs: 0,
+            draftMinIntervalMs: 0,
           });
           await consumer.onDelta(
             'First Telegram preview update with enough characters',

@@ -176,6 +176,7 @@ interface SessionPrefs {
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
   verboseMode?: VerboseMode;
+  telegramDeliveryMode?: 'stream' | 'append' | 'off' | 'draft';
 }
 
 type SendMessageStatus = 'sent' | 'queued' | 'busy';
@@ -190,6 +191,7 @@ const DEFAULT_GATEWAY_TOKEN =
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'help', description: 'Show slash command help' },
+  { name: 'settings', description: 'Show runtime controls' },
   { name: 'status', description: 'Show gateway status' },
   { name: 'sessions', description: 'List available sessions' },
   { name: 'session', description: 'Switch session key' },
@@ -198,11 +200,26 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'think', description: 'Set thinking level' },
   { name: 'reasoning', description: 'Set reasoning level' },
   { name: 'verbose', description: 'Cycle or set tool progress mode' },
-  { name: 'deliver', description: 'Set delivery mode (on/off)' },
+  { name: 'delivery', description: 'Set Telegram delivery mode' },
+  { name: 'mirror', description: 'Mirror TUI replies to the chat channel' },
+  { name: 'usage', description: 'Show usage counters' },
+  { name: 'queue', description: 'Show or set queue policy' },
+  { name: 'compact', description: 'Compact session context' },
+  { name: 'tasks', description: 'Inspect or manage scheduled tasks' },
+  { name: 'runs', description: 'Inspect durable runs' },
+  { name: 'learning', description: 'Show learning controls' },
+  { name: 'knowledge', description: 'Manage the knowledge wiki' },
+  { name: 'subagents', description: 'Manage delegated workers' },
+  { name: 'setup', description: 'Runtime provider setup' },
+  { name: 'groups', description: 'Manage registered groups' },
+  { name: 'skill_manager', description: 'Manage skill lifecycle' },
+  { name: 'approvals', description: 'List pending approvals' },
+  { name: 'reload', description: 'Reload runtime metadata' },
   { name: 'gateway', description: 'Gateway service action (status|restart)' },
   { name: 'new', description: 'Reset session before next run' },
   { name: 'reset', description: 'Alias for /new' },
-  { name: 'abort', description: 'Abort active run' },
+  { name: 'stop', description: 'Stop active run' },
+  { name: 'update', description: 'Update and restart the host' },
   { name: 'exit', description: 'Exit TUI' },
   { name: 'quit', description: 'Exit TUI' },
 ];
@@ -301,6 +318,7 @@ function helpText(): string {
   return [
     'Slash commands:',
     '/help',
+    '/settings',
     '/status',
     '/sessions',
     '/session <key>',
@@ -309,11 +327,21 @@ function helpText(): string {
     '/think <off|minimal|low|medium|high|xhigh>',
     '/reasoning <off|on|stream>',
     '/verbose [off|new|all|verbose]',
-    '/deliver <on|off>',
+    '/delivery <stream|append|off|draft>',
+    '/mirror <on|off>',
+    '/usage [all]',
+    '/queue [mode/debounce/cap/drop]',
+    '/compact [instructions]',
+    '/tasks [list|due|detail|runs|pause|resume|cancel]',
+    '/runs',
+    '/learning',
+    '/knowledge <action>',
+    '/subagents <action>',
+    '/setup, /groups, /skill_manager, /approvals',
     '/gateway <status|restart|doctor>',
     '/update - preserve local changes, pull, rebuild, and restart',
     '/new or /reset',
-    '/abort',
+    '/stop',
     '/exit',
   ].join('\n');
 }
@@ -787,6 +815,33 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         break;
       }
 
+      case 'delivery': {
+        if (!args) {
+          chatLog.addSystem(
+            `Telegram delivery: ${sessionPrefs.telegramDeliveryMode || 'stream'}`,
+          );
+          break;
+        }
+        const value = args.trim().toLowerCase();
+        if (!['stream', 'append', 'off', 'draft'].includes(value)) {
+          chatLog.addSystem('usage: /delivery <stream|append|off|draft>');
+          break;
+        }
+        await client.request('sessions.patch', {
+          sessionKey,
+          telegramDeliveryMode: value,
+        });
+        sessionPrefs.telegramDeliveryMode = value as
+          | 'stream'
+          | 'append'
+          | 'off'
+          | 'draft';
+        chatLog.addSystem(`Telegram delivery set to ${value}`);
+        updateFooter();
+        break;
+      }
+
+      case 'mirror':
       case 'deliver': {
         if (!args) {
           chatLog.addSystem(`delivery: ${deliver ? 'on' : 'off'}`);
@@ -800,6 +855,28 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         deliver = value === 'on';
         updateFooter();
         chatLog.addSystem(`delivery set to ${deliver ? 'on' : 'off'}`);
+        break;
+      }
+
+      case 'settings':
+      case 'usage':
+      case 'queue':
+      case 'compact':
+      case 'tasks':
+      case 'runs':
+      case 'learning':
+      case 'knowledge':
+      case 'subagents':
+      case 'setup':
+      case 'groups':
+      case 'skill_manager':
+      case 'approvals':
+      case 'reload': {
+        const result = await client.request<{ ok: boolean; text: string }>(
+          'operator.command',
+          { sessionKey, command: name, args },
+        );
+        chatLog.addSystem(result.text);
         break;
       }
 
@@ -870,6 +947,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
         chatLog.addSystem('session reset');
         break;
 
+      case 'stop':
       case 'abort':
         if (!activeRunId) {
           chatLog.addSystem('no active run');

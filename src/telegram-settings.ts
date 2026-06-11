@@ -989,77 +989,102 @@ export function buildTelegramSetupApiKeyPanel(chatJid: string): {
 
 export function buildTelegramSettingsHomePanel(
   chatJid: string,
-  deps: { getEffectiveModelLabel: (jid: string) => string },
+  deps: {
+    getEffectiveModelLabel: (jid: string) => string;
+    isMainChat?: (jid: string) => boolean;
+  },
 ): {
   text: string;
   keyboard: TelegramInlineKeyboard;
 } {
+  const keyboard: TelegramInlineKeyboard = [
+    [
+      {
+        text: 'Models',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-model-providers',
+        }),
+      },
+      {
+        text: 'Think',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-think',
+        }),
+      },
+    ],
+    [
+      {
+        text: 'Queue',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-queue',
+        }),
+      },
+      {
+        text: 'Delivery',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-delivery',
+        }),
+      },
+    ],
+    [
+      {
+        text: 'Fresh Next Run',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'trigger-new',
+        }),
+        style: 'primary' as const,
+      },
+      {
+        text: 'Reasoning',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-reasoning',
+        }),
+      },
+      {
+        text: 'Verbose',
+        callbackData: registerTelegramSettingsPanelAction(chatJid, {
+          kind: 'show-verbose',
+        }),
+      },
+    ],
+  ];
+  if (deps.isMainChat?.(chatJid)) {
+    keyboard.push(
+      [
+        { text: 'Tasks', callbackData: 'panel:tasks' },
+        { text: 'Pending Approvals', callbackData: 'panel:pending-tasks' },
+      ],
+      [
+        { text: 'Groups', callbackData: 'panel:groups' },
+        { text: 'Health', callbackData: 'panel:health' },
+      ],
+      [
+        { text: 'Coder', callbackData: 'panel:coder' },
+        {
+          text: 'Runtime Setup',
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'show-setup-home',
+          }),
+        },
+      ],
+    );
+  }
+  keyboard.push([
+    {
+      text: 'Reset Model',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'reset-model',
+        returnTo: 'home',
+      }),
+      style: 'danger' as const,
+    },
+  ]);
   return {
     text: [
       'Runtime controls for this chat:',
       ...formatTelegramSettingsPanelSummary(chatJid, deps),
     ].join('\n'),
-    keyboard: [
-      [
-        {
-          text: 'Models',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'show-model-providers',
-          }),
-        },
-        {
-          text: 'Think',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'show-think',
-          }),
-        },
-      ],
-      [
-        {
-          text: 'Queue',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'show-queue',
-          }),
-        },
-        {
-          text: 'Delivery',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'show-delivery',
-          }),
-        },
-      ],
-      [
-        {
-          text: 'Fresh Next Run',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'trigger-new',
-          }),
-          style: 'primary' as const,
-        },
-        {
-          text: 'Reasoning',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'show-reasoning',
-          }),
-        },
-        {
-          text: 'Verbose',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'show-verbose',
-          }),
-        },
-      ],
-      [
-        {
-          text: 'Reset Model',
-          callbackData: registerTelegramSettingsPanelAction(chatJid, {
-            kind: 'reset-model',
-            returnTo: 'home',
-          }),
-          style: 'danger' as const,
-        },
-      ],
-    ],
+    keyboard,
   };
 }
 
@@ -1568,12 +1593,13 @@ export function buildAdminPanelKeyboard(): TelegramInlineKeyboard {
   return [
     [
       { text: 'Tasks', callbackData: 'panel:tasks' },
-      { text: 'Coder', callbackData: 'panel:coder' },
+      { text: 'Pending Approvals', callbackData: 'panel:pending-tasks' },
     ],
     [
       { text: 'Groups', callbackData: 'panel:groups' },
       { text: 'Health', callbackData: 'panel:health' },
     ],
+    [{ text: 'Coder', callbackData: 'panel:coder' }],
   ];
 }
 
@@ -1584,6 +1610,7 @@ export interface ResolvePanelDeps {
     text: string;
     keyboard: TelegramInlineKeyboard;
   };
+  isMainChat?: (chatJid: string) => boolean;
 }
 
 export function resolveTelegramSettingsPanel(

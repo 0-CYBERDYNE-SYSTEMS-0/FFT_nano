@@ -1,5 +1,7 @@
 import {
   ASSISTANT_NAME,
+  FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS,
+  FFT_NANO_TELEGRAM_HEARTBEAT_MS,
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
   PARITY_CONFIG,
@@ -24,6 +26,10 @@ import { getContainerRuntime } from './container-runtime.js';
 import { isTelegramJid } from './telegram.js';
 import { StreamConsumer } from './streaming/stream-consumer.js';
 import { createTelegramAdapter } from './streaming/telegram-adapter.js';
+import {
+  registerActiveStreamConsumer,
+  unregisterActiveStreamConsumer,
+} from './streaming/active-consumers.js';
 import { getTelegramPreviewRunKey } from './telegram-streaming.js';
 import { cancelPendingConfirmationsForChat } from './permission-gate-ui.js';
 import { isUserAbortedErrorMessage } from './status-report.js';
@@ -76,10 +82,6 @@ export interface AgentRunnerDeps {
     chatJid: string,
     request: ExtensionUIRequest,
   ) => Promise<ExtensionUIResponse>;
-  finalizeTelegramToolProgress: (
-    chatJid: string,
-    requestId: string,
-  ) => Promise<void>;
   updateChatRunPreferences: (
     chatJid: string,
     updater: (current: ChatRunPreferences) => ChatRunPreferences,
@@ -644,6 +646,7 @@ export async function runAgent(
     let runToolExecutions: PiToolExecution[] = [];
 
     let streamConsumer: StreamConsumer | null = null;
+    let streamConsumerRunId: string | null = null;
 
     const executeRun = async (
       runPrefs: ChatRunPreferences,
@@ -671,60 +674,81 @@ export async function runAgent(
         !suppressPreviewStreaming &&
         (runPrefs.telegramDeliveryMode || 'stream') !== 'off'
       ) {
+        const consumerRunId =
+          attemptRequestId || requestId || `run-${Date.now()}`;
+        streamConsumerRunId = consumerRunId;
         streamConsumer = new StreamConsumer({
           chatId: chatJid,
-          runId: attemptRequestId || `run-${Date.now()}`,
+          runId: consumerRunId,
           adapter: createTelegramAdapter(state.telegramBot),
           label: 'Agent',
-          heartbeatMs: 0,
+          heartbeatMs: FFT_NANO_TELEGRAM_HEARTBEAT_MS,
+          draftMinIntervalMs: chatJid.startsWith('telegram:-')
+            ? FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS
+            : undefined,
           deliveryMode: runPrefs.telegramDeliveryMode || 'stream',
           verboseMode: runPrefs.verboseMode || 'off',
         });
+        registerActiveStreamConsumer(chatJid, consumerRunId, streamConsumer);
       } else {
         streamConsumer = null;
+        streamConsumerRunId = null;
       }
-      const output = await runContainerAgent(
-        group,
-        {
-          ...input,
-          prompt: promptOverride || input.prompt,
-          requestId: attemptRequestId,
-          verboseMode: runPrefs.verboseMode,
-          noContinue: runPrefs.nextRunNoContinue === true,
-          suppressPreviewStreaming:
-            suppressPreviewStreaming || input.suppressPreviewStreaming,
-          senderRole: options.senderRole,
-        },
-        abortSignal,
-        (event) => {
-          if (event.kind !== 'tool' || !attemptRequestId) return;
-          hadToolSideEffects = true;
-          if (streamConsumer) {
-            streamConsumer.onToolEvent({
+      let output;
+      try {
+        output = await runContainerAgent(
+          group,
+          {
+            ...input,
+            prompt: promptOverride || input.prompt,
+            requestId: attemptRequestId,
+            verboseMode: runPrefs.verboseMode,
+            noContinue: runPrefs.nextRunNoContinue === true,
+            suppressPreviewStreaming:
+              suppressPreviewStreaming || input.suppressPreviewStreaming,
+            senderRole: options.senderRole,
+          },
+          abortSignal,
+          (event) => {
+            if (event.kind !== 'tool' || !attemptRequestId) return;
+            hadToolSideEffects = true;
+            if (streamConsumer) {
+              streamConsumer.onToolEvent({
+                toolName: event.toolName,
+                status: event.status,
+                ...(event.args ? { args: event.args } : {}),
+                ...(event.output ? { output: event.output } : {}),
+                ...(event.error ? { error: event.error } : {}),
+              });
+            }
+            deps.emitTuiToolEvent({
+              runId: attemptRequestId,
+              sessionKey,
+              index: event.index,
               toolName: event.toolName,
               status: event.status,
               ...(event.args ? { args: event.args } : {}),
               ...(event.output ? { output: event.output } : {}),
               ...(event.error ? { error: event.error } : {}),
             });
-          }
-          deps.emitTuiToolEvent({
-            runId: attemptRequestId,
-            sessionKey,
-            index: event.index,
-            toolName: event.toolName,
-            status: event.status,
-            ...(event.args ? { args: event.args } : {}),
-            ...(event.output ? { output: event.output } : {}),
-            ...(event.error ? { error: event.error } : {}),
-          });
-        },
-        (request) => deps.handlePermissionGateRequest(chatJid, request),
-        (event) => {
-          if (streamConsumer) streamConsumer.handleProgress(event);
-          options.onProgressEvent?.(event);
-        },
-      );
+          },
+          (request) => deps.handlePermissionGateRequest(chatJid, request),
+          (event) => {
+            if (streamConsumer) streamConsumer.handleProgress(event);
+            options.onProgressEvent?.(event);
+          },
+        );
+      } catch (err) {
+        streamConsumer?.stop();
+        if (streamConsumer && streamConsumerRunId) {
+          unregisterActiveStreamConsumer(
+            chatJid,
+            streamConsumerRunId,
+            streamConsumer,
+          );
+        }
+        throw err;
+      }
       cancelPendingConfirmationsForChat(chatJid);
       runToolsInvoked = output.toolExecutions?.length ?? 0;
       runToolExecutions = output.toolExecutions ?? [];
@@ -758,6 +782,13 @@ export async function runAgent(
               : '✓ Done';
         await streamConsumer.collapseActivity(receipt);
         streamConsumer.stop();
+        if (streamConsumerRunId) {
+          unregisterActiveStreamConsumer(
+            chatJid,
+            streamConsumerRunId,
+            streamConsumer,
+          );
+        }
       }
 
       return {
@@ -926,9 +957,5 @@ export async function runAgent(
       }
     }
     return { result: null, streamed: false, ok: false };
-  } finally {
-    if (requestId && isTelegramJid(chatJid)) {
-      await deps.finalizeTelegramToolProgress(chatJid, requestId);
-    }
   }
 }

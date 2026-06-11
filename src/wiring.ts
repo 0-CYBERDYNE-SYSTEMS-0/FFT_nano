@@ -481,9 +481,6 @@ import {
   sendMessage as tdSendMessage,
   sendTelegramAgentReply as tdSendTelegramAgentReply,
   sendAgentResultMessage as tdSendAgentResultMessage,
-  queueTelegramToolProgressReaction as tdQueueTelegramToolProgressReaction,
-  queueTelegramToolProgressUpdate as tdQueueTelegramToolProgressUpdate,
-  finalizeTelegramToolProgress as tdFinalizeTelegramToolProgress,
   deleteTelegramPreviewMessage as tdDeleteTelegramPreviewMessage,
   finalizeTelegramPreviewMessage as tdFinalizeTelegramPreviewMessage,
   sanitizeFileName as tdSanitizeFileName,
@@ -842,6 +839,195 @@ function getTuiCoordinationDeps(): TuiCoordinationDeps {
     patchTuiSessionPrefs,
     runDirectSessionTurn,
     runGatewayServiceCommand,
+    executeOperatorCommand,
+  };
+}
+
+async function executeOperatorCommand(
+  chatJid: string,
+  command: string,
+  args: string,
+): Promise<{ ok: boolean; text: string }> {
+  const normalized = command.replace(/^\//, '').trim().toLowerCase();
+  if (normalized === 'settings') {
+    return {
+      ok: true,
+      text: [
+        'Runtime controls:',
+        ...formatChatRuntimePreferences(chatJid),
+      ].join('\n'),
+    };
+  }
+  if (normalized === 'status') {
+    return { ok: true, text: formatStatusText(chatJid) };
+  }
+  if (normalized === 'usage') {
+    return {
+      ok: true,
+      text: formatUsageText(chatJid, args.trim() === 'all' ? 'all' : 'chat'),
+    };
+  }
+  if (normalized === 'queue') {
+    if (!args.trim()) {
+      return {
+        ok: true,
+        text:
+          formatChatRuntimePreferences(chatJid).find((line) =>
+            line.startsWith('- chat_queue:'),
+          ) || 'Queue settings unavailable.',
+      };
+    }
+    const parsed = parseQueueArgs(args);
+    updateChatRunPreferences(chatJid, (prefs) => {
+      if (parsed.reset) {
+        delete prefs.queueMode;
+        delete prefs.queueDebounceMs;
+        delete prefs.queueCap;
+        delete prefs.queueDrop;
+      }
+      if (parsed.mode) prefs.queueMode = parsed.mode;
+      if (parsed.debounceMs !== undefined) {
+        prefs.queueDebounceMs = parsed.debounceMs;
+      }
+      if (parsed.cap !== undefined) prefs.queueCap = parsed.cap;
+      if (parsed.drop) prefs.queueDrop = parsed.drop;
+      return prefs;
+    });
+    return {
+      ok: true,
+      text:
+        formatChatRuntimePreferences(chatJid).find((line) =>
+          line.startsWith('- chat_queue:'),
+        ) || 'Queue settings updated.',
+    };
+  }
+  if (normalized === 'compact') {
+    return { ok: true, text: await runCompactionForChat(chatJid, args) };
+  }
+  if (normalized === 'tasks') {
+    if (!isMainChat(chatJid)) {
+      return { ok: false, text: 'Task controls require the main session.' };
+    }
+    const [action = 'list', taskId] = args.trim().split(/\s+/);
+    if (action === 'list' || !args.trim()) {
+      return { ok: true, text: formatTasksText('list') };
+    }
+    if (action === 'due') return { ok: true, text: formatTasksText('due') };
+    if (action === 'detail' && taskId) {
+      return { ok: true, text: summarizeTask(taskId) };
+    }
+    if (action === 'runs' && taskId) {
+      return { ok: true, text: formatTaskRunsText(taskId) };
+    }
+    if (['pause', 'resume', 'cancel'].includes(action) && taskId) {
+      if (!getTaskById(taskId)) {
+        return { ok: false, text: `Task not found: ${taskId}` };
+      }
+      if (action === 'cancel') deleteTask(taskId);
+      else
+        updateTask(taskId, {
+          status: action === 'pause' ? 'paused' : 'active',
+        });
+      return { ok: true, text: `${action}d task: ${taskId}` };
+    }
+    return {
+      ok: false,
+      text: 'Usage: /tasks [list|due|detail|runs|pause|resume|cancel] [taskId]',
+    };
+  }
+  if (normalized === 'learning') {
+    if (!isMainChat(chatJid)) {
+      return { ok: false, text: 'Learning controls require the main session.' };
+    }
+    return { ok: true, text: formatLearningDigest() };
+  }
+  if (normalized === 'runs') {
+    const runs = listActiveAgentRuns(chatJid);
+    return {
+      ok: true,
+      text:
+        runs.length > 0
+          ? [
+              'Active durable runs:',
+              ...runs.map(
+                (run) =>
+                  `- ${run.id} [${run.status}] ${run.current_phase || 'running'}`,
+              ),
+            ].join('\n')
+          : 'No active durable runs.',
+    };
+  }
+  if (normalized === 'subagents') {
+    return { ok: true, text: formatActiveSubagentsText() };
+  }
+  if (normalized === 'groups') {
+    if (!isMainChat(chatJid)) {
+      return { ok: false, text: 'Group controls require the main session.' };
+    }
+    return { ok: true, text: formatGroupsText() };
+  }
+  if (normalized === 'setup') {
+    if (!isMainChat(chatJid)) {
+      return { ok: false, text: 'Runtime setup requires the main session.' };
+    }
+    return {
+      ok: true,
+      text: ['Runtime setup:', ...getRuntimeConfigSummaryLines()].join('\n'),
+    };
+  }
+  if (normalized === 'approvals') {
+    if (!isMainChat(chatJid)) {
+      return { ok: false, text: 'Approvals require the main session.' };
+    }
+    const pending = tdFormatPendingTasksText({
+      registerToken: () => 'tui-read-only',
+    });
+    return { ok: true, text: pending.text };
+  }
+  if (normalized === 'skill_manager') {
+    if (!isMainChat(chatJid)) {
+      return {
+        ok: false,
+        text: 'Skill manager controls require the main session.',
+      };
+    }
+    const [action = 'status', ...rest] = args.trim().split(/\s+/);
+    return {
+      ok: true,
+      text: await handleSkillManagerCommand({
+        action,
+        input: rest.join(' '),
+        chatJid,
+      }),
+    };
+  }
+  if (normalized === 'reload') {
+    if (!isMainChat(chatJid)) {
+      return { ok: false, text: 'Reload requires the main session.' };
+    }
+    await refreshTelegramCommandMenus();
+    return { ok: true, text: 'Command menus and metadata refreshed.' };
+  }
+  if (normalized === 'knowledge') {
+    if (!isMainChat(chatJid)) {
+      return {
+        ok: false,
+        text: 'Knowledge controls require the main session.',
+      };
+    }
+    const [action = 'status', ...rest] = args.trim().split(/\s+/);
+    return {
+      ok: true,
+      text: handleKnowledgeCommand({
+        action,
+        input: rest.join(' '),
+        chatJid,
+      }),
+    };
+  }
+  return {
+    ok: false,
+    text: `Unsupported TUI operator command: /${normalized}`,
   };
 }
 
@@ -1299,6 +1485,7 @@ function resolveTelegramSettingsPanel(
     getEffectiveModelLabel,
     formatActiveSubagentsText,
     buildTelegramGroupsPanel,
+    isMainChat,
   });
 }
 
@@ -1583,6 +1770,7 @@ async function handlePermissionGateRequest(
 async function handleTelegramSetupInput(m: {
   chatJid: string;
   content: string;
+  messageId?: number;
 }): Promise<boolean> {
   return telegramCommandHandlers.handleTelegramSetupInput(m);
 }
@@ -1945,49 +2133,6 @@ async function sendMessage(jid: string, text: string): Promise<boolean> {
   return tdSendMessage(jid, text);
 }
 
-function queueTelegramToolProgressReaction(
-  chatJid: string,
-  requestId: string,
-  event: { toolName: string; status: 'start' | 'ok' | 'error' },
-): void {
-  tdQueueTelegramToolProgressReaction(
-    chatJid,
-    requestId,
-    event,
-    getTelegramHostStreamKey,
-  );
-}
-
-function queueTelegramToolProgressUpdate(
-  chatJid: string,
-  requestId: string,
-  deliveryMode: TelegramDeliveryMode,
-  mode: VerboseMode | undefined,
-  event: {
-    toolName: string;
-    status: 'start' | 'ok' | 'error';
-    args?: string;
-    output?: string;
-    error?: string;
-  },
-): void {
-  tdQueueTelegramToolProgressUpdate(
-    chatJid,
-    requestId,
-    deliveryMode,
-    mode,
-    event,
-    getTelegramHostStreamKey,
-  );
-}
-
-async function finalizeTelegramToolProgress(
-  chatJid: string,
-  requestId: string,
-): Promise<void> {
-  return tdFinalizeTelegramToolProgress(chatJid, requestId);
-}
-
 async function deleteTelegramPreviewMessage(
   chatJid: string,
   messageId: number,
@@ -2024,7 +2169,6 @@ initAgentRunner({
   getSessionKeyForChat,
   emitTuiToolEvent,
   handlePermissionGateRequest,
-  finalizeTelegramToolProgress,
   updateChatRunPreferences,
   updateChatUsage,
   setTyping,
