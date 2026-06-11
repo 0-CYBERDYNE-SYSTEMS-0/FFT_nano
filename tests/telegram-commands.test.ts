@@ -769,6 +769,49 @@ test('handleTelegramCommand opens delivery panel when called without args', asyn
   ]);
 });
 
+test('handleTelegramCommand /settings opens the unified settings home', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    panels: Array<{ chatJid: string; panel: { kind: string } }>;
+  };
+  const handlers = createTelegramCommandHandlers(deps);
+
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/settings',
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(deps.panels, [
+    { chatJid: 'telegram:1', panel: { kind: 'show-home' } },
+  ]);
+});
+
+test('handleTelegramSetupInput deletes captured API key message best-effort', async () => {
+  const deleted: Array<{ chatJid: string; messageId: number }> = [];
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    persisted: Array<Record<string, string | undefined>>;
+  };
+  deps.getTelegramSetupInputState = () => ({ kind: 'api-key' });
+  deps.state.telegramBot = {
+    ...deps.state.telegramBot,
+    deleteMessage: async (chatJid: string, messageId: number) => {
+      deleted.push({ chatJid, messageId });
+    },
+  } as any;
+  const handlers = createTelegramCommandHandlers(deps);
+
+  const handled = await handlers.handleTelegramSetupInput({
+    chatJid: 'telegram:1',
+    content: 'secret-value',
+    messageId: 42,
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(deleted, [{ chatJid: 'telegram:1', messageId: 42 }]);
+  assert.deepEqual(deps.persisted, [{ OPENAI_API_KEY: 'secret-value' }]);
+});
+
 test('handleTelegramCommand normalizes delivery aliases to canonical persisted values', async () => {
   const updates: Array<Record<string, any>> = [];
   const deps = createBaseDeps() as TelegramCommandDeps & {

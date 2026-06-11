@@ -24,6 +24,7 @@ import {
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
 type VerboseMode = 'off' | 'new' | 'all' | 'verbose';
+type TelegramDeliveryMode = 'stream' | 'append' | 'off' | 'draft';
 
 export interface SessionPrefs {
   provider?: string;
@@ -31,6 +32,7 @@ export interface SessionPrefs {
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
   verboseMode?: VerboseMode;
+  telegramDeliveryMode?: TelegramDeliveryMode;
   noContinueNext?: boolean;
 }
 
@@ -85,6 +87,11 @@ export interface TuiGatewayAdapters {
     action: 'status' | 'restart' | 'doctor';
   }) => Promise<{ ok: boolean; text: string }> | { ok: boolean; text: string };
   hostUpdate: () => UpdateCommandStartResult;
+  executeOperatorCommand?: (params: {
+    chatJid: string;
+    command: string;
+    args: string;
+  }) => Promise<{ ok: boolean; text: string }>;
 }
 
 const DEFAULT_PORT = Number(process.env.FFT_NANO_TUI_PORT || 28989);
@@ -131,6 +138,23 @@ function normalizeVerboseMode(raw: unknown): VerboseMode | undefined {
   if (key === 'new') return 'new';
   if (['all', 'on', 'true', '1', 'yes'].includes(key)) return 'all';
   if (['verbose', 'full', 'max', '2'].includes(key)) return 'verbose';
+  return undefined;
+}
+
+function normalizeTelegramDeliveryMode(
+  raw: unknown,
+): TelegramDeliveryMode | undefined {
+  const key = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (
+    key === 'stream' ||
+    key === 'append' ||
+    key === 'off' ||
+    key === 'draft'
+  ) {
+    return key;
+  }
   return undefined;
 }
 
@@ -379,6 +403,9 @@ export async function startTuiGatewayServer(
         const thinkLevel = normalizeThinkLevel(params.thinkLevel);
         const reasoningLevel = normalizeReasoningLevel(params.reasoningLevel);
         const verboseMode = normalizeVerboseMode(params.verboseMode);
+        const telegramDeliveryMode = normalizeTelegramDeliveryMode(
+          params.telegramDeliveryMode,
+        );
 
         const patch: SessionPrefs = {};
         if (provider || params.provider === '')
@@ -387,6 +414,9 @@ export async function startTuiGatewayServer(
         if (thinkLevel) patch.thinkLevel = thinkLevel;
         if (reasoningLevel) patch.reasoningLevel = reasoningLevel;
         if (verboseMode) patch.verboseMode = verboseMode;
+        if (telegramDeliveryMode) {
+          patch.telegramDeliveryMode = telegramDeliveryMode;
+        }
 
         const next = adapters.patchSessionPrefs(chatJid, patch);
         sendFrame(
@@ -526,6 +556,36 @@ export async function startTuiGatewayServer(
           .then((result) => {
             sendFrame(ws, response(frame.id, result));
           })
+          .catch((err) => {
+            sendFrame(
+              ws,
+              failure(
+                frame.id,
+                err instanceof Error ? err.message : String(err),
+              ),
+            );
+          });
+        break;
+      }
+
+      case 'operator.command': {
+        if (!chatJid) {
+          sendFrame(ws, failure(frame.id, `Unknown session: ${sessionKey}`));
+          break;
+        }
+        const command = asText(params.command).trim().toLowerCase();
+        const args = asText(params.args).trim();
+        if (!command) {
+          sendFrame(ws, failure(frame.id, 'Missing operator command.'));
+          break;
+        }
+        if (!adapters.executeOperatorCommand) {
+          sendFrame(ws, failure(frame.id, 'Operator controls unavailable.'));
+          break;
+        }
+        void adapters
+          .executeOperatorCommand({ chatJid, command, args })
+          .then((result) => sendFrame(ws, response(frame.id, result)))
           .catch((err) => {
             sendFrame(
               ws,
