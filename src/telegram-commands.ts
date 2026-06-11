@@ -7,6 +7,7 @@ export interface TelegramCommandMessage {
 export interface TelegramSetupInputMessage {
   chatJid: string;
   content: string;
+  messageId?: number;
 }
 
 export interface TelegramCommandCallbackQuery {
@@ -1700,6 +1701,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         return true;
       case 'api-key': {
+        if (m.messageId && deps.state.telegramBot?.deleteMessage) {
+          try {
+            await deps.state.telegramBot.deleteMessage(m.chatJid, m.messageId);
+          } catch {
+            // Best-effort cleanup; Telegram may reject deletion by age/rights.
+          }
+        }
         const snapshot = deps.resolveRuntimeConfigSnapshot(
           deps.getRuntimeConfigEnv(),
         );
@@ -1710,7 +1718,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         });
         await deps.sendMessage(
           m.chatJid,
-          `Saved API key in ${snapshot.apiKeyEnv}.`,
+          `Saved API key in ${snapshot.apiKeyEnv}. The key message was removed when Telegram permissions allowed it.`,
         );
         return true;
       }
@@ -2526,6 +2534,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
+    if (cmd === '/settings') {
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-home' });
+      return true;
+    }
+
     if (!isMainGroup) {
       deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
       await deps.sendMessage(
@@ -2644,15 +2658,21 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
+    const knowledgeLibrarianAction =
+      cmd === '/knowledge' &&
+      ['run', 'dry-run', 'log', 'progress', 'capture'].includes(
+        (rest[0] || '').trim().toLowerCase(),
+      );
     if (
       cmd === '/skill-manager' ||
       cmd === '/skill_manager' ||
       cmd === '/librarian' ||
-      cmd === '/curator'
+      cmd === '/curator' ||
+      knowledgeLibrarianAction
     ) {
       const isSkillManager =
         cmd === '/skill-manager' || cmd === '/skill_manager';
-      const isLibrarian = cmd === '/librarian';
+      const isLibrarian = cmd === '/librarian' || knowledgeLibrarianAction;
       const isDeprecatedCurator = cmd === '/curator';
 
       if (!isMainGroup) {
@@ -2857,9 +2877,31 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         return true;
       }
+      if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
+        const taskId = rest[1];
+        if (!taskId) {
+          await deps.sendMessage(m.chatJid, `Usage: /tasks ${sub} <taskId>`);
+          return true;
+        }
+        if (!deps.getTaskById(taskId)) {
+          await deps.sendMessage(m.chatJid, `Task not found: ${taskId}`);
+          return true;
+        }
+        if (sub === 'pause') {
+          deps.updateTask(taskId, { status: 'paused' });
+          await deps.sendMessage(m.chatJid, `Paused task: ${taskId}`);
+        } else if (sub === 'resume') {
+          deps.updateTask(taskId, { status: 'active' });
+          await deps.sendMessage(m.chatJid, `Resumed task: ${taskId}`);
+        } else {
+          deps.deleteTask(taskId);
+          await deps.sendMessage(m.chatJid, `Canceled task: ${taskId}`);
+        }
+        return true;
+      }
       await deps.sendMessage(
         m.chatJid,
-        'Usage: /tasks [list|due|detail <taskId>|runs <taskId> [limit]]',
+        'Usage: /tasks [list|due|detail <taskId>|runs <taskId> [limit]|pause <taskId>|resume <taskId>|cancel <taskId>]',
       );
       return true;
     }
@@ -2953,12 +2995,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/panel') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      if (!deps.state.telegramBot?.sendMessageWithKeyboard) return true;
-      await deps.state.telegramBot.sendMessageWithKeyboard(
-        m.chatJid,
-        'Admin panel:',
-        deps.buildAdminPanelKeyboard(),
-      );
+      await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-home' });
       return true;
     }
 
