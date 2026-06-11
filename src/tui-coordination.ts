@@ -49,6 +49,11 @@ export interface TuiCoordinationDeps {
     ok: boolean;
     text: string;
   };
+  executeOperatorCommand: (
+    chatJid: string,
+    command: string,
+    args: string,
+  ) => Promise<{ ok: boolean; text: string }>;
 }
 
 export function getSessionKeyForChat(
@@ -294,6 +299,8 @@ export function createTuiGatewayAdapters(
       return { aborted: true };
     },
     serviceGateway: async ({ action }) => deps.runGatewayServiceCommand(action),
+    executeOperatorCommand: ({ chatJid, command, args }) =>
+      deps.executeOperatorCommand(chatJid, command, args),
     hostUpdate: () =>
       startDetachedUpdateCommand({
         cwd: process.cwd(),
