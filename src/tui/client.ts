@@ -209,14 +209,10 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'runs', description: 'Inspect durable runs' },
   { name: 'learning', description: 'Show learning controls' },
   { name: 'knowledge', description: 'Manage the knowledge wiki' },
-  { name: 'coder', description: 'Delegate coding execution' },
-  { name: 'coder_plan', description: 'Delegate coding planning' },
   { name: 'subagents', description: 'Manage delegated workers' },
   { name: 'setup', description: 'Runtime provider setup' },
   { name: 'groups', description: 'Manage registered groups' },
-  { name: 'freechat', description: 'Manage Telegram free-chat access' },
   { name: 'skill_manager', description: 'Manage skill lifecycle' },
-  { name: 'reflect', description: 'Run durable-learning reflection' },
   { name: 'approvals', description: 'List pending approvals' },
   { name: 'reload', description: 'Reload runtime metadata' },
   { name: 'gateway', description: 'Gateway service action (status|restart)' },
@@ -340,9 +336,8 @@ function helpText(): string {
     '/runs',
     '/learning',
     '/knowledge <action>',
-    '/coder <task> or /coder_plan <task>',
     '/subagents <action>',
-    '/setup, /groups, /freechat, /skill_manager, /reflect, /approvals',
+    '/setup, /groups, /skill_manager, /approvals',
     '/gateway <status|restart|doctor>',
     '/update - preserve local changes, pull, rebuild, and restart',
     '/new or /reset',
@@ -871,14 +866,10 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
       case 'runs':
       case 'learning':
       case 'knowledge':
-      case 'coder':
-      case 'coder_plan':
       case 'subagents':
       case 'setup':
       case 'groups':
-      case 'freechat':
       case 'skill_manager':
-      case 'reflect':
       case 'approvals':
       case 'reload': {
         const result = await client.request<{ ok: boolean; text: string }>(
