@@ -208,6 +208,14 @@ export const TELEGRAM_MEDIA_MAX_MB = Math.max(
   1,
   parseInt(process.env.TELEGRAM_MEDIA_MAX_MB || '20', 10),
 );
+export const FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS = parseInt(
+  process.env.FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS || '3000',
+  10,
+);
+export const FFT_NANO_TELEGRAM_HEARTBEAT_MS = parseInt(
+  process.env.FFT_NANO_TELEGRAM_HEARTBEAT_MS || '0',
+  10,
+);
 export type WebAccessMode = 'localhost' | 'lan' | 'remote';
 
 function envFlag(value: string | undefined, defaultValue: boolean): boolean {

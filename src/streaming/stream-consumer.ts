@@ -46,6 +46,10 @@ export interface StreamConsumerConfig {
   // (ephemeral) Activity bubble. Quick turns finish before this and stay a
   // single content bubble. Defaults to 2.5s.
   activitySpawnThresholdMs?: number;
+  // Minimum interval (ms) between draft edits for coalescing. Defaults based on
+  // chatId sign: positive (private) = 1000ms, negative (group) = 3000ms.
+  // Exposed for testing; prefer FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS env var.
+  draftMinIntervalMs?: number;
 }
 
 export interface StreamTuiEvent {
@@ -103,6 +107,16 @@ export class StreamConsumer {
   private toolProgressMessageId: string | null = null;
   private editChain: Promise<void> = Promise.resolve();
 
+  // Latest-wins coalescing: pending text slot + flush timer.
+  // onDelta clobbers pendingText and arms/resets the flush timer.
+  // When timer fires, only the latest pending text is sent.
+  private pendingText: string | null = null;
+  private flushTimer: NodeJS.Timeout | null = null;
+  // Suppresses the flushTimer callback. Set by abort/stop/clearHeartbeat
+  // to prevent pending text from being sent after those calls.
+  private flushSuppressed = false;
+  private readonly draftMinIntervalMs: number;
+
   private draftId: number | null = null;
   private draftMode = false;
   private appendMode = false;
@@ -116,6 +130,24 @@ export class StreamConsumer {
     this.heartbeatMs = config.heartbeatMs ?? 15_000;
     this.activitySpawnThresholdMs =
       config.activitySpawnThresholdMs ?? DEFAULT_ACTIVITY_SPAWN_THRESHOLD_MS;
+    // Compute draftMinIntervalMs: positive chatId (private) = 1000ms,
+    // negative chatId (group) = 3000ms. Override via config or env.
+    if (config.draftMinIntervalMs !== undefined) {
+      this.draftMinIntervalMs = config.draftMinIntervalMs;
+    } else {
+      const chatIdNum = Number(this.config.chatId);
+      if (!Number.isNaN(chatIdNum) && chatIdNum < 0) {
+        // Group chat (negative chatId)
+        const groupInterval = parseInt(
+          process.env.FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS || '3000',
+          10,
+        );
+        this.draftMinIntervalMs = groupInterval;
+      } else {
+        // Private chat (positive or non-numeric chatId)
+        this.draftMinIntervalMs = 1000;
+      }
+    }
     this.appendMode = config.deliveryMode === 'append';
     this.draftMode =
       config.deliveryMode === 'draft' &&
@@ -159,9 +191,23 @@ export class StreamConsumer {
       return;
     }
 
-    this.editChain = this.editChain
-      .catch(() => {})
-      .then(() => this.sendOrEdit(nextText));
+    // Latest-wins coalescing: clobber pendingText and arm/reset flushTimer.
+    // The flushTimer callback sends only the latest text.
+    this.pendingText = nextText;
+    this.clearFlushTimer();
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      if (this.flushSuppressed) {
+        this.pendingText = null;
+        return;
+      }
+      const textToSend = this.pendingText;
+      this.pendingText = null;
+      if (textToSend === null) return;
+      this.editChain = this.editChain
+        .catch(() => {})
+        .then(() => this.sendOrEdit(textToSend));
+    }, this.draftMinIntervalMs);
   }
 
   handleProgress(event: ContainerProgressEvent): void {
@@ -285,6 +331,16 @@ export class StreamConsumer {
     this.completed = true;
     this.clearHeartbeat();
     this.clearActivityTimer();
+    this.clearFlushTimer();
+
+    // Flush any pending text immediately before proceeding.
+    // Do NOT set flushSuppressed here - finish() needs the pending send
+    // to complete so messageId is set before the final edit.
+    if (this.pendingText !== null) {
+      const pending = this.pendingText;
+      this.pendingText = null;
+      await this.sendOrEdit(pending).catch(() => {});
+    }
 
     if (this.appendMode) {
       await this.editChain.catch(() => {});
@@ -343,8 +399,10 @@ export class StreamConsumer {
 
   async abort(): Promise<void> {
     this.completed = true;
+    this.flushSuppressed = true;
     this.clearHeartbeat();
     this.clearActivityTimer();
+    this.clearFlushTimer();
     await this.editChain.catch(() => {});
 
     // Non-destructive: collapse the activity bubble to an interrupted notice and
@@ -372,8 +430,10 @@ export class StreamConsumer {
   }
 
   stop(): void {
+    this.flushSuppressed = true;
     this.clearHeartbeat();
     this.clearActivityTimer();
+    this.clearFlushTimer();
   }
 
   // ── Internal ──────────────────────────────────────────────────────
@@ -482,6 +542,13 @@ export class StreamConsumer {
     if (this.activitySpawnTimer) {
       clearTimeout(this.activitySpawnTimer);
       this.activitySpawnTimer = null;
+    }
+  }
+
+  private clearFlushTimer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
     }
   }
 
@@ -670,6 +737,8 @@ export class StreamConsumer {
     this.heartbeatPhase = '';
     this.heartbeatDetail = '';
     this.heartbeatStartedAt = 0;
+    this.flushSuppressed = true;
+    this.clearFlushTimer();
   }
 
   private isBackedOff(now = Date.now()): boolean {
