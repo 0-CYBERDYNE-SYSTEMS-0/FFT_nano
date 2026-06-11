@@ -125,13 +125,17 @@ export class StreamConsumer {
 
   constructor(private readonly config: StreamConsumerConfig) {
     this.label = config.label || 'Agent';
-    this.heartbeatMs = config.heartbeatMs ?? 15_000;
+    const configuredHeartbeat = config.heartbeatMs ?? 15_000;
+    this.heartbeatMs =
+      Number.isFinite(configuredHeartbeat) && configuredHeartbeat > 0
+        ? configuredHeartbeat
+        : 0;
     this.activitySpawnThresholdMs =
       config.activitySpawnThresholdMs ?? DEFAULT_ACTIVITY_SPAWN_THRESHOLD_MS;
     // Compute draftMinIntervalMs: positive chatId (private) = 1000ms,
     // negative chatId (group) = 3000ms. Override via config or env.
     if (config.draftMinIntervalMs !== undefined) {
-      this.draftMinIntervalMs = config.draftMinIntervalMs;
+      this.draftMinIntervalMs = Math.max(0, config.draftMinIntervalMs);
     } else {
       const chatIdNum = this.parseTelegramChatId();
       if (!Number.isNaN(chatIdNum) && chatIdNum < 0) {
@@ -140,7 +144,10 @@ export class StreamConsumer {
           process.env.FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS || '3000',
           10,
         );
-        this.draftMinIntervalMs = groupInterval;
+        this.draftMinIntervalMs =
+          Number.isFinite(groupInterval) && groupInterval >= 0
+            ? groupInterval
+            : 3000;
       } else {
         // Private chat (positive or non-numeric chatId)
         this.draftMinIntervalMs = 1000;

@@ -694,48 +694,61 @@ export async function runAgent(
         streamConsumer = null;
         streamConsumerRunId = null;
       }
-      const output = await runContainerAgent(
-        group,
-        {
-          ...input,
-          prompt: promptOverride || input.prompt,
-          requestId: attemptRequestId,
-          verboseMode: runPrefs.verboseMode,
-          noContinue: runPrefs.nextRunNoContinue === true,
-          suppressPreviewStreaming:
-            suppressPreviewStreaming || input.suppressPreviewStreaming,
-          senderRole: options.senderRole,
-        },
-        abortSignal,
-        (event) => {
-          if (event.kind !== 'tool' || !attemptRequestId) return;
-          hadToolSideEffects = true;
-          if (streamConsumer) {
-            streamConsumer.onToolEvent({
+      let output;
+      try {
+        output = await runContainerAgent(
+          group,
+          {
+            ...input,
+            prompt: promptOverride || input.prompt,
+            requestId: attemptRequestId,
+            verboseMode: runPrefs.verboseMode,
+            noContinue: runPrefs.nextRunNoContinue === true,
+            suppressPreviewStreaming:
+              suppressPreviewStreaming || input.suppressPreviewStreaming,
+            senderRole: options.senderRole,
+          },
+          abortSignal,
+          (event) => {
+            if (event.kind !== 'tool' || !attemptRequestId) return;
+            hadToolSideEffects = true;
+            if (streamConsumer) {
+              streamConsumer.onToolEvent({
+                toolName: event.toolName,
+                status: event.status,
+                ...(event.args ? { args: event.args } : {}),
+                ...(event.output ? { output: event.output } : {}),
+                ...(event.error ? { error: event.error } : {}),
+              });
+            }
+            deps.emitTuiToolEvent({
+              runId: attemptRequestId,
+              sessionKey,
+              index: event.index,
               toolName: event.toolName,
               status: event.status,
               ...(event.args ? { args: event.args } : {}),
               ...(event.output ? { output: event.output } : {}),
               ...(event.error ? { error: event.error } : {}),
             });
-          }
-          deps.emitTuiToolEvent({
-            runId: attemptRequestId,
-            sessionKey,
-            index: event.index,
-            toolName: event.toolName,
-            status: event.status,
-            ...(event.args ? { args: event.args } : {}),
-            ...(event.output ? { output: event.output } : {}),
-            ...(event.error ? { error: event.error } : {}),
-          });
-        },
-        (request) => deps.handlePermissionGateRequest(chatJid, request),
-        (event) => {
-          if (streamConsumer) streamConsumer.handleProgress(event);
-          options.onProgressEvent?.(event);
-        },
-      );
+          },
+          (request) => deps.handlePermissionGateRequest(chatJid, request),
+          (event) => {
+            if (streamConsumer) streamConsumer.handleProgress(event);
+            options.onProgressEvent?.(event);
+          },
+        );
+      } catch (err) {
+        streamConsumer?.stop();
+        if (streamConsumer && streamConsumerRunId) {
+          unregisterActiveStreamConsumer(
+            chatJid,
+            streamConsumerRunId,
+            streamConsumer,
+          );
+        }
+        throw err;
+      }
       cancelPendingConfirmationsForChat(chatJid);
       runToolsInvoked = output.toolExecutions?.length ?? 0;
       runToolExecutions = output.toolExecutions ?? [];
