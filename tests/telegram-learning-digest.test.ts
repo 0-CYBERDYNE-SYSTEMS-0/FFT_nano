@@ -4,12 +4,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import {
-  TELEGRAM_ADMIN_COMMANDS,
-} from '../src/telegram-command-spec.js';
-import {
-  shouldRunSkillManager,
-} from '../src/skill-lifecycle.js';
+import { TELEGRAM_ADMIN_COMMANDS } from '../src/telegram-command-spec.js';
+import { shouldRunSkillManager } from '../src/skill-lifecycle.js';
 import { state } from '../src/app-state.js';
 import { formatLearningDigest } from '../src/telegram-delivery.js';
 import {
@@ -20,11 +16,11 @@ import {
 } from '../src/db.js';
 import { PARITY_CONFIG } from '../src/parity-config.js';
 import { resolveGroupFolderPath } from '../src/group-folder.js';
-import {
-  recordSelfImproveEvent,
-} from '../src/self-improve-signals.js';
+import { recordSelfImproveEvent } from '../src/self-improve-signals.js';
 import { shouldTriggerSkillSelfImprove } from '../src/skill-service.js';
 import { recordTaskAuditEvent } from '../src/task-audit.js';
+import { recordMutationAuditEvent } from '../src/mutation-audit.js';
+import { MAIN_GROUP_FOLDER } from '../src/app-config.js';
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -88,9 +84,7 @@ test('VAL-WS6-019: learningPaused=true + autoApprove=true → task status is pen
     // isAgentOrigin = true (simulating headless agent)
     const isAgentOrigin = true;
     const taskStatus =
-      isAgentOrigin && !effectiveAutoApprove
-        ? 'pending_approval'
-        : 'active';
+      isAgentOrigin && !effectiveAutoApprove ? 'pending_approval' : 'active';
 
     // Restore
     state.learningPaused = originalPause;
@@ -148,10 +142,7 @@ test('VAL-WS6-019: task-audit.jsonl records learning-paused noop_reason when pau
     recordTaskAuditEvent(groupFolder, auditEvent);
 
     // Verify the audit line was written
-    assert.ok(
-      fs.existsSync(auditFile),
-      'task-audit.jsonl should be created',
-    );
+    assert.ok(fs.existsSync(auditFile), 'task-audit.jsonl should be created');
     const content = fs.readFileSync(auditFile, 'utf-8');
     const lines = content.split('\n').filter((l) => l.trim());
     assert.equal(lines.length, 1, 'Should have exactly one audit line');
@@ -357,7 +348,10 @@ test('VAL-XARE-014: paused + non-operator + autoApprove → self-improve JSONL w
     });
 
     const jsonlPath = path.join(logsDir, 'self-improve-events.jsonl');
-    assert.ok(fs.existsSync(jsonlPath), 'self-improve-events.jsonl should be created');
+    assert.ok(
+      fs.existsSync(jsonlPath),
+      'self-improve-events.jsonl should be created',
+    );
     const content = fs.readFileSync(jsonlPath, 'utf-8');
     const lines = content.split('\n').filter((l) => l.trim());
     assert.equal(lines.length, 1);
@@ -392,9 +386,7 @@ test('VAL-XARE-014: paused + non-operator + autoApprove → schedule_task IPC cr
     // isAgentOrigin = true (non-operator would still be agent-origin for scheduling)
     const isAgentOrigin = true;
     const taskStatus =
-      isAgentOrigin && !effectiveAutoApprove
-        ? 'pending_approval'
-        : 'active';
+      isAgentOrigin && !effectiveAutoApprove ? 'pending_approval' : 'active';
 
     assert.equal(
       effectiveAutoApprove,
@@ -474,9 +466,7 @@ test('VAL-XARE-017: operator-created cron task delivers even when paused; no lea
       ? false
       : PARITY_CONFIG.cron.agentTasks.autoApprove;
     const taskStatus =
-      isAgentOrigin && !effectiveAutoApprove
-        ? 'pending_approval'
-        : 'active';
+      isAgentOrigin && !effectiveAutoApprove ? 'pending_approval' : 'active';
 
     assert.equal(
       taskStatus,
@@ -560,5 +550,128 @@ test('VAL-XARE-017: operator cron announce delivery row transitions pending→de
     );
   } finally {
     state.learningPaused = originalPause;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Skills section sources actual mutations from mutation-audit.jsonl, not
+// review-trigger events from self-improve-events.jsonl
+// ---------------------------------------------------------------------------
+
+test('learning digest Skills section reports actual skill mutations from mutation-audit.jsonl', () => {
+  const groupDir = resolveGroupFolderPath(MAIN_GROUP_FOLDER);
+  const logsDir = path.join(groupDir, 'logs');
+  const mutationAuditFile = path.join(logsDir, 'mutation-audit.jsonl');
+  const selfImproveFile = path.join(logsDir, 'self-improve-events.jsonl');
+
+  const originalMutationAudit = fs.existsSync(mutationAuditFile)
+    ? fs.readFileSync(mutationAuditFile, 'utf-8')
+    : null;
+  const originalSelfImprove = fs.existsSync(selfImproveFile)
+    ? fs.readFileSync(selfImproveFile, 'utf-8')
+    : null;
+
+  const tmpRoot = makeTmpDir();
+  const dbPath = path.join(tmpRoot, 'messages.db');
+
+  try {
+    initDatabaseAtPath(dbPath);
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(mutationAuditFile, '');
+    fs.writeFileSync(selfImproveFile, '');
+
+    recordMutationAuditEvent(MAIN_GROUP_FOLDER, {
+      kind: 'mutation',
+      authorityId: 'op-auth',
+      senderRole: 'operator',
+      mutationType: 'skill',
+      action: 'create',
+      targetName: 'farm-irrigation-helper',
+      success: true,
+    });
+
+    const digest = formatLearningDigest();
+    assert.match(
+      digest,
+      /Skills \(last 7 days\): 1 skill mutation\(s\)\./,
+      'digest should report actual skill mutation count',
+    );
+    assert.match(
+      digest,
+      /create: farm-irrigation-helper/,
+      'digest should include the mutation action and target name',
+    );
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    if (originalMutationAudit === null) {
+      fs.rmSync(mutationAuditFile, { force: true });
+    } else {
+      fs.writeFileSync(mutationAuditFile, originalMutationAudit);
+    }
+    if (originalSelfImprove === null) {
+      fs.rmSync(selfImproveFile, { force: true });
+    } else {
+      fs.writeFileSync(selfImproveFile, originalSelfImprove);
+    }
+  }
+});
+
+test('learning digest Skills section shows no-skills empty state when a review fires but no mutation occurs', () => {
+  const groupDir = resolveGroupFolderPath(MAIN_GROUP_FOLDER);
+  const logsDir = path.join(groupDir, 'logs');
+  const mutationAuditFile = path.join(logsDir, 'mutation-audit.jsonl');
+  const selfImproveFile = path.join(logsDir, 'self-improve-events.jsonl');
+
+  const originalMutationAudit = fs.existsSync(mutationAuditFile)
+    ? fs.readFileSync(mutationAuditFile, 'utf-8')
+    : null;
+  const originalSelfImprove = fs.existsSync(selfImproveFile)
+    ? fs.readFileSync(selfImproveFile, 'utf-8')
+    : null;
+
+  const tmpRoot = makeTmpDir();
+  const dbPath = path.join(tmpRoot, 'messages.db');
+
+  try {
+    initDatabaseAtPath(dbPath);
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(mutationAuditFile, '');
+    fs.writeFileSync(selfImproveFile, '');
+
+    recordSelfImproveEvent(MAIN_GROUP_FOLDER, {
+      run_id: `digest-test-${Date.now()}`,
+      sender_role: 'member',
+      review_type: 'skill-self-improve',
+      trigger_reason: 'remember-signal',
+      signals_detected: ['remember'],
+      review_fired: true,
+      success: true,
+    });
+
+    const digest = formatLearningDigest();
+    assert.match(
+      digest,
+      /Skills \(last 7 days\): No skills created or modified in the last 7 days\./,
+      'digest should show the no-skills empty state when no mutation occurred',
+    );
+    assert.doesNotMatch(
+      digest,
+      /skill mutation\(s\)/,
+      'digest should not claim skill mutations occurred',
+    );
+  } finally {
+    closeDatabase();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    if (originalMutationAudit === null) {
+      fs.rmSync(mutationAuditFile, { force: true });
+    } else {
+      fs.writeFileSync(mutationAuditFile, originalMutationAudit);
+    }
+    if (originalSelfImprove === null) {
+      fs.rmSync(selfImproveFile, { force: true });
+    } else {
+      fs.writeFileSync(selfImproveFile, originalSelfImprove);
+    }
   }
 });
