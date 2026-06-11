@@ -274,6 +274,10 @@ export function getTuiSessionPrefs(
     thinkLevel: prefs.thinkLevel,
     reasoningLevel: prefs.reasoningLevel,
     verboseMode: prefs.verboseMode,
+    telegramDeliveryMode:
+      prefs.telegramDeliveryMode === 'partial'
+        ? 'stream'
+        : prefs.telegramDeliveryMode,
     noContinueNext: prefs.nextRunNoContinue === true,
   };
 }
@@ -312,6 +316,16 @@ export function patchTuiSessionPrefs(
         prefs.verboseMode = patch.verboseMode;
       else delete prefs.verboseMode;
     }
+    if (Object.prototype.hasOwnProperty.call(patch, 'telegramDeliveryMode')) {
+      if (
+        patch.telegramDeliveryMode &&
+        patch.telegramDeliveryMode !== 'stream'
+      ) {
+        prefs.telegramDeliveryMode = patch.telegramDeliveryMode;
+      } else {
+        delete prefs.telegramDeliveryMode;
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(patch, 'noContinueNext')) {
       if (patch.noContinueNext) prefs.nextRunNoContinue = true;
       else delete prefs.nextRunNoContinue;
@@ -324,6 +338,10 @@ export function patchTuiSessionPrefs(
     thinkLevel: next.thinkLevel,
     reasoningLevel: next.reasoningLevel,
     verboseMode: next.verboseMode,
+    telegramDeliveryMode:
+      next.telegramDeliveryMode === 'partial'
+        ? 'stream'
+        : next.telegramDeliveryMode,
     noContinueNext: next.nextRunNoContinue === true,
   };
 }
