@@ -229,7 +229,7 @@ describe('StreamConsumer', () => {
     assert.equal(result.previewState, null);
   });
 
-  test('delivery mode draft keeps verbose tool progress in the native draft', async () => {
+  test('delivery mode draft keeps verbose tool progress in a separate activity message', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
       chatId: 'telegram:1',
@@ -238,16 +238,16 @@ describe('StreamConsumer', () => {
       draftId: 654,
       deliveryMode: 'draft',
       verboseMode: 'all',
+      activitySpawnThresholdMs: 0,
     });
 
     consumer.onToolEvent({ toolName: 'Bash', status: 'start' });
     await flush();
 
-    assert.equal(adapter.sent.length, 0);
+    assert.equal(adapter.sent.length, 1);
     assert.equal(adapter.edits.length, 0);
-    assert.equal(adapter.drafts.length, 1);
-    assert.equal(adapter.drafts[0].draftId, 654);
-    assert.match(adapter.drafts[0].content, /Bash/);
+    assert.equal(adapter.drafts.length, 0);
+    assert.match(adapter.sent[0].content, /Bash/);
     consumer.stop();
   });
 
@@ -396,7 +396,8 @@ describe('StreamConsumer', () => {
 
     await consumer.onDelta('This is the real streamed answer content here');
     consumer.handleProgress({ kind: 'thinking', at: Date.now() });
-    await waitForCoalesce();
+    // Wait long enough for the flushTimer (draftMinIntervalMs=20) to fire
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     // Two distinct bubbles: content (msg 1) + activity (msg 2).
     assert.equal(adapter.sent.length, 2);
@@ -479,11 +480,13 @@ describe('StreamConsumer', () => {
 
     await consumer.onDelta('This is the real streamed answer content here');
     consumer.handleProgress({ kind: 'thinking', at: Date.now() });
-    await waitForCoalesce();
+    // Wait for first flushTimer to fire and content to be sent
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await consumer.onDelta(
       'This is the updated streamed answer content after activity failed',
     );
-    await waitForCoalesce();
+    // Wait for second flushTimer to fire and content to be edited
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     assert.equal(adapter.edits.length, 1);
     assert.equal(adapter.edits[0].messageId, '1');
@@ -666,11 +669,101 @@ describe('StreamConsumer', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     assert.equal(adapter.sent.length, 1);
-    assert.equal(adapter.sent[0].content, 'Second text that is also long enough');
+    assert.equal(
+      adapter.sent[0].content,
+      'Second text that is also long enough',
+    );
     assert.ok(
       !adapter.sent.some((s) => s.content.includes('First')),
       'first text should not appear',
     );
+    consumer.stop();
+  });
+
+  test('continuous deltas flush at the configured cadence instead of starving', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-continuous',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 20,
+    });
+
+    for (let index = 0; index < 8; index++) {
+      await consumer.onDelta(
+        `Continuous answer frame ${index} with enough text to send`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 8));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.ok(adapter.sent.length + adapter.edits.length >= 2);
+    assert.equal(
+      adapter.edits.at(-1)?.content || adapter.sent.at(-1)?.content,
+      'Continuous answer frame 7 with enough text to send',
+    );
+    consumer.stop();
+  });
+
+  test('assistant progress completion does not discard a pending answer frame', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-assistant-progress',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 20,
+    });
+
+    await consumer.onDelta(
+      'Pending answer content that must still be delivered',
+    );
+    consumer.handleProgress({
+      kind: 'assistant',
+      at: Date.now(),
+      text: 'Pending answer content that must still be delivered',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(adapter.sent.length, 1);
+    assert.equal(
+      adapter.sent[0].content,
+      'Pending answer content that must still be delivered',
+    );
+    consumer.stop();
+  });
+
+  test('unsupported native draft falls back to a normal stream message', async () => {
+    const adapter = createMockAdapter({
+      async sendDraft() {
+        return {
+          success: false,
+          messageId: '',
+          error: 'Bad Request: method sendMessageDraft is not supported',
+        };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-draft-fallback',
+      adapter,
+      deliveryMode: 'draft',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Draft fallback answer with enough content to send');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(adapter.sent.length, 1);
+    assert.equal(
+      adapter.sent[0].content,
+      'Draft fallback answer with enough content to send',
+    );
+    assert.equal(consumer.getPreviewState()?.messageId, '1');
     consumer.stop();
   });
 
@@ -687,11 +780,19 @@ describe('StreamConsumer', () => {
 
     await consumer.onDelta('Pending text that is long enough');
     await consumer.finish('Final answer');
-    // Wait past the throttle interval
+    // Wait past the throttle interval to ensure flushTimer (if any) has fired
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    assert.equal(adapter.sent.length, 0, 'no send after finish');
-    assert.equal(adapter.edits.length, 1, 'finish should send final answer');
+    // finish() sends pending text immediately via sendOrEdit, then edits with final answer.
+    // The flushTimer is cleared so nothing additional sends after finish().
+    assert.equal(
+      adapter.sent.length,
+      1,
+      'finish sends pending text immediately',
+    );
+    assert.equal(adapter.sent[0].content, 'Pending text that is long enough');
+    assert.equal(adapter.edits.length, 1, 'finish edits final answer');
+    assert.equal(adapter.edits[0].content, 'Final answer');
   });
 
   test('VAL-STREAM-003 flush timer cleared on abort: no sendOrEdit after abort', async () => {
@@ -778,7 +879,11 @@ describe('StreamConsumer', () => {
 
     // Access private field for testing via any cast (test-only)
     const draftInterval = (consumer as any).draftMinIntervalMs;
-    assert.equal(draftInterval, 1000, 'private chat should use 1000ms interval');
+    assert.equal(
+      draftInterval,
+      1000,
+      'private chat should use 1000ms interval',
+    );
     consumer.stop();
   });
 
@@ -795,6 +900,25 @@ describe('StreamConsumer', () => {
 
     const draftInterval = (consumer as any).draftMinIntervalMs;
     assert.equal(draftInterval, 3000, 'group chat should use 3000ms interval');
+    consumer.stop();
+  });
+
+  test('prefixed Telegram group IDs use group cadence and disable native drafts', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-123456',
+      runId: 'run-group-draft',
+      adapter,
+      deliveryMode: 'draft',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Group draft mode falls back to a stream message');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(adapter.drafts.length, 0);
+    assert.equal(adapter.sent.length, 1);
     consumer.stop();
   });
 });

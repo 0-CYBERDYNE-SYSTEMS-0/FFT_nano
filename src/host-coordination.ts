@@ -24,6 +24,7 @@ import {
   updateTelegramDraftPreview,
   updateTelegramPreview,
 } from './telegram-streaming.js';
+import { getActiveStreamConsumer } from './streaming/active-consumers.js';
 import { deriveTelegramDraftId, type AvailableGroup } from './pi-runner.js';
 import type { RegisteredGroup } from './types.js';
 import { isTelegramJid } from './telegram.js';
@@ -383,6 +384,19 @@ export async function processHostEvent(
       if (!isTelegramJid(event.chatJid)) return;
       if (!state.telegramBot) return;
       if (!state.registeredGroups[event.chatJid]) return;
+
+      const activeConsumer = getActiveStreamConsumer(
+        event.chatJid,
+        event.runId,
+      );
+      if (activeConsumer) {
+        activeConsumer.handleExternalProgress(
+          event.phase,
+          event.text,
+          event.detail,
+        );
+        return;
+      }
 
       const deliveryMode = getTelegramDeliveryMode(event.chatJid);
       if (deliveryMode === 'off') return;
