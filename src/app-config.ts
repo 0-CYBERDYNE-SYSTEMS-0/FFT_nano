@@ -213,7 +213,7 @@ export const FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS = parseInt(
   10,
 );
 export const FFT_NANO_TELEGRAM_HEARTBEAT_MS = parseInt(
-  process.env.FFT_NANO_TELEGRAM_HEARTBEAT_MS || '0',
+  process.env.FFT_NANO_TELEGRAM_HEARTBEAT_MS || '30000',
   10,
 );
 export type WebAccessMode = 'localhost' | 'lan' | 'remote';

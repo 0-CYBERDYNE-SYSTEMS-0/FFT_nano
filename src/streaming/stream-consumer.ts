@@ -91,8 +91,7 @@ export class StreamConsumer {
   private activityCollapsed = false;
   private readonly runStartedAt = Date.now();
   private readonly activitySpawnThresholdMs: number;
-  // Two-block delivery (separate activity + content bubbles) applies only to
-  // `stream` mode. append/draft/off retain their existing single-path behavior.
+  // Status and answer content use separate delivery paths in every live mode.
   private readonly twoBlock: boolean;
 
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -105,15 +104,14 @@ export class StreamConsumer {
   private lastToolName: string | undefined;
   private toolProgressLines: string[] = [];
   private toolProgressMessageId: string | null = null;
-  private editChain: Promise<void> = Promise.resolve();
+  private answerChain: Promise<void> = Promise.resolve();
+  private activityChain: Promise<void> = Promise.resolve();
 
-  // Latest-wins coalescing: pending text slot + flush timer.
-  // onDelta clobbers pendingText and arms/resets the flush timer.
-  // When timer fires, only the latest pending text is sent.
+  // One pending slot plus a non-resetting timer prevents continuous output
+  // from postponing every edit while still dropping stale intermediate frames.
   private pendingText: string | null = null;
   private flushTimer: NodeJS.Timeout | null = null;
-  // Suppresses the flushTimer callback. Set by abort/stop/clearHeartbeat
-  // to prevent pending text from being sent after those calls.
+  private lastAnswerFlushAt = 0;
   private flushSuppressed = false;
   private readonly draftMinIntervalMs: number;
 
@@ -135,7 +133,7 @@ export class StreamConsumer {
     if (config.draftMinIntervalMs !== undefined) {
       this.draftMinIntervalMs = config.draftMinIntervalMs;
     } else {
-      const chatIdNum = Number(this.config.chatId);
+      const chatIdNum = this.parseTelegramChatId();
       if (!Number.isNaN(chatIdNum) && chatIdNum < 0) {
         // Group chat (negative chatId)
         const groupInterval = parseInt(
@@ -151,9 +149,10 @@ export class StreamConsumer {
     this.appendMode = config.deliveryMode === 'append';
     this.draftMode =
       config.deliveryMode === 'draft' &&
+      this.parseTelegramChatId() > 0 &&
       typeof config.adapter.sendDraft === 'function' &&
       config.adapter.supportsDraftStreaming?.(config.chatId) !== false;
-    this.twoBlock = config.deliveryMode === 'stream';
+    this.twoBlock = config.deliveryMode !== 'off';
     this.draftId = this.draftMode
       ? config.draftId ||
         deriveStreamDraftId(`${config.chatId}:${config.runId}`)
@@ -163,12 +162,10 @@ export class StreamConsumer {
   async onDelta(text: string): Promise<void> {
     if (this.completed) return;
     if (this.config.deliveryMode === 'off') return;
-    if (this.isBackedOff()) return;
-
     const nextText = this.appendToolTrailFooter(text);
 
     if (this.appendMode) {
-      this.editChain = this.editChain
+      this.answerChain = this.answerChain
         .catch(() => {})
         .then(() => {
           const appendText = this.extractAppendText(nextText);
@@ -191,23 +188,8 @@ export class StreamConsumer {
       return;
     }
 
-    // Latest-wins coalescing: clobber pendingText and arm/reset flushTimer.
-    // The flushTimer callback sends only the latest text.
     this.pendingText = nextText;
-    this.clearFlushTimer();
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = null;
-      if (this.flushSuppressed) {
-        this.pendingText = null;
-        return;
-      }
-      const textToSend = this.pendingText;
-      this.pendingText = null;
-      if (textToSend === null) return;
-      this.editChain = this.editChain
-        .catch(() => {})
-        .then(() => this.sendOrEdit(textToSend));
-    }, this.draftMinIntervalMs);
+    this.scheduleAnswerFlush();
   }
 
   handleProgress(event: ContainerProgressEvent): void {
@@ -327,15 +309,18 @@ export class StreamConsumer {
     });
   }
 
+  handleExternalProgress(phase: string, text: string, detail?: string): void {
+    if (this.completed) return;
+    this.emitStatusText(phase, text, detail);
+  }
+
   async finish(finalText?: string): Promise<FinishResult> {
     this.completed = true;
     this.clearHeartbeat();
     this.clearActivityTimer();
     this.clearFlushTimer();
 
-    // Flush any pending text immediately before proceeding.
-    // Do NOT set flushSuppressed here - finish() needs the pending send
-    // to complete so messageId is set before the final edit.
+    await this.answerChain.catch(() => {});
     if (this.pendingText !== null) {
       const pending = this.pendingText;
       this.pendingText = null;
@@ -343,13 +328,11 @@ export class StreamConsumer {
     }
 
     if (this.appendMode) {
-      await this.editChain.catch(() => {});
       await this.collapseActivity();
       return { previewState: null, completed: true };
     }
 
     if (finalText && this.messageId) {
-      await this.editChain.catch(() => {});
       const result = await this.config.adapter.editMessage(
         this.config.chatId,
         this.messageId,
@@ -361,7 +344,6 @@ export class StreamConsumer {
       }
     }
 
-    await this.editChain.catch(() => {});
     await this.collapseActivity();
 
     const previewState = this.getPreviewState();
@@ -377,7 +359,7 @@ export class StreamConsumer {
   async collapseActivity(summary?: string): Promise<void> {
     this.clearActivityTimer();
     this.pendingActivityText = '';
-    await this.editChain.catch(() => {});
+    await this.activityChain.catch(() => {});
     if (!this.activityMessageId || this.activityCollapsed) {
       this.activityCollapsed = true;
       return;
@@ -403,7 +385,8 @@ export class StreamConsumer {
     this.clearHeartbeat();
     this.clearActivityTimer();
     this.clearFlushTimer();
-    await this.editChain.catch(() => {});
+    await this.answerChain.catch(() => {});
+    await this.activityChain.catch(() => {});
 
     // Non-destructive: collapse the activity bubble to an interrupted notice and
     // LEAVE the content bubble in place. A recoverable stop must never yank away
@@ -447,10 +430,15 @@ export class StreamConsumer {
         if (result.success) {
           this.lastText = text;
           this.clearFailures();
+          return;
+        }
+        if (this.isUnsupportedDraftError(result.error)) {
+          this.draftMode = false;
+          this.draftId = null;
         } else {
           this.recordFailure();
+          return;
         }
-        return;
       }
 
       if (!this.messageId) {
@@ -498,7 +486,7 @@ export class StreamConsumer {
           this.activitySpawnTimer = null;
           const pending = this.pendingActivityText;
           if (!pending || this.completed || this.activityCollapsed) return;
-          this.editChain = this.editChain
+          this.activityChain = this.activityChain
             .catch(() => {})
             .then(() => this.sendOrEditActivity(pending));
         }, wait);
@@ -506,7 +494,7 @@ export class StreamConsumer {
       return;
     }
 
-    this.editChain = this.editChain
+    this.activityChain = this.activityChain
       .catch(() => {})
       .then(() => this.sendOrEditActivity(text));
   }
@@ -552,6 +540,45 @@ export class StreamConsumer {
     }
   }
 
+  private scheduleAnswerFlush(): void {
+    if (this.flushSuppressed || this.completed || this.flushTimer) return;
+    const now = Date.now();
+    const cadenceDelay = Math.max(
+      0,
+      this.draftMinIntervalMs - (now - this.lastAnswerFlushAt),
+    );
+    const backoffDelay = this.disabled
+      ? Math.max(0, this.disabledUntil - now)
+      : 0;
+
+    this.flushTimer = setTimeout(
+      () => {
+        this.flushTimer = null;
+        if (this.flushSuppressed || this.completed) {
+          this.pendingText = null;
+          return;
+        }
+        const text = this.pendingText;
+        this.pendingText = null;
+        if (text === null) return;
+
+        this.answerChain = this.answerChain
+          .catch(() => {})
+          .then(async () => {
+            await this.sendOrEdit(text);
+            this.lastAnswerFlushAt = Date.now();
+            if (this.lastText !== text && this.pendingText === null) {
+              this.pendingText = text;
+            }
+          })
+          .finally(() => {
+            if (this.pendingText !== null) this.scheduleAnswerFlush();
+          });
+      },
+      Math.max(cadenceDelay, backoffDelay),
+    );
+  }
+
   private handleToolTrail(event: ToolProgressEvent): void {
     const { deliveryMode, verboseMode } = this.config;
     if (deliveryMode === 'off') return;
@@ -595,7 +622,7 @@ export class StreamConsumer {
       return;
     }
 
-    this.editChain = this.editChain
+    this.activityChain = this.activityChain
       .catch(() => {})
       .then(async () => {
         const { adapter, chatId } = this.config;
@@ -737,17 +764,23 @@ export class StreamConsumer {
     this.heartbeatPhase = '';
     this.heartbeatDetail = '';
     this.heartbeatStartedAt = 0;
-    this.flushSuppressed = true;
-    this.clearFlushTimer();
   }
 
-  private isBackedOff(now = Date.now()): boolean {
-    if (this.disabled) {
-      if (this.disabledUntil > now) return true;
-      this.disabled = false;
-      this.disabledUntil = 0;
-    }
-    return false;
+  private parseTelegramChatId(): number {
+    const raw = this.config.chatId.startsWith('telegram:')
+      ? this.config.chatId.slice('telegram:'.length)
+      : this.config.chatId;
+    return Number(raw);
+  }
+
+  private isUnsupportedDraftError(error?: string): boolean {
+    const normalized = (error || '').toLowerCase();
+    return (
+      normalized.includes('sendmessagedraft') ||
+      normalized.includes('method not found') ||
+      normalized.includes('not supported') ||
+      normalized.includes('private chat')
+    );
   }
 
   private recordFailure(now = Date.now()): void {
