@@ -527,6 +527,7 @@ export async function runAgent(
     lifecyclePolicyOverride?: ContainerInput['lifecyclePolicyOverride'];
     onProgressEvent?: (event: ContainerProgressEvent) => void;
     senderRole?: 'operator' | 'member' | 'unknown';
+    dryRun?: boolean;
   } = {},
   abortSignal?: AbortSignal,
 ): Promise<{
@@ -639,6 +640,7 @@ export async function runAgent(
       showReasoning:
         runtimePrefs.showReasoning === true ||
         runtimePrefs.reasoningLevel === 'stream',
+      dryRun: options.dryRun === true,
     };
 
     const sessionKey = deps.getSessionKeyForChat(chatJid);

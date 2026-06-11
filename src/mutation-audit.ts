@@ -12,9 +12,12 @@ import { logger } from './logger.js';
 // pattern. Used by the /learning digest to show mutation activity.
 // ---------------------------------------------------------------------------
 
-export type MutationAuditKind =
-  | 'mutation'
-  | 'noop';
+export type MutationAuditKind = 'mutation' | 'noop';
+
+export interface MutationAuditLogEntry extends MutationAuditEvent {
+  ts: string;
+  group_id: string;
+}
 
 export interface MutationAuditEvent {
   // 'mutation' = successful mutation, 'noop' = rejected due to budget
@@ -65,5 +68,37 @@ export function recordMutationAuditEvent(
       { err, groupFolder, event },
       'Failed to record mutation audit event',
     );
+  }
+}
+
+/**
+ * Read mutation audit events from the JSONL file for the given group.
+ * Returns parsed lines from the last 7 days.
+ */
+export function readMutationAuditEventsLast7Days(
+  groupFolder: string,
+): MutationAuditLogEntry[] {
+  try {
+    const filePath = mutationAuditLogPath(groupFolder);
+    if (!fs.existsSync(filePath)) return [];
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n').filter((l) => l.trim());
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString();
+    const events: MutationAuditLogEntry[] = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as MutationAuditLogEntry;
+        if (parsed.ts && parsed.ts >= cutoff) {
+          events.push(parsed);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return events;
+  } catch {
+    return [];
   }
 }

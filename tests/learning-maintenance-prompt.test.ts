@@ -31,7 +31,9 @@ const TEST_PATHS: WorkspacePaths = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeMaintenanceInput(overrides: Partial<SystemPromptInput> = {}): SystemPromptInput {
+function makeMaintenanceInput(
+  overrides: Partial<SystemPromptInput> = {},
+): SystemPromptInput {
   return {
     assistantName: 'TestBot',
     prompt: 'What should I do?',
@@ -53,7 +55,9 @@ function makeMaintenanceInput(overrides: Partial<SystemPromptInput> = {}): Syste
   } as SystemPromptInput;
 }
 
-function makeInteractiveInput(overrides: Partial<SystemPromptInput> = {}): SystemPromptInput {
+function makeInteractiveInput(
+  overrides: Partial<SystemPromptInput> = {},
+): SystemPromptInput {
   return {
     assistantName: 'TestBot',
     prompt: 'What should I do?',
@@ -88,12 +92,15 @@ describe('VAL-LISO-020: Maintenance prompt is minimal', () => {
 
     const result = callBuildSystemPrompt(maintInput);
 
-    // Maintenance prompt should not include SOUL.md content
-    // The result.text is the full prompt; we check that SOUL-specific content is absent
-    // or that the context state shows empty entries
-    assert.ok(
-      result.report !== undefined,
-      'buildSystemPrompt should return report with context info',
+    // Verify the context entries don't include SOUL.md
+    const soulEntries = result.report.contextEntries.filter(
+      (entry: { id?: string; title?: string }) =>
+        entry.title?.includes('SOUL') || entry.id === 'soul',
+    );
+    assert.equal(
+      soulEntries.length,
+      0,
+      'Maintenance prompt should not include SOUL.md entries',
     );
   });
 
@@ -107,7 +114,11 @@ describe('VAL-LISO-020: Maintenance prompt is minimal', () => {
       (entry: { id?: string; title?: string }) =>
         entry.title?.includes('USER') || entry.id === 'user',
     );
-    assert.equal(userEntries.length, 0, 'Maintenance prompt should not include USER.md entries');
+    assert.equal(
+      userEntries.length,
+      0,
+      'Maintenance prompt should not include USER.md entries',
+    );
   });
 
   it('maintenance mode excludes NANO.md from prompt', () => {
@@ -120,7 +131,11 @@ describe('VAL-LISO-020: Maintenance prompt is minimal', () => {
       (entry: { id?: string; title?: string }) =>
         entry.title?.includes('NANO') || entry.id === 'nano',
     );
-    assert.equal(nanoEntries.length, 0, 'Maintenance prompt should not include NANO.md entries');
+    assert.equal(
+      nanoEntries.length,
+      0,
+      'Maintenance prompt should not include NANO.md entries',
+    );
   });
 
   it('maintenance mode excludes MEMORY.md canonical content', () => {
@@ -149,7 +164,8 @@ describe('VAL-LISO-020: Maintenance prompt is minimal', () => {
     // Maintenance should not include [RECENT CONVERSATION] or equivalent
     const conversationEntries = result.report.contextEntries.filter(
       (entry: { id?: string; title?: string }) =>
-        entry.id?.includes('conversation') || entry.title?.includes('CONVERSATION'),
+        entry.id?.includes('conversation') ||
+        entry.title?.includes('CONVERSATION'),
     );
     assert.equal(
       conversationEntries.length,
@@ -195,7 +211,11 @@ describe('VAL-LISO-020: Maintenance prompt is minimal', () => {
 
     const result = callBuildSystemPrompt(maintInput);
 
-    assert.equal(result.report.mode, 'maintenance', 'Report should reflect maintenance mode');
+    assert.equal(
+      result.report.mode,
+      'maintenance',
+      'Report should reflect maintenance mode',
+    );
   });
 
   it('interactive mode includes expected bootstrap content', () => {
@@ -223,7 +243,11 @@ describe('Maintenance prompt mode excludes HEARTBEAT.md', () => {
       (entry: { id?: string; title?: string }) =>
         entry.title?.includes('HEARTBEAT') || entry.id === 'heartbeat',
     );
-    assert.equal(heartbeatEntries.length, 0, 'Maintenance should not include HEARTBEAT.md');
+    assert.equal(
+      heartbeatEntries.length,
+      0,
+      'Maintenance should not include HEARTBEAT.md',
+    );
   });
 
   it('maintenance mode does not include BOOTSTRAP.md', () => {
@@ -235,7 +259,11 @@ describe('Maintenance prompt mode excludes HEARTBEAT.md', () => {
       (entry: { id?: string; title?: string }) =>
         entry.title?.includes('BOOTSTRAP') || entry.id === 'bootstrap',
     );
-    assert.equal(bootstrapEntries.length, 0, 'Maintenance should not include BOOTSTRAP.md');
+    assert.equal(
+      bootstrapEntries.length,
+      0,
+      'Maintenance should not include BOOTSTRAP.md',
+    );
   });
 
   it('maintenance mode does not include IDENTITY.md', () => {
@@ -247,7 +275,11 @@ describe('Maintenance prompt mode excludes HEARTBEAT.md', () => {
       (entry: { id?: string; title?: string }) =>
         entry.title?.includes('IDENTITY') || entry.id === 'identity',
     );
-    assert.equal(identityEntries.length, 0, 'Maintenance should not include IDENTITY.md');
+    assert.equal(
+      identityEntries.length,
+      0,
+      'Maintenance should not include IDENTITY.md',
+    );
   });
 
   it('maintenance mode does not include PRINCIPLES.md', () => {
@@ -259,7 +291,11 @@ describe('Maintenance prompt mode excludes HEARTBEAT.md', () => {
       (entry: { id?: string; title?: string }) =>
         entry.title?.includes('PRINCIPLES') || entry.id === 'principles',
     );
-    assert.equal(principlesEntries.length, 0, 'Maintenance should not include PRINCIPLES.md');
+    assert.equal(
+      principlesEntries.length,
+      0,
+      'Maintenance should not include PRINCIPLES.md',
+    );
   });
 
   it('maintenance mode does not include TODOS.md', () => {
@@ -271,7 +307,11 @@ describe('Maintenance prompt mode excludes HEARTBEAT.md', () => {
       (entry: { id?: string; title?: string }) =>
         entry.title?.includes('TODOS') || entry.id === 'todos',
     );
-    assert.equal(todosEntries.length, 0, 'Maintenance should not include TODOS.md');
+    assert.equal(
+      todosEntries.length,
+      0,
+      'Maintenance should not include TODOS.md',
+    );
   });
 });
 
@@ -311,7 +351,10 @@ describe('Prompt mode context budget', () => {
 
     // For interactive main, SOUL/NANO should be included
     // The exact entries depend on file existence, but the budget should indicate inclusion
-    assert.ok(result.text.length > 0, 'Interactive main should have full prompt');
+    assert.ok(
+      result.text.length > 0,
+      'Interactive main should have full prompt',
+    );
   });
 });
 
@@ -345,23 +388,34 @@ describe('Maintenance prompt runtime hints', () => {
 
 describe('LISO.5 maintenance contract', () => {
   it('maintenance prompt does not include retrieved memory text', () => {
-    const maintInput = makeMaintenanceInput({
-      providedMemoryContext: 'Long retrieved memory about previous conversations that should not be in maintenance prompt',
-    });
+    const marker =
+      'DISTINCTIVE_RETRIEVED_MEMORY_MARKER_THAT_MUST_NOT_LEAK_INTO_MAINTENANCE';
+    // memoryContext (not providedMemoryContext) is the real input field read by
+    // buildSystemPrompt; maintenance mode must drop it even when populated.
+    const maintInput = makeMaintenanceInput({ memoryContext: marker });
 
     const result = callBuildSystemPrompt(maintInput);
 
-    // The maintenance prompt text should not include the provided memory context
-    // because maintenance mode filters out retrieved memory
-    if (maintInput.providedMemoryContext) {
-      // The actual text may or may not include it depending on implementation
-      // But the key is that the contextEntries should not include memory hits
-      const memoryEntries = result.report.contextEntries.filter(
-        (entry: { source?: string }) => entry.source === 'memory',
-      );
-      // For maintenance, memory retrieval is not included in the same way
-      assert.ok(true, 'Maintenance mode uses minimal context');
-    }
+    assert.ok(
+      !result.text.includes(marker),
+      'Maintenance prompt text must not include retrieved memory context',
+    );
+    assert.ok(
+      !result.ephemeralText.includes(marker),
+      'Maintenance ephemeral prompt must not include retrieved memory context',
+    );
+  });
+
+  it('interactive prompt still includes retrieved memory text', () => {
+    const marker = 'DISTINCTIVE_RETRIEVED_MEMORY_MARKER_FOR_INTERACTIVE';
+    const interactiveInput = makeInteractiveInput({ memoryContext: marker });
+
+    const result = callBuildSystemPrompt(interactiveInput);
+
+    assert.ok(
+      result.text.includes(marker) || result.ephemeralText.includes(marker),
+      'Interactive prompt should include retrieved memory context',
+    );
   });
 
   it('maintenance mode produces smaller prompt than interactive mode', () => {

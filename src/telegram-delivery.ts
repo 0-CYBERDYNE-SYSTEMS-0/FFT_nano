@@ -61,6 +61,7 @@ import { APP_VERSION, SERVICE_STARTED_AT } from './app-state.js';
 import { GIT_INFO } from './state-persistence.js';
 import { getContainerRuntime } from './container-runtime.js';
 import { formatStatusReport } from './status-report.js';
+import { readMutationAuditEventsLast7Days } from './mutation-audit.js';
 import {
   readKnowledgeWikiStatus,
   formatKnowledgeWikiStatusText,
@@ -1046,7 +1047,31 @@ export function formatLearningDigest(): string {
   const groupFolder = MAIN_GROUP_FOLDER;
 
   // Section 1: Skills created/patched/archived in the last 7 days (VAL-WS6-009)
-  // Read from self-improve-events.jsonl for review activity
+  // Read from mutation-audit.jsonl for actual skill mutations
+  const mutationEvents = readMutationAuditEventsLast7Days(groupFolder);
+  const skillMutations = mutationEvents.filter(
+    (e) => e.kind === 'mutation' && e.mutationType === 'skill' && e.success,
+  );
+  if (skillMutations.length === 0) {
+    lines.push(
+      'Skills (last 7 days): No skills created or modified in the last 7 days.',
+    );
+  } else {
+    lines.push(
+      `Skills (last 7 days): ${skillMutations.length} skill mutation(s).`,
+    );
+    for (const evt of skillMutations.slice(0, 3)) {
+      const detail = evt.targetName
+        ? `${evt.action}: ${evt.targetName}`
+        : evt.action;
+      lines.push(`  - ${detail}`);
+    }
+    if (skillMutations.length > 3) {
+      lines.push(`  ... and ${skillMutations.length - 3} more`);
+    }
+  }
+
+  // Optional: mention review triggers as a one-line aside
   const selfImproveEvents = readSelfImproveEventsLast7Days(groupFolder);
   const skillReviewEvents = selfImproveEvents.filter(
     (e) =>
@@ -1054,20 +1079,8 @@ export function formatLearningDigest(): string {
       (e['review_type'] === 'skill-self-improve' ||
         e['review_type'] === 'skill-manager'),
   );
-  if (skillReviewEvents.length === 0) {
-    lines.push('Skills (last 7 days): No skills created or modified in the last 7 days.');
-  } else {
-    lines.push(`Skills (last 7 days): ${skillReviewEvents.length} skill review(s) triggered.`);
-    const firedEvents = skillReviewEvents.filter((e) => e['review_fired'] === true);
-    if (firedEvents.length > 0) {
-      for (const evt of firedEvents.slice(0, 3)) {
-        const reason = (evt['trigger_reason'] as string) || 'unknown';
-        lines.push(`  - ${reason}`);
-      }
-      if (firedEvents.length > 3) {
-        lines.push(`  ... and ${firedEvents.length - 3} more`);
-      }
-    }
+  if (skillReviewEvents.length > 0) {
+    lines.push(`  (${skillReviewEvents.length} skill review(s) triggered)`);
   }
 
   // Section 2: Memory writes from learning_injections (VAL-WS6-009)
@@ -1076,7 +1089,9 @@ export function formatLearningDigest(): string {
   if (memoryInjections.length === 0) {
     lines.push('Memory writes: No memory writes in the last 20 injections.');
   } else {
-    lines.push(`Memory writes: ${memoryInjections.length} memory write(s) in last 20 injections.`);
+    lines.push(
+      `Memory writes: ${memoryInjections.length} memory write(s) in last 20 injections.`,
+    );
     for (const inj of memoryInjections.slice(0, 5)) {
       const itemPreview =
         inj.item.length > 50 ? inj.item.slice(0, 50) + '…' : inj.item;
@@ -1115,14 +1130,10 @@ export function formatLearningDigest(): string {
   if (pendingTasks.length === 0) {
     lines.push('Pending agent-task approvals: None.');
   } else {
-    lines.push(
-      `Pending agent-task approvals: ${pendingTasks.length} pending.`,
-    );
+    lines.push(`Pending agent-task approvals: ${pendingTasks.length} pending.`);
     for (const task of pendingTasks.slice(0, 5)) {
       const promptPreview =
-        task.prompt.length > 50
-          ? task.prompt.slice(0, 50) + '…'
-          : task.prompt;
+        task.prompt.length > 50 ? task.prompt.slice(0, 50) + '…' : task.prompt;
       lines.push(`  - ${task.id}: ${promptPreview}`);
     }
     if (pendingTasks.length > 5) {

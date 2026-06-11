@@ -703,7 +703,9 @@ function renderSkillCatalog(
       when && !desc.toLowerCase().includes(when.toLowerCase())
         ? `${desc} When to use: ${when}`
         : desc;
-    summaryLines.push(`- ${entry.name} [${entry.source}]: ${combined}.${toolText}`);
+    summaryLines.push(
+      `- ${entry.name} [${entry.source}]: ${combined}.${toolText}`,
+    );
   }
 
   const headerText = header.join('\n');
@@ -727,9 +729,9 @@ function renderSkillCatalog(
       truncated = fitted.truncated;
       if (fitted.truncated) {
         // Count how many summary lines were fully omitted
-        const injectedLineCount = summariesText.split('\n').filter((l) =>
-          l.startsWith('- '),
-        ).length;
+        const injectedLineCount = summariesText
+          .split('\n')
+          .filter((l) => l.startsWith('- ')).length;
         omittedCount = entries.length - injectedLineCount;
       }
     }
@@ -876,9 +878,7 @@ function renderBasePrompt(params: {
   lines.push('');
 
   lines.push('## Context Map');
-  lines.push(
-    'Injected EVERY turn (trust these over conversation history):',
-  );
+  lines.push('Injected EVERY turn (trust these over conversation history):');
   lines.push(
     '- SOUL.md (identity/values), TODOS.md (active mission state), retrieved memory snippets.',
   );
@@ -890,19 +890,15 @@ function renderBasePrompt(params: {
   );
   lines.push('On disk only — fetch on demand:');
   lines.push(
-    '- memory/YYYY-MM-DD.md → daily journal (append-only; create today\'s if missing)',
+    "- memory/YYYY-MM-DD.md → daily journal (append-only; create today's if missing)",
   );
-  lines.push(
-    '- knowledge/raw/ → capture staging for the nightly librarian',
-  );
-  lines.push(
-    '- canonical/*.md → durable structured memory',
-  );
+  lines.push('- knowledge/raw/ → capture staging for the nightly librarian');
+  lines.push('- canonical/*.md → durable structured memory');
   lines.push(
     '- skills via skill_list / skill_view (catalog above shows summaries only)',
   );
   lines.push(
-    'Recall rule: before claiming you don\'t know or remember something, use memory_search.',
+    "Recall rule: before claiming you don't know or remember something, use memory_search.",
   );
   if (!params.isMain) {
     lines.push(
@@ -1322,7 +1318,12 @@ export function buildSystemPrompt(
         : 'full';
   const assistantName =
     (input.assistantName || 'FarmFriend').trim() || 'FarmFriend';
-  const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
+  // LISO.5: maintenance runs use minimal bounded context — never retrieved memory,
+  // even if a caller populated memoryContext.
+  const providedMemoryContext =
+    promptMode === 'maintenance'
+      ? ''
+      : trimAndNormalize(input.memoryContext || '');
   const now = options.now?.() ?? new Date();
   const rawTimezone =
     options.timezone ||

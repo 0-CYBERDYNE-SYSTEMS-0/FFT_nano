@@ -1230,7 +1230,10 @@ test('handleTelegramCommand starts real agent runs for librarian and skill manag
   assert.equal(librarianHandled, true);
   assert.equal(skillHandled, true);
   assert.equal(runAgentCalls.length, 2);
-  assert.match(runAgentCalls[0]?.prompt || '', /Manual knowledge librarian run/);
+  assert.match(
+    runAgentCalls[0]?.prompt || '',
+    /Manual knowledge librarian run/,
+  );
   assert.match(runAgentCalls[0]?.prompt || '', /focus pumps/);
   assert.match(runAgentCalls[1]?.prompt || '', /Manual skill manager dry-run/);
   assert.match(runAgentCalls[1]?.prompt || '', /focus duplicates/);
@@ -1246,7 +1249,10 @@ test('handleTelegramCommand starts real agent runs for librarian and skill manag
     /Skill manager dry-run complete \(skill-manager-/,
   );
   assert.match(deps.agentResults[0]?.text || '', /agent completed: librarian-/);
-  assert.match(deps.agentResults[1]?.text || '', /agent completed: skill-manager-/);
+  assert.match(
+    deps.agentResults[1]?.text || '',
+    /agent completed: skill-manager-/,
+  );
   assert.deepEqual(
     deps.runProgress.map((event) => event.phase),
     [
@@ -1467,8 +1473,14 @@ test('VAL-WS2-009 task:reject from non-main chat is refused', async () => {
 });
 
 test('VAL-WS2-007 task:approve updates task to active and writes audit line', async () => {
-  const updatedTasks: Array<{ taskId: string; patch: Record<string, unknown> }> = [];
-  const auditEvents: Array<{ groupFolder: string; event: Record<string, unknown> }> = [];
+  const updatedTasks: Array<{
+    taskId: string;
+    patch: Record<string, unknown>;
+  }> = [];
+  const auditEvents: Array<{
+    groupFolder: string;
+    event: Record<string, unknown>;
+  }> = [];
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
     audits: Array<{
@@ -1514,7 +1526,10 @@ test('VAL-WS2-007 task:approve updates task to active and writes audit line', as
 
 test('VAL-WS2-008 task:reject deletes task and writes audit line', async () => {
   const deletedTasks: string[] = [];
-  const auditEvents: Array<{ groupFolder: string; event: Record<string, unknown> }> = [];
+  const auditEvents: Array<{
+    groupFolder: string;
+    event: Record<string, unknown>;
+  }> = [];
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
     audits: Array<{
@@ -1589,7 +1604,10 @@ test('VAL-WS2-009 expired token is refused with guidance', async () => {
 });
 
 test('VAL-WS2-010 approve and reject have separate audit kinds', async () => {
-  const auditEvents: Array<{ groupFolder: string; event: Record<string, unknown> }> = [];
+  const auditEvents: Array<{
+    groupFolder: string;
+    event: Record<string, unknown>;
+  }> = [];
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
     audits: Array<{
@@ -1876,8 +1894,16 @@ test('VAL-WS6-013 /learning digest is read-only — no LLM call, no DB write, no
   });
 
   // VAL-WS6-013: no LLM call — runAgent and runCodingTask are the LLM invocation paths.
-  assert.equal(runAgentCalls.length, 0, 'runAgent must not be called during /learning digest');
-  assert.equal(runCodingTaskCalls.length, 0, 'runCodingTask must not be called during /learning digest');
+  assert.equal(
+    runAgentCalls.length,
+    0,
+    'runAgent must not be called during /learning digest',
+  );
+  assert.equal(
+    runCodingTaskCalls.length,
+    0,
+    'runCodingTask must not be called during /learning digest',
+  );
 
   // VAL-WS6-013: no DB/JSONL write — recordTaskAuditEvent is the only write in this code path.
   // It is called by the approve/reject callback handlers, NOT by the digest handler.
@@ -2034,4 +2060,85 @@ test('VAL-WS6-015 /learning pause from non-main chat is refused', async () => {
     allowed: false,
     reason: 'not main/admin',
   });
+});
+
+test('handleTelegramCommand blocks live /reflect while learning is paused', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.isMainChat = () => true;
+  deps.state.learningPaused = true;
+  const runAgentCalls: string[] = [];
+  deps.runAgent = async (_group, prompt) => {
+    runAgentCalls.push(prompt);
+    return { ok: true, result: 'done', streamed: false };
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/reflect',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(runAgentCalls.length, 0);
+  assert.match(
+    deps.sent[0]?.text || '',
+    /Learning is paused — run \/learning resume first, or use \/reflect dry-run\./,
+  );
+  assert.deepEqual(deps.audits.at(-1), {
+    chatJid: 'telegram:main',
+    command: '/reflect',
+    allowed: false,
+    reason: 'blocked: learning paused',
+  });
+});
+
+test('handleTelegramCommand allows /reflect dry-run while learning is paused and threads dryRun to runAgent', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.state.learningPaused = true;
+  deps.state.registeredGroups['telegram:main'] = {
+    folder: 'main',
+    name: 'Main',
+  };
+  const runAgentOptions: Array<Record<string, unknown>> = [];
+  deps.runAgent = async (
+    _group,
+    _prompt,
+    _chatJid,
+    _codingHint,
+    _requestId,
+    _prefs,
+    options,
+  ) => {
+    runAgentOptions.push((options as Record<string, unknown>) || {});
+    return { ok: true, result: 'nothing durable to save', streamed: false };
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/reflect dry-run',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(runAgentOptions.length, 1);
+  assert.equal(runAgentOptions[0]?.dryRun, true);
+  for (const message of deps.sent) {
+    assert.ok(
+      !message.text.includes('Learning is paused'),
+      'dry-run reflect must not be blocked by the pause gate',
+    );
+  }
 });
