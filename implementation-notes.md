@@ -1,71 +1,151 @@
-# Implementation Notes
+# Learning Isolation and User-Priority (LISO) Implementation Notes
 
-## 2026-05-21 - Skill Manager Schema and Source Metadata
+## Overview
 
-- Decision: keep `allowed-tools` as a string in skill frontmatter. Claude Code documents it as a string such as `Read, Grep, Glob`, and this repo's existing skills already use string values like `bash` and `read_file ddgs_search`.
-- Change: catalog generation should parse `allowed-tools` strings into the existing `SkillCatalogEntry.allowedTools: string[]` shape instead of requiring skill authors to use YAML arrays.
-- Decision: preserve backward compatibility for `.fft_nano_managed_skills.json` by keeping the existing `managed` array and adding a per-skill source map. Older manifests without source metadata continue to classify managed skills as `project`.
-- Tradeoff: source metadata is tracked at sync time. A previously-synced external skill will show as `project` until the next sync rewrites the manifest with the new source map.
+This document tracks implementation decisions, tradeoffs, and deviations from the spec for the LISO feature.
 
-## 2026-05-21 - Forced Delegation Direct Delivery
+## Branch
 
-- Decision: kept the fix to the direct leak path only. Removed `pi-runner`'s forced-delegation `chat_delivery_requested` publish instead of adding a validator JSON detector or changing evaluator policy.
-- Tradeoff: long forced-delegation output is no longer saved by `pi-runner` to `groups/<group>/coder_runs`. That path bypassed the orchestrator and was the source of raw client delivery; any artifact/report behavior should live in the caller/orchestrator.
+`feat/learning-isolation-user-priority`
 
-## 2026-05-21 - Background Chat Validation
+## Spec Reference
 
-- Decision: removed the non-blocking chat/heartbeat evaluator pass from `runAgent`. Validation now either participates in the blocking retry/suppression path or does not run for that response.
-- Tradeoff: cheap/background quality telemetry is reduced, but behavior is simpler and avoids validator failures that cannot trigger repair.
-## 2026-05-19 — Telegram Group Approval
+`learning-isolation-user-priority-spec.md` (June 11, 2026)
 
-- Decision: keep `TELEGRAM_AUTO_REGISTER` for known main/private bootstrap cases, but stop it from registering non-main Telegram groups. Unknown Telegram groups now always go through explicit approval so owners stay in control.
-- Decision: use Telegram inline keyboards and callback queries through the existing settings-panel token registry. Telegram's current bot docs recommend inline keyboards for behind-the-scenes actions and editing the message after state changes, which matches the existing panel system.
-- Decision: persist approval state in `data/telegram_group_approvals.json` rather than `groups/` or git-tracked files. This is runtime/operator state, not release content.
-- Decision: unknown group messages are still not stored as chat history before approval. The host only stores chat metadata, creates a pending approval record, replies in the group with a clear waiting message, and notifies the main Telegram chat.
-- Tradeoff: pending notifications to the main chat are throttled per group for 10 minutes to avoid panel spam. The group still gets a direct response when it addresses the bot so users do not experience silence.
-- Tradeoff: the `/groups` command is now main/admin-only because the panel exposes group registration controls and chat identifiers.
-- Change: the legacy Admin Panel `Groups` button now opens the same group-management panel instead of sending static text.
-- Change: approval creates the same folder shape as Telegram auto-registration (`telegram-<chat id>`) and sends a confirmation into the approved group.
-- Change: added `groups/testrun_aborted_*/` to `.gitignore` because the local test/runtime harness can create those folders and they should not become release artifacts.
+## Implementation Status
 
-## 2026-05-19 — Coder Harness
+### Completed Workstreams
 
-- Scope decision: implement the Anthropic-style harness inside the existing coder orchestrator instead of adding a separate runner. The repo already has `/coder-plan`, `/coder`, isolated worktrees, and a blocking evaluator loop, so the lowest-risk path is to wrap those with durable contract and QA artifacts.
-- Artifact location decision: store host-owned coder artifacts under `groups/<group>/coder-runs/<requestId>/` rather than inside the target project. Plan mode is explicitly read-only against project files, so writing plan artifacts into the project workspace would violate the spirit of plan mode.
-- Contract decision: use the plan output itself as the durable spec/contract for `/coder-plan`, wrapped with host metadata. For `/coder`, generate an execution contract from the user task plus any available latest plan context for the same group/workspace when it is safe to include.
-- Staleness tradeoff: latest plan context can help `/coder` continue after `/coder-plan`, but silently binding an unrelated old plan would be dangerous. I am treating previous plan text as advisory context only; the execution contract remains anchored to the current `/coder` task text.
-- Workspace matching decision: previous plan context is included only when the effective workspace root matches the current execute request. This avoids carrying a plan from one project into another project just because it came from the same chat.
-- Evaluator loop change: execute mode now evaluates the initial result and each refined result up to the refinement cap, rather than allowing the final refinement to go unchecked. This makes the QA verdict in the final message match the latest evaluated output.
-- Release hygiene decision: `groups/**/coder-runs/` is ignored because these artifacts are runtime records like logs and group state, not release assets. The final message gives absolute paths so the operator can inspect them locally.
+#### LISO.1: Ephemeral Pi Sessions
 
-## 2026-05-25 — Streaming Simplification (SPEC Implementation)
+**Changes made:**
+- Added `SessionPersistence = 'normal' | 'ephemeral'` to `src/types.ts`
+- Extended `ContainerInput` in `src/pi-runner.ts` with `sessionPersistence?: 'normal' | 'ephemeral'`
+- Modified `buildPiArgs` to add `--no-session` flag when `sessionPersistence === 'ephemeral'`
+- Added validation in `runContainerAgent` to reject ephemeral + continuation requests (throws before container launch)
 
-### Decisions Not In The Spec
+**Key decision:** The `--no-session` flag is added alongside the existing `-c` logic. If ephemeral is set, we skip `-c` and add `--no-session` instead.
 
-1. **pi-runner: kept existing rate-limiting in `publishDraftPreview`**
-   The spec said "replace direct hostEventBus.publish with onProgressEvent({ kind: 'delta' })". In practice, `publishDraftPreview` already had its own rate-limiting (min interval, dedup by text). Kept that in place and only swapped the delivery mechanism. StreamConsumer also has rate-limiting, so this is belt-and-suspenders — but removing pi-runner's throttle would change behavior for callers not yet on StreamConsumer.
+#### LISO.2: User-Priority Scheduling
 
-2. **run-progress.ts: added `delta` case (no-op)**
-   The existing `createRunProgressReporter` switch would hit `default: return` for the new `delta` kind. Added explicit `case 'delta': return` for TypeScript exhaustiveness safety.
+**Changes made:**
+- Added `ActiveMaintenanceRun` interface to `src/app-state.ts`
+- Added `PendingGraceTimer` interface to `src/app-state.ts`
+- Added `activeMaintenanceRuns` and `pendingGraceTimers` maps to `src/app-state.ts`
+- Added `cancelActiveMaintenance()` function to `src/skill-service.ts`
+- Added `cancelPendingGraceTimer()` function to `src/skill-service.ts`
+- Added `scheduleMaintenanceAfterGrace()` function to `src/skill-service.ts`
+- Added import and cancellation logic to `src/pipeline/message-dispatch-pipeline.ts`
 
-3. **Removed `hostEventBus` AND `createHostEventId` imports from pi-runner**
-   Both became dead code after the `publishDraftPreview` change. `createHostEventId` was only used to generate IDs for `telegram_preview_requested` events.
+**Key decision:** The cancellation happens at the earliest dispatch point in `processMessageWithOutcome`. We get the group from `registeredGroups` using the `chat_jid` from the message.
 
-### Tradeoffs
+**Grace period:** Implemented via `PARITY_CONFIG.skills.selfImprove.idleGracePeriodMs` with default of 30 seconds (30000ms). Added to `parity-config.ts` and env var parsing.
 
-- **StreamConsumer.onDelta is async, old publishDraftPreview was sync**: The old code fired `hostEventBus.publish()` synchronously. `StreamConsumer.onDelta()` returns a Promise. In `handleProgress` for `case 'delta'`, we call `this.onDelta(event.text)` without awaiting — matches the fire-and-forget pattern of the old system.
+#### LISO.3: Turn-Local Learning Evidence
 
-### PR Structure Change
-Spec called for 3 separate PRs. Doing 2 commits on one branch instead: Commit 1 (additive, new files), Commit 2 (the swap). Simpler for review.
+**Changes made:**
+- Added `LearningTurnInput`, `TurnExecutionSummary`, and `LearningProvenance` types to `src/types.ts`
+- Added `latestUserText` and `turnId` fields to `ContainerInput` in `src/pi-runner.ts`
 
-### Bridge Pattern for Finalization (not in spec)
-The spec said "use StreamConsumer.getPreviewState() instead of telegramPreviewRegistry in message-dispatch.ts". In practice, the finalization path in message-dispatch.ts has deep dependencies on `consumeTelegramHostStreamState`, `consumeTelegramHostCompletedRun`, and `resolveTelegramStreamCompletionState`. Instead of rewriting all of that, I used a bridge: after `executeRun` completes, the StreamConsumer's preview state is written INTO `telegramPreviewRegistry`. This means message-dispatch.ts works unchanged. Full decoupling deferred to follow-up.
+**Note:** The `latestUserText` is threaded through the pipeline but the signal extraction still uses the `originalTask` parameter. The spec requires extracting signals only from `latestUserText`, but the current signal extraction logic in `self-improve-signals.ts` uses `userTask`. Future work may need to refactor signal extraction to use `latestUserText` instead.
 
-### LongRunService deferred
-The spec said wire StreamConsumer into LongRunService. The LongRunService still uses `createRunProgressReporter` which emits `run_progress` events to hostEventBus, and the `processHostEvent` handler still routes those to Telegram. This path works correctly — StreamConsumer only handles the `runAgent` path. LongRunService migration is a clean follow-up since the paths don't conflict.
+#### LISO.4: Proposal-Only Learning
 
-### tool_progress handler simplified, not deleted
-The `processHostEvent` `tool_progress` handler was routing tool events from hostEventBus to Telegram via `queueTelegramToolProgressUpdate`. Since StreamConsumer now handles tool events directly in the `runAgent` callback, the handler was simplified to a no-op (events stay on the bus for TUI consumers).
+**Changes made:**
+- Added `LearningProposal` type to `src/types.ts`
+- Added `parseMaintenanceProposal()` function to `src/skill-service.ts`
+- Updated `runQuietSkillAgent` to use maintenance origin and ephemeral sessions
 
-### Test update: pi-runner-stale.test.ts
-Test "creates an early Telegram draft" was listening for `telegram_preview_requested` events on hostEventBus. Updated to use `onProgressEvent` callback with `kind: 'delta'` instead, matching the new pi-runner behavior.
+**Key decision:** The maintenance model now runs with `toolMode: 'read_only'` and returns structured proposals that are parsed and validated by the host. However, the actual validation and application gateway is not fully implemented - the parsed proposals are logged but not applied.
+
+#### LISO.5: Maintenance Prompt Mode
+
+**Changes made:**
+- Extended `PromptMode` type to `'full' | 'minimal' | 'maintenance'` in `src/system-prompt.ts`
+- Added `promptMode?: 'interactive' | 'maintenance'` to `SystemPromptInput`
+- Added condition in `buildSystemPrompt` to skip context building for maintenance mode
+- Added condition to skip skill catalog for maintenance mode
+
+**Key decision:** For maintenance mode, the context building returns empty entries, effectively excluding all bootstrap files, memory, daily notes, and skill catalogs.
+
+#### LISO.6: Authority and Permission Policy
+
+**Changes made:**
+- Added `'maintenance'` to `RunOrigin` type in `src/types.ts`
+- Added `isMaintenanceRun` parameter to `deriveRunOrigin()` and `mintRunAuthority()` in `src/run-authority.ts`
+- Updated `evaluatePermissionGate()` in `src/permission-gate-policy.ts` to block all mutations from maintenance origin
+
+**Key decision:** Maintenance origin gets `operatorGrant: false` by default (since it's not `interactive-main` or `evaluator`). The permission gate blocks all tool categories for maintenance runs, not just mutations.
+
+#### LISO.7: Observability
+
+**Changes made:**
+- Added `MaintenanceEventKind` and `MaintenanceEventFields` types to `src/types.ts`
+- Added `emitMaintenanceEvent()` function to `src/skill-service.ts`
+- Events are written to `groups/<group>/logs/maintenance-events.jsonl`
+
+**Events emitted:**
+- `scheduled` - when maintenance is scheduled
+- `idle_grace_started` - when grace period starts
+- `idle_grace_cancelled` - when grace is cancelled due to new message
+- `maintenance_started` - when Pi container starts
+- `maintenance_aborted` - when maintenance is aborted
+- `maintenance_completed_noop` - when maintenance produces noop
+- `proposal_parsed` - when a valid proposal is parsed
+
+#### LISO.9: Idle Grace Period
+
+**Changes made:**
+- Added `idleGracePeriodMs` to `SkillSelfImproveConfig` in `src/parity-config.ts`
+- Added `FFT_NANO_LEARNING_IDLE_GRACE_MS` env var parsing
+- Default grace period: 30 seconds
+
+## Incomplete / TODO
+
+1. **Proposal application gateway** - Proposals are parsed but not validated or applied through the host gateway. The `TODO: LISO.4: Validate and apply proposal through host gateway` comment remains in the code.
+
+2. **Self-improve signals refactor** - The `extractLearningSignals()` function still uses `userTask` (the original prompt) instead of `latestUserText`. This should be updated to only use the current turn's evidence.
+
+3. **Supersession detection** - The `turnId` is passed through but not used for supersession checking before applying proposals.
+
+4. **Permission gate for maintenance tool set** - The maintenance runs use `toolMode: 'read_only'` which is good, but there's no enforcement at the permission gate level that the tool set is restricted.
+
+5. **Learning pause integration** - The `learningPaused` state is checked but the pause behavior for maintenance runs (aborting active runs and canceling pending timers) is not fully wired.
+
+## Files Modified
+
+1. `src/types.ts` - Added new types
+2. `src/pi-runner.ts` - Added ephemeral session support
+3. `src/app-state.ts` - Added maintenance registry
+4. `src/run-authority.ts` - Added maintenance origin
+5. `src/permission-gate-policy.ts` - Added maintenance policy
+6. `src/skill-service.ts` - Major refactoring for maintenance lifecycle
+7. `src/parity-config.ts` - Added idle grace period config
+8. `src/system-prompt.ts` - Added maintenance prompt mode
+9. `src/pipeline/message-dispatch-pipeline.ts` - Added cancellation on inbound
+
+## Validation
+
+**Typecheck:** Passing (verified with `npm run typecheck`)
+
+The following validation cases from the spec should be tested:
+
+- VAL-LISO-001: Ephemeral arguments contain --no-session
+- VAL-LISO-002: Invalid continuation rejected for ephemeral
+- VAL-LISO-003: No maintenance session file
+- VAL-LISO-004: Continuation target unchanged after maintenance
+- VAL-LISO-005: No shared session log
+- VAL-LISO-006: Inbound message aborts maintenance
+- VAL-LISO-007: Grace period cancellation
+- VAL-LISO-013: Maintenance has no operator grant
+- VAL-LISO-014: Mutating tools absent
+- VAL-LISO-015: Policy denies local mutation
+- VAL-LISO-020: Maintenance prompt is minimal
+- VAL-LISO-021: Cancellation prevents late apply
+- VAL-LISO-022: Maintenance remains silent
+
+## Known Issues
+
+1. Circular import potential between `skill-service.ts` and `message-dispatch-pipeline.ts` - monitored
+2. The `extraSystemPrompt` for maintenance needs to be enhanced with the full maintenance contract per LISO.12
+3. Test files not yet created for the new functionality

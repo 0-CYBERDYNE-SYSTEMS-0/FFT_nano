@@ -29,7 +29,7 @@ export type ThinkLevel =
   | 'high'
   | 'xhigh';
 export type ReasoningLevel = 'off' | 'on' | 'stream';
-export type PromptMode = 'full' | 'minimal';
+export type PromptMode = 'full' | 'minimal' | 'maintenance';
 
 export interface SkillCatalogEntry {
   name: string;
@@ -57,6 +57,8 @@ export interface SystemPromptInput {
   requestId?: string;
   extraSystemPrompt?: string;
   skillCatalog?: SkillCatalogEntry[];
+  // LISO.5: Prompt mode for this run
+  promptMode?: 'interactive' | 'maintenance';
 }
 
 export interface WorkspacePaths {
@@ -1311,7 +1313,13 @@ export function buildSystemPrompt(
       process.env.FFT_NANO_SKILL_CATALOG_MAX_CHARS,
       DEFAULT_SKILL_CATALOG_MAX_CHARS,
     );
-  const promptMode: PromptMode = input.isScheduledTask ? 'minimal' : 'full';
+  // LISO.5: Maintenance mode is set directly; otherwise derive from scheduled task flag
+  const promptMode: PromptMode =
+    input.promptMode === 'maintenance'
+      ? 'maintenance'
+      : input.isScheduledTask
+        ? 'minimal'
+        : 'full';
   const assistantName =
     (input.assistantName || 'FarmFriend').trim() || 'FarmFriend';
   const providedMemoryContext = trimAndNormalize(input.memoryContext || '');
@@ -1354,27 +1362,33 @@ export function buildSystemPrompt(
     return value;
   };
 
-  const contextState = input.isMain
-    ? buildMainContextEntries({
-        readFileIfExists: trackingReadFileIfExists,
-        includeHeartbeat: includeHeartbeatContext,
-        fileMaxChars,
-        totalMaxChars,
-        groupDir: paths.groupDir,
-        now,
-        timezone,
-      })
-    : buildNonMainContextEntries({
-        readFileIfExists: trackingReadFileIfExists,
-        includeHeartbeat: includeHeartbeatContext,
-        fileMaxChars,
-        totalMaxChars,
-        groupDir: paths.groupDir,
-        globalDir: paths.globalDir,
-      });
+  // LISO.5: Maintenance mode skips normal context building to exclude
+  // SOUL.md, NANO.md, USER.md, MEMORY.md, daily memory, retrieved memory,
+  // recent conversation, and broad skill catalogs.
+  const contextState =
+    promptMode === 'maintenance'
+      ? { entries: [], remainingTotalChars: 0 }
+      : input.isMain
+        ? buildMainContextEntries({
+            readFileIfExists: trackingReadFileIfExists,
+            includeHeartbeat: includeHeartbeatContext,
+            fileMaxChars,
+            totalMaxChars,
+            groupDir: paths.groupDir,
+            now,
+            timezone,
+          })
+        : buildNonMainContextEntries({
+            readFileIfExists: trackingReadFileIfExists,
+            includeHeartbeat: includeHeartbeatContext,
+            fileMaxChars,
+            totalMaxChars,
+            groupDir: paths.groupDir,
+            globalDir: paths.globalDir,
+          });
 
   const skillCatalog =
-    !input.isScheduledTask && !isHeartbeatRun
+    !input.isScheduledTask && !isHeartbeatRun && promptMode !== 'maintenance'
       ? renderSkillCatalog(input.skillCatalog || [], skillCatalogMaxChars)
       : { text: '', injectedChars: 0, count: 0, truncated: false };
 

@@ -118,6 +118,17 @@ export interface ContainerInput {
   // Run authority for this spawn — minted by runContainerAgent at spawn time.
   // Consumers (gate, outbox, IPC watcher) use this for authorization and attribution.
   runAuthority?: RunAuthority;
+  // LISO.6: Marks this as a maintenance run — triggers maintenance origin in mintRunAuthority.
+  isMaintenanceRun?: boolean;
+  // LISO.1: Session persistence mode. 'normal' (default) persists Pi session;
+  // 'ephemeral' prevents session persistence and must not be combined with continuation.
+  sessionPersistence?: 'normal' | 'ephemeral';
+  // LISO.5: Prompt mode for this run. 'maintenance' uses minimal bounded context.
+  promptMode?: 'interactive' | 'maintenance';
+  // LISO.3: Threaded through from dispatch for turn-local learning evidence.
+  latestUserText?: string;
+  // LISO.3: Turn ID for supersession detection in learning proposals.
+  turnId?: string;
 }
 
 export interface ContainerOutput {
@@ -803,7 +814,13 @@ function buildPiArgs(params: {
     transportMode,
   } = params;
   const args: string[] = ['--mode', transportMode];
-  if (useContinue) args.push('-c');
+
+  // LISO.1: Ephemeral sessions use --no-session and cannot continue
+  if (input.sessionPersistence === 'ephemeral') {
+    args.push('--no-session');
+  } else if (useContinue) {
+    args.push('-c');
+  }
 
   const extensionPaths = resolveExtensionPaths();
   if (extensionPaths.length > 0) {
@@ -1020,6 +1037,26 @@ export async function runContainerAgent(
         error: `Sandbox refusal: run with origin=${runAuthority.origin} and effective tool set [${runAuthority.effectiveToolSet.join(',')}] is refused when FFT_NANO_SANDBOX=none and ${envVar} is not set. To permit this run, set ${envVar}=1.`,
       };
     }
+  }
+
+  // LISO.1: Ephemeral sessions must not request continuation
+  if (
+    input.sessionPersistence === 'ephemeral' &&
+    input.noContinue !== true
+  ) {
+    logger.warn(
+      {
+        group: group.name,
+        sessionPersistence: input.sessionPersistence,
+        noContinue: input.noContinue,
+      },
+      'Ephemeral run requested continuation — refusing before container launch',
+    );
+    return {
+      status: 'error',
+      result: null,
+      error: 'Configuration error: ephemeral session must not request continuation. Set noContinue: true when sessionPersistence: "ephemeral".',
+    };
   }
 
   let extendHardTimeoutForWait:
