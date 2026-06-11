@@ -651,7 +651,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         'none',
         requestId,
         deps.state.chatRunPreferences[params.chatJid] || {},
-        {},
+        { dryRun: params.action === 'dry-run' },
         abortController.signal,
       );
       deps.updateChatUsage(params.chatJid, run.usage);
@@ -2615,14 +2615,6 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/reflect') {
-      if (!isMainGroup) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
-        await deps.sendMessage(
-          m.chatJid,
-          `${deps.constants.assistantName}: /reflect is only available in the main/admin chat.`,
-        );
-        return true;
-      }
       const first = (rest[0] || '').trim().toLowerCase();
       if (first === 'help') {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
@@ -2641,6 +2633,19 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
       const isDryRun = first === 'dry-run' || first === 'dry';
       const action: 'run' | 'dry-run' = isDryRun ? 'dry-run' : 'run';
+      if (action === 'run' && deps.state.learningPaused) {
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'blocked: learning paused',
+        );
+        await deps.sendMessage(
+          m.chatJid,
+          'Learning is paused — run /learning resume first, or use /reflect dry-run.',
+        );
+        return true;
+      }
       const focus = (isDryRun ? rest.slice(1) : rest).join(' ').trim();
       deps.logTelegramCommandAudit(
         m.chatJid,

@@ -103,6 +103,7 @@ export interface MintRunAuthorityInput {
   effectiveToolSet?: readonly RunAuthority['effectiveToolSet'][number][];
   senderRole?: RunAuthority['senderRole'];
   startedDuringPause?: boolean;
+  dryRun?: boolean;
 }
 
 export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
@@ -118,6 +119,7 @@ export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
     effectiveToolSet: explicitToolSet,
     senderRole = 'unknown',
     startedDuringPause = false,
+    dryRun = false,
   } = input;
 
   const origin = deriveRunOrigin({
@@ -172,5 +174,6 @@ export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
     operatorGrant,
     senderRole,
     startedDuringPause,
+    dryRun,
   };
 }

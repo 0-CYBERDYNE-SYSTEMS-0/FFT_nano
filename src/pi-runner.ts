@@ -120,6 +120,9 @@ export interface ContainerInput {
   runAuthority?: RunAuthority;
   // LISO.6: Marks this as a maintenance run — triggers maintenance origin in mintRunAuthority.
   isMaintenanceRun?: boolean;
+  // /reflect dry-run: stamped onto the RunAuthority so the skill/memory gateways
+  // hard-reject mutations for this run.
+  dryRun?: boolean;
   // LISO.1: Session persistence mode. 'normal' (default) persists Pi session;
   // 'ephemeral' prevents session persistence and must not be combined with continuation.
   sessionPersistence?: 'normal' | 'ephemeral';
@@ -1001,6 +1004,7 @@ export async function runContainerAgent(
     }),
     senderRole: input.senderRole ?? 'unknown', // threaded from DispatchRequest through runAgent
     startedDuringPause: false, // resolved from PARITY_CONFIG.learning_paused at startup
+    dryRun: input.dryRun === true,
   });
   // Register so IPC watcher can attribute async actions to this run.
   runAuthorityRegistry.set(group.folder, runAuthority);
@@ -1040,10 +1044,7 @@ export async function runContainerAgent(
   }
 
   // LISO.1: Ephemeral sessions must not request continuation
-  if (
-    input.sessionPersistence === 'ephemeral' &&
-    input.noContinue !== true
-  ) {
+  if (input.sessionPersistence === 'ephemeral' && input.noContinue !== true) {
     logger.warn(
       {
         group: group.name,
@@ -1055,7 +1056,8 @@ export async function runContainerAgent(
     return {
       status: 'error',
       result: null,
-      error: 'Configuration error: ephemeral session must not request continuation. Set noContinue: true when sessionPersistence: "ephemeral".',
+      error:
+        'Configuration error: ephemeral session must not request continuation. Set noContinue: true when sessionPersistence: "ephemeral".',
     };
   }
 

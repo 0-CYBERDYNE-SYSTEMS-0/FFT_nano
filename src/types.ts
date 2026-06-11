@@ -170,6 +170,9 @@ export interface RunAuthority {
   // Global pause stamp captured at run start — a mid-run pause applies to the
   // next loop tick, not to the in-flight run.
   startedDuringPause: boolean;
+  // /reflect dry-run: host hard-rejects skill and memory mutations for this run.
+  // Read-only actions remain allowed.
+  dryRun: boolean;
 }
 
 export interface RegisteredGroup {
