@@ -59,13 +59,14 @@ export function deriveEffectiveToolSet(
  * Derive the RunOrigin from spawn-time signals.
  *
  * Priority:
- *   evaluator > interactive-main > subagent > headless
+ *   maintenance > evaluator > interactive-main > subagent > headless
  *
  * Note: isHeartbeat is consulted BEFORE the interactive-main check because
  * a heartbeat run is always headless regardless of isMain — the operator is
  * not present at the keyboard.
  */
 export function deriveRunOrigin(params: {
+  isMaintenanceRun?: boolean;
   isEvaluatorRun?: boolean;
   isMain?: boolean;
   isSubagent?: boolean;
@@ -73,6 +74,8 @@ export function deriveRunOrigin(params: {
   isHeartbeat?: boolean;
   requestId?: string;
 }): RunOrigin {
+  // LISO.6: Maintenance runs have their own origin distinct from evaluator
+  if (params.isMaintenanceRun) return 'maintenance';
   if (params.isEvaluatorRun) return 'evaluator';
   // Heartbeats are headless (checked first so isMain=true + heartbeat → headless)
   if (params.isHeartbeat || params.requestId?.startsWith('heartbeat-')) {
@@ -95,6 +98,8 @@ export interface MintRunAuthorityInput {
   isScheduledTask?: boolean;
   isHeartbeat?: boolean;
   isEvaluatorRun?: boolean;
+  // LISO.6: Marks this as a maintenance run — no operatorGrant, no interactive tools
+  isMaintenanceRun?: boolean;
   effectiveToolSet?: readonly RunAuthority['effectiveToolSet'][number][];
   senderRole?: RunAuthority['senderRole'];
   startedDuringPause?: boolean;
@@ -109,12 +114,14 @@ export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
     isScheduledTask = false,
     isHeartbeat = false,
     isEvaluatorRun = false,
+    isMaintenanceRun = false,
     effectiveToolSet: explicitToolSet,
     senderRole = 'unknown',
     startedDuringPause = false,
   } = input;
 
   const origin = deriveRunOrigin({
+    isMaintenanceRun,
     isEvaluatorRun,
     isMain,
     isSubagent,

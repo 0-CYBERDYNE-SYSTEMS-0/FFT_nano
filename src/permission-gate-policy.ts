@@ -95,9 +95,11 @@ export function isProtectedPath(filePath: string): boolean {
  *
  * Policy table:
  *   read / local-mutate → always allow (any origin)
- *   destroy → block on headless/subagent/evaluator; confirm on interactive-main
- *   outbound → held on headless/subagent without operatorGrant; otherwise allow
- *   schedule → allow (WS2 enforces pending_approval at the IPC handler)
+ *   destroy → block on headless/subagent/evaluator/maintenance; confirm on interactive-main
+ *   outbound → held on headless/subagent without grant; block maintenance; allow otherwise
+ *   schedule → held on headless/subagent without grant; block maintenance; allow otherwise
+ *   maintenance → all mutations denied; read only allowed through permission gate (but
+ *                  maintenance runs should use minimal/empty tool sets at launch)
  *
  * I1 invariant: this function reads only RunAuthority fields and tool input.
  * It never reads prompt content or IPC payload fields authored by the agent.
@@ -109,6 +111,28 @@ export function evaluatePermissionGate(params: {
 }): PermissionGateDecision {
   const { toolName, input, runAuthority } = params;
   const { origin } = runAuthority;
+
+  // LISO.6: Maintenance origin has no mutation authority regardless of tool.
+  // Defense in depth: even if the maintenance run launched with tools (which it
+  // shouldn't), the permission gate blocks all mutations.
+  if (origin === 'maintenance') {
+    const classification = classifyActionCategory(toolName, input);
+    // Maintenance can only do read operations; everything else is blocked
+    if (classification.category === 'read') {
+      // Even read is denied by default for maintenance per VAL-LISO-014 unless
+      // it's bounded supplied context (which the host controls at launch time,
+      // not here). Block all reads from maintenance at the gate level.
+      return {
+        action: 'block',
+        reason: 'Maintenance run cannot read files. All filesystem access is denied.',
+      };
+    }
+    // All mutations, scheduling, outbound, and destroy are blocked for maintenance
+    return {
+      action: 'block',
+      reason: `Maintenance run cannot perform '${toolName}' operations. Maintenance runs may only return structured learning proposals.`,
+    };
+  }
 
   const classification = classifyActionCategory(toolName, input);
 
