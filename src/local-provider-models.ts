@@ -88,14 +88,42 @@ export function discoverOpenAiCompatibleModels(params: {
     }
     const result = spawnSync(
       'curl',
-      ['-sf', '--max-time', '3', '-H', `Authorization: Bearer ${apiKey}`, `${normalizedUrl}/models`],
+      [
+        '-sS',
+        '--max-time',
+        '3',
+        '-H',
+        `Authorization: Bearer ${apiKey}`,
+        '-w',
+        '\n%{http_code}',
+        `${normalizedUrl}/models`,
+      ],
       { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
     );
     if (result.status !== 0) {
       const message = result.stderr.trim() || `curl exited ${result.status}`;
       return { ok: false, provider: providerId, models: [], error: message };
     }
-    const body = JSON.parse(result.stdout);
+    const output = result.stdout.trimEnd();
+    const newlineIndex = output.lastIndexOf('\n');
+    const bodyText = newlineIndex >= 0 ? output.slice(0, newlineIndex) : output;
+    const statusText = newlineIndex >= 0 ? output.slice(newlineIndex + 1) : '';
+    const status = Number(statusText);
+    const body = JSON.parse(bodyText);
+    if (status < 200 || status >= 300) {
+      const message =
+        isObject(body.error) && typeof body.error.message === 'string'
+          ? body.error.message
+          : typeof body.message === 'string'
+            ? body.message
+            : `HTTP ${Number.isFinite(status) ? status : 'unknown'}`;
+      return {
+        ok: false,
+        provider: providerId,
+        models: [],
+        error: `HTTP ${Number.isFinite(status) ? status : 'unknown'}: ${message}`,
+      };
+    }
     const models = isObject(body) && Array.isArray(body.data) ? body.data : [];
     const modelIds = uniqueSorted(
       models
@@ -308,8 +336,8 @@ export function ensureLocalProviderModels(
     // Discover remote OpenAI-compatible providers
     const remoteProviders = [
       { providerId: 'openai', baseUrlEnv: 'OPENAI_BASE_URL', apiKeyEnv: 'OPENAI_API_KEY' },
-      { providerId: 'kimi-coding', baseUrlEnv: 'KIMI_BASE_URL', apiKeyEnv: 'KIMI_API_KEY', defaultBaseUrl: 'https://api.moonshot.cn/v1' },
-      { providerId: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', apiKeyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.chat/v1' },
+      { providerId: 'moonshotai', baseUrlEnv: 'MOONSHOT_BASE_URL', apiKeyEnv: 'MOONSHOT_API_KEY', defaultBaseUrl: 'https://api.moonshot.ai/v1' },
+      { providerId: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', apiKeyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io/v1' },
       { providerId: 'openrouter', baseUrlEnv: 'OPENROUTER_BASE_URL', apiKeyEnv: 'OPENROUTER_API_KEY', defaultBaseUrl: 'https://openrouter.ai/api/v1' },
     ];
 
@@ -324,28 +352,26 @@ export function ensureLocalProviderModels(
         });
         if (result.ok && result.models.length > 0) {
           discovered[rp.providerId] = result.models;
+          const baseUrl = env[rp.baseUrlEnv] || rp.defaultBaseUrl || '';
+          const apiKeyRef = env[rp.apiKeyEnv]
+            ? `$${rp.apiKeyEnv}`
+            : '$PI_API_KEY';
           upsertProvider(
             providers,
             rp.providerId,
             managedProvider({
-              baseUrl: rp.defaultBaseUrl || env[rp.baseUrlEnv] || '',
-              apiKey: env[rp.apiKeyEnv] || env.PI_API_KEY || '',
+              baseUrl,
+              apiKey: apiKeyRef,
               models: result.models,
             }),
           );
         } else if (!result.ok && result.error) {
           errors.push(`${rp.providerId}: ${result.error}`);
-          if (isManagedLocalProvider(providers[rp.providerId])) {
-            delete providers[rp.providerId];
-          }
         }
       } catch (err) {
         errors.push(
           `${rp.providerId}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        if (isManagedLocalProvider(providers[rp.providerId])) {
-          delete providers[rp.providerId];
-        }
       }
     }
 

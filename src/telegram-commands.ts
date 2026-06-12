@@ -185,7 +185,11 @@ export interface TelegramCommandDeps {
   loadPiModels: (
     forceRefresh?: boolean,
   ) =>
-    | { ok: true; entries: Array<{ provider: string; model: string }> }
+    | {
+        ok: true;
+        entries: Array<{ provider: string; model: string }>;
+        warnings?: string[];
+      }
     | { ok: false; text: string };
   validateProviderModelRef: (
     provider: string,
@@ -1937,7 +1941,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([p, c]) => `${p}: ${c}`)
         .join(', ');
-      const text = `Model list refreshed. ${total} models across ${providerCounts.size} providers.\n${providerSummary}`;
+      const warningText = refreshed.warnings?.length
+        ? `\nWarnings:\n${refreshed.warnings.map((w) => `- ${w}`).join('\n')}`
+        : '';
+      const text = `Model list refreshed. ${total} models across ${providerCounts.size} providers.\n${providerSummary}${warningText}`;
       deps.emitTuiChatEvent({
         runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
         sessionKey: deps.getSessionKeyForChat(m.chatJid),

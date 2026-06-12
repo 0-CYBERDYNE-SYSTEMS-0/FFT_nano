@@ -95,7 +95,7 @@ test('buildRuntimeProviderPresetUpdates applies local defaults for ollama and lm
   });
   assert.equal(kimiUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'kimi-coding');
   assert.equal(kimiUpdates.PI_API, 'kimi-coding');
-  assert.equal(kimiUpdates.PI_MODEL, 'kimi-k2.6');
+  assert.equal(kimiUpdates.PI_MODEL, 'kimi-for-coding');
 
   const ollamaUpdates = buildRuntimeProviderPresetUpdates({
     preset: 'ollama',
