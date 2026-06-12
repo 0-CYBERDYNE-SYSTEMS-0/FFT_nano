@@ -68,6 +68,67 @@ function isLikelyChatModelId(id: string): boolean {
   ].some((token) => normalized.includes(token));
 }
 
+export interface DiscoverOpenAiCompatibleModelsResult {
+  ok: boolean;
+  provider: string;
+  models: string[];
+  error?: string;
+}
+
+export function discoverOpenAiCompatibleModels(params: {
+  providerId: string;
+  baseUrl: string;
+  apiKey: string;
+}): DiscoverOpenAiCompatibleModelsResult {
+  const { providerId, baseUrl, apiKey } = params;
+  try {
+    const normalizedUrl = normalizeOpenAiBaseUrl(baseUrl);
+    if (!normalizedUrl) {
+      return { ok: false, provider: providerId, models: [], error: 'empty baseUrl' };
+    }
+    const result = spawnSync(
+      'curl',
+      ['-sf', '--max-time', '3', '-H', `Authorization: Bearer ${apiKey}`, `${normalizedUrl}/models`],
+      { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
+    );
+    if (result.status !== 0) {
+      const message = result.stderr.trim() || `curl exited ${result.status}`;
+      return { ok: false, provider: providerId, models: [], error: message };
+    }
+    const body = JSON.parse(result.stdout);
+    const models = isObject(body) && Array.isArray(body.data) ? body.data : [];
+    const modelIds = uniqueSorted(
+      models
+        .map((model) => (isObject(model) ? String(model.id || '') : ''))
+        .filter((id) => id && isLikelyChatModelId(id)),
+    );
+    return { ok: true, provider: providerId, models: modelIds };
+  } catch (err) {
+    return {
+      ok: false,
+      provider: providerId,
+      models: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function discoverRemoteProviderModels(params: {
+  env: NodeJS.ProcessEnv;
+  providerId: string;
+  baseUrlEnv: string;
+  apiKeyEnv: string;
+  defaultBaseUrl?: string;
+}): DiscoverOpenAiCompatibleModelsResult {
+  const { env, providerId, baseUrlEnv, apiKeyEnv, defaultBaseUrl } = params;
+  const baseUrl = env[baseUrlEnv] || defaultBaseUrl || '';
+  const apiKey = env[apiKeyEnv] || env.PI_API_KEY || '';
+  if (!baseUrl || !apiKey) {
+    return { ok: false, provider: providerId, models: [], error: 'missing baseUrl or apiKey' };
+  }
+  return discoverOpenAiCompatibleModels({ providerId, baseUrl, apiKey });
+}
+
 function discoverOllamaModels(env: NodeJS.ProcessEnv): {
   baseUrl: string;
   models: string[];
@@ -241,6 +302,50 @@ export function ensureLocalProviderModels(
       );
       if (isManagedLocalProvider(providers['lm-studio'])) {
         delete providers['lm-studio'];
+      }
+    }
+
+    // Discover remote OpenAI-compatible providers
+    const remoteProviders = [
+      { providerId: 'openai', baseUrlEnv: 'OPENAI_BASE_URL', apiKeyEnv: 'OPENAI_API_KEY' },
+      { providerId: 'kimi-coding', baseUrlEnv: 'KIMI_BASE_URL', apiKeyEnv: 'KIMI_API_KEY', defaultBaseUrl: 'https://api.moonshot.cn/v1' },
+      { providerId: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', apiKeyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.chat/v1' },
+      { providerId: 'openrouter', baseUrlEnv: 'OPENROUTER_BASE_URL', apiKeyEnv: 'OPENROUTER_API_KEY', defaultBaseUrl: 'https://openrouter.ai/api/v1' },
+    ];
+
+    for (const rp of remoteProviders) {
+      try {
+        const result = discoverRemoteProviderModels({
+          env,
+          providerId: rp.providerId,
+          baseUrlEnv: rp.baseUrlEnv,
+          apiKeyEnv: rp.apiKeyEnv,
+          defaultBaseUrl: rp.defaultBaseUrl,
+        });
+        if (result.ok && result.models.length > 0) {
+          discovered[rp.providerId] = result.models;
+          upsertProvider(
+            providers,
+            rp.providerId,
+            managedProvider({
+              baseUrl: rp.defaultBaseUrl || env[rp.baseUrlEnv] || '',
+              apiKey: env[rp.apiKeyEnv] || env.PI_API_KEY || '',
+              models: result.models,
+            }),
+          );
+        } else if (!result.ok && result.error) {
+          errors.push(`${rp.providerId}: ${result.error}`);
+          if (isManagedLocalProvider(providers[rp.providerId])) {
+            delete providers[rp.providerId];
+          }
+        }
+      } catch (err) {
+        errors.push(
+          `${rp.providerId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (isManagedLocalProvider(providers[rp.providerId])) {
+          delete providers[rp.providerId];
+        }
       }
     }
 

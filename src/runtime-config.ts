@@ -90,14 +90,14 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     id: 'minimax',
     label: 'MiniMax',
     piApi: 'minimax',
-    defaultModel: 'MiniMax-M2.1',
+    defaultModel: 'MiniMax-M3',
     apiKeyEnv: 'MINIMAX_API_KEY',
   },
   {
     id: 'kimi-coding',
     label: 'Kimi Coding',
     piApi: 'kimi-coding',
-    defaultModel: 'kimi-k2.6',
+    defaultModel: 'kimi-k2.7',
     apiKeyEnv: 'KIMI_API_KEY',
   },
   {

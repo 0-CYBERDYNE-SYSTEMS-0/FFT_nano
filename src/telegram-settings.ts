@@ -358,7 +358,11 @@ export function modelExistsInPiModels(
 }
 
 export function providerAllowsCustomModelId(provider: string): boolean {
-  return provider.trim().toLowerCase() === 'opencode-go';
+  // All providers support custom model IDs; we validate at runtime when the
+  // agent actually tries to use the model. This lets users immediately adopt
+  // new models without waiting for hardcoded lists to update.
+  const p = provider.trim().toLowerCase();
+  return p.length > 0;
 }
 
 export function parseProviderFromModelLabel(label: string): string | null {
@@ -371,7 +375,7 @@ export function parseProviderFromModelLabel(label: string): string | null {
 export function validateProviderModelRef(
   provider: string,
   model: string,
-): { ok: true } | { ok: false; text: string } {
+): { ok: true; warning?: string } | { ok: false; text: string } {
   const normalizedProvider = provider.trim();
   const normalizedModel = model.trim();
   if (!normalizedProvider || !normalizedModel) {
@@ -393,15 +397,14 @@ export function validateProviderModelRef(
       text: `Unknown provider "${normalizedProvider}". Use /models or /model picker.`,
     };
   }
-  if (providerAllowsCustomModelId(normalizedProvider)) {
-    return { ok: true };
-  }
   if (
     !modelExistsInPiModels(loaded.entries, normalizedProvider, normalizedModel)
   ) {
+    // Allow unknown models with a warning; runtime validation happens when
+    // the agent actually tries to use the model.
     return {
-      ok: false,
-      text: `Model "${normalizedProvider}/${normalizedModel}" is unavailable. Use /models or /model picker.`,
+      ok: true,
+      warning: `Model "${normalizedProvider}/${normalizedModel}" is not in the known list. It will be attempted at runtime.`,
     };
   }
   return { ok: true };

@@ -59,6 +59,10 @@ export const TELEGRAM_ADMIN_COMMANDS = [
   { command: 'groups', description: 'List registered groups' },
   { command: 'reload', description: 'Refresh command state and metadata' },
   {
+    command: 'refresh_models',
+    description: 'Refresh model list from provider APIs',
+  },
+  {
     command: 'update',
     description: 'Preserve local changes, pull, rebuild, and restart',
   },
@@ -112,6 +116,8 @@ export type TelegramCommandName =
   | '/groups'
   | '/reload'
   | '/panel'
+  | '/refresh-models'
+  | '/refresh_models'
   | '/update'
   | '/coder'
   | '/coding'
@@ -167,6 +173,8 @@ const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
   '/groups',
   '/reload',
   '/panel',
+  '/refresh-models',
+  '/refresh_models',
   '/update',
   '/coder',
   '/coding',
@@ -229,6 +237,7 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/freechat remove <chatId> - disable free chat in a non-main Telegram chat',
     '/freechat list - list chats with free chat enabled',
     '/reload - refresh command menus and group metadata',
+    '/refresh_models - refresh model list from provider APIs',
     '/update - preserve local changes, pull latest code, rebuild, and restart service',
     '/coder <task> - explicit delegated coding run',
     '/coding <task> - alias for /coder',
