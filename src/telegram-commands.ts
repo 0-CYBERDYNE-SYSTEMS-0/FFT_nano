@@ -181,11 +181,16 @@ export interface TelegramCommandDeps {
     input: string;
     chatJid: string;
   }) => Promise<string> | string;
-  runPiListModels: (searchText: string) => { text: string };
+  runPiListModels: (searchText: string) => { ok: boolean; text: string };
+  loadPiModels: (
+    forceRefresh?: boolean,
+  ) =>
+    | { ok: true; entries: Array<{ provider: string; model: string }> }
+    | { ok: false; text: string };
   validateProviderModelRef: (
     provider: string,
     model: string,
-  ) => { ok: true } | { ok: false; text: string };
+  ) => { ok: true; warning?: string } | { ok: false; text: string };
   normalizeThinkLevel: (value: string) => string | null | undefined;
   normalizeReasoningLevel: (value: string) => string | null | undefined;
   normalizeTelegramDeliveryMode: (value: string) => string | null | undefined;
@@ -433,7 +438,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       params.provider,
       params.model,
     );
-    if (validation.ok) return validation;
+    if (validation.ok) {
+      if (validation.warning) {
+        await deps.sendMessage(params.chatJid, validation.warning);
+      }
+      return validation;
+    }
     await deps.sendMessage(params.chatJid, validation.text);
     return { ok: false };
   }
@@ -1895,6 +1905,46 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         message: { role: 'assistant', content: listed.text },
       });
       await deps.sendMessage(m.chatJid, listed.text);
+      return true;
+    }
+
+    if (cmd === '/refresh-models' || cmd === '/refresh_models') {
+      if (!isMainGroup) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main');
+        await deps.sendMessage(m.chatJid, 'Admin-only command.');
+        return true;
+      }
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      await deps.sendMessage(m.chatJid, 'Refreshing model list from providers...');
+      const refreshed = deps.loadPiModels(true);
+      if (!refreshed.ok) {
+        const text = `Refresh failed: ${refreshed.text}`;
+        deps.emitTuiChatEvent({
+          runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+          sessionKey: deps.getSessionKeyForChat(m.chatJid),
+          state: 'final',
+          message: { role: 'assistant', content: text },
+        });
+        await deps.sendMessage(m.chatJid, text);
+        return true;
+      }
+      const total = refreshed.entries.length;
+      const providerCounts = new Map<string, number>();
+      for (const entry of refreshed.entries) {
+        providerCounts.set(entry.provider, (providerCounts.get(entry.provider) || 0) + 1);
+      }
+      const providerSummary = Array.from(providerCounts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([p, c]) => `${p}: ${c}`)
+        .join(', ');
+      const text = `Model list refreshed. ${total} models across ${providerCounts.size} providers.\n${providerSummary}`;
+      deps.emitTuiChatEvent({
+        runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+        sessionKey: deps.getSessionKeyForChat(m.chatJid),
+        state: 'final',
+        message: { role: 'assistant', content: text },
+      });
+      await deps.sendMessage(m.chatJid, text);
       return true;
     }
 

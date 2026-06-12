@@ -1156,7 +1156,7 @@ function parseProviderFromModelLabel(label: string): string | null {
 function validateProviderModelRef(
   provider: string,
   model: string,
-): { ok: true } | { ok: false; text: string } {
+): { ok: true; warning?: string } | { ok: false; text: string } {
   return tsValidateProviderModelRef(provider, model);
 }
 
@@ -1673,6 +1673,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   handleSkillManagerCommand,
   handleLibrarianCommand,
   runPiListModels,
+  loadPiModels,
   validateProviderModelRef,
   normalizeThinkLevel,
   normalizeReasoningLevel,
