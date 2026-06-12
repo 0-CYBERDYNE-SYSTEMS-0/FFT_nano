@@ -175,7 +175,9 @@ export function persistRuntimeConfigUpdates(
 
 export function loadPiModels(
   forceRefresh = false,
-): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
+):
+  | { ok: true; entries: PiModelEntry[]; warnings?: string[] }
+  | { ok: false; text: string } {
   if (
     !forceRefresh &&
     state.piModelsCache &&
@@ -209,6 +211,14 @@ export function loadPiModels(
     piAgentDir,
     getRuntimeConfigEnv(),
   );
+  const warnings = localSeedResult.ok
+    ? localSeedResult.errors.filter(
+        (error) =>
+          !error.startsWith('ollama:') &&
+          !error.startsWith('lm-studio:') &&
+          !error.endsWith(': missing baseUrl or apiKey'),
+      )
+    : localSeedResult.errors;
   if (!localSeedResult.ok) {
     void localSeedResult;
   }
@@ -265,7 +275,9 @@ export function loadPiModels(
   }
 
   state.piModelsCache = { entries, loadedAt: Date.now() };
-  return { ok: true, entries };
+  return warnings.length > 0
+    ? { ok: true, entries, warnings }
+    : { ok: true, entries };
 }
 
 export function runPiListModels(searchText: string): {

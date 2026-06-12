@@ -86,6 +86,7 @@ function createBaseDeps(): TelegramCommandDeps {
     summarizeTask: () => 'task detail',
     formatTaskRunsText: () => 'task runs',
     runPiListModels: () => ({ text: 'models' }),
+    loadPiModels: () => ({ ok: true, entries: [] }),
     validateProviderModelRef: () => ({ ok: true }),
     normalizeThinkLevel: () => null,
     normalizeReasoningLevel: () => null,
@@ -989,6 +990,41 @@ test('handleTelegramCommand rejects invalid /model provider/model overrides', as
     allowed: false,
     reason: 'invalid model override',
   });
+});
+
+test('handleTelegramCommand /refresh_models reports provider refresh warnings', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.loadPiModels = () => ({
+    ok: true,
+    entries: [
+      { provider: 'kimi-coding', model: 'kimi-for-coding' },
+      { provider: 'minimax', model: 'MiniMax-M2.7' },
+      { provider: 'minimax', model: 'MiniMax-M3' },
+    ],
+    warnings: ['kimi-coding: provider API returned 401'],
+  });
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:main',
+    chatName: 'Main',
+    content: '/refresh_models',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(deps.sent[0]?.text, 'Refreshing model list from providers...');
+  assert.match(
+    deps.sent[1]?.text || '',
+    /Model list refreshed\. 3 models across 2 providers\./,
+  );
+  assert.match(deps.sent[1]?.text || '', /kimi-coding: 1, minimax: 2/);
+  assert.match(
+    deps.sent[1]?.text || '',
+    /Warnings:\n- kimi-coding: provider API returned 401/,
+  );
 });
 
 test('handleTelegramCommand /model <model> resolves provider context and persists validated pair', async () => {

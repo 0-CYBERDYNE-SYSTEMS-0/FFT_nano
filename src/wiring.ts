@@ -1126,7 +1126,9 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
 
 function loadPiModels(
   forceRefresh = false,
-): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
+):
+  | { ok: true; entries: PiModelEntry[]; warnings?: string[] }
+  | { ok: false; text: string } {
   return tsLoadPiModels(forceRefresh);
 }
 
