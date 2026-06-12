@@ -289,6 +289,15 @@ export function ensureLocalProviderModels(
     if (!isObject(config.providers)) config.providers = {};
     const providers = config.providers as JsonObject;
 
+    const legacyKimiProvider = providers['kimi-coding'];
+    if (
+      isManagedLocalProvider(legacyKimiProvider) &&
+      typeof legacyKimiProvider.baseUrl === 'string' &&
+      legacyKimiProvider.baseUrl.includes('api.moonshot.')
+    ) {
+      delete providers['kimi-coding'];
+    }
+
     try {
       const ollama = discoverOllamaModels(env);
       if (ollama.models.length > 0) {

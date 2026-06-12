@@ -512,7 +512,6 @@ import {
   runPiListModels as tsRunPiListModels,
   providerExistsInPiModels as tsProviderExistsInPiModels,
   modelExistsInPiModels as tsModelExistsInPiModels,
-  providerAllowsCustomModelId as tsProviderAllowsCustomModelId,
   parseProviderFromModelLabel as tsParseProviderFromModelLabel,
   validateProviderModelRef as tsValidateProviderModelRef,
   sanitizeRunPreferencesModelOverride as tsSanitizeRunPreferencesModelOverride,
@@ -1145,10 +1144,6 @@ function modelExistsInPiModels(
   model: string,
 ): boolean {
   return tsModelExistsInPiModels(entries, provider, model);
-}
-
-function providerAllowsCustomModelId(provider: string): boolean {
-  return tsProviderAllowsCustomModelId(provider);
 }
 
 function parseProviderFromModelLabel(label: string): string | null {

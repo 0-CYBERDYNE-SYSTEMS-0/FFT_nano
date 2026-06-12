@@ -369,14 +369,6 @@ export function modelExistsInPiModels(
   );
 }
 
-export function providerAllowsCustomModelId(provider: string): boolean {
-  // All providers support custom model IDs; we validate at runtime when the
-  // agent actually tries to use the model. This lets users immediately adopt
-  // new models without waiting for hardcoded lists to update.
-  const p = provider.trim().toLowerCase();
-  return p.length > 0;
-}
-
 export function parseProviderFromModelLabel(label: string): string | null {
   const slash = label.indexOf('/');
   if (slash <= 0) return null;
@@ -412,11 +404,9 @@ export function validateProviderModelRef(
   if (
     !modelExistsInPiModels(loaded.entries, normalizedProvider, normalizedModel)
   ) {
-    // Allow unknown models with a warning; runtime validation happens when
-    // the agent actually tries to use the model.
     return {
-      ok: true,
-      warning: `Model "${normalizedProvider}/${normalizedModel}" is not in the known list. It will be attempted at runtime.`,
+      ok: false,
+      text: `Model "${normalizedProvider}/${normalizedModel}" is not available. Run /refresh_models, then select it with /model.`,
     };
   }
   return { ok: true };
@@ -460,8 +450,7 @@ export function sanitizeRunPreferencesModelOverride(
     effectiveProvider,
   );
   const modelKnown = rawModel
-    ? providerAllowsCustomModelId(effectiveProvider) ||
-      modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
+    ? modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
     : providerKnown;
   if (providerKnown && modelKnown) {
     return { runPreferences: nextPrefs };

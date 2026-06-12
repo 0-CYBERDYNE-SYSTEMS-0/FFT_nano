@@ -1099,8 +1099,8 @@ test('handleTelegramCallbackQuery rejects invalid set-model callback payloads', 
   }> = [];
   deps.getTelegramSettingsPanelAction = () => ({
     kind: 'set-model',
-    provider: 'minimax',
-    model: 'not-real',
+    provider: 'kimi-coding',
+    model: 'kimi-k2.7-code',
     returnTo: 'models',
   });
   deps.validateProviderModelRef = (provider, model) => ({

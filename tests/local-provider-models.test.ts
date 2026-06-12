@@ -105,3 +105,33 @@ test('ensureLocalProviderModels registers discovered Moonshot models for Pi', ()
     process.env.PATH = previousPath;
   }
 });
+
+test('ensureLocalProviderModels removes the legacy Moonshot override for Kimi Coding', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-legacy-kimi-models-'));
+  const modelsPath = path.join(dir, 'models.json');
+  fs.writeFileSync(
+    modelsPath,
+    `${JSON.stringify(
+      {
+        providers: {
+          'kimi-coding': {
+            xFftNanoManaged: 'fft-nano-local-discovery',
+            baseUrl: 'https://api.moonshot.ai/v1',
+            api: 'openai-completions',
+            apiKey: '$KIMI_API_KEY',
+            models: [{ id: 'kimi-k2.7-code' }],
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  const result = ensureLocalProviderModels(dir, {});
+
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  const after = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+  assert.equal(after.providers['kimi-coding'], undefined);
+});

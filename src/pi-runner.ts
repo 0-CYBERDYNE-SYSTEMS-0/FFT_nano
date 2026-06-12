@@ -514,6 +514,8 @@ export function collectRuntimeSecrets(
     'ZAI_API_KEY',
     'MINIMAX_API_KEY',
     'KIMI_API_KEY',
+    'MOONSHOT_API_KEY',
+    'MOONSHOT_BASE_URL',
     'MODAL_API_KEY',
     'NVIDIA_API_KEY',
     'FFT_NANO_DRY_RUN',
