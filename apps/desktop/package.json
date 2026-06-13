@@ -6,7 +6,6 @@
   "author": "FFT_nano",
   "license": "MIT",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
