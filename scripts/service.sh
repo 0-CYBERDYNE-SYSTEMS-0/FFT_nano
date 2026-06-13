@@ -9,6 +9,11 @@ SYSTEMD_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 LOG_DIR="${PROJECT_ROOT}/logs"
 TAIL_LINES="${FFT_NANO_LOG_TAIL_LINES:-120}"
 
+# Termux/Termux-services paths
+TERMUX_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+TERMUX_SERVICE_DIR="${TERMUX_PREFIX}/var/service/${SERVICE_NAME}"
+TERMUX_LOG_DIR="${TERMUX_PREFIX}/var/log/${SERVICE_NAME}"
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -281,6 +286,123 @@ linux_logs() {
   run_privileged journalctl -u "${SERVICE_NAME}" -n "${TAIL_LINES}" --no-pager
 }
 
+# ---- Termux / Android ----
+
+is_termux() {
+  [[ -n "${TERMUX_VERSION:-}" ]] || [[ "${PREFIX:-}" == *com.termux* ]] || [[ -d /data/data/com.termux/files/usr ]]
+}
+
+termux_service_exists() {
+  [[ -d "${TERMUX_SERVICE_DIR}" ]]
+}
+
+termux_install() {
+  if ! is_termux; then
+    fail "termux-services is only available on Android/Termux"
+  fi
+
+  mkdir -p "${TERMUX_SERVICE_DIR}/log" "${TERMUX_LOG_DIR}" "${LOG_DIR}"
+
+  # Create run script
+  cat >"${TERMUX_SERVICE_DIR}/run" <<EOF
+#!/data/data/com.termux/files/usr/bin/sh
+exec ${TERMUX_PREFIX}/bin/node ${PROJECT_ROOT}/dist/index.js >> ${TERMUX_LOG_DIR}/stdout.log 2>> ${TERMUX_LOG_DIR}/stderr.log
+EOF
+
+  # Create log/run script
+  cat >"${TERMUX_SERVICE_DIR}/log/run" <<EOF
+#!/data/data/com.termux/files/usr/bin/sh
+exec logger -t ${SERVICE_NAME}
+EOF
+
+  chmod +x "${TERMUX_SERVICE_DIR}/run" "${TERMUX_SERVICE_DIR}/log/run"
+  say "Installed termux-services service: ${SERVICE_NAME}"
+}
+
+termux_uninstall() {
+  if ! is_termux; then
+    fail "termux-services is only available on Android/Termux"
+  fi
+
+  termux_stop
+
+  rm -rf "${TERMUX_SERVICE_DIR}" 2>/dev/null || true
+  rm -rf "${TERMUX_LOG_DIR}" 2>/dev/null || true
+  say "Uninstalled termux-services service: ${SERVICE_NAME}"
+}
+
+termux_start() {
+  if ! is_termux; then
+    fail "termux-services is only available on Android/Termux"
+  fi
+
+  if ! termux_service_exists; then
+    fail "Service not installed. Run install first."
+  fi
+
+  sv up "${SERVICE_NAME}"
+  say "Started termux-services service: ${SERVICE_NAME}"
+}
+
+termux_stop() {
+  if ! is_termux; then
+    return 0
+  fi
+
+  if termux_service_exists; then
+    sv down "${SERVICE_NAME}" 2>/dev/null || true
+  fi
+}
+
+termux_restart() {
+  if ! is_termux; then
+    fail "termux-services is only available on Android/Termux"
+  fi
+
+  if ! termux_service_exists; then
+    fail "Service not installed. Run install first."
+  fi
+
+  sv restart "${SERVICE_NAME}"
+  say "Restarted termux-services service: ${SERVICE_NAME}"
+}
+
+termux_status() {
+  if ! is_termux; then
+    echo "not_termux"
+    return
+  fi
+
+  if ! termux_service_exists; then
+    echo "not_installed"
+    return
+  fi
+
+  if sv status "${SERVICE_NAME}" 2>/dev/null | grep -q "run"; then
+    echo "running"
+  else
+    echo "stopped"
+  fi
+}
+
+termux_logs() {
+  if ! is_termux; then
+    echo "not_termux"
+    return
+  fi
+
+  if [[ -f "${TERMUX_LOG_DIR}/stdout.log" ]]; then
+    tail -n "${TAIL_LINES}" "${TERMUX_LOG_DIR}/stdout.log"
+  else
+    echo "(no stdout logs)"
+  fi
+
+  if [[ -f "${TERMUX_LOG_DIR}/stderr.log" ]]; then
+    echo "=== stderr ==="
+    tail -n "${TAIL_LINES}" "${TERMUX_LOG_DIR}/stderr.log"
+  fi
+}
+
 main() {
   local action="${1:-status}"
   case "${action}" in
@@ -297,6 +419,13 @@ main() {
 
   local platform
   platform="$(uname -s)"
+
+  # Android/Termux uses termux-services
+  if [[ "${platform}" == "Linux" ]] && is_termux; then
+    "termux_${action}"
+    return
+  fi
+
   case "${platform}" in
     Darwin)
       "mac_${action}"

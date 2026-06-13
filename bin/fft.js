@@ -10,12 +10,15 @@ function printUsage() {
   fft profile <status|set|apply> [core|farm]
   fft start [telegram-only]
   fft dev [telegram-only]
+  fft stop
+  fft status [--json]
   fft tui [--url ws://127.0.0.1:28989] [--session main] [--deliver]
   fft web [--open]
   fft doctor [--json]
   fft skill-manager <status|run|dry-run|pause|resume|pin|unpin|archive|restore|backup> [skill]
   fft service <install|uninstall|start|stop|restart|status|logs>
   fft update
+  fft desktop
 
 Options:
   --repo <path>   Run against a specific FFT_nano repo path.
@@ -92,7 +95,7 @@ function main() {
     process.exit(0);
   }
 
-  if (!['onboard', 'profile', 'start', 'dev', 'tui', 'web', 'service', 'doctor', 'skill-manager', 'curator', 'update'].includes(command)) {
+  if (!['onboard', 'profile', 'start', 'stop', 'status', 'dev', 'tui', 'web', 'service', 'doctor', 'skill-manager', 'curator', 'update', 'desktop'].includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     printUsage();
     process.exit(2);
@@ -167,6 +170,93 @@ function main() {
   if (command === 'update') {
     const result = spawnSync('node', ['dist/update-worker-cli.js', '--cwd', repoRoot], {
       cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+    return;
+  }
+
+  if (command === 'stop') {
+    const result = spawnSync('bash', [path.join(repoRoot, 'scripts/start.sh'), 'stop'], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+    return;
+  }
+
+  if (command === 'status') {
+    const lockFile = path.join(repoRoot, 'data/fft_nano.lock');
+    const pidFile = path.join(repoRoot, 'data/fft_nano.pid');
+    const wantJson = commandArgs.includes('--json');
+
+    let status = {
+      host: 'stopped',
+      pid: null,
+      port: null,
+      service: 'unknown',
+    };
+
+    // Check if PID file exists
+    if (fs.existsSync(pidFile)) {
+      try {
+        const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+        if (!isNaN(pid) && pid > 0) {
+          try {
+            // Check if process exists
+            process.kill(pid, 0);
+            status.host = 'running';
+            status.pid = pid;
+          } catch {
+            // Process doesn't exist
+          }
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    // Try to detect port from lock file
+    if (fs.existsSync(lockFile)) {
+      try {
+        const lockContent = fs.readFileSync(lockFile, 'utf8');
+        const portMatch = lockContent.match(/port[= ]*(\d+)/i);
+        if (portMatch) {
+          status.port = parseInt(portMatch[1], 10);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    if (wantJson) {
+      process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+    } else {
+      if (status.host === 'running') {
+        process.stdout.write(`FFT_nano: running (PID ${status.pid})\n`);
+        if (status.port) {
+          process.stdout.write(`TUI port: ${status.port}\n`);
+        }
+      } else {
+        process.stdout.write('FFT_nano: stopped\n');
+      }
+    }
+    return;
+  }
+
+  if (command === 'desktop') {
+    // Launch desktop app
+    const desktopAppDir = path.join(repoRoot, 'apps/desktop');
+    if (!fs.existsSync(desktopAppDir)) {
+      process.stderr.write('Desktop app not found. Run from FFT_nano source directory.\n');
+      process.exit(1);
+    }
+    const result = spawnSync('npm', ['run', 'dev'], {
+      cwd: desktopAppDir,
       env: process.env,
       stdio: 'inherit',
     });
