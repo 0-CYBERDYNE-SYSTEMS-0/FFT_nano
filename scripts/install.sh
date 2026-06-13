@@ -478,7 +478,7 @@ main() {
     local admin_secret
     # Use openssl for cryptographically secure random string to avoid SIGPIPE issues with head/tr
     if command -v openssl >/dev/null 2>&1; then
-      admin_secret="$(openssl rand -base64 24 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 32)"
+      admin_secret="$(openssl rand -base64 36 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 32)"
     else
       # Fallback: use od and tr without piping to head (avoids SIGPIPE)
       admin_secret="$(od -An -tx1 -N24 /dev/urandom 2>/dev/null | tr -d ' \n' | head -c 32)"

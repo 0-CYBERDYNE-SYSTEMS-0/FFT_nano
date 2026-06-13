@@ -13,7 +13,7 @@ const __dirname = path.dirname(__filename);
 // Dynamically import the platform adapter from src/platform
 // This is a Node.js CLI script, so we use dynamic import for ESM
 async function getPlatformAdapter() {
-  const platformPath = path.resolve(__dirname, '..', 'src', 'platform', 'index.js');
+  const platformPath = path.resolve(__dirname, '..', 'dist', 'platform', 'index.js');
   const module = await import(`file://${platformPath}`);
   return module.getPlatformAdapter();
 }
