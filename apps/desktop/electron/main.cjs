@@ -84,6 +84,45 @@ function getAuthTokenFromEnv(fftNanoPath) {
 let currentHostPath = null;
 
 /**
+ * Search for a running FFT_nano host by looking for lock files in global locations.
+ * This allows discovering a running host even if it's in a different location than
+ * what findFftNanoHost() resolves to (e.g., ~/FFT_nano vs ~/fft_nano).
+ * 
+ * @returns {{ found: boolean, path?: string, pid?: number, port?: number }}
+ */
+function findRunningHostViaLockFile() {
+  const homeDir = os.homedir();
+  const possiblePaths = [
+    path.join(homeDir, 'FFT_nano'),
+    path.join(homeDir, 'fft_nano'),
+    path.join(homeDir, 'nano'),
+  ];
+
+  for (const basePath of possiblePaths) {
+    const lockFilePath = path.join(basePath, 'data', 'fft_nano.lock');
+    try {
+      if (fs.existsSync(lockFilePath)) {
+        const lockData = JSON.parse(fs.readFileSync(lockFilePath, 'utf8'));
+        if (lockData.pid) {
+          // Check if process is actually running
+          try {
+            process.kill(lockData.pid, 0);
+            const port = lockData.port || 28989;
+            console.log('[FFT Desktop] Found running host via global lock file scan at:', basePath, 'PID:', lockData.pid, 'Port:', port);
+            return { found: true, path: basePath, pid: lockData.pid, port };
+          } catch {
+            // Process not running, try next path
+          }
+        }
+      }
+    } catch {
+      // Ignore errors, try next path
+    }
+  }
+  return { found: false };
+}
+
+/**
  * Check if `fft` command is available on PATH
  */
 function isFftOnPath() {
@@ -295,7 +334,7 @@ function createWindow() {
     minHeight: 600,
     title: 'FFT_nano',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -569,14 +608,19 @@ function setupIpcHandlers() {
 
   ipcMain.handle('fftDesktop:getSettings', () => {
     // Load settings from disk
-    const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+    const userDataPath = app.getPath('userData');
+    console.log('[FFT Desktop] Settings path (userData):', userDataPath);
+    const settingsPath = path.join(userDataPath, 'settings.json');
     try {
       if (fs.existsSync(settingsPath)) {
-        return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        console.log('[FFT Desktop] Settings loaded from:', settingsPath);
+        return data;
       }
-    } catch {
-      // Ignore
+    } catch (err) {
+      console.error('[FFT Desktop] Failed to load settings:', err);
     }
+    console.log('[FFT Desktop] Using default settings');
     return {
       theme: 'system',
       notifications: true,
@@ -586,9 +630,28 @@ function setupIpcHandlers() {
   });
 
   ipcMain.handle('fftDesktop:setSettings', (event, settings) => {
-    const settingsPath = path.join(app.getPath('userData'), 'settings.json');
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-    return { success: true };
+    const userDataPath = app.getPath('userData');
+    console.log('[FFT Desktop] Settings path (userData):', userDataPath);
+    const settingsPath = path.join(userDataPath, 'settings.json');
+    
+    // Ensure directory exists
+    try {
+      if (!fs.existsSync(userDataPath)) {
+        fs.mkdirSync(userDataPath, { recursive: true });
+        console.log('[FFT Desktop] Created userData directory:', userDataPath);
+      }
+    } catch (err) {
+      console.error('[FFT Desktop] Failed to create userData directory:', err);
+    }
+    
+    try {
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      console.log('[FFT Desktop] Settings saved to:', settingsPath);
+      return { success: true };
+    } catch (err) {
+      console.error('[FFT Desktop] Failed to save settings:', err);
+      return { success: false, error: err.message };
+    }
   });
 
   ipcMain.handle('fftDesktop:openExternal', (event, url) => {
@@ -666,28 +729,38 @@ app.whenReady().then(async () => {
   setupIpcHandlers();
   setupAutoUpdater();
 
-  // Try to find and connect to existing host or start a new one
-  const hostInfo = findFftNanoHost();
-  if (hostInfo.type !== 'bootstrap') {
-    // Check if host is already running
-    const lockFile = path.join(hostInfo.path, 'data', 'fft_nano.lock');
-    try {
-      if (fs.existsSync(lockFile)) {
-        const lockData = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
-        if (lockData.pid) {
-          // Check if process is actually running
-          try {
-            process.kill(lockData.pid, 0);
-            console.log('[FFT Desktop] Found running host with PID:', lockData.pid);
-            hostPort = lockData.port || 28989;
-            // Don't spawn new host, just connect to existing
-          } catch {
-            console.log('[FFT Desktop] Stale lock file, host not running');
+  // First, do a global search for any running host via lock files in ~/FFT_nano, ~/fft_nano, ~/nano
+  // This ensures we discover hosts even if they're in a different location than FFT_NANO_DESKTOP_ROOT
+  const globalHost = findRunningHostViaLockFile();
+  if (globalHost.found) {
+    hostPort = globalHost.port;
+    currentHostPath = globalHost.path;
+    console.log('[FFT Desktop] Connected to running host at:', globalHost.path, 'port:', hostPort);
+  } else {
+    // Try to find and connect to existing host or start a new one
+    const hostInfo = findFftNanoHost();
+    if (hostInfo.type !== 'bootstrap') {
+      // Check if host is already running in the resolved path
+      const lockFile = path.join(hostInfo.path, 'data', 'fft_nano.lock');
+      try {
+        if (fs.existsSync(lockFile)) {
+          const lockData = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+          if (lockData.pid) {
+            // Check if process is actually running
+            try {
+              process.kill(lockData.pid, 0);
+              console.log('[FFT Desktop] Found running host with PID:', lockData.pid);
+              hostPort = lockData.port || 28989;
+              currentHostPath = hostInfo.path;
+              // Don't spawn new host, just connect to existing
+            } catch {
+              console.log('[FFT Desktop] Stale lock file, host not running');
+            }
           }
         }
+      } catch {
+        // Ignore
       }
-    } catch {
-      // Ignore
     }
   }
 
