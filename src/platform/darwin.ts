@@ -1,8 +1,9 @@
-import { exec, spawn } from 'child_process';
+import { exec, execSync, spawn } from 'child_process';
 import { existsSync, unlinkSync } from 'fs';
 import { createServer } from 'net';
 import { promisify } from 'util';
 import path from 'path';
+import { logger } from '../logger.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import type { Server, Socket } from 'net';
 import type { PlatformAdapter } from './types.js';
@@ -165,11 +166,11 @@ export class DarwinAdapter implements PlatformAdapter {
 
   getCredential(service: string, account: string): string | null {
     try {
-      const { stdout } = execSync(
+      const result = execSync(
         `security find-generic-password -s "${service}" -a "${account}" -w 2>/dev/null`,
-        { encoding: 'utf8' },
-      );
-      return stdout.trim() || null;
+        { encoding: 'utf8' } as { encoding: 'utf8' },
+      ) as string;
+      return result.trim() || null;
     } catch {
       return null;
     }
@@ -182,12 +183,16 @@ export class DarwinAdapter implements PlatformAdapter {
         `security delete-generic-password -s "${service}" -a "${account}" 2>/dev/null || true`,
       );
     } catch {
-      // Ignore
+      // Ignore - may not exist
     }
     // Add new
-    execSync(
-      `security add-generic-password -s "${service}" -a "${account}" -w "${value}" -U 2>/dev/null || true`,
-    );
+    try {
+      execSync(
+        `security add-generic-password -s "${service}" -a "${account}" -w "${value}" -U 2>/dev/null`,
+      );
+    } catch (err) {
+      logger.warn({ err, service, account }, 'Failed to store credential in macOS Keychain');
+    }
   }
 
   deleteCredential(service: string, account: string): void {
@@ -219,13 +224,4 @@ export class DarwinAdapter implements PlatformAdapter {
   pathsEqual(a: string, b: string): boolean {
     return path.posix.normalize(a) === path.posix.normalize(b);
   }
-}
-
-// Need execSync
-function execSync(
-  command: string,
-  options?: { encoding?: string; windowsHide?: boolean },
-): { stdout: string } {
-  const { execSync: _execSync } = require('child_process');
-  return _execSync(command, options) as { stdout: string };
 }

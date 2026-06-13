@@ -4,6 +4,7 @@ import { createServer } from 'net';
 import { promisify } from 'util';
 import path from 'path';
 import { readFile } from 'fs/promises';
+import { logger } from '../logger.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import type { Server, Socket } from 'net';
 import type { PlatformAdapter } from './types.js';
@@ -334,10 +335,10 @@ exec logger -t ${SERVICE_NAME}
     try {
       const { execSync } = require('child_process');
       execSync(
-        `secret-tool store --label="${service}" service "${service}" account "${account}" <<< "${value}" 2>/dev/null || true`,
+        `secret-tool store --label="${service}" service "${service}" account "${account}" <<< "${value}" 2>/dev/null`,
       );
-    } catch {
-      // secret-tool may not be available
+    } catch (err) {
+      logger.error({ err, service, account }, 'Failed to store credential via secret-tool (libsecret). Is secret-tool installed?');
     }
   }
 
