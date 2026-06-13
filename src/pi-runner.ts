@@ -1,7 +1,8 @@
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { getPlatformAdapter } from './platform/index.js';
 import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -1289,15 +1290,14 @@ export async function runContainerAgent(
     if (!activeChild) return;
     const ref = activeChild;
     if (ref.exitCode !== null || ref.signalCode !== null) return;
+    const platformAdapter = getPlatformAdapter();
     const signal = (sig: NodeJS.Signals) => {
-      if (ref.pid && process.platform !== 'win32') {
-        try {
-          process.kill(-ref.pid, sig);
-          return;
-        } catch {
-          // Fall back to signaling the direct child below.
-        }
+      if (ref.pid) {
+        // Use platform adapter for process group kill
+        const killed = platformAdapter.killProcessGroup(ref.pid, sig);
+        if (killed) return;
       }
+      // Fall back to signaling the direct child
       ref.kill(sig);
     };
     signal('SIGTERM');
@@ -1403,12 +1403,15 @@ export async function runContainerAgent(
         env: env as Record<string, string>,
       });
 
-      const child = spawn(sandboxed.command, sandboxed.args, {
+      const platformAdapter = getPlatformAdapter();
+      // spawnDetached returns ChildProcess, but with stdio: ['pipe', 'pipe', 'pipe']
+      // stdin/stdout/stderr are guaranteed to be non-null
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const child = platformAdapter.spawnDetached(sandboxed.command, sandboxed.args, {
         cwd: wp.groupDir,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
-      });
+      }) as ChildProcess & { stdin: NonNullable<ChildProcess['stdin']>; stdout: NonNullable<ChildProcess['stdout']>; stderr: NonNullable<ChildProcess['stderr']> };
       const closeRpcInput = () => {
         if (
           transportMode !== 'rpc' ||
