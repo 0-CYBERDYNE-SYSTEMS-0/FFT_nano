@@ -2096,7 +2096,7 @@ function getControlCenterKnowledgeStatus() {
 function createWebControlCenterAdapters(): WebControlCenterAdapters {
   return webCreateAdapters(getWebControlCenterDeps());
 }
-async function startTuiGatewayService(): Promise<void> {
+async function startTuiGatewayService(): Promise<boolean> {
   return tuiStartGatewayService(hostEventBus, getTuiCoordinationDeps());
 }
 

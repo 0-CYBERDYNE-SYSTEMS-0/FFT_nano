@@ -311,11 +311,11 @@ export function createTuiGatewayAdapters(
 export async function startTuiGatewayService(
   hostEventBus: HostEventBus,
   deps: TuiCoordinationDeps,
-): Promise<void> {
-  if (state.tuiGatewayServer) return;
+): Promise<boolean> {
+  if (state.tuiGatewayServer) return true;
   if (!FFT_NANO_TUI_ENABLED) {
     logger.info('TUI gateway disabled via FFT_NANO_TUI_ENABLED');
-    return;
+    return false;
   }
   try {
     state.tuiGatewayServer = await startTuiGatewayServer(
@@ -328,12 +328,14 @@ export async function startTuiGatewayService(
         socketPath: '/tmp/fft_nano_tui.sock',
       },
     );
+    return true;
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error(
       { err: error },
       'TUI gateway failed to start; continuing without TUI surface',
     );
+    return false;
   }
 }
 

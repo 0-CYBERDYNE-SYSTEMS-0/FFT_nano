@@ -90,6 +90,10 @@ const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
 // --- sendMessage ---
 
 export async function sendMessage(jid: string, text: string): Promise<boolean> {
+  if (jid.startsWith('tui:')) {
+    logger.warn({ jid }, 'External delivery requested for local TUI session');
+    return false;
+  }
   if (isTelegramJid(jid)) {
     if (!state.telegramBot) {
       logger.error(
