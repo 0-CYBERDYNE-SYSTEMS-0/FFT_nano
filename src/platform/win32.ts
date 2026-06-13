@@ -292,7 +292,13 @@ export class Win32Adapter implements PlatformAdapter {
     };
 
     // Cast to allow windowsCreateProcessOptions which may not be in all TS definitions
-    return spawn(command, args, spawnOpts as SpawnOptions & { windowsCreateProcessOptions?: { createProcessGroup: boolean } });
+    return spawn(
+      command,
+      args,
+      spawnOpts as SpawnOptions & {
+        windowsCreateProcessOptions?: { createProcessGroup: boolean };
+      },
+    );
   }
 
   showNotification(title: string, message: string): void {

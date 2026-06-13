@@ -191,7 +191,10 @@ export class DarwinAdapter implements PlatformAdapter {
         `security add-generic-password -s "${service}" -a "${account}" -w "${value}" -U 2>/dev/null`,
       );
     } catch (err) {
-      logger.warn({ err, service, account }, 'Failed to store credential in macOS Keychain');
+      logger.warn(
+        { err, service, account },
+        'Failed to store credential in macOS Keychain',
+      );
     }
   }
 
