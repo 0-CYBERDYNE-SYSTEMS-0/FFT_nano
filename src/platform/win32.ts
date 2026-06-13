@@ -9,7 +9,11 @@ const SERVICE_NAME = 'fft-nano';
 
 // Dynamic imports for node-windows (only available on Windows)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type WindowsServiceType = new (options: { name: string; description?: string; script: string }) => {
+type WindowsServiceType = new (options: {
+  name: string;
+  description?: string;
+  script: string;
+}) => {
   install: (cb: (err: Error | null) => void) => void;
   start: (cb: (err: Error | null) => void) => void;
   stop: (cb: (err: Error | null) => void) => void;
@@ -23,7 +27,9 @@ async function getWindowsService(): Promise<WindowsServiceType | null> {
   if (WindowsService === undefined) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      WindowsService = (await import('node-windows') as any).default || (await import('node-windows') as any);
+      WindowsService =
+        ((await import('node-windows')) as any).default ||
+        ((await import('node-windows')) as any);
     } catch {
       WindowsService = null;
     }
@@ -33,9 +39,14 @@ async function getWindowsService(): Promise<WindowsServiceType | null> {
 
 // tree-kill for process tree killing on Windows
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let treeKill: ((pid: number, signal: string, cb: (err: Error | null) => void) => void) | null = null;
+let treeKill:
+  | ((pid: number, signal: string, cb: (err: Error | null) => void) => void)
+  | null = null;
 
-async function getTreeKill(): Promise<((pid: number, signal: string, cb: (err: Error | null) => void) => void) | null> {
+async function getTreeKill(): Promise<
+  | ((pid: number, signal: string, cb: (err: Error | null) => void) => void)
+  | null
+> {
   if (treeKill === null) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,14 +60,18 @@ async function getTreeKill(): Promise<((pid: number, signal: string, cb: (err: E
 
 // node-notifier for Windows toast notifications
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type NotifierType = { notify: (options: { title: string; message: string }) => void };
+type NotifierType = {
+  notify: (options: { title: string; message: string }) => void;
+};
 let notifier: NotifierType | null | undefined = undefined;
 
 async function getNotifier(): Promise<NotifierType | null> {
   if (notifier === undefined) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      notifier = (await import('node-notifier') as any).default || (await import('node-notifier') as any);
+      notifier =
+        ((await import('node-notifier')) as any).default ||
+        ((await import('node-notifier')) as any);
     } catch {
       notifier = null;
     }
@@ -64,16 +79,24 @@ async function getNotifier(): Promise<NotifierType | null> {
   return notifier as NotifierType | null;
 }
 
-async function execAsync(command: string): Promise<{ stdout: string; stderr: string }> {
+async function execAsync(
+  command: string,
+): Promise<{ stdout: string; stderr: string }> {
   const { exec } = await import('child_process');
   return new Promise((resolve) => {
-    exec(command, { encoding: 'utf8' }, (err: Error | null, stdout: string, stderr: string) => {
-      resolve({ stdout: stdout || '', stderr: stderr || '' });
-    });
+    exec(
+      command,
+      { encoding: 'utf8' },
+      (err: Error | null, stdout: string, stderr: string) => {
+        resolve({ stdout: stdout || '', stderr: stderr || '' });
+      },
+    );
   });
 }
 
-function promisifyCallback<T>(fn: (cb: (err: Error | null, result?: T) => void) => void): () => Promise<T> {
+function promisifyCallback<T>(
+  fn: (cb: (err: Error | null, result?: T) => void) => void,
+): () => Promise<T> {
   return () =>
     new Promise((resolve, reject) => {
       fn((err, result) => {
@@ -91,7 +114,9 @@ export class Win32Adapter implements PlatformAdapter {
   async installService(): Promise<void> {
     const Service = await getWindowsService();
     if (!Service) {
-      throw new Error('node-windows is not installed. Run: npm install node-windows');
+      throw new Error(
+        'node-windows is not installed. Run: npm install node-windows',
+      );
     }
 
     const serviceScript = path.join(process.cwd(), 'dist', 'index.js');
@@ -113,7 +138,11 @@ export class Win32Adapter implements PlatformAdapter {
 
     await this.stopService();
 
-    const service = new Service({ name: SERVICE_NAME, description: '', script: '' });
+    const service = new Service({
+      name: SERVICE_NAME,
+      description: '',
+      script: '',
+    });
     const deleteSvc = promisifyCallback<void>(service.delete.bind(service));
     try {
       await deleteSvc();
@@ -128,7 +157,11 @@ export class Win32Adapter implements PlatformAdapter {
       throw new Error('node-windows is not installed');
     }
 
-    const service = new Service({ name: SERVICE_NAME, description: '', script: '' });
+    const service = new Service({
+      name: SERVICE_NAME,
+      description: '',
+      script: '',
+    });
     const start = promisifyCallback<void>(service.start.bind(service));
     await start();
   }
@@ -141,7 +174,11 @@ export class Win32Adapter implements PlatformAdapter {
       return;
     }
 
-    const service = new Service({ name: SERVICE_NAME, description: '', script: '' });
+    const service = new Service({
+      name: SERVICE_NAME,
+      description: '',
+      script: '',
+    });
     const stop = promisifyCallback<void>(service.stop.bind(service));
     try {
       await stop();
@@ -171,20 +208,31 @@ export class Win32Adapter implements PlatformAdapter {
     }
 
     return new Promise((resolve) => {
-      const service = new Service({ name: SERVICE_NAME, description: '', script: '' });
+      const service = new Service({
+        name: SERVICE_NAME,
+        description: '',
+        script: '',
+      });
       // Check if service exists
       const { exec } = require('child_process');
-      exec(`sc query "${SERVICE_NAME}"`, (err: Error | null, stdout: string) => {
-        if (err || stdout.includes('does not exist') || stdout.includes('not found')) {
-          resolve('not_installed');
-          return;
-        }
-        if (stdout.includes('RUNNING')) {
-          resolve('running');
-        } else {
-          resolve('stopped');
-        }
-      });
+      exec(
+        `sc query "${SERVICE_NAME}"`,
+        (err: Error | null, stdout: string) => {
+          if (
+            err ||
+            stdout.includes('does not exist') ||
+            stdout.includes('not found')
+          ) {
+            resolve('not_installed');
+            return;
+          }
+          if (stdout.includes('RUNNING')) {
+            resolve('running');
+          } else {
+            resolve('stopped');
+          }
+        },
+      );
     });
   }
 
@@ -205,11 +253,14 @@ export class Win32Adapter implements PlatformAdapter {
     // Try tree-kill first if available, otherwise use taskkill
     const tk = treeKill;
     if (tk) {
-      let result = false;
-      tk(pid, 'SIGKILL', (err) => {
-        result = !err;
-      });
-      return result;
+      try {
+        // treeKill has a sync variant not in the types
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (tk as any).sync(pid, 'SIGKILL');
+        return true;
+      } catch {
+        return false;
+      }
     }
 
     // Fallback to synchronous taskkill
@@ -222,7 +273,11 @@ export class Win32Adapter implements PlatformAdapter {
     }
   }
 
-  spawnDetached(command: string, args: string[], options?: SpawnOptions): ChildProcess {
+  spawnDetached(
+    command: string,
+    args: string[],
+    options?: SpawnOptions,
+  ): ChildProcess {
     return spawn(command, args, {
       ...options,
       detached: false, // Windows handles detachment differently
@@ -288,7 +343,9 @@ export class Win32Adapter implements PlatformAdapter {
       // First delete any existing credential
       execSync(`cmdkey /delete:${target} 2>nul || true`, { windowsHide: true });
       // Then add new one
-      execSync(`cmdkey /generic:${target} /pass:"${value}" 2>nul || true`, { windowsHide: true });
+      execSync(`cmdkey /generic:${target} /pass:"${value}" 2>nul || true`, {
+        windowsHide: true,
+      });
     } catch {
       // cmdkey may fail in some environments
     }
@@ -319,6 +376,9 @@ export class Win32Adapter implements PlatformAdapter {
   }
 
   pathsEqual(a: string, b: string): boolean {
-    return path.win32.normalize(a).toLowerCase() === path.win32.normalize(b).toLowerCase();
+    return (
+      path.win32.normalize(a).toLowerCase() ===
+      path.win32.normalize(b).toLowerCase()
+    );
   }
 }
