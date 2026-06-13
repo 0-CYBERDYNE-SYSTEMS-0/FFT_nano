@@ -4,6 +4,7 @@ import YAML from 'yaml';
 
 import { loadSkillUsage } from './skill-lifecycle.js';
 import type { SkillCatalogEntry } from './system-prompt.js';
+import { getPlatformAdapter } from './platform/index.js';
 
 export const PROJECT_RUNTIME_SKILLS_RELATIVE_DIR_CANDIDATES = [
   path.join('skills', 'runtime'),
@@ -557,12 +558,19 @@ function isDirectory(dirPath: string): boolean {
 }
 
 function normalizeForPathCompare(p: string): string {
-  return process.platform === 'win32' ? p.toLowerCase() : p;
+  // Use platform adapter for consistent cross-platform path normalization
+  const platformAdapter = getPlatformAdapter();
+  return platformAdapter.normalizePath(p);
 }
 
 function isPathInsideRoot(candidatePath: string, rootPath: string): boolean {
+  const platformAdapter = getPlatformAdapter();
   const normalizedCandidate = normalizeForPathCompare(candidatePath);
   const normalizedRoot = normalizeForPathCompare(rootPath);
+  // Use pathsEqual for case-insensitive comparison on Windows
+  if (platformAdapter.pathsEqual(normalizedCandidate, normalizedRoot)) {
+    return true;
+  }
   const relative = path.relative(normalizedRoot, normalizedCandidate);
   return (
     relative === '' ||
