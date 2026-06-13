@@ -18,6 +18,14 @@ contextBridge.exposeInMainWorld('fftDesktop', {
   },
 
   /**
+   * Get the auth token for WebSocket connection
+   * @returns {string} Auth token
+   */
+  getAuthToken: () => {
+    return ipcRenderer.invoke('fftDesktop:getAuthToken');
+  },
+
+  /**
    * Start the FFT_nano host
    * @returns {{ success: boolean, port?: number }}
    */
