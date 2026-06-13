@@ -2268,6 +2268,8 @@ function registerShutdownHandlers(): void {
 
 export async function main(): Promise<void> {
   await appRuntime.main();
+  // Emit ready signal for CLI fft start command
+  console.log(`FFT_NANO_READY port=${FFT_NANO_TUI_PORT}`);
   startUpdateNotificationLoop({ sendMessage });
 }
 
