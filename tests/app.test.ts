@@ -235,6 +235,7 @@ test('main allows onboarding mode without configured channels', async () => {
     acquireSingletonLock: () => {},
     startTuiGatewayService: async () => {
       tuiStarted += 1;
+      return true;
     },
     startWebControlCenterService: async () => {
       webStarted += 1;
@@ -254,4 +255,128 @@ test('main allows onboarding mode without configured channels', async () => {
   assert.equal(webStarted, 1);
   assert.equal(schedulerStarted, 0);
   assert.equal(messageLoopStarted, 0);
+});
+
+test('main allows TUI-only mode without starting channel delivery loops', async () => {
+  let telegramStarted = 0;
+  let schedulerStarted = 0;
+  let messageLoopStarted = 0;
+  let heartbeatStarted = 0;
+  let outboxFlushed = 0;
+  let longRunsResumed = 0;
+
+  const runtime = createAppRuntime({
+    state: {
+      telegramBot: undefined,
+      registeredGroups: {},
+    },
+    constants: {
+      telegramBotToken: undefined,
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+      featureFarm: false,
+      farmStateEnabled: false,
+      whatsappEnabled: false,
+      onboardingMode: false,
+    },
+    createTelegramBot: () => {
+      telegramStarted += 1;
+      return { startPolling: () => {} };
+    },
+    refreshTelegramCommandMenus: async () => {},
+    handleTelegramCallbackQuery: async () => {},
+    handleTelegramSetupInput: async () => false,
+    handleTelegramCommand: async () => false,
+    storeChatMetadata: () => {},
+    maybeRegisterTelegramChat: () => false,
+    isMainChat: () => false,
+    persistTelegramMedia: async (event) => event.content,
+    storeTextMessage: () => {},
+    logger: {
+      info: () => {},
+      warn: () => {},
+    },
+    ensureContainerSystemRunning: () => {},
+    initDatabase: () => {},
+    loadState: () => {},
+    migrateLegacyClaudeMemoryFiles: () => {},
+    migrateCompactionSummariesFromSoul: () => {},
+    maybePromoteConfiguredTelegramMain: () => {},
+    acquireSingletonLock: () => {},
+    startTuiGatewayService: async () => true,
+    startWebControlCenterService: async () => {},
+    startSchedulerLoop: () => {
+      schedulerStarted += 1;
+    },
+    startMessageLoop: async () => {
+      messageLoopStarted += 1;
+    },
+    startHeartbeatLoop: () => {
+      heartbeatStarted += 1;
+    },
+    flushDeliveryOutbox: async () => {
+      outboxFlushed += 1;
+      return { delivered: 0, stillPending: 0 };
+    },
+    resumeRecoverableLongRuns: async () => {
+      longRunsResumed += 1;
+      return { resumed: 0, abandoned: 0 };
+    },
+    maybeRunBootMdOnce: () => {},
+  });
+
+  await runtime.main();
+
+  assert.equal(telegramStarted, 0);
+  assert.equal(schedulerStarted, 0);
+  assert.equal(messageLoopStarted, 0);
+  assert.equal(heartbeatStarted, 0);
+  assert.equal(outboxFlushed, 0);
+  assert.equal(longRunsResumed, 0);
+});
+
+test('main rejects channel-free startup when the TUI gateway is unavailable', async () => {
+  const runtime = createAppRuntime({
+    state: {
+      telegramBot: undefined,
+      registeredGroups: {},
+    },
+    constants: {
+      telegramBotToken: undefined,
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+      featureFarm: false,
+      farmStateEnabled: false,
+      whatsappEnabled: false,
+      onboardingMode: false,
+    },
+    createTelegramBot: () => ({ startPolling: () => {} }),
+    refreshTelegramCommandMenus: async () => {},
+    handleTelegramCallbackQuery: async () => {},
+    handleTelegramSetupInput: async () => false,
+    handleTelegramCommand: async () => false,
+    storeChatMetadata: () => {},
+    maybeRegisterTelegramChat: () => false,
+    isMainChat: () => false,
+    persistTelegramMedia: async (event) => event.content,
+    storeTextMessage: () => {},
+    logger: {
+      info: () => {},
+      warn: () => {},
+    },
+    ensureContainerSystemRunning: () => {},
+    initDatabase: () => {},
+    loadState: () => {},
+    migrateLegacyClaudeMemoryFiles: () => {},
+    migrateCompactionSummariesFromSoul: () => {},
+    maybePromoteConfiguredTelegramMain: () => {},
+    acquireSingletonLock: () => {},
+    startTuiGatewayService: async () => false,
+    startWebControlCenterService: async () => {},
+  });
+
+  await assert.rejects(
+    runtime.main(),
+    /No channels enabled.*TUI gateway is unavailable/,
+  );
 });

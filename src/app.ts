@@ -98,7 +98,7 @@ export interface AppRuntimeDeps {
   migrateLegacyClaudeMemoryFiles?: () => void;
   migrateCompactionSummariesFromSoul?: () => void;
   maybePromoteConfiguredTelegramMain?: () => void;
-  startTuiGatewayService?: () => Promise<void>;
+  startTuiGatewayService?: () => Promise<boolean>;
   startWebControlCenterService?: () => Promise<void>;
   stopTuiGatewayService?: () => Promise<void>;
   stopWebControlCenterService?: () => Promise<void>;
@@ -563,7 +563,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.migrateLegacyClaudeMemoryFiles?.();
     deps.migrateCompactionSummariesFromSoul?.();
     deps.maybePromoteConfiguredTelegramMain?.();
-    await deps.startTuiGatewayService?.();
+    const tuiAvailable = (await deps.startTuiGatewayService?.()) === true;
     await deps.startWebControlCenterService?.();
     deps.logger.info?.(
       {
@@ -589,14 +589,27 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       !!deps.constants.farmStateEnabled &&
       deps.constants.whatsappEnabled === false &&
       !telegramEnabled;
+    const tuiOnlyMode =
+      !farmOnlyMode &&
+      deps.constants.whatsappEnabled === false &&
+      !telegramEnabled &&
+      tuiAvailable;
     if (
       deps.constants.whatsappEnabled === false &&
       !telegramEnabled &&
-      !farmOnlyMode
+      !farmOnlyMode &&
+      !tuiOnlyMode
     ) {
       throw new Error(
-        'No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.',
+        'No channels enabled and TUI gateway is unavailable. Set WHATSAPP_ENABLED=1, TELEGRAM_BOT_TOKEN, or enable a working TUI gateway.',
       );
+    }
+    if (tuiOnlyMode) {
+      deps.logger.info?.(
+        'Running in TUI-only mode (messaging channels and delivery loops disabled)',
+      );
+      deps.maybeRunBootMdOnce?.();
+      return;
     }
     if (telegramEnabled) {
       await startTelegram();
