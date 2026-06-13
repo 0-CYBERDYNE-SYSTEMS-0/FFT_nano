@@ -338,7 +338,10 @@ exec logger -t ${SERVICE_NAME}
         `secret-tool store --label="${service}" service "${service}" account "${account}" <<< "${value}" 2>/dev/null`,
       );
     } catch (err) {
-      logger.error({ err, service, account }, 'Failed to store credential via secret-tool (libsecret). Is secret-tool installed?');
+      logger.error(
+        { err, service, account },
+        'Failed to store credential via secret-tool (libsecret). Is secret-tool installed?',
+      );
     }
   }
 
