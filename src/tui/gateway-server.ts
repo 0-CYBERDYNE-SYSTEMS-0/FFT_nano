@@ -546,7 +546,9 @@ export async function startTuiGatewayServer(
 
   // Local mode: Unix socket server for direct TUI connections
   const platformAdapter = getPlatformAdapter();
-  let localServer: ReturnType<typeof platformAdapter.createLocalSocket> | undefined;
+  let localServer:
+    | ReturnType<typeof platformAdapter.createLocalSocket>
+    | undefined;
   if (socketPath) {
     await removeStaleUnixSocket(socketPath);
 

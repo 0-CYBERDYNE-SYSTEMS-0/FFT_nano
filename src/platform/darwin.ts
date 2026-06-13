@@ -50,7 +50,9 @@ export class DarwinAdapter implements PlatformAdapter {
 
     // Unload existing first
     try {
-      await execAsync(`launchctl bootout gui/$(id -u) "${PLIST_PATH()}" 2>/dev/null || true`);
+      await execAsync(
+        `launchctl bootout gui/$(id -u) "${PLIST_PATH()}" 2>/dev/null || true`,
+      );
     } catch {
       // Ignore
     }
@@ -61,7 +63,9 @@ export class DarwinAdapter implements PlatformAdapter {
 
   async uninstallService(): Promise<void> {
     try {
-      await execAsync(`launchctl bootout gui/$(id -u) "${PLIST_PATH()}" 2>/dev/null || true`);
+      await execAsync(
+        `launchctl bootout gui/$(id -u) "${PLIST_PATH()}" 2>/dev/null || true`,
+      );
     } catch {
       // Ignore
     }
@@ -77,7 +81,9 @@ export class DarwinAdapter implements PlatformAdapter {
     await execAsync(`launchctl kickstart -k gui/$(id -u)/${LABEL}`);
     // Bootstrap if not already
     try {
-      await execAsync(`launchctl print gui/$(id -u)/${LABEL} 2>/dev/null || launchctl bootstrap gui/$(id -u) "${PLIST_PATH()}"`);
+      await execAsync(
+        `launchctl print gui/$(id -u)/${LABEL} 2>/dev/null || launchctl bootstrap gui/$(id -u) "${PLIST_PATH()}"`,
+      );
     } catch {
       await execAsync(`launchctl bootstrap gui/$(id -u) "${PLIST_PATH()}"`);
     }
@@ -85,7 +91,9 @@ export class DarwinAdapter implements PlatformAdapter {
 
   async stopService(): Promise<void> {
     try {
-      await execAsync(`launchctl bootout gui/$(id -u)/${LABEL} 2>/dev/null || true`);
+      await execAsync(
+        `launchctl bootout gui/$(id -u)/${LABEL} 2>/dev/null || true`,
+      );
     } catch {
       // Ignore
     }
@@ -98,7 +106,9 @@ export class DarwinAdapter implements PlatformAdapter {
 
   async getServiceStatus(): Promise<'running' | 'stopped' | 'not_installed'> {
     try {
-      const { stdout } = await execAsync(`launchctl print gui/$(id -u)/${LABEL} 2>&1`);
+      const { stdout } = await execAsync(
+        `launchctl print gui/$(id -u)/${LABEL} 2>&1`,
+      );
       if (stdout.includes(' PID:') || stdout.includes('Running')) {
         return 'running';
       }
@@ -137,7 +147,11 @@ export class DarwinAdapter implements PlatformAdapter {
     }
   }
 
-  spawnDetached(command: string, args: string[], options?: SpawnOptions): ChildProcess {
+  spawnDetached(
+    command: string,
+    args: string[],
+    options?: SpawnOptions,
+  ): ChildProcess {
     return spawn(command, args, {
       ...options,
       detached: true,
@@ -164,7 +178,9 @@ export class DarwinAdapter implements PlatformAdapter {
   setCredential(service: string, account: string, value: string): void {
     // Delete existing first
     try {
-      execSync(`security delete-generic-password -s "${service}" -a "${account}" 2>/dev/null || true`);
+      execSync(
+        `security delete-generic-password -s "${service}" -a "${account}" 2>/dev/null || true`,
+      );
     } catch {
       // Ignore
     }
@@ -176,7 +192,9 @@ export class DarwinAdapter implements PlatformAdapter {
 
   deleteCredential(service: string, account: string): void {
     try {
-      execSync(`security delete-generic-password -s "${service}" -a "${account}" 2>/dev/null || true`);
+      execSync(
+        `security delete-generic-password -s "${service}" -a "${account}" 2>/dev/null || true`,
+      );
     } catch {
       // Ignore
     }
@@ -204,7 +222,10 @@ export class DarwinAdapter implements PlatformAdapter {
 }
 
 // Need execSync
-function execSync(command: string, options?: { encoding?: string; windowsHide?: boolean }): { stdout: string } {
+function execSync(
+  command: string,
+  options?: { encoding?: string; windowsHide?: boolean },
+): { stdout: string } {
   const { execSync: _execSync } = require('child_process');
   return _execSync(command, options) as { stdout: string };
 }
