@@ -8,6 +8,7 @@ declare global {
   interface Window {
     fftDesktop: {
       getHostStatus: () => Promise<{ running: boolean; port: number | null }>;
+      getAuthToken: () => Promise<string>;
       startHost: () => Promise<{ success: boolean; port?: number }>;
       stopHost: () => Promise<{ success: boolean }>;
       restartHost: () => Promise<{ success: boolean; port?: number }>;
@@ -33,6 +34,17 @@ interface HostStatus {
   port: number | null;
 }
 
+/**
+ * Build WebSocket URL with optional auth token
+ */
+function buildWsUrl(port: number, token?: string): string {
+  const baseUrl = `ws://127.0.0.1:${port}/api/ws`;
+  if (token) {
+    return `${baseUrl}?token=${encodeURIComponent(token)}`;
+  }
+  return baseUrl;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>('chat');
   const [hostStatus, setHostStatus] = useState<HostStatus>({ running: false, port: null });
@@ -47,7 +59,8 @@ function App() {
           const status = await window.fftDesktop.getHostStatus();
           setHostStatus(status);
           if (status.running && status.port) {
-            setWsUrl(`ws://127.0.0.1:${status.port}/api/ws`);
+            const token = await window.fftDesktop.getAuthToken();
+            setWsUrl(buildWsUrl(status.port, token));
           }
         } catch (err) {
           console.error('Failed to get host status:', err);
@@ -65,10 +78,11 @@ function App() {
   // Listen for host status changes from main process
   useEffect(() => {
     if (window.fftDesktop) {
-      const unsubscribe = window.fftDesktop.onHostStatus((status) => {
+      const unsubscribe = window.fftDesktop.onHostStatus(async (status) => {
         setHostStatus(status);
         if (status.running && status.port) {
-          setWsUrl(`ws://127.0.0.1:${status.port}/api/ws`);
+          const token = await window.fftDesktop.getAuthToken();
+          setWsUrl(buildWsUrl(status.port, token));
         } else {
           setWsUrl(null);
         }
@@ -93,7 +107,8 @@ function App() {
       if (window.fftDesktop) {
         const result = await window.fftDesktop.startHost();
         if (result.success && result.port) {
-          setWsUrl(`ws://127.0.0.1:${result.port}/api/ws`);
+          const token = await window.fftDesktop.getAuthToken();
+          setWsUrl(buildWsUrl(result.port, token));
         }
       }
     } catch (err) {
@@ -120,7 +135,8 @@ function App() {
       if (window.fftDesktop) {
         const result = await window.fftDesktop.restartHost();
         if (result.success && result.port) {
-          setWsUrl(`ws://127.0.0.1:${result.port}/api/ws`);
+          const token = await window.fftDesktop.getAuthToken();
+          setWsUrl(buildWsUrl(result.port, token));
         }
       }
     } catch (err) {

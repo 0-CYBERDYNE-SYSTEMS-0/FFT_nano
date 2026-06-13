@@ -51,6 +51,39 @@ function hasBootstrapMarker(fftNanoPath) {
 }
 
 /**
+ * Get auth token from .env file in the FFT_nano host directory
+ */
+function getAuthTokenFromEnv(fftNanoPath) {
+  const envPath = path.join(fftNanoPath, '.env');
+  if (!fs.existsSync(envPath)) {
+    return '';
+  }
+  try {
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    const lines = envContent.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#') || trimmed.length === 0) continue;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex === -1) continue;
+      const key = trimmed.substring(0, eqIndex).trim();
+      const value = trimmed.substring(eqIndex + 1).trim();
+      // Remove quotes if present
+      const cleanValue = value.replace(/^["']|["']$/g, '');
+      if (key === 'FFT_NANO_TUI_AUTH_TOKEN') {
+        return cleanValue;
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return '';
+}
+
+// Keep track of the current host path for token retrieval
+let currentHostPath = null;
+
+/**
  * Check if `fft` command is available on PATH
  */
 function isFftOnPath() {
@@ -185,15 +218,13 @@ function spawnHost(fftNanoPath) {
   console.log('[FFT Desktop] Spawning FFT_nano host from:', fftNanoPath);
   
   const isWindows = process.platform === 'win32';
-  const nodeExe = process.execPath;
-  const hostScript = path.join(fftNanoPath, 'dist', 'index.js');
   
-  // Check if dist exists
-  if (!fs.existsSync(hostScript)) {
-    throw new Error(`Host script not found: ${hostScript}. Run 'npm run build' first.`);
-  }
-
-  const child = spawn(nodeExe, [hostScript], {
+  // Use `fft start --tui --no-open` to ensure .env is loaded properly
+  // This is the correct way to start the host as it handles env loading, signal handling, etc.
+  const fftCmd = isWindows ? 'fft.exe' : 'fft';
+  const fftArgs = ['start', '--tui', '--no-open'];
+  
+  const child = spawn(fftCmd, fftArgs, {
     cwd: fftNanoPath,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -436,10 +467,12 @@ async function startHost() {
       const { child, port } = await spawnHost(newHostInfo.path);
       hostProcess = child;
       hostPort = port;
+      currentHostPath = newHostInfo.path;
     } else {
       const { child, port } = await spawnHost(hostInfo.path);
       hostProcess = child;
       hostPort = port;
+      currentHostPath = hostInfo.path;
     }
 
     hostProcess.on('close', (code, signal) => {
@@ -504,6 +537,19 @@ function setupIpcHandlers() {
       running: !!hostProcess,
       port: hostPort,
     };
+  });
+
+  ipcMain.handle('fftDesktop:getAuthToken', () => {
+    // Get auth token from .env file in the host directory
+    if (currentHostPath) {
+      return getAuthTokenFromEnv(currentHostPath);
+    }
+    // Fallback: try to find host and get token from there
+    const hostInfo = findFftNanoHost();
+    if (hostInfo.path) {
+      return getAuthTokenFromEnv(hostInfo.path);
+    }
+    return '';
   });
 
   ipcMain.handle('fftDesktop:startHost', async () => {
