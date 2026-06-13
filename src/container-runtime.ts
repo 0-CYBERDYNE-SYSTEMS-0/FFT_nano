@@ -23,11 +23,23 @@ function dockerAvailableAndHealthy(): boolean {
   }
 }
 
-function isWindowsDockerDesktop(): boolean {
+function isWindowsDockerDesktop(dockerVerified = false): boolean {
   // Docker Desktop on Windows sets DOCKER_HOST and uses named pipes
   // We check for the presence of docker CLI and Windows-specific indicators
   if (process.platform !== 'win32') return false;
-  return dockerAvailableAndHealthy();
+  // Only re-verify Docker health if not already verified by caller
+  if (!dockerVerified) {
+    return dockerAvailableAndHealthy();
+  }
+  // dockerVerified=true means Docker was already confirmed healthy by getContainerRuntime()
+  // Check Windows-specific indicator (DOCKER_HOST named pipe presence) without re-verifying
+  const dockerHost = process.env.DOCKER_HOST;
+  if (dockerHost && dockerHost.includes('//./pipe')) {
+    return true;
+  }
+  // DOCKER_HOST not set to named pipe - don't re-verify Docker, just return false
+  // The caller (getContainerRuntime) already verified Docker is healthy
+  return false;
 }
 
 function isAndroidTermux(): boolean {
@@ -66,9 +78,12 @@ export function getContainerRuntime(): ContainerRuntime {
 
   // Auto mode uses Docker when it is actually usable, otherwise it falls back
   // to the repo-local host Pi runtime.
-  // On Windows, also verify Docker Desktop is available
+  // On Windows, verify Docker first, then check Windows-specific indicators
   if (process.platform === 'win32') {
-    if (isWindowsDockerDesktop()) return 'docker';
+    if (dockerAvailableAndHealthy()) {
+      // Docker is healthy - check Windows-specific indicators without re-verifying
+      if (isWindowsDockerDesktop(true)) return 'docker';
+    }
   } else if (dockerAvailableAndHealthy()) {
     return 'docker';
   }
