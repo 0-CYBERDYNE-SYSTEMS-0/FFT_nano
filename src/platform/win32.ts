@@ -278,12 +278,21 @@ export class Win32Adapter implements PlatformAdapter {
     args: string[],
     options?: SpawnOptions,
   ): ChildProcess {
-    return spawn(command, args, {
+    // Windows CREATE_NEW_PROCESS_GROUP flag - needed for proper process group isolation
+    // on detached processes. The createProcessGroup flag allows the spawned process
+    // to be killed as a group via taskkill /T.
+    const spawnOpts = {
       ...options,
       detached: false, // Windows handles detachment differently
       windowsHide: true,
       windowsVerbatimArguments: false,
-    });
+      windowsCreateProcessOptions: {
+        createProcessGroup: true,
+      },
+    };
+
+    // Cast to allow windowsCreateProcessOptions which may not be in all TS definitions
+    return spawn(command, args, spawnOpts as SpawnOptions & { windowsCreateProcessOptions?: { createProcessGroup: boolean } });
   }
 
   showNotification(title: string, message: string): void {
@@ -328,9 +337,18 @@ export class Win32Adapter implements PlatformAdapter {
         encoding: 'utf8',
         windowsHide: true,
       });
-      // Parse the password from output
-      const match = (stdout as string).match(/Password:\s*(.+)/);
-      return match ? match[1].trim() : null;
+      // Parse the password from output using line-by-line parsing
+      const lines = (stdout as string).split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.toLowerCase().startsWith('password:')) {
+          const password = trimmed.substring(9).trim();
+          if (password) {
+            return password;
+          }
+        }
+      }
+      return null;
     } catch {
       return null;
     }
