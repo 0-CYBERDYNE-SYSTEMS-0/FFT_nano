@@ -1,8 +1,22 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
+
+// Get the directory of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Dynamically import the platform adapter from src/platform
+// This is a Node.js CLI script, so we use dynamic import for ESM
+async function getPlatformAdapter() {
+  const platformPath = path.resolve(__dirname, '..', 'src', 'platform', 'index.js');
+  const module = await import(`file://${platformPath}`);
+  return module.getPlatformAdapter();
+}
 
 function printUsage() {
   process.stdout.write(`Usage:
@@ -79,7 +93,67 @@ function runInRepo(repoRoot, script, args) {
   process.exit(result.status ?? 1);
 }
 
-function main() {
+/**
+ * Parse FFT_NANO_READY port=<N> from host stdout
+ */
+function parseReadyPort(stdout) {
+  const match = stdout.match(/FFT_NANO_READY\s+port=(\d+)/i);
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+  return null;
+}
+
+/**
+ * Read lock file and return all fields
+ * @returns {{ pid: number|null, port: number|null, hostname: string, startedAt: string }|null}
+ */
+function readPidFromLock(lockFile) {
+  try {
+    if (fs.existsSync(lockFile)) {
+      const content = fs.readFileSync(lockFile, 'utf8');
+      const data = JSON.parse(content);
+      return {
+        pid: data.pid || null,
+        port: data.port || null,
+        hostname: data.hostname || os.hostname(),
+        startedAt: data.startedAt || null,
+      };
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return null;
+}
+
+/**
+ * Write PID and port to lock file
+ */
+function writePidToLock(lockFile, pid, port) {
+  const data = {
+    pid,
+    port,
+    hostname: os.hostname(),
+    startedAt: new Date().toISOString(),
+  };
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  fs.writeFileSync(lockFile, JSON.stringify(data, null, 2) + '\n', 'utf8');
+}
+
+/**
+ * Check if a process is running by PID
+ */
+function isProcessRunning(pid) {
+  if (!pid || !Number.isFinite(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function main() {
   let parsed;
   try {
     parsed = parseCli(process.argv.slice(2));
@@ -112,8 +186,58 @@ function main() {
     process.exit(2);
   }
 
+  // Handle service commands with platformAdapter
   if (command === 'service') {
-    runInRepo(repoRoot, 'scripts/service.sh', commandArgs);
+    const [serviceAction, ...serviceActionArgs] = commandArgs;
+    const platformAdapter = await getPlatformAdapter();
+
+    try {
+      switch (serviceAction) {
+        case 'install': {
+          await platformAdapter.installService();
+          process.stdout.write('Service installed successfully.\n');
+          break;
+        }
+        case 'uninstall': {
+          await platformAdapter.uninstallService();
+          process.stdout.write('Service uninstalled successfully.\n');
+          break;
+        }
+        case 'start': {
+          await platformAdapter.startService();
+          process.stdout.write('Service started successfully.\n');
+          break;
+        }
+        case 'stop': {
+          await platformAdapter.stopService();
+          process.stdout.write('Service stopped successfully.\n');
+          break;
+        }
+        case 'restart': {
+          await platformAdapter.restartService();
+          process.stdout.write('Service restarted successfully.\n');
+          break;
+        }
+        case 'status': {
+          const serviceStatus = await platformAdapter.getServiceStatus();
+          process.stdout.write(`Service status: ${serviceStatus}\n`);
+          break;
+        }
+        case 'logs': {
+          const logs = await platformAdapter.getServiceLogs();
+          process.stdout.write(logs + '\n');
+          break;
+        }
+        default: {
+          process.stderr.write(`Unknown service action: ${serviceAction}\n`);
+          process.stderr.write('Valid actions: install, uninstall, start, stop, restart, status, logs\n');
+          process.exit(2);
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`Service command failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    }
     return;
   }
 
@@ -125,6 +249,7 @@ function main() {
     });
     if (result.error) throw result.error;
     process.exit(result.status ?? 1);
+    return;
   }
 
   if (command === 'skill-manager') {
@@ -135,6 +260,7 @@ function main() {
     });
     if (result.error) throw result.error;
     process.exit(result.status ?? 1);
+    return;
   }
 
   if (command === 'curator') {
@@ -145,6 +271,7 @@ function main() {
     });
     if (result.error) throw result.error;
     process.exit(result.status ?? 1);
+    return;
   }
 
   if (command === 'profile') {
@@ -155,6 +282,7 @@ function main() {
     });
     if (result.error) throw result.error;
     process.exit(result.status ?? 1);
+    return;
   }
 
   if (command === 'onboard') {
@@ -179,19 +307,51 @@ function main() {
   }
 
   if (command === 'stop') {
-    const result = spawnSync('bash', [path.join(repoRoot, 'scripts/start.sh'), 'stop'], {
-      cwd: repoRoot,
-      env: process.env,
-      stdio: 'inherit',
-    });
-    if (result.error) throw result.error;
-    process.exit(result.status ?? 1);
-    return;
+    const platformAdapter = await getPlatformAdapter();
+    const lockFile = path.join(repoRoot, 'data/fft_nano.lock');
+
+    // Read PID from lock file
+    const pid = readPidFromLock(lockFile);
+
+    if (!pid) {
+      process.stderr.write('No PID found in lock file. Is FFT_nano running?\n');
+      process.exit(1);
+    }
+
+    // Check if process is running
+    if (!isProcessRunning(pid)) {
+      process.stdout.write('FFT_nano is not running (stale lock file).\n');
+      // Remove stale lock file
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {
+        // Ignore
+      }
+      process.exit(0);
+    }
+
+    // Try graceful shutdown first
+    const killed = platformAdapter.killProcessGroup(pid, 'SIGTERM');
+
+    if (!killed) {
+      // Try SIGKILL as fallback
+      platformAdapter.killProcessGroup(pid, 'SIGKILL');
+    }
+
+    // Remove lock file
+    try {
+      fs.unlinkSync(lockFile);
+    } catch {
+      // Ignore
+    }
+
+    process.stdout.write('FFT_nano stopped.\n');
+    process.exit(0);
   }
 
   if (command === 'status') {
+    const platformAdapter = await getPlatformAdapter();
     const lockFile = path.join(repoRoot, 'data/fft_nano.lock');
-    const pidFile = path.join(repoRoot, 'data/fft_nano.pid');
     const wantJson = commandArgs.includes('--json');
 
     let status = {
@@ -201,36 +361,25 @@ function main() {
       service: 'unknown',
     };
 
-    // Check if PID file exists
-    if (fs.existsSync(pidFile)) {
-      try {
-        const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
-        if (!isNaN(pid) && pid > 0) {
-          try {
-            // Check if process exists
-            process.kill(pid, 0);
-            status.host = 'running';
-            status.pid = pid;
-          } catch {
-            // Process doesn't exist
-          }
-        }
-      } catch {
-        // Ignore parse errors
-      }
+    // Get service status from platform adapter
+    try {
+      const serviceStatus = await platformAdapter.getServiceStatus();
+      status.service = serviceStatus;
+    } catch {
+      // Ignore service status errors
     }
 
-    // Try to detect port from lock file
-    if (fs.existsSync(lockFile)) {
-      try {
-        const lockContent = fs.readFileSync(lockFile, 'utf8');
-        const portMatch = lockContent.match(/port[= ]*(\d+)/i);
-        if (portMatch) {
-          status.port = parseInt(portMatch[1], 10);
-        }
-      } catch {
-        // Ignore
-      }
+    // Read lock file data
+    const lockData = readPidFromLock(lockFile);
+    const defaultPort = parseInt(process.env.FFT_NANO_TUI_PORT || '28989', 10);
+
+    if (lockData && lockData.pid && isProcessRunning(lockData.pid)) {
+      status.host = 'running';
+      status.pid = lockData.pid;
+      // Use port from lock file if available, otherwise use default
+      status.port = lockData.port || defaultPort;
+    } else {
+      status.port = defaultPort;
     }
 
     if (wantJson) {
@@ -238,13 +387,119 @@ function main() {
     } else {
       if (status.host === 'running') {
         process.stdout.write(`FFT_nano: running (PID ${status.pid})\n`);
-        if (status.port) {
-          process.stdout.write(`TUI port: ${status.port}\n`);
-        }
+        process.stdout.write(`TUI port: ${status.port}\n`);
       } else {
         process.stdout.write('FFT_nano: stopped\n');
       }
+      process.stdout.write(`Service: ${status.service}\n`);
     }
+    return;
+  }
+
+  if (command === 'start') {
+    const platformAdapter = await getPlatformAdapter();
+    const lockFile = path.join(repoRoot, 'data/fft_nano.lock');
+
+    // Check if already running
+    const existingPid = readPidFromLock(lockFile);
+    if (existingPid && isProcessRunning(existingPid)) {
+      process.stderr.write(`FFT_nano is already running (PID ${existingPid}).\n`);
+      process.stderr.write('Use "fft stop" first, or "fft restart" to restart.\n');
+      process.exit(1);
+    }
+
+    // Clean up stale lock file if exists
+    if (fs.existsSync(lockFile)) {
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {
+        // Ignore
+      }
+    }
+
+    // Spawn the host process
+    const hostExe = process.execPath;
+    const hostScript = path.join(repoRoot, 'dist/index.js');
+
+    // Build environment with telegram-only if requested
+    const env = { ...process.env };
+    if (commandArgs.includes('telegram-only')) {
+      env.WHATSAPP_ENABLED = '0';
+    }
+
+    process.stdout.write('Starting FFT_nano...\n');
+
+    // Spawn detached process
+    const child = spawn(hostExe, [hostScript], {
+      cwd: repoRoot,
+      env,
+      detached: false, // We manage the process directly
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    child.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      stdoutData += chunk;
+      process.stdout.write(chunk);
+    });
+
+    child.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      stderrData += chunk;
+      process.stderr.write(chunk);
+    });
+
+    // Wait for FFT_NANO_READY or process exit
+    const timeoutMs = 30000; // 30 seconds
+    const startTime = Date.now();
+
+    await new Promise((resolve, reject) => {
+      const checkReady = () => {
+        const port = parseReadyPort(stdoutData);
+        if (port) {
+          // Host is ready, write PID and port to lock file
+          writePidToLock(lockFile, child.pid, port);
+          process.stdout.write(`FFT_nano started (PID ${child.pid}) and ready on port ${port}\n`);
+          resolve(undefined);
+          return true;
+        }
+        return false;
+      };
+
+      // Check if process exited unexpectedly
+      child.on('exit', (code, signal) => {
+        if (code !== 0 && code !== null) {
+          reject(new Error(`FFT_nano exited with code ${code}`));
+        } else if (signal) {
+          reject(new Error(`FFT_nano was killed by signal ${signal}`));
+        }
+      });
+
+      // Poll for ready signal
+      const interval = setInterval(() => {
+        if (checkReady()) {
+          clearInterval(interval);
+          return;
+        }
+        if (Date.now() - startTime > timeoutMs) {
+          clearInterval(interval);
+          // Timeout but process might still be running - try to get PID and port
+          if (child.pid) {
+            const port = parseReadyPort(stdoutData) || parseInt(process.env.FFT_NANO_TUI_PORT || '28989', 10);
+            writePidToLock(lockFile, child.pid, port);
+            process.stdout.write(`FFT_nano started (PID ${child.pid}) - ready signal timeout\n`);
+          }
+          resolve(undefined);
+        }
+      }, 100);
+    });
+
+    // Detach the child - it now runs independently
+    child.unref();
+    process.exit(0);
     return;
   }
 
