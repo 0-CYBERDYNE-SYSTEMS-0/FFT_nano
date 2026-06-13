@@ -344,7 +344,7 @@ function createWindow() {
 
   // Load the app
   if (isDev) {
-    mainWindow.loadURL('http://127.0.0.1:5173');
+    mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
@@ -573,7 +573,8 @@ async function restartHost() {
 function setupIpcHandlers() {
   ipcMain.handle('fftDesktop:getHostStatus', () => {
     return {
-      running: !!hostProcess,
+      // Host is running if we spawned it (hostProcess) OR if we discovered it via lock file (hostPort && currentHostPath)
+      running: !!(hostProcess || (hostPort && currentHostPath)),
       port: hostPort,
     };
   });
