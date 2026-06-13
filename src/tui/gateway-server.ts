@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto';
 import { existsSync, unlinkSync } from 'fs';
-import { Socket, createServer } from 'net';
+import { Socket } from 'net';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { logger } from '../logger.js';
+import { getPlatformAdapter } from '../platform/index.js';
 import type { UpdateCommandStartResult } from '../update-command.js';
 
 import type {
@@ -604,11 +605,12 @@ export async function startTuiGatewayServer(
   }
 
   // Local mode: Unix socket server for direct TUI connections
-  let localServer: ReturnType<typeof createServer> | undefined;
+  const platformAdapter = getPlatformAdapter();
+  let localServer: ReturnType<typeof platformAdapter.createLocalSocket> | undefined;
   if (socketPath) {
     await removeStaleUnixSocket(socketPath);
 
-    localServer = createServer();
+    localServer = platformAdapter.createLocalSocket(socketPath);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const localWss = new WebSocketServer({ server: localServer as any });
 
