@@ -28,7 +28,10 @@ export class LinuxAdapter implements PlatformAdapter {
 
   private async detectInitSystem(): Promise<void> {
     // Check for systemd
-    if (existsSync('/run/systemd/system') || existsSync('/var/run/systemd/system')) {
+    if (
+      existsSync('/run/systemd/system') ||
+      existsSync('/var/run/systemd/system')
+    ) {
       this.initSystem = 'systemd';
       return;
     }
@@ -64,7 +67,11 @@ WantedBy=multi-user.target
 `;
     const { writeFile, mkdir } = await import('fs/promises');
     await mkdir('/etc/systemd/system', { recursive: true });
-    await writeFile(`/etc/systemd/system/${SERVICE_NAME}.service`, unitContent, 'utf8');
+    await writeFile(
+      `/etc/systemd/system/${SERVICE_NAME}.service`,
+      unitContent,
+      'utf8',
+    );
     await execAsync('systemctl daemon-reload');
   }
 
@@ -92,10 +99,16 @@ exec ${process.execPath} ${path.join(process.cwd(), 'dist/index.js')} 2>&1
     const { writeFile, mkdir } = await import('fs/promises');
     await mkdir(`/etc/sv/${SERVICE_NAME}`, { recursive: true });
     await writeFile(`/etc/sv/${SERVICE_NAME}/run`, runContent, 'utf8');
-    await writeFile(`/etc/sv/${SERVICE_NAME}/log/run`, `#!/bin/sh
+    await writeFile(
+      `/etc/sv/${SERVICE_NAME}/log/run`,
+      `#!/bin/sh
 exec logger -t ${SERVICE_NAME}
-`, 'utf8');
-    await execAsync(`chmod +x /etc/sv/${SERVICE_NAME}/run /etc/sv/${SERVICE_NAME}/log/run`);
+`,
+      'utf8',
+    );
+    await execAsync(
+      `chmod +x /etc/sv/${SERVICE_NAME}/run /etc/sv/${SERVICE_NAME}/log/run`,
+    );
   }
 
   async installService(): Promise<void> {
@@ -114,7 +127,9 @@ exec logger -t ${SERVICE_NAME}
         await execAsync(`ln -sf /etc/sv/${SERVICE_NAME} /var/service/`);
         break;
       default:
-        throw new Error(`Unsupported init system. Could not detect systemd, OpenRC, or runit.`);
+        throw new Error(
+          `Unsupported init system. Could not detect systemd, OpenRC, or runit.`,
+        );
     }
   }
 
@@ -123,25 +138,33 @@ exec logger -t ${SERVICE_NAME}
 
     switch (this.initSystem) {
       case 'systemd':
-        await execAsync(`systemctl disable ${SERVICE_NAME} 2>/dev/null || true`);
+        await execAsync(
+          `systemctl disable ${SERVICE_NAME} 2>/dev/null || true`,
+        );
         try {
           const { unlink } = await import('fs/promises');
           await unlink(`/etc/systemd/system/${SERVICE_NAME}.service`);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         await execAsync('systemctl daemon-reload');
         break;
       case 'openrc':
         try {
           const { unlink } = await import('fs/promises');
           await unlink(`/etc/init.d/${SERVICE_NAME}`);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         break;
       case 'runit':
         try {
           await execAsync(`rm -f /var/service/${SERVICE_NAME}`);
           const { rm } = await import('fs/promises');
           await rm(`/etc/sv/${SERVICE_NAME}`, { recursive: true, force: true });
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         break;
     }
   }
@@ -204,7 +227,9 @@ exec logger -t ${SERVICE_NAME}
     switch (this.initSystem) {
       case 'systemd': {
         try {
-          const { stdout } = await execAsync(`systemctl is-active ${SERVICE_NAME}`);
+          const { stdout } = await execAsync(
+            `systemctl is-active ${SERVICE_NAME}`,
+          );
           return stdout.trim() === 'active' ? 'running' : 'stopped';
         } catch {
           return 'not_installed';
@@ -212,7 +237,9 @@ exec logger -t ${SERVICE_NAME}
       }
       case 'openrc': {
         try {
-          const { stdout } = await execAsync(`rc-service ${SERVICE_NAME} status`);
+          const { stdout } = await execAsync(
+            `rc-service ${SERVICE_NAME} status`,
+          );
           return stdout.includes('started') ? 'running' : 'stopped';
         } catch {
           return 'not_installed';
@@ -237,7 +264,9 @@ exec logger -t ${SERVICE_NAME}
     switch (this.initSystem) {
       case 'systemd':
         try {
-          const { stdout } = await execAsync(`journalctl ${JOURNAL_CTL_ARGS.join(' ')}`);
+          const { stdout } = await execAsync(
+            `journalctl ${JOURNAL_CTL_ARGS.join(' ')}`,
+          );
           return stdout || '(no logs available)';
         } catch {
           return '(no logs available)';
@@ -246,7 +275,9 @@ exec logger -t ${SERVICE_NAME}
       case 'runit': {
         try {
           const logFile = `/var/log/${SERVICE_NAME}/stdout.log`;
-          return await readFile(logFile, 'utf8').catch(() => '(no logs available)');
+          return await readFile(logFile, 'utf8').catch(
+            () => '(no logs available)',
+          );
         } catch {
           return '(no logs available)';
         }
@@ -265,7 +296,11 @@ exec logger -t ${SERVICE_NAME}
     }
   }
 
-  spawnDetached(command: string, args: string[], options?: SpawnOptions): ChildProcess {
+  spawnDetached(
+    command: string,
+    args: string[],
+    options?: SpawnOptions,
+  ): ChildProcess {
     return spawn(command, args, {
       ...options,
       detached: true,
@@ -274,9 +309,12 @@ exec logger -t ${SERVICE_NAME}
   }
 
   showNotification(title: string, message: string): void {
-    exec(`notify-send "${title.replace(/"/g, '\\"')}" "${message.replace(/"/g, '\\"')}"`, {
-      windowsHide: true,
-    });
+    exec(
+      `notify-send "${title.replace(/"/g, '\\"')}" "${message.replace(/"/g, '\\"')}"`,
+      {
+        windowsHide: true,
+      },
+    );
   }
 
   getCredential(service: string, account: string): string | null {
@@ -306,7 +344,9 @@ exec logger -t ${SERVICE_NAME}
   deleteCredential(service: string, account: string): void {
     try {
       const { execSync } = require('child_process');
-      execSync(`secret-tool delete service "${service}" account "${account}" 2>/dev/null || true`);
+      execSync(
+        `secret-tool delete service "${service}" account "${account}" 2>/dev/null || true`,
+      );
     } catch {
       // Ignore
     }

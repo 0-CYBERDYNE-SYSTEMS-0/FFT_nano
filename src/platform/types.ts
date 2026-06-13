@@ -26,7 +26,11 @@ export interface PlatformAdapter {
 
   // Process management
   killProcessGroup(pid: number, signal: NodeJS.Signals): boolean;
-  spawnDetached(command: string, args: string[], options?: SpawnOptions): ChildProcess;
+  spawnDetached(
+    command: string,
+    args: string[],
+    options?: SpawnOptions,
+  ): ChildProcess;
 
   // Notifications
   showNotification(title: string, message: string): void;

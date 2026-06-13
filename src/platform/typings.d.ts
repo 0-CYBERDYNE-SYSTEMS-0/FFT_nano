@@ -30,7 +30,10 @@ declare module 'node-notifier' {
   }
 
   interface Notifier {
-    notify(options: NotificationOptions, callback?: (err: Error | null, response: unknown) => void): void;
+    notify(
+      options: NotificationOptions,
+      callback?: (err: Error | null, response: unknown) => void,
+    ): void;
   }
 
   const notifier: Notifier;
@@ -39,6 +42,10 @@ declare module 'node-notifier' {
 }
 
 declare module 'tree-kill' {
-  function treeKill(pid: number, signal: string, callback: (err: Error | null) => void): void;
+  function treeKill(
+    pid: number,
+    signal: string,
+    callback: (err: Error | null) => void,
+  ): void;
   export default treeKill;
 }

@@ -1,5 +1,11 @@
 import { exec, spawn } from 'child_process';
-import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import {
+  existsSync,
+  unlinkSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+} from 'fs';
 import { createServer } from 'net';
 import { promisify } from 'util';
 import path from 'path';
@@ -59,7 +65,9 @@ exec logger -t ${SERVICE_NAME}
     try {
       await execAsync(`sv up ${SERVICE_NAME}`);
     } catch {
-      throw new Error('Failed to start service. Ensure termux-services is installed and service exists.');
+      throw new Error(
+        'Failed to start service. Ensure termux-services is installed and service exists.',
+      );
     }
   }
 
@@ -83,7 +91,9 @@ exec logger -t ${SERVICE_NAME}
     }
 
     try {
-      const { stdout } = await execAsync(`sv status ${SERVICE_NAME} 2>/dev/null || echo "down"`);
+      const { stdout } = await execAsync(
+        `sv status ${SERVICE_NAME} 2>/dev/null || echo "down"`,
+      );
       return stdout.trim().includes('run') ? 'running' : 'stopped';
     } catch {
       return 'stopped';
@@ -99,7 +109,9 @@ exec logger -t ${SERVICE_NAME}
     } catch {
       // Try to get logs via sv log
       try {
-        const { stdout } = await execAsync(`sv log ${SERVICE_NAME} 2>/dev/null || echo "(no logs)"`);
+        const { stdout } = await execAsync(
+          `sv log ${SERVICE_NAME} 2>/dev/null || echo "(no logs)"`,
+        );
         return stdout || '(no logs available)';
       } catch {
         return '(no logs available)';
@@ -116,7 +128,11 @@ exec logger -t ${SERVICE_NAME}
     }
   }
 
-  spawnDetached(command: string, args: string[], options?: SpawnOptions): ChildProcess {
+  spawnDetached(
+    command: string,
+    args: string[],
+    options?: SpawnOptions,
+  ): ChildProcess {
     return spawn(command, args, {
       ...options,
       detached: true,

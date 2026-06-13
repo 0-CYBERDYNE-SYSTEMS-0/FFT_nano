@@ -1552,11 +1552,19 @@ export async function runContainerAgent(
       // spawnDetached returns ChildProcess, but with stdio: ['pipe', 'pipe', 'pipe']
       // stdin/stdout/stderr are guaranteed to be non-null
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const child = platformAdapter.spawnDetached(sandboxed.command, sandboxed.args, {
-        cwd: wp.groupDir,
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }) as ChildProcess & { stdin: NonNullable<ChildProcess['stdin']>; stdout: NonNullable<ChildProcess['stdout']>; stderr: NonNullable<ChildProcess['stderr']> };
+      const child = platformAdapter.spawnDetached(
+        sandboxed.command,
+        sandboxed.args,
+        {
+          cwd: wp.groupDir,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      ) as ChildProcess & {
+        stdin: NonNullable<ChildProcess['stdin']>;
+        stdout: NonNullable<ChildProcess['stdout']>;
+        stderr: NonNullable<ChildProcess['stderr']>;
+      };
       const closeRpcInput = () => {
         if (
           transportMode !== 'rpc' ||
