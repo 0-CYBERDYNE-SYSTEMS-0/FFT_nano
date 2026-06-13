@@ -2,7 +2,7 @@
   "name": "fft-desktop",
   "version": "0.1.0",
   "description": "FFT_nano Desktop App - Native Electron desktop application",
-  "main": "electron/main.cjs",
+  "main": "dist-electron/main.js",
   "author": "FFT_nano",
   "license": "MIT",
   "private": true,
