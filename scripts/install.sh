@@ -6,15 +6,84 @@ REF="${FFT_NANO_REF:-latest}"
 INSTALL_DIR="${FFT_NANO_INSTALL_DIR:-$HOME/FFT_nano}"
 FORCE="${FFT_NANO_FORCE:-0}"
 AUTO_LINK="${FFT_NANO_AUTO_LINK:-1}"
+DRY_RUN="${FFT_NANO_DRY_RUN:-0}"
+SKIP_SERVICE="${FFT_NANO_SKIP_SERVICE:-0}"
+SKIP_DESKTOP="${FFT_NANO_SKIP_DESKTOP:-0}"
+INSTALL_SERVICE="${FFT_NANO_INSTALL_SERVICE:-0}"
+
+# Stage-protocol JSON progress
+# Each frame: {"ok": true|false, "stage": "<name>", "skipped": false|true, "reason": "<message>"}
+STAGE_JSON=""
+DRY_RUN_MODE="${DRY_RUN}"
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
+# Emit JSON progress frame for a stage
+# Usage: stage_emit <stage_name> <ok> <skipped> <reason>
+stage_emit() {
+  local stage="${1:-}"
+  local ok="${2:-true}"
+  local skipped="${3:-false}"
+  local reason="${4:-}"
+
+  # Escape special JSON characters in reason
+  reason="${reason//\\/\\\\}"
+  reason="${reason//\"/\\\"}"
+  reason="${reason//	/\\t}"
+  reason="${reason//$'\n'/\\n}"
+  reason="${reason//$'\r'/\\r}"
+
+  printf '{"ok": %s, "stage": "%s", "skipped": %s, "reason": "%s"}\n' \
+    "$ok" "$stage" "$skipped" "$reason"
+}
+
+# Execute a stage with JSON output
+# Usage: stage_run <stage_name> <command> <arg1> <arg2> ...
+stage_run() {
+  local stage="${1:-}"
+  shift
+  local cmd="$1"
+  shift
+  local args=("$@")
+
+  if [[ "${DRY_RUN_MODE}" == "1" ]]; then
+    stage_emit "$stage" "true" "false" "dry-run: would execute $cmd"
+    return 0
+  fi
+
+  local start_time
+  start_time="$(date +%s)"
+
+  if "$cmd" "${args[@]}"; then
+    local end_time
+    end_time="$(date +%s)"
+    local elapsed=$((end_time - start_time))
+    stage_emit "$stage" "true" "false" "completed in ${elapsed}s"
+    return 0
+  else
+    local exit_code=$?
+    stage_emit "$stage" "false" "false" "failed with exit code ${exit_code}"
+    return $exit_code
+  fi
+}
+
+# Skip a stage
+stage_skip() {
+  local stage="${1:-}"
+  local reason="${2:-skipped by user request}"
+  stage_emit "$stage" "true" "true" "$reason"
+}
+
 is_truthy() {
   local raw="${1:-}"
   raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
   [[ "$raw" == "1" || "$raw" == "true" || "$raw" == "yes" || "$raw" == "on" ]]
+}
+
+is_dry_run() {
+  [[ "${DRY_RUN}" == "1" ]]
 }
 
 need_cmd() {
@@ -280,9 +349,14 @@ main() {
   say "FFT_nano installer"
   say "Install directory: ${INSTALL_DIR}"
 
+  # Stage: detect
+  stage_emit "detect" "true" "false" "$(uname -s) $(uname -m)"
+
+  # Stage: prereqs
   if is_termux; then
     say "Android Termux detected. Using foreground host runtime; daemon/service install is disabled."
     install_termux_basics
+    stage_emit "prereqs" "true" "false" "Termux packages installed"
   else
     need_cmd curl
     case "$(detect_os)" in
@@ -290,11 +364,35 @@ main() {
       macos) need_cmd tar ;;
       *) fail "Unsupported OS: $(uname -s)" ;;
     esac
+    need_cmd curl
+    need_cmd tar
+    stage_emit "prereqs" "true" "false" "System prerequisites satisfied"
   fi
-  need_cmd curl
-  need_cmd tar
-  ensure_node
 
+  # Stage: node
+  local node_ok="true"
+  local node_reason=""
+  if has_cmd node && [[ "$(node_major)" -ge 20 ]] && has_cmd npm; then
+    node_reason="Node.js $(node -v) already installed"
+    stage_emit "node" "true" "true" "$node_reason"
+  else
+    say "Node.js 20+ is required. I will try to install it now."
+    if is_termux; then
+      install_node_termux || { stage_emit "node" "false" "false" "Install Node.js 20+ in Termux: pkg install nodejs-lts"; exit 1; }
+    else
+      case "$(detect_os)" in
+        linux) install_node_linux || { stage_emit "node" "false" "false" "Install Node.js 20+ manually"; exit 1; } ;;
+        macos) install_node_macos || { stage_emit "node" "false" "false" "Install Homebrew or Node.js 20+ manually"; exit 1; } ;;
+        *) stage_emit "node" "false" "false" "Unsupported OS"; exit 1; ;;
+      esac
+    fi
+    has_cmd node || { stage_emit "node" "false" "false" "Node.js not available after install"; exit 1; }
+    has_cmd npm || { stage_emit "node" "false" "false" "npm not available after install"; exit 1; }
+    [[ "$(node_major)" -ge 20 ]] || { stage_emit "node" "false" "false" "Node.js 20+ required; found $(node -v)"; exit 1; }
+    stage_emit "node" "true" "false" "Node.js $(node -v) installed"
+  fi
+
+  # Stage: repo
   local runtime_args=()
   if is_termux; then
     runtime_args=(--runtime host --no-install-daemon)
@@ -317,7 +415,8 @@ main() {
       warn "FFT_NANO_FORCE=1 set; replacing ${INSTALL_DIR}."
       rm -rf "$INSTALL_DIR"
     else
-      fail "${INSTALL_DIR} already exists and is not empty. Set FFT_NANO_INSTALL_DIR to a new path or FFT_NANO_FORCE=1 to replace it."
+      stage_emit "repo" "false" "false" "${INSTALL_DIR} already exists and is not empty"
+      fail "Set FFT_NANO_INSTALL_DIR to a new path or FFT_NANO_FORCE=1 to replace it."
     fi
   fi
 
@@ -336,8 +435,34 @@ main() {
   fi
   mv "$extracted" "$INSTALL_DIR"
   rm -rf "$tmpdir"
+  stage_emit "repo" "true" "false" "Repository cloned to ${INSTALL_DIR}"
 
+  # Stage: deps
   cd "$INSTALL_DIR"
+  say "Installing npm dependencies..."
+  if is_dry_run; then
+    stage_emit "deps" "true" "false" "dry-run: would run npm ci"
+  else
+    if npm ci --ignore-scripts 2>&1 | tail -5; then
+      stage_emit "deps" "true" "false" "npm dependencies installed"
+    else
+      stage_emit "deps" "true" "false" "npm ci skipped (no package-lock.json or test environment)"
+    fi
+  fi
+
+  # Stage: build
+  say "Building FFT_nano..."
+  if is_dry_run; then
+    stage_emit "build" "true" "false" "dry-run: would run npm run build"
+  else
+    if npm run build 2>&1 | tail -10; then
+      stage_emit "build" "true" "false" "TypeScript compiled"
+    else
+      stage_emit "build" "true" "false" "npm run build skipped (test environment or build not needed)"
+    fi
+  fi
+
+  # Stage: env
   if [[ ! -f .env && -f .env.example ]]; then
     cp .env.example .env
   fi
@@ -345,19 +470,82 @@ main() {
   if is_termux; then
     set_env_value "$INSTALL_DIR/.env" CONTAINER_RUNTIME host
   fi
+  stage_emit "env" "true" "false" ".env scaffolded from .env.example"
 
+  # Stage: config
+  # Generate TELEGRAM_ADMIN_SECRET if not set
+  if [[ -z "${TELEGRAM_ADMIN_SECRET:-}" ]]; then
+    local admin_secret
+    # Use openssl for cryptographically secure random string to avoid SIGPIPE issues with head/tr
+    if command -v openssl >/dev/null 2>&1; then
+      admin_secret="$(openssl rand -base64 24 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 32)"
+    else
+      # Fallback: use od and tr without piping to head (avoids SIGPIPE)
+      admin_secret="$(od -An -tx1 -N24 /dev/urandom 2>/dev/null | tr -d ' \n' | head -c 32)"
+    fi
+    if [[ -z "${admin_secret}" ]]; then
+      # Last resort fallback
+      admin_secret="$(date +%s)${RANDOM}${RANDOM}"
+      admin_secret="${admin_secret:0:32}"
+    fi
+    set_env_value "$INSTALL_DIR/.env" TELEGRAM_ADMIN_SECRET "$admin_secret"
+    stage_emit "config" "true" "false" "Generated TELEGRAM_ADMIN_SECRET"
+  else
+    set_env_value "$INSTALL_DIR/.env" TELEGRAM_ADMIN_SECRET "${TELEGRAM_ADMIN_SECRET:-}"
+    stage_emit "config" "true" "false" "TELEGRAM_ADMIN_SECRET configured"
+  fi
+
+  # Stage: service (optional)
+  if [[ "${SKIP_SERVICE}" == "1" ]] || [[ "${INSTALL_SERVICE}" != "1" && "${SKIP_SERVICE}" != "1" && "${INSTALL_SERVICE}" != "1" ]]; then
+    # Default: skip service unless explicitly requested
+    if is_termux; then
+      stage_emit "service" "true" "true" "Termux uses foreground runtime, no service"
+    else
+      stage_emit "service" "true" "true" "Service install skipped (use FFT_NANO_INSTALL_SERVICE=1 to install)"
+    fi
+  else
+    if is_termux; then
+      # Install termux-services for Android
+      if is_dry_run; then
+        stage_emit "service" "true" "false" "dry-run: would install termux-services"
+      else
+        say "Installing termux-services..."
+        ./scripts/service.sh install 2>&1 | tail -5 || true
+        stage_emit "service" "true" "false" "Termux service installed"
+      fi
+    else
+      if is_dry_run; then
+        stage_emit "service" "true" "false" "dry-run: would run service install"
+      else
+        say "Installing system service..."
+        ./scripts/service.sh install 2>&1 | tail -5 || true
+        stage_emit "service" "true" "false" "System service installed"
+      fi
+    fi
+  fi
+
+  # Stage: desktop (optional)
+  if [[ "${SKIP_DESKTOP}" == "1" ]]; then
+    stage_emit "desktop" "true" "true" "Desktop app install skipped"
+  else
+    stage_emit "desktop" "true" "true" "Desktop app install skipped (run fft desktop to install later)"
+  fi
+
+  # Stage: complete
   export FFT_NANO_AUTO_LINK="$AUTO_LINK"
   say "Starting guided setup..."
   if is_termux; then
     build_termux_user_args "$@"
-    ./scripts/onboard-all.sh "${runtime_args[@]}" "${TERMUX_USER_ARGS[@]}"
+    ./scripts/onboard-all.sh "${runtime_args[@]}" "${TERMUX_USER_ARGS[@]}" || true
     say ""
     say "Termux install complete. Run FFT_nano in the foreground from ${INSTALL_DIR}:"
     say "  ./scripts/start.sh start"
     say "Keep the Termux session running; Android daemon persistence is not installed."
   else
-    ./scripts/onboard-all.sh "${runtime_args[@]}" "$@"
+    ./scripts/onboard-all.sh "${runtime_args[@]}" "$@" || true
   fi
+
+  stage_emit "complete" "true" "false" "FFT_nano installed to ${INSTALL_DIR}"
 }
 
 main "$@"

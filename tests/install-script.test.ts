@@ -75,6 +75,14 @@ mkdir -p "$root/scripts"
 cat > "$root/.env.example" <<'ENV'
 PI_API=replace-me
 ENV
+# Create minimal package-lock.json for npm ci
+cat > "$root/package-lock.json" <<'LOCK'
+{
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {}
+}
+LOCK
 cat > "$root/scripts/onboard-all.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -94,6 +102,15 @@ chmod +x "$root/scripts/onboard-all.sh"
     `#!/usr/bin/env bash
 set -euo pipefail
 printf 'pkg:%s\\n' "$*" >> "${path.join(fixtureRoot, 'pkg.log')}"
+`,
+  );
+
+  // Mock npm to succeed without doing anything (for deps stage)
+  writeExecutable(
+    path.join(binDir, 'npm'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+exit 0
 `,
   );
 
