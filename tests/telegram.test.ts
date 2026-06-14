@@ -135,9 +135,58 @@ test('normalizeTelegramPreviewText keeps the head for a long real reply', () => 
   assert.equal(normalized.startsWith('Here is the answer.'), true);
 });
 
-test('markdownToTelegramHtml renders fenced code as Telegram pre/code', () => {
+test('markdownToTelegramHtml renders fenced code with language class', () => {
   const html = markdownToTelegramHtml('```ts\nconst x = 1;\n```');
-  assert.equal(html, '<pre><code>const x = 1;\n</code></pre>');
+  assert.equal(
+    html,
+    '<pre><code class="language-ts">const x = 1;\n</code></pre>',
+  );
+});
+
+test('markdownToTelegramHtml renders fenced code without language', () => {
+  const html = markdownToTelegramHtml('```\nplain\n```');
+  assert.equal(html, '<pre><code>plain\n</code></pre>');
+});
+
+test('markdownToTelegramHtml renders single-asterisk italic', () => {
+  assert.equal(
+    markdownToTelegramHtml('an *italic* word'),
+    'an <i>italic</i> word',
+  );
+});
+
+test('markdownToTelegramHtml keeps bold and italic distinct', () => {
+  assert.equal(
+    markdownToTelegramHtml('**bold** and *thin*'),
+    '<b>bold</b> and <i>thin</i>',
+  );
+});
+
+test('markdownToTelegramHtml does not italicize list bullets', () => {
+  assert.equal(
+    markdownToTelegramHtml('* item one\n* item two'),
+    '* item one\n* item two',
+  );
+});
+
+test('markdownToTelegramHtml renders blockquote from > lines', () => {
+  const html = markdownToTelegramHtml('> quoted line\n> second line\nafter');
+  assert.equal(
+    html,
+    '<blockquote>quoted line\nsecond line</blockquote>\nafter',
+  );
+});
+
+test('markdownToTelegramHtml renders inline formatting inside blockquote', () => {
+  const html = markdownToTelegramHtml('> a **bold** quote');
+  assert.equal(html, '<blockquote>a <b>bold</b> quote</blockquote>');
+});
+
+test('markdownToTelegramHtml marks long blockquotes expandable', () => {
+  const quote = Array.from({ length: 10 }, (_, i) => `> line ${i}`).join('\n');
+  const html = markdownToTelegramHtml(quote);
+  assert.ok(html.startsWith('<blockquote expandable>'));
+  assert.ok(html.endsWith('</blockquote>'));
 });
 
 test('markdownToTelegramHtml escapes unsafe tags while preserving inline code', () => {
