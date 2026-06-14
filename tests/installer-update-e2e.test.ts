@@ -7,6 +7,10 @@ import test from 'node:test';
 
 import { resolveRef, runUpdateCommand, type UpdateProgressEvent } from '../src/update-command.js';
 
+// Keep the post-restart health probe fast — the e2e runs real `sleep`.
+process.env.FFT_NANO_UPDATE_HEALTH_SETTLE_MS = '1000';
+process.env.FFT_NANO_UPDATE_HEALTH_RECHECK_MS = '1000';
+
 /**
  * installer-update-e2e.test.ts
  *
@@ -81,7 +85,7 @@ function createFixtureRepo(fixturePath: string, fakeTag: string): void {
   // scripts/service.sh — always succeeds
   fs.writeFileSync(
     path.join(fixturePath, 'scripts', 'service.sh'),
-    '#!/bin/bash\ncase "$1" in\n  restart) exit 0 ;;\n  status) echo "running" ; exit 0 ;;\n  *) exit 0 ;;\nesac\n',
+    '#!/bin/bash\ncase "$1" in\n  restart) exit 0 ;;\n  status) echo "running" ; exit 0 ;;\n  pid) echo 4242 ; exit 0 ;;\n  *) exit 0 ;;\nesac\n',
   );
   fs.chmodSync(path.join(fixturePath, 'scripts', 'service.sh'), 0o755);
 
@@ -123,6 +127,13 @@ resolve_ref() {
   // Add origin remote and push
   execSync('git remote add origin file://' + originPath, { cwd: fixturePath, stdio: 'ignore' });
   execSync('git push origin main', { cwd: fixturePath, stdio: 'ignore' });
+
+  // Create a commit that lives only on origin so the local checkout is one
+  // commit behind. This exercises the real fetch/pull/install/build/restart
+  // path instead of the up-to-date short-circuit.
+  execSync('git commit --allow-empty -m "upstream update"', { cwd: fixturePath, stdio: 'ignore' });
+  execSync('git push origin main', { cwd: fixturePath, stdio: 'ignore' });
+  execSync('git reset --hard HEAD~1', { cwd: fixturePath, stdio: 'ignore' });
 }
 
 test('installer-update-e2e: skipped on Windows', { skip: isWindows }, () => {

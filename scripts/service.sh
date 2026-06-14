@@ -174,6 +174,16 @@ mac_status() {
   launchctl print "${target}/${LAUNCHD_LABEL}"
 }
 
+mac_pid() {
+  local target pid
+  target="$(mac_target)"
+  pid="$(launchctl print "${target}/${LAUNCHD_LABEL}" 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9]*\).*/\1/p' | head -1)"
+  if [[ -z "${pid}" || "${pid}" == "0" ]]; then
+    pid="$(pgrep -f "${PROJECT_ROOT}/dist/index.js" 2>/dev/null | head -1 || true)"
+  fi
+  [[ -n "${pid}" && "${pid}" != "0" ]] && printf '%s\n' "${pid}"
+}
+
 mac_logs() {
   mkdir -p "${LOG_DIR}"
   local files=()
@@ -377,6 +387,19 @@ linux_restart_systemd() {
   run_privileged systemctl restart "${SERVICE_NAME}"
 }
 
+linux_pid() {
+  local init_system pid
+  init_system="$(linux_detect_init)"
+  pid=""
+  if [[ "${init_system}" == "systemd" ]]; then
+    pid="$(systemctl show -p MainPID --value "${SERVICE_NAME}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${pid}" || "${pid}" == "0" ]]; then
+    pid="$(pgrep -f "${PROJECT_ROOT}/dist/index.js" 2>/dev/null | head -1 || true)"
+  fi
+  [[ -n "${pid}" && "${pid}" != "0" ]] && printf '%s\n' "${pid}"
+}
+
 linux_status() {
   local init_system
   init_system="$(linux_detect_init)"
@@ -566,6 +589,12 @@ termux_service_exists() {
   [[ -d "${TERMUX_SERVICE_DIR}" ]]
 }
 
+termux_pid() {
+  local pid
+  pid="$(pgrep -f "${PROJECT_ROOT}/dist/index.js" 2>/dev/null | head -1 || true)"
+  [[ -n "${pid}" && "${pid}" != "0" ]] && printf '%s\n' "${pid}"
+}
+
 termux_install() {
   if ! is_termux; then
     fail "termux-services is only available on Android/Termux"
@@ -680,7 +709,7 @@ main() {
       usage
       exit 0
       ;;
-    install|uninstall|start|stop|restart|status|logs)
+    install|uninstall|start|stop|restart|status|logs|pid)
       ;;
     *)
       fail "Unknown action: ${action}"
