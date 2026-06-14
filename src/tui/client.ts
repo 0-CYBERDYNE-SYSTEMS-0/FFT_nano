@@ -9,6 +9,8 @@ import {
 } from '@mariozechner/pi-tui';
 import { Socket } from 'net';
 
+import { getPlatformAdapter } from '../platform/index.js';
+
 import type {
   AgentEventPayload,
   ChatEventPayload,
@@ -69,8 +71,9 @@ class LocalTuiConnection {
   async connect(): Promise<void> {
     if (this.connected) return;
 
+    const platformAdapter = getPlatformAdapter();
     return new Promise<void>((resolve, reject) => {
-      this.socket = new Socket();
+      this.socket = platformAdapter.connectLocalSocket(this.socketPath);
 
       this.socket.connect(this.socketPath, () => {
         this.connected = true;

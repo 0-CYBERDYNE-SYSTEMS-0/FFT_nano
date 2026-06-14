@@ -54,7 +54,22 @@ const progressEvents: UpdateProgressEvent[] = [];
 try {
   const result = runUpdateCommand({
     cwd,
-    onProgress: (event) => progressEvents.push(event),
+    onProgress: (event) => {
+      progressEvents.push(event);
+      // Flush each event to the report file so the host's notification loop
+      // can render live phase-by-phase progress instead of a silent gap until
+      // the run completes. Best-effort: a write failure must not abort the run.
+      try {
+        writeUpdateNotification(reportFile, {
+          ...baseRecord,
+          status: 'started',
+          progress: [...progressEvents],
+          updatedAt: new Date().toISOString(),
+        });
+      } catch {
+        // Ignore; the final write below still records the outcome.
+      }
+    },
   });
   writeUpdateNotification(
     reportFile,

@@ -73,4 +73,45 @@ export FFT_NANO_WEB_ACCESS_MODE="${FFT_NANO_WEB_ACCESS_MODE:-localhost}"
 export FFT_NANO_WEB_HOST="${FFT_NANO_WEB_HOST:-127.0.0.1}"
 export FFT_NANO_WEB_PORT="${FFT_NANO_WEB_PORT:-28990}"
 
+# Install-recovery: if an `/update` died mid dependency-install/build (the
+# window where node_modules is wiped by `npm ci` and dist/ may be stale), a
+# marker file at data/update-incomplete survives. Finish the install + build
+# here — before launching node — so a half-installed checkout self-heals
+# instead of crash-looping silently. Roll back to the recorded pre-update SHA
+# if the new code still won't build. All output goes to a recovery log.
+recover_incomplete_update() {
+  local marker="$PROJECT_ROOT/data/update-incomplete"
+  [[ -f "$marker" ]] || return 0
+
+  local recovery_log="$LOG_DIR/update-recovery.log"
+  mkdir -p "$LOG_DIR"
+
+  # Single-flight: claim the marker by renaming it. A concurrent launch that
+  # loses the race skips recovery and lets the winner finish.
+  local claim="$marker.recovering"
+  if ! mv "$marker" "$claim" 2>/dev/null; then
+    return 0
+  fi
+
+  local pre_sha
+  pre_sha="$(head -1 "$claim" 2>/dev/null || true)"
+
+  {
+    echo "[$(date -u +%FT%TZ)] update-incomplete detected; finishing install (pre_sha=${pre_sha:-unknown})"
+    if npm ci --include=dev && npm run build; then
+      echo "[$(date -u +%FT%TZ)] recovery: reinstall + build OK"
+      rm -f "$claim"
+    elif [[ -n "$pre_sha" ]] && git reset --hard "$pre_sha" && npm ci --include=dev && npm run build; then
+      echo "[$(date -u +%FT%TZ)] recovery: rolled back to $pre_sha and rebuilt OK"
+      rm -f "$claim"
+    else
+      echo "[$(date -u +%FT%TZ)] recovery: FAILED; leaving marker for next boot. Manual fix: cd $PROJECT_ROOT && npm ci && npm run build"
+      mv "$claim" "$marker" 2>/dev/null || true
+    fi
+  } >>"$recovery_log" 2>&1
+}
+
+LOG_DIR="${LOG_DIR:-$PROJECT_ROOT/logs}"
+recover_incomplete_update
+
 exec "$NODE_BIN" "$APP_ENTRY"
