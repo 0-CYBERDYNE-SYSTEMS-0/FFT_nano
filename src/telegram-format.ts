@@ -203,12 +203,14 @@ function isTableStart(lines: string[], i: number): boolean {
 }
 
 function renderTable(rows: string[][]): string {
-  const cols = Math.max(...rows.map((r) => r.length));
+  const [header, ...body] = rows;
+  // GFM: the header row defines the column count. Extra body cells are dropped
+  // and missing ones padded, so the separator never desyncs from the header.
+  const cols = header.length;
   const widths = Array.from({ length: cols }, (_, c) =>
     Math.max(...rows.map((r) => (r[c] ?? '').length)),
   );
   const pad = (cell: string, c: number) => (cell ?? '').padEnd(widths[c]);
-  const [header, ...body] = rows;
   const headerLine = header
     .map((cell, c) => pad(cell, c))
     .join(' | ')
