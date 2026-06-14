@@ -189,6 +189,27 @@ test('markdownToTelegramHtml marks long blockquotes expandable', () => {
   assert.ok(html.endsWith('</blockquote>'));
 });
 
+test('markdownToTelegramHtml renders pipe tables as aligned pre block', () => {
+  const md = '| Crop | Acres |\n|------|-------|\n| Corn | 120 |\n| Soy | 80 |';
+  const html = markdownToTelegramHtml(md);
+  assert.equal(
+    html,
+    '<pre>Crop | Acres\n-----+------\nCorn | 120\nSoy  | 80</pre>',
+  );
+});
+
+test('markdownToTelegramHtml escapes table cell content', () => {
+  const md = '| A | B |\n|---|---|\n| <x> | a&b |';
+  const html = markdownToTelegramHtml(md);
+  assert.ok(html.includes('&lt;x&gt;'));
+  assert.ok(html.includes('a&amp;b'));
+});
+
+test('markdownToTelegramHtml does not treat paragraph + hr as a table', () => {
+  const html = markdownToTelegramHtml('Some heading\n---\nbody text');
+  assert.ok(!html.includes('<pre>'));
+});
+
 test('markdownToTelegramHtml escapes unsafe tags while preserving inline code', () => {
   const html = markdownToTelegramHtml(
     'run `<b>rm -rf</b>` and <script>x</script>',

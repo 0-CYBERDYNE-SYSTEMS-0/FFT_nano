@@ -180,14 +180,65 @@ const BLOCKQUOTE_LINE = /^\s*>\s?/;
 const BLOCKQUOTE_EXPANDABLE_LINES = 8;
 const BLOCKQUOTE_EXPANDABLE_CHARS = 400;
 
+// Telegram has no table markup; GitHub-style pipe tables are rendered as an
+// aligned monospace <pre> block so columns line up in the proportional font.
+function splitTableRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((cell) => cell.trim());
+}
+
+function isTableDelimiterRow(line: string): boolean {
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
+
+function isTableStart(lines: string[], i: number): boolean {
+  return (
+    i + 1 < lines.length &&
+    lines[i].includes('|') &&
+    isTableDelimiterRow(lines[i + 1])
+  );
+}
+
+function renderTable(rows: string[][]): string {
+  const cols = Math.max(...rows.map((r) => r.length));
+  const widths = Array.from({ length: cols }, (_, c) =>
+    Math.max(...rows.map((r) => (r[c] ?? '').length)),
+  );
+  const pad = (cell: string, c: number) => (cell ?? '').padEnd(widths[c]);
+  const [header, ...body] = rows;
+  const headerLine = header
+    .map((cell, c) => pad(cell, c))
+    .join(' | ')
+    .trimEnd();
+  const sepLine = widths.map((w) => '-'.repeat(w)).join('-+-');
+  const bodyLines = body.map((row) =>
+    Array.from({ length: cols }, (_, c) => pad(row[c] ?? '', c))
+      .join(' | ')
+      .trimEnd(),
+  );
+  const table = [headerLine, sepLine, ...bodyLines].join('\n');
+  return `<pre>${escapeHtml(table)}</pre>`;
+}
+
 // Renders a non-fenced segment, lifting consecutive `> ` lines into Telegram
-// <blockquote> elements before inline formatting is applied.
+// <blockquote> elements and pipe tables into <pre> before inline formatting.
 function renderBlockMarkdown(segment: string): string {
   const lines = segment.split('\n');
   const parts: string[] = [];
   let i = 0;
   while (i < lines.length) {
-    if (BLOCKQUOTE_LINE.test(lines[i])) {
+    if (isTableStart(lines, i)) {
+      const rows: string[][] = [splitTableRow(lines[i])];
+      i += 2; // skip header + delimiter
+      while (i < lines.length && lines[i].includes('|')) {
+        rows.push(splitTableRow(lines[i]));
+        i++;
+      }
+      parts.push(renderTable(rows));
+    } else if (BLOCKQUOTE_LINE.test(lines[i])) {
       const quoteLines: string[] = [];
       while (i < lines.length && BLOCKQUOTE_LINE.test(lines[i])) {
         quoteLines.push(lines[i].replace(BLOCKQUOTE_LINE, ''));
@@ -201,7 +252,11 @@ function renderBlockMarkdown(segment: string): string {
       parts.push(`${tag}${renderInlineMarkdown(inner)}</blockquote>`);
     } else {
       const textLines: string[] = [];
-      while (i < lines.length && !BLOCKQUOTE_LINE.test(lines[i])) {
+      while (
+        i < lines.length &&
+        !BLOCKQUOTE_LINE.test(lines[i]) &&
+        !isTableStart(lines, i)
+      ) {
         textLines.push(lines[i]);
         i++;
       }
