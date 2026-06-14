@@ -17,6 +17,9 @@ const TELEGRAM_PARSE_ERROR_RE =
   /can't parse entities|parse entities|find end of the entity/i;
 const TELEGRAM_MESSAGE_TOO_LONG_RE = /message is too long/i;
 const TELEGRAM_MESSAGE_NOT_MODIFIED_RE = /message is not modified/i;
+const TELEGRAM_RICH_MAX_CHARS = 32768;
+const TELEGRAM_RICH_UNAVAILABLE_RE =
+  /not found|does not exist|no such method|unsupported|not implemented/i;
 const TELEGRAM_RETRYABLE_ERROR_RE =
   /timed out|timeout|temporarily unavailable|too many requests|retry after|internal server error|bad gateway|service unavailable/i;
 const TELEGRAM_RETRY_ATTEMPTS = Math.max(
@@ -79,6 +82,10 @@ export function isTelegramPrivateChatJid(jid: string): boolean {
   if (!chatId) return false;
   const numericChatId = Number(chatId);
   return Number.isInteger(numericChatId) && numericChatId > 0;
+}
+
+export function isTelegramRichMessageWithinLimit(text: string): boolean {
+  return Array.from(text).length <= TELEGRAM_RICH_MAX_CHARS;
 }
 
 export interface TelegramEntity {
@@ -548,6 +555,7 @@ export interface TelegramDraftOptions {
 
 export interface TelegramStreamMessageOptions {
   messageThreadId?: number;
+  rich?: boolean;
 }
 
 export interface TelegramBotOptions {
@@ -696,6 +704,9 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   let offset = state.offset || 0;
   let lastPersistedOffset = offset;
   let botUsername: string | null = null;
+  // Latched off after a sendRichMessage capability failure (old Bot API
+  // server) so later sends skip the doomed rich attempt entirely.
+  let richSendDisabled = false;
   interface TypingLoopState {
     interval: ReturnType<typeof setInterval>;
     inFlight: boolean;
@@ -796,6 +807,31 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     return false;
   }
 
+  // Capability error: the sendRichMessage endpoint itself is missing (old Bot
+  // API server / library). Latch rich off after one of these so every later
+  // send doesn't pay a doomed extra roundtrip.
+  function isRichCapabilityError(err: unknown): boolean {
+    if (err instanceof TelegramApiError) {
+      if (err.statusCode === 404) return true;
+      return TELEGRAM_RICH_UNAVAILABLE_RE.test(err.message);
+    }
+    if (err instanceof Error) {
+      return TELEGRAM_RICH_UNAVAILABLE_RE.test(err.message);
+    }
+    return false;
+  }
+
+  // Permanent per-message rejection: a BadRequest (e.g. content exceeds a
+  // server-enforced rich limit, or rich markdown the parser refused). Safe to
+  // fall back to the legacy path because the message was not delivered.
+  function isRichFallbackError(err: unknown): boolean {
+    if (isRichCapabilityError(err)) return true;
+    if (err instanceof TelegramApiError) {
+      return err.statusCode === 400;
+    }
+    return false;
+  }
+
   function isRetryableTelegramError(err: unknown): boolean {
     if (err instanceof TelegramApiError) {
       const statusCode = err.statusCode;
@@ -862,6 +898,55 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     throw lastErr instanceof Error
       ? lastErr
       : new Error(`Telegram API failed (${method})`);
+  }
+
+  function shouldAttemptRich(text: string): boolean {
+    return (
+      !richSendDisabled &&
+      text.length > 0 &&
+      isTelegramRichMessageWithinLimit(text)
+    );
+  }
+
+  // Attempt a single Bot API 10.1 sendRichMessage with the RAW agent markdown
+  // so tables/lists/headings/nested quotes render natively. The markdown must
+  // NOT be HTML-converted — that would escape and destroy table pipes.
+  // Returns true on delivery, false to signal "fall back to the legacy path".
+  // Re-throws transient errors: the request may have reached Telegram, so a
+  // legacy resend would risk a duplicate.
+  async function trySendRich(
+    chatId: string,
+    rawMarkdown: string,
+    replyMarkup?: {
+      inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+    },
+  ): Promise<boolean> {
+    if (!shouldAttemptRich(rawMarkdown)) return false;
+    try {
+      await apiPostWithRetry('sendRichMessage', {
+        chat_id: chatId,
+        rich_message: { markdown: rawMarkdown },
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      });
+      return true;
+    } catch (err) {
+      if (isRichCapabilityError(err)) {
+        richSendDisabled = true;
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          'sendRichMessage unavailable; disabling rich messages and falling back to HTML',
+        );
+        return false;
+      }
+      if (isRichFallbackError(err)) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          'sendRichMessage rejected message; falling back to HTML send',
+        );
+        return false;
+      }
+      throw err;
+    }
   }
 
   async function sendMessageChunk(
@@ -1160,6 +1245,10 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
     }
 
+    // Prefer a single native rich message (raw markdown, tables intact). Only
+    // chunk + HTML-convert when rich is unavailable or rejects the content.
+    if (await trySendRich(chatId, text)) return;
+
     for (const chunk of splitTelegramText(text, TELEGRAM_SAFE_MESSAGE_LEN)) {
       if (chunk && chunk.length <= TELEGRAM_MAX_MESSAGE_LEN) {
         await sendMessageChunk(chatId, chunk);
@@ -1198,14 +1287,36 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       throw new Error(`Invalid Telegram draft id: ${draftId}`);
     }
 
+    const normalized = normalizeTelegramPreviewText(text);
+    const thread =
+      typeof opts.messageThreadId === 'number' &&
+      Number.isFinite(opts.messageThreadId)
+        ? { message_thread_id: Math.trunc(opts.messageThreadId) }
+        : {};
+
+    if (shouldAttemptRich(normalized)) {
+      try {
+        await apiPostWithRetry('sendRichMessageDraft', {
+          chat_id: chatId,
+          draft_id: draftId,
+          rich_message: { markdown: normalized },
+          ...thread,
+        });
+        return;
+      } catch (err) {
+        if (isRichCapabilityError(err)) {
+          richSendDisabled = true;
+        } else if (!isRichFallbackError(err)) {
+          throw err;
+        }
+      }
+    }
+
     await apiPostWithRetry('sendMessageDraft', {
       chat_id: chatId,
       draft_id: draftId,
-      text: normalizeTelegramPreviewText(text),
-      ...(typeof opts.messageThreadId === 'number' &&
-      Number.isFinite(opts.messageThreadId)
-        ? { message_thread_id: Math.trunc(opts.messageThreadId) }
-        : {}),
+      text: normalized,
+      ...thread,
     });
   }
 
@@ -1252,16 +1363,37 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
         `Invalid Telegram message id for stream edit: ${messageId}`,
       );
     }
+    const normalized = opts.rich
+      ? text.replace(/\r\n/g, '\n')
+      : normalizeTelegramPreviewText(text);
+
     try {
+      if (opts.rich && shouldAttemptRich(normalized)) {
+        try {
+          await apiPostWithRetry('editMessageText', {
+            chat_id: chatId,
+            message_id: messageId,
+            rich_message: { markdown: normalized },
+          });
+          return;
+        } catch (err) {
+          if (isRichCapabilityError(err)) {
+            richSendDisabled = true;
+          } else if (!isRichFallbackError(err)) {
+            throw err;
+          }
+        }
+      }
+
+      const htmlText = opts.rich
+        ? renderTelegramHtmlText(normalized, { textMode: 'markdown' })
+        : normalized;
       await apiPostWithRetry('editMessageText', {
         chat_id: chatId,
         message_id: messageId,
-        text: normalizeTelegramPreviewText(text),
+        text: htmlText,
+        ...(opts.rich ? { parse_mode: 'HTML' } : {}),
         disable_web_page_preview: true,
-        ...(typeof opts.messageThreadId === 'number' &&
-        Number.isFinite(opts.messageThreadId)
-          ? { message_thread_id: Math.trunc(opts.messageThreadId) }
-          : {}),
       });
     } catch (err) {
       if (
@@ -1285,6 +1417,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }
 
     const replyMarkup = buildReplyMarkup(keyboard);
+    if (await trySendRich(chatId, text, replyMarkup)) return;
+
     const chunks = splitTelegramText(text, TELEGRAM_SAFE_MESSAGE_LEN);
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];

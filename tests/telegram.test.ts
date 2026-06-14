@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { state } from '../src/app-state.js';
+import { finalizeTelegramPreviewMessage } from '../src/telegram-delivery.js';
 import {
   createTelegramBot,
   isTelegramPrivateChatJid,
   isTelegramJid,
+  isTelegramRichMessageWithinLimit,
   normalizeTelegramDraftText,
   normalizeTelegramPreviewText,
   parseTelegramChatId,
   splitTelegramText,
   splitTelegramTextForHtmlLimit,
+  type TelegramBot,
 } from '../src/telegram.js';
 import {
   markdownToTelegramHtml,
@@ -223,6 +227,288 @@ test('markdownToTelegramHtml escapes unsafe tags while preserving inline code', 
 test('markdownToTelegramHtml keeps markdown link query params intact', () => {
   const html = markdownToTelegramHtml('[x](https://example.com/?a=1&b=2)');
   assert.equal(html, '<a href="https://example.com/?a=1&amp;b=2">x</a>');
+});
+
+test('sendMessage delivers raw markdown via sendRichMessage (Bot API 10.1)', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body)),
+    });
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: {} }),
+    } as Response;
+  }) as typeof fetch;
+
+  const md = '| Crop | Acres |\n|------|-------|\n| Corn | 120 |';
+  try {
+    const bot = createTelegramBot({
+      token: 'token',
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+    });
+    await bot.sendMessage('telegram:1', md);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/sendRichMessage$/);
+  assert.deepEqual(Object.keys(calls[0].body).sort(), [
+    'chat_id',
+    'rich_message',
+  ]);
+  const rich = calls[0].body.rich_message as { markdown: string };
+  // RAW markdown — pipes must survive untouched for native table rendering.
+  assert.equal(rich.markdown, md);
+});
+
+test('sendMessage falls back to HTML sendMessage and latches off when rich is unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/sendRichMessage')) {
+      return {
+        ok: true,
+        json: async () => ({
+          ok: false,
+          error_code: 404,
+          description: 'Not Found: method sendRichMessage not found',
+        }),
+      } as Response;
+    }
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: {} }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const bot = createTelegramBot({
+      token: 'token',
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+    });
+    await bot.sendMessage('telegram:1', 'first reply');
+    await bot.sendMessage('telegram:1', 'second reply');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // First send: rich attempted (404) then legacy sendMessage. Second send:
+  // rich latched off, so only sendMessage is called.
+  const richCalls = calls.filter((u) => u.endsWith('/sendRichMessage'));
+  const legacyCalls = calls.filter((u) => u.endsWith('/sendMessage'));
+  assert.equal(richCalls.length, 1);
+  assert.equal(legacyCalls.length, 2);
+});
+
+test('rich message limit counts Unicode characters rather than UTF-16 code units', () => {
+  assert.equal(isTelegramRichMessageWithinLimit('a'.repeat(32768)), true);
+  assert.equal(isTelegramRichMessageWithinLimit('a'.repeat(32769)), false);
+  assert.equal(isTelegramRichMessageWithinLimit('😀'.repeat(32768)), true);
+});
+
+test('sendMessageWithKeyboard uses documented sendRichMessage reply_markup', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body)),
+    });
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: {} }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const bot = createTelegramBot({
+      token: 'token',
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+    });
+    await bot.sendMessageWithKeyboard('telegram:1', '# Choose', [
+      [{ text: 'Open', callbackData: 'open' }],
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.match(calls[0].url, /\/sendRichMessage$/);
+  assert.deepEqual(Object.keys(calls[0].body).sort(), [
+    'chat_id',
+    'reply_markup',
+    'rich_message',
+  ]);
+});
+
+test('sendMessageDraft uses documented sendRichMessageDraft payload', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body)),
+    });
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: true }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const bot = createTelegramBot({
+      token: 'token',
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+    });
+    await bot.sendMessageDraft('telegram:1', 7, '**working**', {
+      messageThreadId: 3,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.match(calls[0].url, /\/sendRichMessageDraft$/);
+  assert.deepEqual(calls[0].body, {
+    chat_id: '1',
+    draft_id: 7,
+    rich_message: { markdown: '**working**' },
+    message_thread_id: 3,
+  });
+});
+
+test('sendMessageDraft falls back when partial rich markdown is rejected', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/sendRichMessageDraft')) {
+      return {
+        ok: true,
+        json: async () => ({
+          ok: false,
+          error_code: 400,
+          description: 'Bad Request: failed to parse rich message',
+        }),
+      } as Response;
+    }
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: true }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const bot = createTelegramBot({
+      token: 'token',
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+    });
+    await bot.sendMessageDraft('telegram:1', 8, '```partial');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /\/sendRichMessageDraft$/);
+  assert.match(calls[1], /\/sendMessageDraft$/);
+});
+
+test('editStreamMessage finalizes with editMessageText.rich_message', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body)),
+    });
+    return {
+      ok: true,
+      json: async () => ({ ok: true, result: {} }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const bot = createTelegramBot({
+      token: 'token',
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+    });
+    await bot.editStreamMessage(
+      'telegram:1',
+      42,
+      '# Final\n\n| A | B |\n|---|---|',
+      {
+        rich: true,
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.match(calls[0].url, /\/editMessageText$/);
+  assert.deepEqual(calls[0].body, {
+    chat_id: '1',
+    message_id: 42,
+    rich_message: { markdown: '# Final\n\n| A | B |\n|---|---|' },
+  });
+});
+
+test('finalizeTelegramPreviewMessage edits the first preview as rich and removes stale bubbles', async () => {
+  const originalBot = state.telegramBot;
+  const edits: Array<{
+    chatJid: string;
+    messageId: number;
+    text: string;
+    rich?: boolean;
+  }> = [];
+  const deleted: number[] = [];
+
+  state.telegramBot = {
+    editStreamMessage: async (chatJid, messageId, text, opts) => {
+      edits.push({ chatJid, messageId, text, rich: opts?.rich });
+    },
+    deleteMessage: async (_chatJid, messageId) => {
+      deleted.push(messageId);
+    },
+  } as TelegramBot;
+
+  try {
+    const sent = await finalizeTelegramPreviewMessage(
+      'telegram:1',
+      41,
+      '# Final\n\n| A | B |\n|---|---|',
+      [41, 42],
+    );
+    assert.equal(sent, true);
+  } finally {
+    state.telegramBot = originalBot;
+  }
+
+  assert.deepEqual(edits, [
+    {
+      chatJid: 'telegram:1',
+      messageId: 41,
+      text: '# Final\n\n| A | B |\n|---|---|',
+      rich: true,
+    },
+  ]);
+  assert.deepEqual(deleted, [42]);
 });
 
 test('createTelegramBot uploads video, audio, voice, and animation via Telegram Bot API', async () => {
