@@ -600,18 +600,34 @@ termux_install() {
     fail "termux-services is only available on Android/Termux"
   fi
 
+  # termux-services is required for sv/run-script to manage the daemon.
+  if ! command -v sv >/dev/null 2>&1; then
+    if [[ "${FFT_NANO_NONINTERACTIVE:-0}" == "1" ]] || [[ ! -t 0 ]]; then
+      fail "termux-services is not installed. Install it interactively with 'pkg install termux-services' before running install."
+    fi
+    say "termux-services is not installed; attempting: pkg install termux-services"
+    if ! pkg install -y termux-services; then
+      fail "Failed to install termux-services. Re-run with --no-install-daemon to skip, or install it interactively with 'pkg install termux-services'."
+    fi
+  fi
+
   mkdir -p "${TERMUX_SERVICE_DIR}/log" "${TERMUX_LOG_DIR}" "${LOG_DIR}"
 
-  # Create run script
+  # The run script must source .env and call scripts/start.sh start so
+  # TUI defaults, runtime selection, and TELEGRAM_BOT_TOKEN resolution
+  # match the foreground path. Do NOT exec node dist/index.js directly:
+  # the gateway startup would skip the .env defaults and would not be
+  # consistent with `scripts/service.sh` on other platforms.
   cat >"${TERMUX_SERVICE_DIR}/run" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
-exec ${TERMUX_PREFIX}/bin/node ${PROJECT_ROOT}/dist/index.js >> ${TERMUX_LOG_DIR}/stdout.log 2>> ${TERMUX_LOG_DIR}/stderr.log
+cd ${PROJECT_ROOT}
+exec ${PROJECT_ROOT}/scripts/start.sh start >> ${TERMUX_LOG_DIR}/stdout.log 2>> ${TERMUX_LOG_DIR}/stderr.log
 EOF
 
-  # Create log/run script
+  # Forward daemon logs to logcat as well, in addition to the on-disk files.
   cat >"${TERMUX_SERVICE_DIR}/log/run" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
-exec logger -t ${SERVICE_NAME}
+exec svlogd -tt ${TERMUX_LOG_DIR}
 EOF
 
   chmod +x "${TERMUX_SERVICE_DIR}/run" "${TERMUX_SERVICE_DIR}/log/run"
@@ -690,15 +706,28 @@ termux_logs() {
     return
   fi
 
-  if [[ -f "${TERMUX_LOG_DIR}/stdout.log" ]]; then
-    tail -n "${TAIL_LINES}" "${TERMUX_LOG_DIR}/stdout.log"
-  else
-    echo "(no stdout logs)"
+  mkdir -p "${TERMUX_LOG_DIR}"
+
+  if [[ -f "${TERMUX_LOG_DIR}/current" ]] || compgen -G "${TERMUX_LOG_DIR}/*" >/dev/null; then
+    # svlogd rotates logs into timestamped files. Tail the most recent.
+    local latest
+    latest="$(ls -1t "${TERMUX_LOG_DIR}" 2>/dev/null | head -1 || true)"
+    if [[ -n "${latest}" ]] && [[ -f "${TERMUX_LOG_DIR}/${latest}" ]]; then
+      tail -n "${TAIL_LINES}" "${TERMUX_LOG_DIR}/${latest}"
+      return
+    fi
   fi
 
+  if [[ -f "${TERMUX_LOG_DIR}/stdout.log" ]]; then
+    echo "=== stdout ==="
+    tail -n "${TAIL_LINES}" "${TERMUX_LOG_DIR}/stdout.log"
+  fi
   if [[ -f "${TERMUX_LOG_DIR}/stderr.log" ]]; then
     echo "=== stderr ==="
     tail -n "${TAIL_LINES}" "${TERMUX_LOG_DIR}/stderr.log"
+  fi
+  if [[ ! -f "${TERMUX_LOG_DIR}/stdout.log" ]] && [[ ! -f "${TERMUX_LOG_DIR}/stderr.log" ]]; then
+    echo "(no logs)"
   fi
 }
 

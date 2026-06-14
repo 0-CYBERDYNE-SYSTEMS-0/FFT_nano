@@ -72,10 +72,15 @@ export class ChatLog extends Container {
       output?: string;
       error?: string;
     },
-    verboseMode: VerboseMode,
+    verboseMode?: VerboseMode,
   ) {
     const effectiveRunId = this.resolveRunId(runId);
-    if (verboseMode === 'new' && data.status === 'start') {
+    const effectiveMode: VerboseMode =
+      verboseMode && ['off', 'new', 'all', 'verbose'].includes(verboseMode)
+        ? verboseMode
+        : 'off';
+    if (effectiveMode === 'off') return;
+    if (effectiveMode === 'new' && data.status === 'start') {
       const lastTool = this.lastToolByRun.get(effectiveRunId);
       if (lastTool === data.toolName) {
         return;
@@ -85,10 +90,10 @@ export class ChatLog extends Container {
     const key = `${effectiveRunId}:${data.index}`;
     const existing = this.toolRuns.get(key);
     if (existing) {
-      existing.setEvent(data, verboseMode);
+      existing.setEvent(data, effectiveMode);
       return;
     }
-    const component = new ToolMessageComponent(data, verboseMode);
+    const component = new ToolMessageComponent(data, effectiveMode);
     this.toolRuns.set(key, component);
     this.addChild(component);
   }

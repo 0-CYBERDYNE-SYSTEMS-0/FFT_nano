@@ -947,7 +947,45 @@ export async function runOnboarding(
     gatewayPort: wizard.gatewayPort,
   };
   writeWizardMetadata(workspace, summary);
+  if (wizard.installDaemon) {
+    await installDaemonIfRequested();
+  }
   return summary;
+}
+
+async function installDaemonIfRequested(): Promise<void> {
+  // Delegate to `scripts/service.sh install` via a child process so
+  // the same on-disk service definition is used across macOS / Linux
+  // / Termux. This is the right place to wire it because the operator
+  // already accepted the risk and the env file is in place.
+  const { spawn } = await import('child_process');
+  const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+  if (!fs.existsSync(scriptPath)) {
+    process.stderr.write(
+      `service.sh not found at ${scriptPath}; skipping daemon install. Run \`fft service install\` later.\n`,
+    );
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const child = spawn('bash', [scriptPath, 'install'], {
+      env: { ...process.env, FFT_NANO_NONINTERACTIVE: '1' },
+      stdio: 'inherit',
+    });
+    child.once('error', (err) => {
+      process.stderr.write(
+        `daemon install failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      resolve();
+    });
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        process.stderr.write(
+          `daemon install exited with code ${code}; the wizard chose --install-daemon, so you may need to fix the issue and run \`fft service install\` manually.\n`,
+        );
+      }
+      resolve();
+    });
+  });
 }
 
 async function main(): Promise<void> {

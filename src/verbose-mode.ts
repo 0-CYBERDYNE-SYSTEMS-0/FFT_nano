@@ -34,7 +34,7 @@ export function describeVerboseMode(mode: VerboseMode): string {
 
 export function cycleVerboseMode(mode: VerboseMode | undefined): VerboseMode {
   const cycle: VerboseMode[] = ['off', 'new', 'all', 'verbose'];
-  const current = mode && cycle.includes(mode) ? mode : 'all';
+  const current = mode && cycle.includes(mode) ? mode : 'off';
   const index = cycle.indexOf(current);
   return cycle[(index + 1) % cycle.length] || 'off';
 }

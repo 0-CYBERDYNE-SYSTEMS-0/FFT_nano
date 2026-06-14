@@ -1,12 +1,11 @@
 import { exec, spawn } from 'child_process';
 import { existsSync, unlinkSync } from 'fs';
-import { createServer } from 'net';
+import { createServer, Server, Socket } from 'net';
 import { promisify } from 'util';
 import path from 'path';
 import { readFile } from 'fs/promises';
 import { logger } from '../logger.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
-import type { Server, Socket } from 'net';
 import type { PlatformAdapter } from './types.js';
 
 const execAsync = promisify(exec);
@@ -355,16 +354,22 @@ exec logger -t ${SERVICE_NAME}
     }
   }
 
-  createLocalSocket(socketPath: string): Server {
-    if (existsSync(socketPath)) {
-      unlinkSync(socketPath);
-    }
-    return createServer().listen(socketPath);
+  createLocalSocket(): Server {
+    return createServer();
   }
 
-  connectLocalSocket(socketPath: string): Socket {
-    const { createConnection } = require('net');
-    return createConnection(socketPath);
+  connectLocalSocket(): Socket {
+    return new Socket();
+  }
+
+  resolveLocalSocketPath(): string {
+    // Use XDG_RUNTIME_DIR when available so the socket lives in a
+    // user-private runtime directory (typically /run/user/<uid>). Fall
+    // back to /tmp only when nothing more specific is available, and
+    // namespace it under fft-nano/ so we never collide with other tools.
+    const xdg = process.env.XDG_RUNTIME_DIR;
+    const base = xdg && xdg.trim() ? xdg : '/tmp';
+    return path.join(base, 'fft-nano', 'tui.sock');
   }
 
   normalizePath(p: string): string {
