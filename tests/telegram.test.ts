@@ -214,6 +214,22 @@ test('markdownToTelegramHtml does not treat paragraph + hr as a table', () => {
   assert.ok(!html.includes('<pre>'));
 });
 
+test('markdownToTelegramHtml keeps the separator column count in sync for ragged rows', () => {
+  // Header defines 3 columns; the extra 4th body cell is dropped and the short
+  // row padded, so the separator never desyncs from the header.
+  const md = '| A | B | C |\n|---|---|---|\n| 1 | 2 |\n| 3 | 4 | 5 | 6 |';
+  const html = markdownToTelegramHtml(md);
+  assert.equal(html, '<pre>A | B | C\n--+---+--\n1 | 2 |\n3 | 4 | 5</pre>');
+});
+
+test('markdownToTelegramHtml consumes alignment-colon delimiter rows', () => {
+  const md = '| L | R |\n|:--|--:|\n| a | bb |';
+  const html = markdownToTelegramHtml(md);
+  // The :--/--:  delimiter row is consumed (alignment hints), not rendered.
+  assert.ok(!html.includes(':'));
+  assert.equal(html, '<pre>L | R\n--+---\na | bb</pre>');
+});
+
 test('markdownToTelegramHtml escapes unsafe tags while preserving inline code', () => {
   const html = markdownToTelegramHtml(
     'run `<b>rm -rf</b>` and <script>x</script>',

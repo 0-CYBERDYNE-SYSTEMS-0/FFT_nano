@@ -1067,6 +1067,9 @@ function renderBasePrompt(params: {
   lines.push(
     'Avoid markdown headings in final chat replies unless explicitly requested.',
   );
+  lines.push(
+    'For tabular or comparison data, use GitHub-style markdown tables (| col | col | with a |---|---| separator row); the chat renders them as native tables.',
+  );
   lines.push('');
 
   lines.push('## Heartbeats');
