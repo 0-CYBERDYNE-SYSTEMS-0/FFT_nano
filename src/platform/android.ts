@@ -136,7 +136,6 @@ exec logger -t ${SERVICE_NAME}
     return spawn(command, args, {
       ...options,
       detached: true,
-      stdio: 'ignore',
     });
   }
 

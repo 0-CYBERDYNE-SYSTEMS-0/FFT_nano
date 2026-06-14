@@ -1565,6 +1565,12 @@ export async function runContainerAgent(
         stdout: NonNullable<ChildProcess['stdout']>;
         stderr: NonNullable<ChildProcess['stderr']>;
       };
+      if (!child.stdin || !child.stdout || !child.stderr) {
+        child.kill();
+        throw new Error(
+          `Platform adapter "${platformAdapter.name}" did not preserve piped stdio for the Pi child process`,
+        );
+      }
       const closeRpcInput = () => {
         if (
           transportMode !== 'rpc' ||

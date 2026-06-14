@@ -236,5 +236,38 @@ describe('PlatformAdapter', () => {
       assert.equal(typeof child, 'object');
       assert.equal(typeof child.unref, 'function');
     });
+
+    test('Unix spawnDetached preserves requested piped stdio', async () => {
+      const { DarwinAdapter } = await import('../../src/platform/darwin.js');
+      const { LinuxAdapter } = await import('../../src/platform/linux.js');
+      const { AndroidAdapter } = await import('../../src/platform/android.js');
+
+      for (const adapter of [
+        new DarwinAdapter(),
+        new LinuxAdapter(),
+        new AndroidAdapter(),
+      ]) {
+        const child = adapter.spawnDetached(
+          process.execPath,
+          ['-e', 'process.stdout.write("ready")'],
+          { stdio: ['pipe', 'pipe', 'pipe'] },
+        );
+
+        assert.ok(child.stdin, `${adapter.name} should preserve piped stdin`);
+        assert.ok(child.stdout, `${adapter.name} should preserve piped stdout`);
+        assert.ok(child.stderr, `${adapter.name} should preserve piped stderr`);
+
+        let stdout = '';
+        child.stdout.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString();
+        });
+        child.stdin.end();
+        await new Promise<void>((resolve, reject) => {
+          child.once('error', reject);
+          child.once('close', () => resolve());
+        });
+        assert.equal(stdout, 'ready');
+      }
+    });
   });
 });
