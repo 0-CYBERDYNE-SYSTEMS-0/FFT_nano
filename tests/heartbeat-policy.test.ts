@@ -49,7 +49,7 @@ test('stripHeartbeatToken strips wrapped heartbeat token and suppresses short ac
 });
 
 test('parseHeartbeatActiveHours and isWithinHeartbeatActiveHours support day ranges', () => {
-  const active = parseHeartbeatActiveHours('Mon-Fri@09:00-17:00');
+  const active = parseHeartbeatActiveHours('Mon-Fri@09:00-17:00@UTC');
   assert.ok(active);
   assert.equal(
     isWithinHeartbeatActiveHours(active, new Date('2026-02-18T16:00:00.000Z')),
