@@ -12,6 +12,7 @@ import {
 import { logger } from './logger.js';
 import {
   isTelegramJid,
+  isTelegramRichMessageWithinLimit,
   splitTelegramText,
   parseTelegramChatId,
 } from './telegram.js';
@@ -375,10 +376,12 @@ export async function finalizeTelegramPreviewMessage(
   const ids = messageIds && messageIds.length ? messageIds : [messageId];
 
   const extracted = extractTelegramAttachmentHintsFromReply(text);
+  // Attachments must still be delivered as fresh messages. Bot API 10.1 lets
+  // the first persistent preview bubble become the final rich message in place.
+  const richEligible =
+    text.length > 0 && isTelegramRichMessageWithinLimit(text);
   if (extracted.hints.length > 0) {
     const sent = await sendTelegramAgentReply(chatJid, text);
-    // The reply carries attachments and is delivered as fresh messages, so the
-    // transient preview bubbles must be removed to avoid orphaned leading text.
     await deleteTelegramPreviewMessage(chatJid, ids[0], ids);
     logger.info(
       {
@@ -391,6 +394,38 @@ export async function finalizeTelegramPreviewMessage(
       'Telegram streaming preview finalized',
     );
     return sent;
+  }
+
+  if (richEligible) {
+    try {
+      await state.telegramBot.editStreamMessage(chatJid, ids[0], text, {
+        rich: true,
+      });
+      for (const staleId of ids.slice(1)) {
+        await deleteTelegramPreviewMessage(chatJid, staleId);
+      }
+      logger.info(
+        {
+          chatJid,
+          messageId,
+          previewCount: ids.length,
+          finalizeMode: 'edit-rich',
+          textLength: text.length,
+        },
+        'Telegram streaming preview finalized',
+      );
+      return true;
+    } catch (err) {
+      logger.warn(
+        { chatJid, messageId, err },
+        'Failed to finalize Telegram rich preview in place',
+      );
+      const sent = await sendTelegramAgentReply(chatJid, text);
+      if (sent) {
+        await deleteTelegramPreviewMessage(chatJid, ids[0], ids);
+      }
+      return sent;
+    }
   }
 
   const chunks = splitTelegramText(text);
