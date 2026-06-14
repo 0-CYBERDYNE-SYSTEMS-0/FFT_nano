@@ -1298,8 +1298,38 @@ export function runGatewayServiceCommand(
 
   return {
     ok: true,
-    text: bounded || `Gateway service command completed: ${action}`,
+    text:
+      action === 'status'
+        ? appendTuiGatewayHealth(
+            bounded || `Gateway service command completed: ${action}`,
+          )
+        : bounded || `Gateway service command completed: ${action}`,
   };
+}
+
+function appendTuiGatewayHealth(prefix: string): string {
+  if (state.tuiGatewayServer) {
+    const endpoint = state.tuiGatewayLocalEndpoint;
+    return (
+      prefix +
+      '\n\nTUI gateway: healthy' +
+      (endpoint ? `\n- local_endpoint: ${endpoint}` : '')
+    );
+  }
+  const localEndpoint = state.tuiGatewayLocalEndpoint;
+  const lines: string[] = [prefix, '', 'TUI gateway: degraded (not listening)'];
+  lines.push(
+    localEndpoint
+      ? `- local_endpoint: ${localEndpoint}`
+      : '- local_endpoint: <not resolved>',
+  );
+  if (state.tuiGatewayLastError) {
+    lines.push(`- last_error: ${state.tuiGatewayLastError}`);
+  }
+  lines.push(
+    '- hint: run ./scripts/service.sh status and inspect service logs; if running on Android/Termux, ensure termux-services is installed and the daemon was installed with --install-daemon.',
+  );
+  return lines.join('\n');
 }
 
 // --- Knowledge runtime snapshot + command ---

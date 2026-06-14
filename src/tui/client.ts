@@ -42,7 +42,10 @@ interface CliOptions {
   localMode: boolean;
 }
 
-// Local mode: Unix socket client that implements the same interface as GatewayClient
+// Local mode: Unix socket client that implements the same interface as
+// GatewayClient. The wire protocol is one newline-delimited JSON frame
+// per line (matching the local server contract) so that both sides of
+// the local transport use the same simple, line-based framing.
 class LocalTuiConnection {
   private socket: Socket | null = null;
   private readonly socketPath: string;
@@ -57,6 +60,7 @@ class LocalTuiConnection {
   private readonly onClose?: (code: number, reason: string) => void;
   private connected = false;
   private buffer = '';
+  private connectPromise: Promise<void> | null = null;
 
   constructor(
     socketPath: string,
@@ -68,24 +72,43 @@ class LocalTuiConnection {
     this.onClose = onClose;
   }
 
-  async connect(): Promise<void> {
-    if (this.connected) return;
+  connect(): Promise<void> {
+    if (this.connected) return Promise.resolve();
+    if (this.connectPromise) return this.connectPromise;
+    this.connectPromise = new Promise<void>((resolve, reject) => {
+      const platformAdapter = getPlatformAdapter();
+      // The adapter hands back an unconnected socket; this client owns
+      // the connect call so it can wire the data/error/close handlers
+      // exactly once and avoid the "double connect" race that exists
+      // when an adapter pre-connects.
+      const socket = platformAdapter.connectLocalSocket();
+      this.socket = socket;
 
-    const platformAdapter = getPlatformAdapter();
-    return new Promise<void>((resolve, reject) => {
-      this.socket = platformAdapter.connectLocalSocket(this.socketPath);
+      const fail = (err: Error) => {
+        if (this.connectPromise) {
+          this.connectPromise = null;
+        }
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+        this.socket = null;
+        reject(err);
+      };
 
-      this.socket.connect(this.socketPath, () => {
+      socket.once('error', fail);
+      socket.once('connect', () => {
+        socket.off('error', fail);
         this.connected = true;
+        this.connectPromise = null;
         resolve();
       });
-
-      this.socket.on('data', (data: Buffer) => {
+      socket.on('data', (data: Buffer) => {
         this.buffer += data.toString('utf8');
-        // Process complete messages (newline-delimited JSON)
+        // Newline-delimited JSON: each line is a complete frame.
         const lines = this.buffer.split('\n');
         this.buffer = lines.pop() || '';
-
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
@@ -97,7 +120,7 @@ class LocalTuiConnection {
         }
       });
 
-      this.socket.on('close', () => {
+      socket.on('close', () => {
         this.connected = false;
         for (const [, pending] of this.pending) {
           pending.reject(new Error('Connection closed'));
@@ -106,10 +129,13 @@ class LocalTuiConnection {
         this.onClose?.(0, 'connection closed');
       });
 
-      this.socket.on('error', (err) => {
-        reject(err);
-      });
+      try {
+        socket.connect(this.socketPath);
+      } catch (err) {
+        fail(err instanceof Error ? err : new Error(String(err)));
+      }
     });
+    return this.connectPromise;
   }
 
   private handleFrame(frame: Record<string, unknown>): void {
@@ -168,7 +194,11 @@ class LocalTuiConnection {
 
   close(): void {
     this.connected = false;
-    this.socket?.destroy();
+    try {
+      this.socket?.end();
+    } catch {
+      // ignore
+    }
     this.socket = null;
   }
 }
@@ -438,12 +468,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
       if (activeRunId && evt.runId !== activeRunId) return;
 
       if (evt.stream === 'tool') {
-        if ((sessionPrefs.verboseMode || 'all') === 'off') return;
-        chatLog.upsertToolEvent(
-          evt.runId,
-          evt.data,
-          sessionPrefs.verboseMode || 'all',
-        );
+        chatLog.upsertToolEvent(evt.runId, evt.data, sessionPrefs.verboseMode);
         tui.requestRender();
         return;
       }
@@ -493,10 +518,15 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
     }, 50);
   };
 
-  // Create the appropriate client based on mode
-  const socketPath = '/tmp/fft_nano_tui.sock';
+  // Create the appropriate client based on mode. The local endpoint
+  // is resolved by the platform adapter so it works on Linux/macOS
+  // (XDG_RUNTIME_DIR or $HOME-based), Termux (PREFIX/var/run), and
+  // Windows (named pipe). We no longer hardcode /tmp/fft_nano_tui.sock.
+  const localEndpoint = opts.localMode
+    ? getPlatformAdapter().resolveLocalSocketPath()
+    : null;
   const client = opts.localMode
-    ? new LocalTuiConnection(socketPath, onEvent, onClose)
+    ? new LocalTuiConnection(localEndpoint as string, onEvent, onClose)
     : new GatewayClient({ url: opts.url, onEvent, onClose });
 
   const tui = new TUI(new ProcessTerminal());
@@ -544,7 +574,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
 
   const updateHeader = () => {
     const modeLabel = opts.localMode
-      ? `local (${socketPath})`
+      ? `local (${localEndpoint})`
       : opts.url || DEFAULT_GATEWAY_URL;
     header.setText(
       theme.header(`FFT_nano TUI · ${modeLabel} · session ${sessionKey}`),
@@ -604,14 +634,27 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
   };
 
   const loadHistory = async (limit = 120) => {
-    const res = await client.request<{
+    let res: {
       sessionKey: string;
       messages: Array<{ role: string; text: string; timestamp: string }>;
-    }>('chat.history', {
-      sessionKey,
-      limit,
-    });
+    };
+    try {
+      res = await client.request<{
+        sessionKey: string;
+        messages: Array<{ role: string; text: string; timestamp: string }>;
+      }>('chat.history', {
+        sessionKey,
+        limit,
+      });
+    } catch (err) {
+      // Preserve the current chat log on failure.
+      const message = err instanceof Error ? err.message : String(err);
+      chatLog.addSystem(`history fetch failed: ${message}`);
+      throw err;
+    }
 
+    // Only clear and swap the chat log after the fetch succeeds so a failed
+    // request does not wipe the existing history.
     chatLog.clearAll();
     for (const message of res.messages) {
       if (message.role === 'user') chatLog.addUser(message.text);

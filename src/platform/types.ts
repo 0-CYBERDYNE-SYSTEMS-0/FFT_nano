@@ -41,8 +41,31 @@ export interface PlatformAdapter {
   deleteCredential(service: string, account: string): void;
 
   // Local socket (TUI gateway)
-  createLocalSocket(path: string): Server;
-  connectLocalSocket(path: string): Socket;
+  /**
+   * Create an unbound, unlistened net server for the local TUI transport.
+   * The caller is responsible for calling `.listen(...)` (or otherwise
+   * attaching it) so that the platform can decide whether to bind, clean
+   * up stale entries, or apply address-family specific setup first.
+   */
+  createLocalSocket(): Server;
+  /**
+   * Return an unconnected client socket for the local TUI transport.
+   * The caller is responsible for calling `.connect(...)` with the
+   * resolved endpoint. Returning a connected socket would conflict with
+   * the caller's connect call and break platform-specific behavior
+   * (e.g., Windows named pipes, Android abstract sockets).
+   */
+  connectLocalSocket(): Socket;
+
+  // Paths
+  /**
+   * Resolve the platform-appropriate local endpoint for the TUI transport.
+   * On Unix-like systems this is a filesystem path (e.g., Termux
+   * $PREFIX/var/run/fft-nano/tui.sock). On Windows this is a named-pipe
+   * path (e.g., \\\\.\\pipe\\fft-nano-tui). Implementations should NOT
+   * hardcode /tmp because that location is not writable on Android/Termux.
+   */
+  resolveLocalSocketPath(): string;
 
   // Paths
   normalizePath(p: string): string;

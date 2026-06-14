@@ -1,11 +1,10 @@
 import { exec, execSync, spawn } from 'child_process';
 import { existsSync, unlinkSync } from 'fs';
-import { createServer } from 'net';
+import { createServer, Server, Socket } from 'net';
 import { promisify } from 'util';
 import path from 'path';
 import { logger } from '../logger.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
-import type { Server, Socket } from 'net';
 import type { PlatformAdapter } from './types.js';
 
 const execAsync = promisify(exec);
@@ -208,16 +207,25 @@ export class DarwinAdapter implements PlatformAdapter {
     }
   }
 
-  createLocalSocket(socketPath: string): Server {
-    if (existsSync(socketPath)) {
-      unlinkSync(socketPath);
-    }
-    return createServer().listen(socketPath);
+  createLocalSocket(): Server {
+    return createServer();
   }
 
-  connectLocalSocket(socketPath: string): Socket {
-    const { createConnection } = require('net');
-    return createConnection(socketPath);
+  connectLocalSocket(): Socket {
+    return new Socket();
+  }
+
+  resolveLocalSocketPath(): string {
+    // Use the user-private Library/Application Support runtime directory
+    // so the socket is never shared with other users.
+    const home = process.env.HOME || '';
+    return path.join(
+      home,
+      'Library',
+      'Application Support',
+      'fft-nano',
+      'tui.sock',
+    );
   }
 
   normalizePath(p: string): string {

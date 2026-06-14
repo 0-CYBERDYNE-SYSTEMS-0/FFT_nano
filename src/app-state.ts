@@ -262,6 +262,9 @@ export const state = {
   shuttingDown: false,
   heartbeatLastTargetAny: null as string | null,
   tuiGatewayServer: null as TuiGatewayServer | null,
+  tuiGatewayHealthy: true,
+  tuiGatewayLastError: null as string | null,
+  tuiGatewayLocalEndpoint: null as string | null,
   webControlCenterServer: null as WebControlCenterServer | null,
   piModelsCache: null as { entries: PiModelEntry[]; loadedAt: number } | null,
   // WS6.3: global kill-switch for all learning loops. Checked by

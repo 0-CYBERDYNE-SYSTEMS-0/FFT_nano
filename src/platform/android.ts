@@ -6,11 +6,10 @@ import {
   writeFileSync,
   mkdirSync,
 } from 'fs';
-import { createServer } from 'net';
+import { createServer, Server, Socket } from 'net';
 import { promisify } from 'util';
 import path from 'path';
 import type { ChildProcess, SpawnOptions } from 'child_process';
-import type { Server, Socket } from 'net';
 import type { PlatformAdapter } from './types.js';
 
 const execAsync = promisify(exec);
@@ -26,27 +25,27 @@ export class AndroidAdapter implements PlatformAdapter {
   readonly socketType = 'unix' as const;
 
   async installService(): Promise<void> {
-    // Create service directory
-    mkdirSync(`${SERVICE_DIR}/log`, { recursive: true });
-
-    // Create run script
-    const runScript = `#!/data/data/com.termux/files/usr/bin/sh
-exec ${process.execPath} ${path.join(process.cwd(), 'dist/index.js')} 2>&1
-`;
-    writeFileSync(`${SERVICE_DIR}/run`, runScript, 'utf8');
-
-    // Create log/run script
-    const logRunScript = `#!/data/data/com.termux/files/usr/bin/sh
-exec logger -t ${SERVICE_NAME}
-`;
-    writeFileSync(`${SERVICE_DIR}/log/run`, logRunScript, 'utf8');
-
-    // Make executable
-    try {
-      await execAsync(`chmod +x "${SERVICE_DIR}/run" "${SERVICE_DIR}/log/run"`);
-    } catch {
-      // May fail if running as non-Termux user
-    }
+    // Delegate to scripts/service.sh so macOS / Linux / Termux stay
+    // consistent. The script handles termux-services dependency checks,
+    // mkdir -p, run-script generation, and chmod. This keeps the
+    // service definition identical between `fft service install` and
+    // `service.sh install` on Android.
+    const { spawn } = await import('child_process');
+    const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn('bash', [scriptPath, 'install'], {
+        env: { ...process.env, FFT_NANO_NONINTERACTIVE: '1' },
+        stdio: 'inherit',
+      });
+      child.once('error', reject);
+      child.once('exit', (code) => {
+        if (code === 0) resolve();
+        else
+          reject(
+            new Error(`scripts/service.sh install exited with code ${code}`),
+          );
+      });
+    });
   }
 
   async uninstallService(): Promise<void> {
@@ -62,13 +61,25 @@ exec logger -t ${SERVICE_NAME}
   }
 
   async startService(): Promise<void> {
-    try {
-      await execAsync(`sv up ${SERVICE_NAME}`);
-    } catch {
-      throw new Error(
-        'Failed to start service. Ensure termux-services is installed and service exists.',
-      );
-    }
+    // Delegate to scripts/service.sh so behavior matches the operator's
+    // CLI. scripts/service.sh termux_start fails fast with a clear
+    // error if termux-services is not installed.
+    const { spawn } = await import('child_process');
+    const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn('bash', [scriptPath, 'start'], {
+        env: { ...process.env, FFT_NANO_NONINTERACTIVE: '1' },
+        stdio: 'inherit',
+      });
+      child.once('error', reject);
+      child.once('exit', (code) => {
+        if (code === 0) resolve();
+        else
+          reject(
+            new Error(`scripts/service.sh start exited with code ${code}`),
+          );
+      });
+    });
   }
 
   async stopService(): Promise<void> {
@@ -101,22 +112,25 @@ exec logger -t ${SERVICE_NAME}
   }
 
   async getServiceLogs(): Promise<string> {
-    const logDir = `${TERMUX_PREFIX}/var/log/${SERVICE_NAME}`;
-    const logFile = `${logDir}/stdout.log`;
-
-    try {
-      return readFileSync(logFile, 'utf8');
-    } catch {
-      // Try to get logs via sv log
-      try {
-        const { stdout } = await execAsync(
-          `sv log ${SERVICE_NAME} 2>/dev/null || echo "(no logs)"`,
-        );
-        return stdout || '(no logs available)';
-      } catch {
-        return '(no logs available)';
-      }
-    }
+    // Delegate to scripts/service.sh termux_logs so the on-disk log
+    // rotation path (svlogd) is honored and both stdout and stderr are
+    // surfaced.
+    const { spawn } = await import('child_process');
+    const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+    return new Promise<string>((resolve) => {
+      const child = spawn('bash', [scriptPath, 'logs'], {
+        env: { ...process.env, FFT_NANO_NONINTERACTIVE: '1' },
+      });
+      let output = '';
+      child.stdout?.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+      });
+      child.once('error', () => resolve(output || '(no logs available)'));
+      child.once('exit', () => resolve(output || '(no logs available)'));
+    });
   }
 
   killProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
@@ -181,16 +195,18 @@ exec logger -t ${SERVICE_NAME}
     return path.join(CREDENTIALS_DIR, `${service}__${account}.cred`);
   }
 
-  createLocalSocket(socketPath: string): Server {
-    if (existsSync(socketPath)) {
-      unlinkSync(socketPath);
-    }
-    return createServer().listen(socketPath);
+  createLocalSocket(): Server {
+    return createServer();
   }
 
-  connectLocalSocket(socketPath: string): Socket {
-    const { createConnection } = require('net');
-    return createConnection(socketPath);
+  connectLocalSocket(): Socket {
+    return new Socket();
+  }
+
+  resolveLocalSocketPath(): string {
+    // On Android/Termux, /tmp is not writable. Use the Termux user-private
+    // run directory under $PREFIX so the gateway can listen without root.
+    return path.join(TERMUX_PREFIX, 'var', 'run', 'fft-nano', 'tui.sock');
   }
 
   normalizePath(p: string): string {

@@ -1,8 +1,7 @@
 import { spawn } from 'child_process';
-import { createServer } from 'net';
+import { createServer, Server, Socket } from 'net';
 import path from 'path';
 import type { ChildProcess, SpawnOptions } from 'child_process';
-import type { Server, Socket } from 'net';
 import type { PlatformAdapter } from './types.js';
 
 const SERVICE_NAME = 'fft-nano';
@@ -385,14 +384,18 @@ export class Win32Adapter implements PlatformAdapter {
     }
   }
 
-  createLocalSocket(pipeName: string): Server {
-    // Node.js automatically handles Windows named pipe paths
-    return createServer().listen(pipeName);
+  createLocalSocket(): Server {
+    return createServer();
   }
 
-  connectLocalSocket(pipeName: string): Socket {
-    const { createConnection } = require('net');
-    return createConnection(pipeName);
+  connectLocalSocket(): Socket {
+    return new Socket();
+  }
+
+  resolveLocalSocketPath(): string {
+    // Use a Windows named pipe. The local transport on Windows is a
+    // named pipe rather than a filesystem path.
+    return '\\\\.\\pipe\\fft-nano-tui';
   }
 
   normalizePath(p: string): string {
