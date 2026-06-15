@@ -41,7 +41,11 @@ import { normalizeTelegramPreviewText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
-import { parsePiJsonOutput, type PiToolExecution } from './pi-json-parser.js';
+import {
+  parsePiJsonOutput,
+  splitInlineReasoning,
+  type PiToolExecution,
+} from './pi-json-parser.js';
 import {
   determinePromptPreflightDecision,
   hashPromptContent,
@@ -1609,8 +1613,10 @@ export async function runContainerAgent(
       let stdout = '';
       let stderr = '';
       let lineBuffer = '';
+      let rawAssistantSoFar = '';
       let assistantSoFar = '';
       let thinkingSoFar = '';
+      let inlineReasoningSoFar = '';
       let streamedDraft = false;
       let stdoutTruncated = false;
       let sawMeaningfulProgress = false;
@@ -1786,11 +1792,12 @@ export async function runContainerAgent(
         if (runFinalized || localSettled) return;
         if (!assistantSoFar) return;
         let previewText = assistantSoFar;
-        if (input.showReasoning && thinkingSoFar) {
+        const reasoningSoFar = thinkingSoFar || inlineReasoningSoFar;
+        if (input.showReasoning && reasoningSoFar) {
           const thinkingBlock =
-            thinkingSoFar.length > 600
-              ? `...${thinkingSoFar.slice(-597)}`
-              : thinkingSoFar;
+            reasoningSoFar.length > 600
+              ? `...${reasoningSoFar.slice(-597)}`
+              : reasoningSoFar;
           previewText = `Reasoning:\n\`\`\`\n${thinkingBlock}\n\`\`\`\n\n${assistantSoFar}`;
         }
         publishDraftPreview(previewText, force);
@@ -2000,8 +2007,14 @@ export async function runContainerAgent(
           }
           const delta = extractAssistantTextDeltaFromPiEvent(event);
           if (delta) {
-            if (delta.kind === 'append') assistantSoFar += delta.text;
-            else assistantSoFar = delta.text;
+            if (delta.kind === 'append') rawAssistantSoFar += delta.text;
+            else rawAssistantSoFar = delta.text;
+            // Reasoning models stream <think>...</think> inline in the text
+            // channel; strip it so the user never sees chain-of-thought, and
+            // surface it via the existing showReasoning path instead.
+            const split = splitInlineReasoning(rawAssistantSoFar);
+            assistantSoFar = split.visible;
+            inlineReasoningSoFar = split.reasoning;
             noteProgress({
               kind: 'assistant',
               at: Date.now(),
