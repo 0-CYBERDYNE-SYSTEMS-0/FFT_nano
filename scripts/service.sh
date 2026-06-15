@@ -34,6 +34,23 @@ USAGE
 say() { printf '%s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# The service must run from the runtime worktree (~/fft_nano), never the edit
+# worktree (~/fft_nano-dev). Registering from the edit worktree points launchd
+# at a checkout whose dist/ is routinely wiped/rebuilt on feature branches,
+# which crash-loops the agent (MODULE_NOT_FOUND on dist/index.js). Refuse to
+# install from any *-dev checkout. Override with FFT_NANO_ALLOW_DEV_SERVICE=1.
+guard_runtime_root() {
+  case "$(basename "${PROJECT_ROOT}")" in
+    *-dev | *-dev/)
+      [[ "${FFT_NANO_ALLOW_DEV_SERVICE:-0}" == "1" ]] && return 0
+      fail "Refusing to register the service from an edit worktree (${PROJECT_ROOT}).
+The service must run from the runtime worktree (e.g. ~/fft_nano on the dev branch).
+cd to the runtime worktree and run ./scripts/service.sh install there, or set
+FFT_NANO_ALLOW_DEV_SERVICE=1 to override."
+      ;;
+  esac
+}
+
 run_privileged() {
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
@@ -738,7 +755,10 @@ main() {
       usage
       exit 0
       ;;
-    install|uninstall|start|stop|restart|status|logs|pid)
+    install)
+      guard_runtime_root
+      ;;
+    uninstall|start|stop|restart|status|logs|pid)
       ;;
     *)
       fail "Unknown action: ${action}"
