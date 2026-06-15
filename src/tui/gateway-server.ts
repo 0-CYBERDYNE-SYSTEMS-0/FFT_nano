@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
-import { existsSync, lstatSync, unlinkSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, unlinkSync } from 'fs';
 import { Socket } from 'net';
+import { dirname } from 'path';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { logger } from '../logger.js';
@@ -671,6 +672,9 @@ export async function startTuiGatewayServer(
   if (socketPath) {
     try {
       localEndpoint = socketPath;
+      if (process.platform !== 'win32') {
+        mkdirSync(dirname(localEndpoint), { recursive: true, mode: 0o700 });
+      }
       await removeStaleUnixSocket(localEndpoint);
 
       localServer = platformAdapter.createLocalSocket();

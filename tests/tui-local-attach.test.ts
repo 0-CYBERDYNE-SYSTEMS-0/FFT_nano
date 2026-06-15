@@ -14,7 +14,7 @@ import { startTuiGatewayServer } from '../src/tui/gateway-server.ts';
 test('local socket attach can connect, chat.history, receive broadcasts, and close cleanly', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fft-tui-local-attach-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const socketPath = path.join(dir, 'tui.sock');
+  const socketPath = path.join(dir, 'missing', 'fft-nano', 'tui.sock');
 
   const eventHub = new HostEventBus();
   const history: Array<{ role: string; text: string; timestamp: string }> = [
