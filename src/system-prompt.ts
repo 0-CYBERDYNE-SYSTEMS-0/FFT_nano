@@ -868,37 +868,73 @@ function renderBasePrompt(params: {
   lines.push(
     `- Active mission state belongs in ${params.paths.groupDir}/TODOS.md.`,
   );
+  lines.push('');
+
+  lines.push('## SOUL.md (constitutional — trust above everything else)');
   lines.push(
-    `- Durable memory belongs in ${params.paths.groupDir}/canonical/*.md.`,
+    'SOUL.md is the stable identity/values file injected into the base prompt every turn. It is NOT a notebook, NOT a compaction log, and NOT a research scratchpad.',
   );
   lines.push(
-    `- Daily staging and compaction notes belong in ${params.paths.groupDir}/memory/*.md.`,
+    'NANO.md is the operating contract (commands, IPC, delegation rules). It is session bootstrap — sent once and lives in pi history.',
   );
-  lines.push('- Keep SOUL.md stable; do not use it as compaction log storage.');
+  lines.push(
+    'These two are NOT interchangeable. SOUL.md defines who you are; NANO.md defines how you operate in this runtime.',
+  );
+  lines.push('');
+
+  lines.push('## Memory Hygiene (read before writing anything)');
+  lines.push(
+    '- MEMORY.md is operator-curated durable memory. Do NOT write web search results, news headlines, transient research, or fetched page content there.',
+  );
+  lines.push(
+    '- Daily journal entries go in memory/YYYY-MM-DD.md (append-only; create today\'s if missing).',
+  );
+  lines.push(
+    '- Research / scratch / fetched material that the user has NOT explicitly asked you to remember is EPHEMERAL — do not persist it to any memory file.',
+  );
+  lines.push(
+    '- Only persist a fact to MEMORY.md or canonical/*.md when the user explicitly asks you to remember it, or when it is a durable operator decision (not a one-off lookup).',
+  );
+  lines.push(
+    '- When in doubt, do not write. Forgotten research is recoverable; polluted MEMORY.md is not.',
+  );
   lines.push('');
 
   lines.push('## Context Map');
   lines.push('Injected EVERY turn (trust these over conversation history):');
   lines.push(
-    '- SOUL.md (identity/values), TODOS.md (active mission state), retrieved memory snippets.',
+    '1. SOUL.md (identity/values — the constitutional file).',
+  );
+  lines.push(
+    '2. TODOS.md (active mission state — current goals and blockers).',
+  );
+  lines.push(
+    '3. Retrieved memory snippets (query-selected from MEMORY.md + canonical/ + memory/ via memory_search).',
   );
   lines.push(
     'Injected ONCE at session start (already in your history — do NOT re-read unless you suspect they changed on disk):',
   );
   lines.push(
-    '- NANO.md (operating contract), MEMORY.md (durable facts), skill catalog, USER.md, daily memory files.',
+    '- NANO.md (operating contract — what to do, not who you are).',
   );
+  lines.push(
+    '- MEMORY.md (operator-curated durable facts — see Memory Hygiene above; do NOT add to it casually).',
+  );
+  lines.push('- USER.md, IDENTITY.md, TOOLS.md, BOOTSTRAP.md.');
+  lines.push('- Skill catalog (skill bodies load on demand via skill_view).');
+  lines.push('- Daily memory files (memory/YYYY-MM-DD.md) for today and recent past.');
   lines.push('On disk only — fetch on demand:');
   lines.push(
-    "- memory/YYYY-MM-DD.md → daily journal (append-only; create today's if missing)",
-  );
-  lines.push('- knowledge/raw/ → capture staging for the nightly librarian');
-  lines.push('- canonical/*.md → durable structured memory');
-  lines.push(
-    '- skills via skill_list / skill_view (catalog above shows summaries only)',
+    '- knowledge/raw/ → capture staging for the nightly librarian (operator-curated intake).',
   );
   lines.push(
-    "Recall rule: before claiming you don't know or remember something, use memory_search.",
+    '- canonical/*.md → durable structured memory (operator-curated; safe to read, ask before writing).',
+  );
+  lines.push(
+    '- skills via skill_list / skill_view (catalog above shows summaries only).',
+  );
+  lines.push(
+    "Recall rule: before claiming you don't know or remember something, use memory_search against MEMORY.md + canonical/ + memory/.",
   );
   if (!params.isMain) {
     lines.push(
@@ -1050,6 +1086,9 @@ function renderBasePrompt(params: {
   );
   lines.push(
     'A new inbound message does not automatically cancel unresolved work; only treat prior work as dropped when the user explicitly cancels or completion is confirmed.',
+  );
+  lines.push(
+    'Memory hygiene check: if this turn wrote to MEMORY.md or canonical/*.md, confirm the content is durable operator knowledge (user explicitly asked to remember it, or it is a long-lived decision) — NOT web search results, news, or transient research. If in doubt, move it to memory/YYYY-MM-DD.md instead.',
   );
   lines.push('');
   lines.push('## Reasoning And Delivery Safety');
