@@ -6,6 +6,181 @@ type JsonObject = Record<string, any>;
 
 const LOCAL_PROVIDER_MARKER = 'fft-nano-local-discovery';
 
+// Curated model lists + per-model API maps for providers we want to surface
+// even when the live /v1/models probe is unavailable. OpenCode Go/Zen serve
+// different model families over different API surfaces, so each model needs
+// its own `api` field. See https://opencode.ai/docs/go and /docs/zen for the
+// full endpoint matrix.
+
+const CURATED_STEPFUN = [
+  'step-3.7-flash',
+  'step-3.5-flash-2603',
+  'step-3.5-flash',
+];
+
+const CURATED_MINIMAX = [
+  'MiniMax-M3',
+  'MiniMax-M2.7',
+  'MiniMax-M2.7-highspeed',
+  'MiniMax-M2.5',
+  'MiniMax-M2.5-highspeed',
+  'MiniMax-M2.1',
+  'MiniMax-M2.1-highspeed',
+  'MiniMax-M2',
+];
+
+const CURATED_OPENCODE_GO = [
+  'glm-5.2',
+  'glm-5.1',
+  'kimi-k2.7',
+  'kimi-k2.6',
+  'mimo-v2.5',
+  'mimo-v2.5-pro',
+  'minimax-m3',
+  'minimax-m2.7',
+  'minimax-m2.5',
+  'qwen3.7-max',
+  'qwen3.7-plus',
+  'qwen3.6-plus',
+  'deepseek-v4-pro',
+  'deepseek-v4-flash',
+];
+
+const OPENCODE_GO_PER_MODEL_API: Record<string, string> = {
+  'glm-5.2': 'openai-completions',
+  'glm-5.1': 'openai-completions',
+  'kimi-k2.7': 'openai-completions',
+  'kimi-k2.6': 'openai-completions',
+  'mimo-v2.5': 'openai-completions',
+  'mimo-v2.5-pro': 'openai-completions',
+  'deepseek-v4-pro': 'openai-completions',
+  'deepseek-v4-flash': 'openai-completions',
+  'minimax-m3': 'anthropic-messages',
+  'minimax-m2.7': 'anthropic-messages',
+  'minimax-m2.5': 'anthropic-messages',
+  'qwen3.7-max': 'anthropic-messages',
+  'qwen3.7-plus': 'anthropic-messages',
+  'qwen3.6-plus': 'anthropic-messages',
+};
+
+const CURATED_OPENCODE_ZEN = [
+  'gpt-5.5',
+  'gpt-5.5-pro',
+  'gpt-5.4',
+  'gpt-5.4-pro',
+  'gpt-5.4-mini',
+  'gpt-5.4-nano',
+  'gpt-5.3-codex',
+  'gpt-5.3-codex-spark',
+  'gpt-5.2',
+  'gpt-5.2-codex',
+  'gpt-5.1',
+  'gpt-5.1-codex',
+  'gpt-5.1-codex-max',
+  'gpt-5.1-codex-mini',
+  'gpt-5',
+  'gpt-5-codex',
+  'gpt-5-nano',
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-opus-4-5',
+  'claude-opus-4-1',
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5',
+  'claude-sonnet-4',
+  'claude-haiku-4-5',
+  'claude-3-5-haiku',
+  'gemini-3.5-flash',
+  'gemini-3.1-pro',
+  'gemini-3-flash',
+  'qwen3.7-max',
+  'qwen3.7-plus',
+  'qwen3.6-plus',
+  'qwen3.5-plus',
+  'deepseek-v4-pro',
+  'deepseek-v4-flash',
+  'minimax-m2.7',
+  'minimax-m2.5',
+  'glm-5.1',
+  'glm-5',
+  'kimi-k2.5',
+  'kimi-k2.6',
+  'grok-build-0.1',
+  'big-pickle',
+  'mimo-v2.5-free',
+  'north-mini-code-free',
+  'nemotron-3-ultra-free',
+  'deepseek-v4-flash-free',
+];
+
+const OPENCODE_ZEN_PER_MODEL_API: Record<string, string> = {
+  'gpt-5.5': 'openai-responses',
+  'gpt-5.5-pro': 'openai-responses',
+  'gpt-5.4': 'openai-responses',
+  'gpt-5.4-pro': 'openai-responses',
+  'gpt-5.4-mini': 'openai-responses',
+  'gpt-5.4-nano': 'openai-responses',
+  'gpt-5.3-codex': 'openai-responses',
+  'gpt-5.3-codex-spark': 'openai-responses',
+  'gpt-5.2': 'openai-responses',
+  'gpt-5.2-codex': 'openai-responses',
+  'gpt-5.1': 'openai-responses',
+  'gpt-5.1-codex': 'openai-responses',
+  'gpt-5.1-codex-max': 'openai-responses',
+  'gpt-5.1-codex-mini': 'openai-responses',
+  'gpt-5': 'openai-responses',
+  'gpt-5-codex': 'openai-responses',
+  'gpt-5-nano': 'openai-responses',
+  'claude-fable-5': 'anthropic-messages',
+  'claude-opus-4-8': 'anthropic-messages',
+  'claude-opus-4-7': 'anthropic-messages',
+  'claude-opus-4-6': 'anthropic-messages',
+  'claude-opus-4-5': 'anthropic-messages',
+  'claude-opus-4-1': 'anthropic-messages',
+  'claude-sonnet-4-6': 'anthropic-messages',
+  'claude-sonnet-4-5': 'anthropic-messages',
+  'claude-sonnet-4': 'anthropic-messages',
+  'claude-haiku-4-5': 'anthropic-messages',
+  'claude-3-5-haiku': 'anthropic-messages',
+  'qwen3.7-max': 'anthropic-messages',
+  'qwen3.7-plus': 'anthropic-messages',
+  'qwen3.6-plus': 'anthropic-messages',
+  'qwen3.5-plus': 'anthropic-messages',
+  'gemini-3.5-flash': 'google-generative-ai',
+  'gemini-3.1-pro': 'google-generative-ai',
+  'gemini-3-flash': 'google-generative-ai',
+  'deepseek-v4-pro': 'openai-completions',
+  'deepseek-v4-flash': 'openai-completions',
+  'minimax-m2.7': 'openai-completions',
+  'minimax-m2.5': 'openai-completions',
+  'glm-5.1': 'openai-completions',
+  'glm-5': 'openai-completions',
+  'kimi-k2.5': 'openai-completions',
+  'kimi-k2.6': 'openai-completions',
+  'grok-build-0.1': 'openai-completions',
+  'big-pickle': 'openai-completions',
+  'mimo-v2.5-free': 'openai-completions',
+  'north-mini-code-free': 'openai-completions',
+  'nemotron-3-ultra-free': 'openai-completions',
+  'deepseek-v4-flash-free': 'openai-completions',
+};
+
+const CURATED_OPENROUTER = [
+  'openrouter/free',
+];
+
+interface RemoteProviderConfig {
+  providerId: string;
+  baseUrlEnv: string;
+  apiKeyEnv: string;
+  defaultBaseUrl?: string;
+  defaultApi?: string;
+  perModelApi?: Record<string, string>;
+  curated?: string[];
+}
+
 export interface EnsureLocalProviderModelsResult {
   ok: boolean;
   path: string;
@@ -73,6 +248,9 @@ export interface DiscoverOpenAiCompatibleModelsResult {
   provider: string;
   models: string[];
   error?: string;
+  /** True when discovery was skipped because env was missing baseUrl or apiKey.
+   *  Curated fallbacks should NOT fire in this case — the user has not opted in. */
+  unconfigured?: boolean;
 }
 
 export function discoverOpenAiCompatibleModels(params: {
@@ -152,7 +330,7 @@ function discoverRemoteProviderModels(params: {
   const baseUrl = env[baseUrlEnv] || defaultBaseUrl || '';
   const apiKey = env[apiKeyEnv] || env.PI_API_KEY || '';
   if (!baseUrl || !apiKey) {
-    return { ok: false, provider: providerId, models: [], error: 'missing baseUrl or apiKey' };
+    return { ok: false, provider: providerId, models: [], error: 'missing baseUrl or apiKey', unconfigured: true };
   }
   return discoverOpenAiCompatibleModels({ providerId, baseUrl, apiKey });
 }
@@ -203,25 +381,39 @@ function managedProvider(params: {
   apiKey: string;
   models: string[];
   supportsReasoningEffort?: boolean;
+  defaultApi?: string;
+  perModelApi?: Record<string, string>;
 }): JsonObject {
+  const defaultApi = params.defaultApi ?? 'openai-completions';
+  const perModelApi = params.perModelApi ?? {};
+  const omitProviderApi = Object.keys(perModelApi).length > 0;
   return {
     xFftNanoManaged: LOCAL_PROVIDER_MARKER,
     baseUrl: params.baseUrl,
-    api: 'openai-completions',
+    ...(omitProviderApi ? {} : { api: defaultApi }),
     apiKey: params.apiKey,
     compat: {
       supportsDeveloperRole: false,
       supportsReasoningEffort: params.supportsReasoningEffort ?? false,
     },
-    models: params.models.map((id) => ({
-      id,
-      name: id,
-      reasoning: false,
-      input: ['text'],
-      contextWindow: 128_000,
-      maxTokens: 16_384,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    })),
+    models: params.models.map((id) => {
+      const entry: JsonObject = {
+        id,
+        name: id,
+        reasoning: false,
+        input: ['text'],
+        contextWindow: 128_000,
+        maxTokens: 16_384,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      };
+      const perModel = perModelApi[id] ?? perModelApi[id.toLowerCase()];
+      if (perModel) {
+        entry.api = perModel;
+      } else if (omitProviderApi || defaultApi !== 'openai-completions') {
+        entry.api = defaultApi;
+      }
+      return entry;
+    }),
   };
 }
 
@@ -342,12 +534,52 @@ export function ensureLocalProviderModels(
       }
     }
 
-    // Discover remote OpenAI-compatible providers
-    const remoteProviders = [
+    // Discover remote OpenAI-compatible providers. opencode-go is intentionally
+    // NOT here — its deepseek-specific metadata (cost, reasoning, contextWindow)
+    // is managed by ensureOpenCodeGoModels and would be silently overwritten
+    // by the generic merge in upsertProvider.
+    const remoteProviders: Array<RemoteProviderConfig> = [
       { providerId: 'openai', baseUrlEnv: 'OPENAI_BASE_URL', apiKeyEnv: 'OPENAI_API_KEY' },
       { providerId: 'moonshotai', baseUrlEnv: 'MOONSHOT_BASE_URL', apiKeyEnv: 'MOONSHOT_API_KEY', defaultBaseUrl: 'https://api.moonshot.ai/v1' },
-      { providerId: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', apiKeyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io/v1' },
-      { providerId: 'openrouter', baseUrlEnv: 'OPENROUTER_BASE_URL', apiKeyEnv: 'OPENROUTER_API_KEY', defaultBaseUrl: 'https://openrouter.ai/api/v1' },
+      {
+        providerId: 'minimax',
+        baseUrlEnv: 'MINIMAX_BASE_URL',
+        apiKeyEnv: 'MINIMAX_API_KEY',
+        defaultBaseUrl: 'https://api.minimax.io/anthropic',
+        defaultApi: 'anthropic-messages',
+        curated: CURATED_MINIMAX,
+      },
+      {
+        providerId: 'minimax-cn',
+        baseUrlEnv: 'MINIMAX_CN_BASE_URL',
+        apiKeyEnv: 'MINIMAX_CN_API_KEY',
+        defaultBaseUrl: 'https://api.minimaxi.com/anthropic',
+        defaultApi: 'anthropic-messages',
+        curated: CURATED_MINIMAX,
+      },
+      {
+        providerId: 'stepfun',
+        baseUrlEnv: 'STEPFUN_BASE_URL',
+        apiKeyEnv: 'STEPFUN_API_KEY',
+        defaultBaseUrl: 'https://api.stepfun.ai/step_plan/v1',
+        defaultApi: 'openai-completions',
+        curated: CURATED_STEPFUN,
+      },
+      {
+        providerId: 'opencode-zen',
+        baseUrlEnv: 'OPENCODE_ZEN_BASE_URL',
+        apiKeyEnv: 'OPENCODE_API_KEY',
+        defaultBaseUrl: 'https://opencode.ai/zen/v1',
+        perModelApi: OPENCODE_ZEN_PER_MODEL_API,
+        curated: CURATED_OPENCODE_ZEN,
+      },
+      {
+        providerId: 'openrouter',
+        baseUrlEnv: 'OPENROUTER_BASE_URL',
+        apiKeyEnv: 'OPENROUTER_API_KEY',
+        defaultBaseUrl: 'https://openrouter.ai/api/v1',
+        curated: CURATED_OPENROUTER,
+      },
     ];
 
     for (const rp of remoteProviders) {
@@ -359,8 +591,24 @@ export function ensureLocalProviderModels(
           apiKeyEnv: rp.apiKeyEnv,
           defaultBaseUrl: rp.defaultBaseUrl,
         });
+        let modelIds: string[] = [];
         if (result.ok && result.models.length > 0) {
-          discovered[rp.providerId] = result.models;
+          modelIds = result.models;
+          if (rp.curated) {
+            for (const curatedId of rp.curated) {
+              if (!modelIds.includes(curatedId)) modelIds.push(curatedId);
+            }
+          }
+        } else if (rp.curated && !result.unconfigured) {
+          modelIds = [...rp.curated];
+          if (!result.ok && result.error) {
+            errors.push(`${rp.providerId}: ${result.error}`);
+          }
+        } else if (!result.ok && result.error && !result.unconfigured) {
+          errors.push(`${rp.providerId}: ${result.error}`);
+        }
+        if (modelIds.length > 0) {
+          discovered[rp.providerId] = modelIds;
           const baseUrl = env[rp.baseUrlEnv] || rp.defaultBaseUrl || '';
           const apiKeyRef = env[rp.apiKeyEnv]
             ? `$${rp.apiKeyEnv}`
@@ -371,11 +619,11 @@ export function ensureLocalProviderModels(
             managedProvider({
               baseUrl,
               apiKey: apiKeyRef,
-              models: result.models,
+              models: modelIds,
+              defaultApi: rp.defaultApi,
+              perModelApi: rp.perModelApi,
             }),
           );
-        } else if (!result.ok && result.error) {
-          errors.push(`${rp.providerId}: ${result.error}`);
         }
       } catch (err) {
         errors.push(

@@ -8,10 +8,13 @@ export type RuntimeProviderPreset =
   | 'gemini'
   | 'openrouter'
   | 'opencode-go'
+  | 'opencode-zen'
   | 'zai'
   | 'minimax'
+  | 'minimax-cn'
   | 'kimi-coding'
-  | 'ollama';
+  | 'ollama'
+  | 'stepfun';
 
 export const RUNTIME_PROVIDER_PRESET_ENV = 'FFT_NANO_RUNTIME_PROVIDER_PRESET';
 
@@ -77,7 +80,18 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     label: 'OpenCode Go',
     piApi: 'opencode-go',
     defaultModel: 'deepseek-v4-pro',
+    apiKeyEnv: 'OPENCODE_GO_API_KEY',
+    endpointEnv: 'OPENCODE_GO_BASE_URL',
+    defaultEndpointValue: 'https://opencode.ai/zen/go/v1',
+  },
+  {
+    id: 'opencode-zen',
+    label: 'OpenCode Zen',
+    piApi: 'opencode-zen',
+    defaultModel: 'gpt-5.4',
     apiKeyEnv: 'OPENCODE_API_KEY',
+    endpointEnv: 'OPENCODE_ZEN_BASE_URL',
+    defaultEndpointValue: 'https://opencode.ai/zen/v1',
   },
   {
     id: 'zai',
@@ -88,10 +102,30 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
   },
   {
     id: 'minimax',
-    label: 'MiniMax',
+    label: 'MiniMax (global)',
     piApi: 'minimax',
     defaultModel: 'MiniMax-M3',
     apiKeyEnv: 'MINIMAX_API_KEY',
+    endpointEnv: 'MINIMAX_BASE_URL',
+    defaultEndpointValue: 'https://api.minimax.io/anthropic',
+  },
+  {
+    id: 'minimax-cn',
+    label: 'MiniMax (China)',
+    piApi: 'minimax-cn',
+    defaultModel: 'MiniMax-M3',
+    apiKeyEnv: 'MINIMAX_CN_API_KEY',
+    endpointEnv: 'MINIMAX_CN_BASE_URL',
+    defaultEndpointValue: 'https://api.minimaxi.com/anthropic',
+  },
+  {
+    id: 'stepfun',
+    label: 'StepFun Step Plan',
+    piApi: 'stepfun',
+    defaultModel: 'step-3.7-flash',
+    apiKeyEnv: 'STEPFUN_API_KEY',
+    endpointEnv: 'STEPFUN_BASE_URL',
+    defaultEndpointValue: 'https://api.stepfun.ai/step_plan/v1',
   },
   {
     id: 'kimi-coding',
@@ -305,8 +339,11 @@ export function buildRuntimeProviderPresetUpdates(params: {
   };
 
   if (applyLocalDefaults && provider.defaultEndpointValue) {
-    updates.OPENAI_BASE_URL = provider.defaultEndpointValue;
-    updates.PI_BASE_URL = provider.defaultEndpointValue;
+    const endpointEnvKey = provider.endpointEnv || 'OPENAI_BASE_URL';
+    updates[endpointEnvKey] = provider.defaultEndpointValue;
+    if (endpointEnvKey === 'OPENAI_BASE_URL') {
+      updates.PI_BASE_URL = provider.defaultEndpointValue;
+    }
   }
 
   if (

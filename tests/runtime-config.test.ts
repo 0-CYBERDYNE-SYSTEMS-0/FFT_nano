@@ -35,12 +35,12 @@ test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, opencode-go, o
   const opencodeGo = resolveRuntimeConfigSnapshot({
     PI_API: 'opencode-go',
     PI_MODEL: 'deepseek-v4-pro',
-    OPENCODE_API_KEY: 'secret',
+    OPENCODE_GO_API_KEY: 'secret',
   });
   assert.equal(opencodeGo.providerPreset, 'opencode-go');
   assert.equal(opencodeGo.provider, 'opencode-go');
   assert.equal(opencodeGo.model, 'deepseek-v4-pro');
-  assert.equal(opencodeGo.apiKeyEnv, 'OPENCODE_API_KEY');
+  assert.equal(opencodeGo.apiKeyEnv, 'OPENCODE_GO_API_KEY');
   assert.equal(opencodeGo.apiKeyConfigured, true);
 
   const opencodeGoFallback = resolveRuntimeConfigSnapshot({
@@ -86,6 +86,7 @@ test('buildRuntimeProviderPresetUpdates applies local defaults for ollama and lm
   assert.equal(opencodeGoUpdates[RUNTIME_PROVIDER_PRESET_ENV], 'opencode-go');
   assert.equal(opencodeGoUpdates.PI_API, 'opencode-go');
   assert.equal(opencodeGoUpdates.PI_MODEL, 'deepseek-v4-pro');
+  assert.equal(opencodeGoUpdates.OPENCODE_GO_BASE_URL, 'https://opencode.ai/zen/go/v1');
   assert.equal(opencodeGoUpdates.OPENAI_BASE_URL, undefined);
   assert.equal(opencodeGoUpdates.PI_BASE_URL, undefined);
 

@@ -20,13 +20,16 @@ export type OnboardRuntime = 'auto' | 'docker' | 'host';
 export type OnboardAuthChoice =
   | 'openai'
   | 'opencode-go'
+  | 'opencode-zen'
   | 'lm-studio'
   | 'anthropic'
   | 'gemini'
   | 'openrouter'
   | 'zai'
   | 'minimax'
+  | 'minimax-cn'
   | 'kimi-coding'
+  | 'stepfun'
   | 'ollama'
   | 'skip';
 export type OnboardHatchChoice = 'tui' | 'web' | 'later';
@@ -135,7 +138,7 @@ function usage(): string {
     '  --flow <quickstart|advanced|manual>',
     '  --mode <local|remote>',
     '  --runtime <auto|docker|host>',
-    '  --auth-choice <openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip>',
+    '  --auth-choice <openai|opencode-go|opencode-zen|lm-studio|anthropic|gemini|openrouter|zai|minimax|minimax-cn|kimi-coding|stepfun|ollama|skip>',
     '  --model <provider/model-or-id>',
     '  --api-key <token>            API key for selected auth choice',
     '  --remote-url <url>           Remote gateway URL (remote mode)',
@@ -199,20 +202,23 @@ function parseAuthChoice(
   if (
     value === 'openai' ||
     value === 'opencode-go' ||
+    value === 'opencode-zen' ||
     value === 'lm-studio' ||
     value === 'anthropic' ||
     value === 'gemini' ||
     value === 'openrouter' ||
     value === 'zai' ||
     value === 'minimax' ||
+    value === 'minimax-cn' ||
     value === 'kimi-coding' ||
+    value === 'stepfun' ||
     value === 'ollama' ||
     value === 'skip'
   ) {
     return value;
   }
   throw new Error(
-    `Invalid --auth-choice (use openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip): ${raw}`,
+    `Invalid --auth-choice (use openai|opencode-go|opencode-zen|lm-studio|anthropic|gemini|openrouter|zai|minimax|minimax-cn|kimi-coding|stepfun|ollama|skip): ${raw}`,
   );
 }
 
@@ -663,7 +669,11 @@ async function resolveWizardSelections(
             'openrouter',
             'zai',
             'minimax',
+            'minimax-cn',
             'kimi-coding',
+            'opencode-go',
+            'opencode-zen',
+            'stepfun',
             'skip',
           ],
           'lm-studio',

@@ -509,6 +509,7 @@ export function collectRuntimeSecrets(
     'FFT_NANO_RUNTIME_PROVIDER_PRESET',
     'OPENAI_API_KEY',
     'OPENCODE_API_KEY',
+    'OPENCODE_GO_API_KEY',
     'OPENAI_BASE_URL',
     'ANTHROPIC_API_KEY',
     'GEMINI_API_KEY',
@@ -518,6 +519,13 @@ export function collectRuntimeSecrets(
     'GROQ_API_KEY',
     'ZAI_API_KEY',
     'MINIMAX_API_KEY',
+    'MINIMAX_BASE_URL',
+    'MINIMAX_CN_API_KEY',
+    'MINIMAX_CN_BASE_URL',
+    'STEPFUN_API_KEY',
+    'STEPFUN_BASE_URL',
+    'OPENCODE_GO_BASE_URL',
+    'OPENCODE_ZEN_BASE_URL',
     'KIMI_API_KEY',
     'MOONSHOT_API_KEY',
     'MOONSHOT_BASE_URL',
@@ -556,6 +564,13 @@ export function collectRuntimeSecrets(
   }
   if (
     merged.PI_API?.trim().toLowerCase() === 'opencode-go' &&
+    merged.PI_API_KEY &&
+    !merged.OPENCODE_GO_API_KEY
+  ) {
+    merged.OPENCODE_GO_API_KEY = merged.PI_API_KEY;
+  }
+  if (
+    merged.PI_API?.trim().toLowerCase() === 'opencode-zen' &&
     merged.PI_API_KEY &&
     !merged.OPENCODE_API_KEY
   ) {
