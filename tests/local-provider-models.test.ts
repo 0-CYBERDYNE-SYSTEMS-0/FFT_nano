@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { ensureLocalProviderModels } from '../src/local-provider-models.js';
 
-test('ensureLocalProviderModels preserves managed providers on discovery failure', () => {
+test('ensureLocalProviderModels falls back to curated MiniMax models when live probe fails', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-local-models-'));
   const modelsPath = path.join(dir, 'models.json');
   const existing = {
@@ -23,16 +23,26 @@ test('ensureLocalProviderModels preserves managed providers on discovery failure
   fs.writeFileSync(modelsPath, `${JSON.stringify(existing, null, 2)}\n`);
 
   const result = ensureLocalProviderModels(dir, {
-    MINIMAX_BASE_URL: 'http://127.0.0.1:9/v1',
     MINIMAX_API_KEY: 'secret',
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.changed, false);
+  assert.equal(result.changed, true);
+  assert.ok((result.errors ?? []).some((msg) => msg.startsWith('minimax:')));
 
   const after = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
-  assert.deepEqual(after.providers.minimax.models, [{ id: 'MiniMax-M2.5' }]);
+  assert.equal(after.providers.minimax.baseUrl, 'https://api.minimax.io/anthropic');
+  assert.equal(after.providers.minimax.api, 'anthropic-messages');
   assert.equal(after.providers.minimax.apiKey, '$MINIMAX_API_KEY');
+  assert.ok(
+    after.providers.minimax.models.length >= 8,
+    'curated MiniMax list should be seeded when probe fails',
+  );
+  assert.ok(
+    after.providers.minimax.models.every(
+      (m: { api?: string; id: string }) => m.api === 'anthropic-messages',
+    ),
+  );
 });
 
 test('ensureLocalProviderModels preserves managed Moonshot models on discovery failure', () => {

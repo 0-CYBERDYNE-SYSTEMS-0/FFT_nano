@@ -226,6 +226,13 @@ export function loadPiModels(
   if (
     runtimeEnv.PI_API?.trim().toLowerCase() === 'opencode-go' &&
     runtimeEnv.PI_API_KEY &&
+    !runtimeEnv.OPENCODE_GO_API_KEY
+  ) {
+    runtimeEnv.OPENCODE_GO_API_KEY = runtimeEnv.PI_API_KEY;
+  }
+  if (
+    runtimeEnv.PI_API?.trim().toLowerCase() === 'opencode-zen' &&
+    runtimeEnv.PI_API_KEY &&
     !runtimeEnv.OPENCODE_API_KEY
   ) {
     runtimeEnv.OPENCODE_API_KEY = runtimeEnv.PI_API_KEY;

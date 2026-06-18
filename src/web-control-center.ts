@@ -127,10 +127,7 @@ export const PROVIDER_SETUP_URLS: Record<
   openrouter: {
     signupUrl: 'https://openrouter.ai/keys',
     docsUrl: 'https://openrouter.ai/docs',
-  },
-  'opencode-go': {
-    docsUrl: 'https://github.com/sst/opencode',
-    note: 'Uses OPENCODE_API_KEY, with PI_API_KEY as a compatibility fallback.',
+    note: 'The `openrouter/free` model routes to a random free model per request. Some free models log your prompts for training — review before sharing sensitive data.',
   },
   zai: {
     signupUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
@@ -138,8 +135,30 @@ export const PROVIDER_SETUP_URLS: Record<
   },
   minimax: {
     signupUrl:
+      'https://platform.minimax.io/user-center/basic-information/interface-key',
+    docsUrl: 'https://platform.minimax.io/docs',
+    note: 'Global endpoint at https://api.minimax.io/anthropic. Same MiniMax account as MiniMax-CN.',
+  },
+  'minimax-cn': {
+    signupUrl:
       'https://platform.minimaxi.com/user-center/basic-information/interface-key',
     docsUrl: 'https://platform.minimaxi.com/document',
+    note: 'Domestic China endpoint at https://api.minimaxi.com/anthropic. Get API key from the CN console.',
+  },
+  stepfun: {
+    signupUrl: 'https://platform.stepfun.ai/step-plan',
+    docsUrl: 'https://platform.stepfun.ai/docs/en/step-plan/overview',
+    note: 'Subscription ($6.99-$99/mo). Uses the dedicated /step_plan/v1 endpoint, NOT the standard /v1.',
+  },
+  'opencode-go': {
+    signupUrl: 'https://opencode.ai/go',
+    docsUrl: 'https://opencode.ai/docs/go/',
+    note: 'Subscription: $5 first month, $10/mo after. Same OpenCode account as OpenCode Zen.',
+  },
+  'opencode-zen': {
+    signupUrl: 'https://opencode.ai/auth',
+    docsUrl: 'https://opencode.ai/docs/zen/',
+    note: 'Pay-as-you-go. Auto-reload $20 if balance < $5. Same OpenCode account works for Zen and Go.',
   },
   'kimi-coding': {
     signupUrl: 'https://platform.moonshot.ai/console/api-keys',
