@@ -61,11 +61,8 @@ export function getContainerRuntime(): ContainerRuntime {
     return 'host';
   }
 
-  // Platform adapter reports whether Docker is supported
-  if (!platformAdapter.supportsDocker) {
-    return 'host';
-  }
-
+  // Explicit CONTAINER_RUNTIME always wins (except on Android/Termux above).
+  // Tests and operators rely on this to override the platform adapter.
   const raw = (process.env.CONTAINER_RUNTIME || 'auto').toLowerCase();
 
   if (raw === 'docker') return 'docker';
@@ -74,6 +71,11 @@ export function getContainerRuntime(): ContainerRuntime {
     throw new Error(
       `Invalid CONTAINER_RUNTIME="${process.env.CONTAINER_RUNTIME}" (expected "auto", "docker", or "host")`,
     );
+  }
+
+  // Auto mode: check whether the platform adapter reports Docker support
+  if (!platformAdapter.supportsDocker) {
+    return 'host';
   }
 
   // Auto mode uses Docker when it is actually usable, otherwise it falls back
