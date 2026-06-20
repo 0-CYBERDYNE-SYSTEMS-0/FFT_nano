@@ -38,6 +38,7 @@
   "build": {
     "appId": "com.fft_nano.desktop",
     "productName": "FFT_nano",
+    "homepage": "https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano",
     "directories": {
       "output": "release"
     },
