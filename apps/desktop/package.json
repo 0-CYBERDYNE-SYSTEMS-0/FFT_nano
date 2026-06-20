@@ -5,6 +5,7 @@
   "main": "dist-electron/main.js",
   "author": "FFT_nano",
   "license": "MIT",
+  "homepage": "https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano",
   "private": true,
   "scripts": {
     "dev": "vite",
@@ -38,7 +39,6 @@
   "build": {
     "appId": "com.fft_nano.desktop",
     "productName": "FFT_nano",
-    "homepage": "https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano",
     "directories": {
       "output": "release"
     },

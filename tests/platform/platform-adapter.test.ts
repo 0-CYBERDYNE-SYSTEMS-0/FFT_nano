@@ -160,11 +160,14 @@ describe('PlatformAdapter', () => {
       }
     });
 
-    test('returns cached adapter on subsequent calls', async () => {
+    test('re-detects platform on each call (no module-level cache)', async () => {
       const { getPlatformAdapter } = await import('../../src/platform/index.js');
       const adapter1 = getPlatformAdapter();
       const adapter2 = getPlatformAdapter();
-      assert.strictEqual(adapter1, adapter2); // Same reference
+      // No caching: the platform adapter must re-detect on every call so that
+      // tests mutating process.env.PREFIX (Termux simulation) see fresh results.
+      assert.equal(adapter1.name, adapter2.name);
+      assert.notStrictEqual(adapter1, adapter2); // Different instances
     });
 
     test('adapter has all required methods', async () => {
