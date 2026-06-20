@@ -36,7 +36,6 @@
     "fft-nano": "./bin/fft.js"
   },
   "scripts": {
-    "postinstall": "npm rebuild",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
