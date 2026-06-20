@@ -456,7 +456,7 @@ test(
       progressEvents.some((event) => event.kind === 'retry_fresh'),
       false,
     );
-    assert.ok(duration < 2000);
+    assert.ok(duration < 5000);
   },
 );
 

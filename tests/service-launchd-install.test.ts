@@ -91,6 +91,7 @@ fi
     FFT_NANO_LAUNCHD_LABEL: label,
     LAUNCHCTL_LOG: launchctlLog,
     LAUNCHCTL_STATE: launchctlState,
+    FFT_NANO_ALLOW_DEV_SERVICE: '1',
   };
 
   const result = spawnSync('bash', ['scripts/service.sh', 'install'], {
