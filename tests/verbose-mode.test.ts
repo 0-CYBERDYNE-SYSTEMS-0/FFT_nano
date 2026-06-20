@@ -31,7 +31,7 @@ test('parseVerboseDirective handles cycle and explicit set forms', () => {
 });
 
 test('cycleVerboseMode matches the configured cycle ordering', () => {
-  assert.equal(cycleVerboseMode(undefined), 'verbose');
+  assert.equal(cycleVerboseMode(undefined), 'new');
   assert.equal(cycleVerboseMode('off'), 'new');
   assert.equal(cycleVerboseMode('new'), 'all');
   assert.equal(cycleVerboseMode('all'), 'verbose');

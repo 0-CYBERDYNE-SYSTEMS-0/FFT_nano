@@ -175,7 +175,9 @@ export function persistRuntimeConfigUpdates(
 
 export function loadPiModels(
   forceRefresh = false,
-): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
+):
+  | { ok: true; entries: PiModelEntry[]; warnings?: string[] }
+  | { ok: false; text: string } {
   if (
     !forceRefresh &&
     state.piModelsCache &&
@@ -209,12 +211,27 @@ export function loadPiModels(
     piAgentDir,
     getRuntimeConfigEnv(),
   );
+  const warnings = localSeedResult.ok
+    ? localSeedResult.errors.filter(
+        (error) =>
+          !error.startsWith('ollama:') &&
+          !error.startsWith('lm-studio:') &&
+          !error.endsWith(': missing baseUrl or apiKey'),
+      )
+    : localSeedResult.errors;
   if (!localSeedResult.ok) {
     void localSeedResult;
   }
   const runtimeEnv = getRuntimeConfigEnv();
   if (
     runtimeEnv.PI_API?.trim().toLowerCase() === 'opencode-go' &&
+    runtimeEnv.PI_API_KEY &&
+    !runtimeEnv.OPENCODE_GO_API_KEY
+  ) {
+    runtimeEnv.OPENCODE_GO_API_KEY = runtimeEnv.PI_API_KEY;
+  }
+  if (
+    runtimeEnv.PI_API?.trim().toLowerCase() === 'opencode-zen' &&
     runtimeEnv.PI_API_KEY &&
     !runtimeEnv.OPENCODE_API_KEY
   ) {
@@ -265,7 +282,9 @@ export function loadPiModels(
   }
 
   state.piModelsCache = { entries, loadedAt: Date.now() };
-  return { ok: true, entries };
+  return warnings.length > 0
+    ? { ok: true, entries, warnings }
+    : { ok: true, entries };
 }
 
 export function runPiListModels(searchText: string): {
@@ -357,10 +376,6 @@ export function modelExistsInPiModels(
   );
 }
 
-export function providerAllowsCustomModelId(provider: string): boolean {
-  return provider.trim().toLowerCase() === 'opencode-go';
-}
-
 export function parseProviderFromModelLabel(label: string): string | null {
   const slash = label.indexOf('/');
   if (slash <= 0) return null;
@@ -371,7 +386,7 @@ export function parseProviderFromModelLabel(label: string): string | null {
 export function validateProviderModelRef(
   provider: string,
   model: string,
-): { ok: true } | { ok: false; text: string } {
+): { ok: true; warning?: string } | { ok: false; text: string } {
   const normalizedProvider = provider.trim();
   const normalizedModel = model.trim();
   if (!normalizedProvider || !normalizedModel) {
@@ -393,15 +408,12 @@ export function validateProviderModelRef(
       text: `Unknown provider "${normalizedProvider}". Use /models or /model picker.`,
     };
   }
-  if (providerAllowsCustomModelId(normalizedProvider)) {
-    return { ok: true };
-  }
   if (
     !modelExistsInPiModels(loaded.entries, normalizedProvider, normalizedModel)
   ) {
     return {
       ok: false,
-      text: `Model "${normalizedProvider}/${normalizedModel}" is unavailable. Use /models or /model picker.`,
+      text: `Model "${normalizedProvider}/${normalizedModel}" is not available. Run /refresh_models, then select it with /model.`,
     };
   }
   return { ok: true };
@@ -445,8 +457,7 @@ export function sanitizeRunPreferencesModelOverride(
     effectiveProvider,
   );
   const modelKnown = rawModel
-    ? providerAllowsCustomModelId(effectiveProvider) ||
-      modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
+    ? modelExistsInPiModels(loaded.entries, effectiveProvider, rawModel)
     : providerKnown;
   if (providerKnown && modelKnown) {
     return { runPreferences: nextPrefs };

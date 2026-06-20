@@ -230,6 +230,91 @@ Common failure modes:
 - Multiple instances: Telegram polling can error with "Conflict: terminated by other getUpdates request". FFT_nano now uses a lock file (`data/fft_nano.lock`) to prevent two instances from running at once.
 - Docker daemon unavailable: run `docker info` and start Docker Desktop/daemon if needed.
 
+### Android / Termux (Termux-services daemon, first-class)
+
+Android/Termux is a fully supported, daemon-capable target. The runtime,
+service manager, and TUI attach all use the same `./scripts/service.sh`
+contract as Linux/macOS. There is no separate Android TUI build.
+
+**Required packages (run once in Termux):**
+```bash
+pkg update && pkg upgrade
+pkg install nodejs-lts termux-services termux-api
+# Termux:API is the official companion app that exposes camera,
+# microphone, file picker, contacts, SMS, sensors, etc. to scripts.
+# Install "Termux:API" from F-Droid or the Play Store and grant
+# runtime permissions (Storage, Camera, Microphone, Location, ...).
+```
+
+**Install + start the persistent daemon (recommended):**
+```bash
+./scripts/onboard.sh --install-daemon --hatch tui
+# or non-interactively:
+./scripts/onboard.sh --non-interactive --accept-risk --install-daemon
+# Then enable the run-in-Termux-boot autostart once:
+sv-enable fft-nano
+```
+
+`scripts/service.sh` will:
+1. Check for `sv` (termux-services) and `pkg install termux-services` if missing.
+2. Install the run script at `$PREFIX/var/service/fft-nano/run` that
+   `exec`s `scripts/start.sh start` so the same `.env`, TUI defaults,
+   and runtime selection apply.
+3. Pipe stdout and stderr to `$PREFIX/var/log/fft-nano/` so
+   `fft service logs` returns both.
+
+**Default ports (Android/Termux):**
+- TUI gateway (WebSocket): `ws://127.0.0.1:28989`
+- Web control center:      `http://127.0.0.1:28990`
+- Local TUI socket:        `$PREFIX/var/run/fft-nano/tui.sock`
+
+**Two ways to attach the TUI client:**
+- Default (WebSocket): `./scripts/start.sh tui` — connects to
+  `ws://127.0.0.1:28989` over the loopback WebSocket.
+- Local socket (faster, no WebSocket framing): `FFT_NANO_TUI_LOCAL=1 ./scripts/start.sh tui`
+  Connects over the platform-derived local socket. Same protocol
+  (newline-delimited JSON) on both sides; works even when the
+  network namespace is restricted.
+
+**Daemon management:**
+```bash
+fft service status        # sv status fft-nano
+fft service logs          # tail stdout + stderr from /data/data/com.termux/files/usr/var/log/fft-nano/
+fft service restart       # sv restart fft-nano
+fft service stop
+fft service start
+fft service install --no-install-daemon  # explicit opt-out
+```
+
+**Device capabilities (the agent must be aware of these primitives):**
+The Termux:API app exposes a complete device surface via the `termux-api`
+package and via `am` (Activity Manager) for any other Android intent.
+FFT_nano expects the host shell to have these tools available, with
+storage/camera/microphone permissions granted to Termux:API:
+- Files: read/write anywhere under `/sdcard/`, `/storage/`, and the
+  shared-storage SAF picker. The Termux `~` path is
+  `/data/data/com.termux/files/home`. Storage permission must be
+  granted via `termux-setup-storage`.
+- Camera: `termux-camera-photo`, `termux-camera-video` (capture
+  stills and video for image / video analysis).
+- Microphone: `termux-microphone-record` for transcriptions and
+  audio capture.
+- Clipboard, contacts, SMS, location, sensors, battery, toast
+  notifications, share, media playback: each has a `termux-*` CLI.
+- `am` (Activity Manager): launch any installed Android activity by
+  intent, e.g. `am start -a android.intent.action.VIEW -d <uri>`.
+  This is how the agent can hand off to other apps on the device.
+- Power-user escape hatch: `cmd` (Android shell) for system
+  services, settings, and broadcast intents.
+
+**Onboarding must default to `--install-daemon`:**
+The onboard wizard must install the termux-services daemon by default
+on Termux (do not silently fall back to `--no-install-daemon`).
+Operators can still opt out explicitly with `--no-install-daemon`.
+
+The "foreground only" framing for Android is removed; Termux is a
+first-class daemon target.
+
 ---
 ## Development Workflow
 

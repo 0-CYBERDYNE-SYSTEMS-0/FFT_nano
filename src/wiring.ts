@@ -512,7 +512,6 @@ import {
   runPiListModels as tsRunPiListModels,
   providerExistsInPiModels as tsProviderExistsInPiModels,
   modelExistsInPiModels as tsModelExistsInPiModels,
-  providerAllowsCustomModelId as tsProviderAllowsCustomModelId,
   parseProviderFromModelLabel as tsParseProviderFromModelLabel,
   validateProviderModelRef as tsValidateProviderModelRef,
   sanitizeRunPreferencesModelOverride as tsSanitizeRunPreferencesModelOverride,
@@ -1126,7 +1125,9 @@ function runPiListModels(searchText: string): { ok: boolean; text: string } {
 
 function loadPiModels(
   forceRefresh = false,
-): { ok: true; entries: PiModelEntry[] } | { ok: false; text: string } {
+):
+  | { ok: true; entries: PiModelEntry[]; warnings?: string[] }
+  | { ok: false; text: string } {
   return tsLoadPiModels(forceRefresh);
 }
 
@@ -1145,10 +1146,6 @@ function modelExistsInPiModels(
   return tsModelExistsInPiModels(entries, provider, model);
 }
 
-function providerAllowsCustomModelId(provider: string): boolean {
-  return tsProviderAllowsCustomModelId(provider);
-}
-
 function parseProviderFromModelLabel(label: string): string | null {
   return tsParseProviderFromModelLabel(label);
 }
@@ -1156,7 +1153,7 @@ function parseProviderFromModelLabel(label: string): string | null {
 function validateProviderModelRef(
   provider: string,
   model: string,
-): { ok: true } | { ok: false; text: string } {
+): { ok: true; warning?: string } | { ok: false; text: string } {
   return tsValidateProviderModelRef(provider, model);
 }
 
@@ -1673,6 +1670,7 @@ const telegramCommandHandlers = createTelegramCommandHandlers({
   handleSkillManagerCommand,
   handleLibrarianCommand,
   runPiListModels,
+  loadPiModels,
   validateProviderModelRef,
   normalizeThinkLevel,
   normalizeReasoningLevel,
@@ -2098,7 +2096,7 @@ function getControlCenterKnowledgeStatus() {
 function createWebControlCenterAdapters(): WebControlCenterAdapters {
   return webCreateAdapters(getWebControlCenterDeps());
 }
-async function startTuiGatewayService(): Promise<void> {
+async function startTuiGatewayService(): Promise<boolean> {
   return tuiStartGatewayService(hostEventBus, getTuiCoordinationDeps());
 }
 
@@ -2270,6 +2268,8 @@ function registerShutdownHandlers(): void {
 
 export async function main(): Promise<void> {
   await appRuntime.main();
+  // Emit ready signal for CLI fft start command
+  console.log(`FFT_NANO_READY port=${FFT_NANO_TUI_PORT}`);
   startUpdateNotificationLoop({ sendMessage });
 }
 

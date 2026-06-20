@@ -7,6 +7,61 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-20
+
+### Added
+
+- Five new provider presets (`stepfun`, `minimax-cn`, `opencode-zen`, refreshed
+  `opencode-go`, and the OpenRouter free router) so operators can switch model
+  providers without hand-editing env files.
+- Rich Telegram message formatting: italic, fenced code with language labels,
+  blockquotes, and markdown tables rendered as aligned monospace pre blocks.
+  Ragged-row separators stay in sync with the table body.
+- Local TUI attach across platforms: the TUI client can now connect over a
+  Unix/Windows local socket in addition to the loopback WebSocket, with the
+  same newline-delimited JSON protocol on both transports.
+- Cross-platform install scripts (macOS/Linux/Windows) with stage-protocol
+  JSON progress, plus matching service scripts for systemd, launchd, and
+  termux-services.
+- Per-platform `PlatformAdapter` interface and implementations for darwin,
+  linux, win32, and android (used by the install/service/desktop code paths).
+- E2E CI/CD matrix workflow for desktop app builds and cross-platform E2E
+  tests, gated by `release-readiness.yml`.
+- Control-center revamp: collapsible shell, onboarding gate, rich chat,
+  service controls, and an in-browser file editor (PR #137).
+- Local-attached TUI now creates its socket directory on startup so first-run
+  attach succeeds on clean installs.
+
+### Changed
+
+- `SOUL.md` is promoted into the stable base prompt, and a memory-hygiene
+  ruleset is added to keep transient retrieval noise out of long-term memory.
+- Postinstall rebuilds native modules after `npm install`, so tree installs
+  ship with up-to-date bindings.
+- The TUI gateway now supports isolated local-only runtime mode for restricted
+  network namespaces.
+- `service.sh` refuses to register a launchd/systemd service when invoked from
+  the edit worktree, eliminating the most common misconfiguration.
+
+### Fixed
+
+- Delivered output no longer leaks inline `<think>...</think>` reasoning into
+  Telegram previews or finals.
+- `/update` is now reliable end-to-end: rollback on failure, health gate, and
+  live progress streamed back to the operator.
+- Pi child process streams are preserved across runs so late tool output is
+  not silently dropped.
+- Ragged markdown tables keep their pre-table separator in sync with the body.
+- Local TUI attach no longer fails on Termux, where the loopback WebSocket is
+  not always reachable.
+- Desktop host discovery and status detection handle missing/empty env more
+  robustly, and the desktop shell no longer crashes on missing `__dirname`
+  under ESM.
+- Cross-platform install resolves Node 25.x test failures and stage-protocol
+  edge cases.
+- `/reflect` correctly reports the actual skill mutations that were applied
+  (instead of stale or empty digests).
+
 ## [0.4.1] - 2026-06-09
 
 ### Added

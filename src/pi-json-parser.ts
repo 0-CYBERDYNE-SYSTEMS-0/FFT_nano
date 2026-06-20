@@ -27,6 +27,61 @@ export interface ParsePiJsonOutputResult {
   toolExecutions?: PiToolExecution[];
 }
 
+// Reasoning models (e.g. MiniMax-M) emit chain-of-thought inline in the text
+// channel as literal <think>...</think> spans instead of a structured thinking
+// channel. Split that reasoning out of the user-facing text. Works on a partial
+// buffer mid-stream: an unclosed <think> drops everything after the open tag
+// from `visible` until the closing tag arrives. Matches both <think> and
+// <thinking> tags, case-insensitively.
+export function splitInlineReasoning(text: string): {
+  visible: string;
+  reasoning: string;
+} {
+  if (!text || text.toLowerCase().indexOf('<think') === -1) {
+    return { visible: text, reasoning: '' };
+  }
+  const lower = text.toLowerCase();
+  let visible = '';
+  const reasoningParts: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const open = lower.indexOf('<think', i);
+    if (open === -1) {
+      visible += text.slice(i);
+      break;
+    }
+    const openTagEnd = lower.indexOf('>', open);
+    const openTag =
+      openTagEnd === -1 ? lower.slice(open) : lower.slice(open, openTagEnd + 1);
+    if (openTag !== '<think>' && openTag !== '<thinking>') {
+      // Not a reasoning tag (e.g. "<thinker"); keep the '<' and continue.
+      visible += text.slice(i, open + 1);
+      i = open + 1;
+      continue;
+    }
+    visible += text.slice(i, open);
+    if (openTagEnd === -1) {
+      // Opening tag is still streaming in; drop the partial fragment.
+      break;
+    }
+    const contentStart = openTagEnd + 1;
+    const close = lower.indexOf('</think', contentStart);
+    if (close === -1) {
+      // Unclosed block (still streaming): rest is reasoning-in-progress.
+      reasoningParts.push(text.slice(contentStart));
+      break;
+    }
+    reasoningParts.push(text.slice(contentStart, close));
+    const closeTagEnd = lower.indexOf('>', close);
+    if (closeTagEnd === -1) break;
+    i = closeTagEnd + 1;
+  }
+  return {
+    visible: visible.replace(/\n{3,}/g, '\n\n').trim(),
+    reasoning: reasoningParts.join('\n').trim(),
+  };
+}
+
 function extractTextFromContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -461,14 +516,14 @@ export function parsePiJsonOutput(
       };
     }
     return {
-      result: raw,
+      result: splitInlineReasoning(raw).visible,
       usage,
       ...(toolExecutions.length > 0 ? { toolExecutions } : {}),
     };
   }
 
   return {
-    result: lastAssistant.trim(),
+    result: splitInlineReasoning(lastAssistant).visible,
     usage,
     ...(toolExecutions.length > 0 ? { toolExecutions } : {}),
   };

@@ -20,13 +20,16 @@ export type OnboardRuntime = 'auto' | 'docker' | 'host';
 export type OnboardAuthChoice =
   | 'openai'
   | 'opencode-go'
+  | 'opencode-zen'
   | 'lm-studio'
   | 'anthropic'
   | 'gemini'
   | 'openrouter'
   | 'zai'
   | 'minimax'
+  | 'minimax-cn'
   | 'kimi-coding'
+  | 'stepfun'
   | 'ollama'
   | 'skip';
 export type OnboardHatchChoice = 'tui' | 'web' | 'later';
@@ -135,7 +138,7 @@ function usage(): string {
     '  --flow <quickstart|advanced|manual>',
     '  --mode <local|remote>',
     '  --runtime <auto|docker|host>',
-    '  --auth-choice <openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip>',
+    '  --auth-choice <openai|opencode-go|opencode-zen|lm-studio|anthropic|gemini|openrouter|zai|minimax|minimax-cn|kimi-coding|stepfun|ollama|skip>',
     '  --model <provider/model-or-id>',
     '  --api-key <token>            API key for selected auth choice',
     '  --remote-url <url>           Remote gateway URL (remote mode)',
@@ -199,20 +202,23 @@ function parseAuthChoice(
   if (
     value === 'openai' ||
     value === 'opencode-go' ||
+    value === 'opencode-zen' ||
     value === 'lm-studio' ||
     value === 'anthropic' ||
     value === 'gemini' ||
     value === 'openrouter' ||
     value === 'zai' ||
     value === 'minimax' ||
+    value === 'minimax-cn' ||
     value === 'kimi-coding' ||
+    value === 'stepfun' ||
     value === 'ollama' ||
     value === 'skip'
   ) {
     return value;
   }
   throw new Error(
-    `Invalid --auth-choice (use openai|opencode-go|lm-studio|anthropic|gemini|openrouter|zai|minimax|kimi-coding|ollama|skip): ${raw}`,
+    `Invalid --auth-choice (use openai|opencode-go|opencode-zen|lm-studio|anthropic|gemini|openrouter|zai|minimax|minimax-cn|kimi-coding|stepfun|ollama|skip): ${raw}`,
   );
 }
 
@@ -663,7 +669,11 @@ async function resolveWizardSelections(
             'openrouter',
             'zai',
             'minimax',
+            'minimax-cn',
             'kimi-coding',
+            'opencode-go',
+            'opencode-zen',
+            'stepfun',
             'skip',
           ],
           'lm-studio',
@@ -947,7 +957,45 @@ export async function runOnboarding(
     gatewayPort: wizard.gatewayPort,
   };
   writeWizardMetadata(workspace, summary);
+  if (wizard.installDaemon) {
+    await installDaemonIfRequested();
+  }
   return summary;
+}
+
+async function installDaemonIfRequested(): Promise<void> {
+  // Delegate to `scripts/service.sh install` via a child process so
+  // the same on-disk service definition is used across macOS / Linux
+  // / Termux. This is the right place to wire it because the operator
+  // already accepted the risk and the env file is in place.
+  const { spawn } = await import('child_process');
+  const scriptPath = path.join(process.cwd(), 'scripts', 'service.sh');
+  if (!fs.existsSync(scriptPath)) {
+    process.stderr.write(
+      `service.sh not found at ${scriptPath}; skipping daemon install. Run \`fft service install\` later.\n`,
+    );
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const child = spawn('bash', [scriptPath, 'install'], {
+      env: { ...process.env, FFT_NANO_NONINTERACTIVE: '1' },
+      stdio: 'inherit',
+    });
+    child.once('error', (err) => {
+      process.stderr.write(
+        `daemon install failed: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      resolve();
+    });
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        process.stderr.write(
+          `daemon install exited with code ${code}; the wizard chose --install-daemon, so you may need to fix the issue and run \`fft service install\` manually.\n`,
+        );
+      }
+      resolve();
+    });
+  });
 }
 
 async function main(): Promise<void> {

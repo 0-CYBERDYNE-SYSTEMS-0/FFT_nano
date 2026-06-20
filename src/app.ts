@@ -2,6 +2,7 @@ import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { pruneStaleState } from './app-state.js';
+import { getPlatformAdapter } from './platform/index.js';
 
 export interface AppRuntimeDeps {
   state: {
@@ -98,7 +99,7 @@ export interface AppRuntimeDeps {
   migrateLegacyClaudeMemoryFiles?: () => void;
   migrateCompactionSummariesFromSoul?: () => void;
   maybePromoteConfiguredTelegramMain?: () => void;
-  startTuiGatewayService?: () => Promise<void>;
+  startTuiGatewayService?: () => Promise<boolean>;
   startWebControlCenterService?: () => Promise<void>;
   stopTuiGatewayService?: () => Promise<void>;
   stopWebControlCenterService?: () => Promise<void>;
@@ -265,11 +266,9 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       if (qr) {
         const msg = 'WhatsApp authentication required. Run: npm run auth';
         deps.logger.error?.(msg);
-        if (process.platform === 'darwin') {
-          exec(
-            `osascript -e 'display notification "${msg}" with title "FFT_nano" sound name "Basso"'`,
-          );
-        }
+        // Use platform adapter for cross-platform notifications
+        const platformAdapter = getPlatformAdapter();
+        platformAdapter.showNotification('FFT_nano', msg);
         setTimeout(() => process.exit(1), 1000);
       }
 
@@ -563,7 +562,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.migrateLegacyClaudeMemoryFiles?.();
     deps.migrateCompactionSummariesFromSoul?.();
     deps.maybePromoteConfiguredTelegramMain?.();
-    await deps.startTuiGatewayService?.();
+    const tuiAvailable = (await deps.startTuiGatewayService?.()) === true;
     await deps.startWebControlCenterService?.();
     deps.logger.info?.(
       {
@@ -589,14 +588,27 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       !!deps.constants.farmStateEnabled &&
       deps.constants.whatsappEnabled === false &&
       !telegramEnabled;
+    const tuiOnlyMode =
+      !farmOnlyMode &&
+      deps.constants.whatsappEnabled === false &&
+      !telegramEnabled &&
+      tuiAvailable;
     if (
       deps.constants.whatsappEnabled === false &&
       !telegramEnabled &&
-      !farmOnlyMode
+      !farmOnlyMode &&
+      !tuiOnlyMode
     ) {
       throw new Error(
-        'No channels enabled. Set WHATSAPP_ENABLED=1 and/or TELEGRAM_BOT_TOKEN.',
+        'No channels enabled and TUI gateway is unavailable. Set WHATSAPP_ENABLED=1, TELEGRAM_BOT_TOKEN, or enable a working TUI gateway.',
       );
+    }
+    if (tuiOnlyMode) {
+      deps.logger.info?.(
+        'Running in TUI-only mode (messaging channels and delivery loops disabled)',
+      );
+      deps.maybeRunBootMdOnce?.();
+      return;
     }
     if (telegramEnabled) {
       await startTelegram();

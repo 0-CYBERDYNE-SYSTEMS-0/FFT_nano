@@ -527,6 +527,7 @@ export async function runAgent(
     lifecyclePolicyOverride?: ContainerInput['lifecyclePolicyOverride'];
     onProgressEvent?: (event: ContainerProgressEvent) => void;
     senderRole?: 'operator' | 'member' | 'unknown';
+    dryRun?: boolean;
   } = {},
   abortSignal?: AbortSignal,
 ): Promise<{
@@ -592,7 +593,11 @@ export async function runAgent(
           schema: 'fft_nano.host_context.v1',
           route: {
             chat_jid: chatJid,
-            channel: isTelegramJid(chatJid) ? 'telegram' : 'whatsapp',
+            channel: chatJid.startsWith('tui:')
+              ? 'tui'
+              : isTelegramJid(chatJid)
+                ? 'telegram'
+                : 'whatsapp',
             group_folder: group.folder,
             group_name: group.name,
             is_main: isMain,
@@ -639,6 +644,7 @@ export async function runAgent(
       showReasoning:
         runtimePrefs.showReasoning === true ||
         runtimePrefs.reasoningLevel === 'stream',
+      dryRun: options.dryRun === true,
     };
 
     const sessionKey = deps.getSessionKeyForChat(chatJid);

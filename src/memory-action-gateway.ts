@@ -170,6 +170,26 @@ export async function executeMemoryAction(
       jid: chatJid,
     };
 
+    if (authority?.dryRun) {
+      recordMutationAuditEvent(targetGroupFolder, {
+        kind: 'noop',
+        authorityId: attribution.authorityId,
+        senderRole: attribution.senderRole,
+        mutationType: 'memory',
+        action: String(parsed.params.intent ?? 'memory_write'),
+        targetName: parsed.params.intent ?? undefined,
+        noopReason: 'dry-run',
+        success: false,
+      });
+      return {
+        requestId: parsed.requestId,
+        status: 'error',
+        error:
+          'Memory write blocked: dry-run run. Report what you would save; do not write memory.',
+        executedAt,
+      };
+    }
+
     // Mutation-budget check: all write actions (memory_write) are mutations
     const budgetResult = checkMutationBudget({
       groupFolder: targetGroupFolder,

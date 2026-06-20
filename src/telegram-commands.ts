@@ -181,11 +181,20 @@ export interface TelegramCommandDeps {
     input: string;
     chatJid: string;
   }) => Promise<string> | string;
-  runPiListModels: (searchText: string) => { text: string };
+  runPiListModels: (searchText: string) => { ok: boolean; text: string };
+  loadPiModels: (
+    forceRefresh?: boolean,
+  ) =>
+    | {
+        ok: true;
+        entries: Array<{ provider: string; model: string }>;
+        warnings?: string[];
+      }
+    | { ok: false; text: string };
   validateProviderModelRef: (
     provider: string,
     model: string,
-  ) => { ok: true } | { ok: false; text: string };
+  ) => { ok: true; warning?: string } | { ok: false; text: string };
   normalizeThinkLevel: (value: string) => string | null | undefined;
   normalizeReasoningLevel: (value: string) => string | null | undefined;
   normalizeTelegramDeliveryMode: (value: string) => string | null | undefined;
@@ -433,7 +442,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       params.provider,
       params.model,
     );
-    if (validation.ok) return validation;
+    if (validation.ok) {
+      if (validation.warning) {
+        await deps.sendMessage(params.chatJid, validation.warning);
+      }
+      return validation;
+    }
     await deps.sendMessage(params.chatJid, validation.text);
     return { ok: false };
   }
@@ -651,7 +665,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         'none',
         requestId,
         deps.state.chatRunPreferences[params.chatJid] || {},
-        {},
+        { dryRun: params.action === 'dry-run' },
         abortController.signal,
       );
       deps.updateChatUsage(params.chatJid, run.usage);
@@ -1898,6 +1912,49 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       return true;
     }
 
+    if (cmd === '/refresh-models' || cmd === '/refresh_models') {
+      if (!isMainGroup) {
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main');
+        await deps.sendMessage(m.chatJid, 'Admin-only command.');
+        return true;
+      }
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      await deps.sendMessage(m.chatJid, 'Refreshing model list from providers...');
+      const refreshed = deps.loadPiModels(true);
+      if (!refreshed.ok) {
+        const text = `Refresh failed: ${refreshed.text}`;
+        deps.emitTuiChatEvent({
+          runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+          sessionKey: deps.getSessionKeyForChat(m.chatJid),
+          state: 'final',
+          message: { role: 'assistant', content: text },
+        });
+        await deps.sendMessage(m.chatJid, text);
+        return true;
+      }
+      const total = refreshed.entries.length;
+      const providerCounts = new Map<string, number>();
+      for (const entry of refreshed.entries) {
+        providerCounts.set(entry.provider, (providerCounts.get(entry.provider) || 0) + 1);
+      }
+      const providerSummary = Array.from(providerCounts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([p, c]) => `${p}: ${c}`)
+        .join(', ');
+      const warningText = refreshed.warnings?.length
+        ? `\nWarnings:\n${refreshed.warnings.map((w) => `- ${w}`).join('\n')}`
+        : '';
+      const text = `Model list refreshed. ${total} models across ${providerCounts.size} providers.\n${providerSummary}${warningText}`;
+      deps.emitTuiChatEvent({
+        runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+        sessionKey: deps.getSessionKeyForChat(m.chatJid),
+        state: 'final',
+        message: { role: 'assistant', content: text },
+      });
+      await deps.sendMessage(m.chatJid, text);
+      return true;
+    }
+
     if (cmd === '/model') {
       const argText = rest.join(' ').trim();
       if (!argText) {
@@ -2615,14 +2672,6 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/reflect') {
-      if (!isMainGroup) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
-        await deps.sendMessage(
-          m.chatJid,
-          `${deps.constants.assistantName}: /reflect is only available in the main/admin chat.`,
-        );
-        return true;
-      }
       const first = (rest[0] || '').trim().toLowerCase();
       if (first === 'help') {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
@@ -2641,6 +2690,19 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
       const isDryRun = first === 'dry-run' || first === 'dry';
       const action: 'run' | 'dry-run' = isDryRun ? 'dry-run' : 'run';
+      if (action === 'run' && deps.state.learningPaused) {
+        deps.logTelegramCommandAudit(
+          m.chatJid,
+          cmd,
+          false,
+          'blocked: learning paused',
+        );
+        await deps.sendMessage(
+          m.chatJid,
+          'Learning is paused — run /learning resume first, or use /reflect dry-run.',
+        );
+        return true;
+      }
       const focus = (isDryRun ? rest.slice(1) : rest).join(' ').trim();
       deps.logTelegramCommandAudit(
         m.chatJid,

@@ -12,6 +12,7 @@ import { getChatHistory, getAllChats } from './db.js';
 import { storeHostMessage } from './db.js';
 import { logger } from './logger.js';
 import { getContainerRuntime } from './container-runtime.js';
+import { getPlatformAdapter } from './platform/index.js';
 import { startDetachedUpdateCommand } from './update-command.js';
 import {
   startTuiGatewayServer,
@@ -311,12 +312,19 @@ export function createTuiGatewayAdapters(
 export async function startTuiGatewayService(
   hostEventBus: HostEventBus,
   deps: TuiCoordinationDeps,
-): Promise<void> {
-  if (state.tuiGatewayServer) return;
+): Promise<boolean> {
+  if (state.tuiGatewayServer) return true;
   if (!FFT_NANO_TUI_ENABLED) {
     logger.info('TUI gateway disabled via FFT_NANO_TUI_ENABLED');
-    return;
+    return false;
   }
+  // Resolve the local endpoint via the platform adapter so the gateway
+  // works on Termux (PREFIX/var/run/fft-nano/tui.sock), Linux/macOS
+  // (XDG_RUNTIME_DIR or $HOME-based), and Windows (named pipe). We do
+  // NOT hardcode /tmp because that path is not writable on Android.
+  const platformAdapter = getPlatformAdapter();
+  const localEndpoint = platformAdapter.resolveLocalSocketPath();
+  state.tuiGatewayLocalEndpoint = localEndpoint;
   try {
     state.tuiGatewayServer = await startTuiGatewayServer(
       createTuiGatewayAdapters(hostEventBus, deps),
@@ -325,15 +333,21 @@ export async function startTuiGatewayService(
         host: FFT_NANO_TUI_HOST,
         port: FFT_NANO_TUI_PORT,
         authToken: FFT_NANO_TUI_AUTH_TOKEN || undefined,
-        socketPath: '/tmp/fft_nano_tui.sock',
+        socketPath: localEndpoint,
       },
     );
+    state.tuiGatewayHealthy = true;
+    state.tuiGatewayLastError = null;
+    return true;
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error(
-      { err: error },
+      { err: error, localEndpoint },
       'TUI gateway failed to start; continuing without TUI surface',
     );
+    state.tuiGatewayHealthy = false;
+    state.tuiGatewayLastError = error.message;
+    return false;
   }
 }
 

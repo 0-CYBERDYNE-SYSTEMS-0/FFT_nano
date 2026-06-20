@@ -1,7 +1,8 @@
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { getPlatformAdapter } from './platform/index.js';
 import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -40,7 +41,11 @@ import { normalizeTelegramPreviewText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
-import { parsePiJsonOutput, type PiToolExecution } from './pi-json-parser.js';
+import {
+  parsePiJsonOutput,
+  splitInlineReasoning,
+  type PiToolExecution,
+} from './pi-json-parser.js';
 import {
   determinePromptPreflightDecision,
   hashPromptContent,
@@ -118,6 +123,20 @@ export interface ContainerInput {
   // Run authority for this spawn — minted by runContainerAgent at spawn time.
   // Consumers (gate, outbox, IPC watcher) use this for authorization and attribution.
   runAuthority?: RunAuthority;
+  // LISO.6: Marks this as a maintenance run — triggers maintenance origin in mintRunAuthority.
+  isMaintenanceRun?: boolean;
+  // /reflect dry-run: stamped onto the RunAuthority so the skill/memory gateways
+  // hard-reject mutations for this run.
+  dryRun?: boolean;
+  // LISO.1: Session persistence mode. 'normal' (default) persists Pi session;
+  // 'ephemeral' prevents session persistence and must not be combined with continuation.
+  sessionPersistence?: 'normal' | 'ephemeral';
+  // LISO.5: Prompt mode for this run. 'maintenance' uses minimal bounded context.
+  promptMode?: 'interactive' | 'maintenance';
+  // LISO.3: Threaded through from dispatch for turn-local learning evidence.
+  latestUserText?: string;
+  // LISO.3: Turn ID for supersession detection in learning proposals.
+  turnId?: string;
 }
 
 export interface ContainerOutput {
@@ -490,6 +509,7 @@ export function collectRuntimeSecrets(
     'FFT_NANO_RUNTIME_PROVIDER_PRESET',
     'OPENAI_API_KEY',
     'OPENCODE_API_KEY',
+    'OPENCODE_GO_API_KEY',
     'OPENAI_BASE_URL',
     'ANTHROPIC_API_KEY',
     'GEMINI_API_KEY',
@@ -499,7 +519,16 @@ export function collectRuntimeSecrets(
     'GROQ_API_KEY',
     'ZAI_API_KEY',
     'MINIMAX_API_KEY',
+    'MINIMAX_BASE_URL',
+    'MINIMAX_CN_API_KEY',
+    'MINIMAX_CN_BASE_URL',
+    'STEPFUN_API_KEY',
+    'STEPFUN_BASE_URL',
+    'OPENCODE_GO_BASE_URL',
+    'OPENCODE_ZEN_BASE_URL',
     'KIMI_API_KEY',
+    'MOONSHOT_API_KEY',
+    'MOONSHOT_BASE_URL',
     'MODAL_API_KEY',
     'NVIDIA_API_KEY',
     'FFT_NANO_DRY_RUN',
@@ -535,6 +564,13 @@ export function collectRuntimeSecrets(
   }
   if (
     merged.PI_API?.trim().toLowerCase() === 'opencode-go' &&
+    merged.PI_API_KEY &&
+    !merged.OPENCODE_GO_API_KEY
+  ) {
+    merged.OPENCODE_GO_API_KEY = merged.PI_API_KEY;
+  }
+  if (
+    merged.PI_API?.trim().toLowerCase() === 'opencode-zen' &&
     merged.PI_API_KEY &&
     !merged.OPENCODE_API_KEY
   ) {
@@ -803,7 +839,13 @@ function buildPiArgs(params: {
     transportMode,
   } = params;
   const args: string[] = ['--mode', transportMode];
-  if (useContinue) args.push('-c');
+
+  // LISO.1: Ephemeral sessions use --no-session and cannot continue
+  if (input.sessionPersistence === 'ephemeral') {
+    args.push('--no-session');
+  } else if (useContinue) {
+    args.push('-c');
+  }
 
   const extensionPaths = resolveExtensionPaths();
   if (extensionPaths.length > 0) {
@@ -984,6 +1026,7 @@ export async function runContainerAgent(
     }),
     senderRole: input.senderRole ?? 'unknown', // threaded from DispatchRequest through runAgent
     startedDuringPause: false, // resolved from PARITY_CONFIG.learning_paused at startup
+    dryRun: input.dryRun === true,
   });
   // Register so IPC watcher can attribute async actions to this run.
   runAuthorityRegistry.set(group.folder, runAuthority);
@@ -1020,6 +1063,24 @@ export async function runContainerAgent(
         error: `Sandbox refusal: run with origin=${runAuthority.origin} and effective tool set [${runAuthority.effectiveToolSet.join(',')}] is refused when FFT_NANO_SANDBOX=none and ${envVar} is not set. To permit this run, set ${envVar}=1.`,
       };
     }
+  }
+
+  // LISO.1: Ephemeral sessions must not request continuation
+  if (input.sessionPersistence === 'ephemeral' && input.noContinue !== true) {
+    logger.warn(
+      {
+        group: group.name,
+        sessionPersistence: input.sessionPersistence,
+        noContinue: input.noContinue,
+      },
+      'Ephemeral run requested continuation — refusing before container launch',
+    );
+    return {
+      status: 'error',
+      result: null,
+      error:
+        'Configuration error: ephemeral session must not request continuation. Set noContinue: true when sessionPersistence: "ephemeral".',
+    };
   }
 
   let extendHardTimeoutForWait:
@@ -1385,15 +1446,14 @@ export async function runContainerAgent(
     if (!activeChild) return;
     const ref = activeChild;
     if (ref.exitCode !== null || ref.signalCode !== null) return;
+    const platformAdapter = getPlatformAdapter();
     const signal = (sig: NodeJS.Signals) => {
-      if (ref.pid && process.platform !== 'win32') {
-        try {
-          process.kill(-ref.pid, sig);
-          return;
-        } catch {
-          // Fall back to signaling the direct child below.
-        }
+      if (ref.pid) {
+        // Use platform adapter for process group kill
+        const killed = platformAdapter.killProcessGroup(ref.pid, sig);
+        if (killed) return;
       }
+      // Fall back to signaling the direct child
       ref.kill(sig);
     };
     signal('SIGTERM');
@@ -1507,12 +1567,29 @@ export async function runContainerAgent(
         env: env as Record<string, string>,
       });
 
-      const child = spawn(sandboxed.command, sandboxed.args, {
-        cwd: wp.groupDir,
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
-      });
+      const platformAdapter = getPlatformAdapter();
+      // spawnDetached returns ChildProcess, but with stdio: ['pipe', 'pipe', 'pipe']
+      // stdin/stdout/stderr are guaranteed to be non-null
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const child = platformAdapter.spawnDetached(
+        sandboxed.command,
+        sandboxed.args,
+        {
+          cwd: wp.groupDir,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      ) as ChildProcess & {
+        stdin: NonNullable<ChildProcess['stdin']>;
+        stdout: NonNullable<ChildProcess['stdout']>;
+        stderr: NonNullable<ChildProcess['stderr']>;
+      };
+      if (!child.stdin || !child.stdout || !child.stderr) {
+        child.kill();
+        throw new Error(
+          `Platform adapter "${platformAdapter.name}" did not preserve piped stdio for the Pi child process`,
+        );
+      }
       const closeRpcInput = () => {
         if (
           transportMode !== 'rpc' ||
@@ -1551,8 +1628,10 @@ export async function runContainerAgent(
       let stdout = '';
       let stderr = '';
       let lineBuffer = '';
+      let rawAssistantSoFar = '';
       let assistantSoFar = '';
       let thinkingSoFar = '';
+      let inlineReasoningSoFar = '';
       let streamedDraft = false;
       let stdoutTruncated = false;
       let sawMeaningfulProgress = false;
@@ -1728,11 +1807,12 @@ export async function runContainerAgent(
         if (runFinalized || localSettled) return;
         if (!assistantSoFar) return;
         let previewText = assistantSoFar;
-        if (input.showReasoning && thinkingSoFar) {
+        const reasoningSoFar = thinkingSoFar || inlineReasoningSoFar;
+        if (input.showReasoning && reasoningSoFar) {
           const thinkingBlock =
-            thinkingSoFar.length > 600
-              ? `...${thinkingSoFar.slice(-597)}`
-              : thinkingSoFar;
+            reasoningSoFar.length > 600
+              ? `...${reasoningSoFar.slice(-597)}`
+              : reasoningSoFar;
           previewText = `Reasoning:\n\`\`\`\n${thinkingBlock}\n\`\`\`\n\n${assistantSoFar}`;
         }
         publishDraftPreview(previewText, force);
@@ -1942,8 +2022,14 @@ export async function runContainerAgent(
           }
           const delta = extractAssistantTextDeltaFromPiEvent(event);
           if (delta) {
-            if (delta.kind === 'append') assistantSoFar += delta.text;
-            else assistantSoFar = delta.text;
+            if (delta.kind === 'append') rawAssistantSoFar += delta.text;
+            else rawAssistantSoFar = delta.text;
+            // Reasoning models stream <think>...</think> inline in the text
+            // channel; strip it so the user never sees chain-of-thought, and
+            // surface it via the existing showReasoning path instead.
+            const split = splitInlineReasoning(rawAssistantSoFar);
+            assistantSoFar = split.visible;
+            inlineReasoningSoFar = split.reasoning;
             noteProgress({
               kind: 'assistant',
               at: Date.now(),

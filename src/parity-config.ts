@@ -73,6 +73,8 @@ export interface SkillSelfImproveConfig {
   toolInterval: number;
   minIntervalMinutes: number;
   operators: string[];
+  // LISO.9: Wait period after interactive response before starting quiet learning
+  idleGracePeriodMs: number;
 }
 
 export interface SkillManagerBackupConfig {
@@ -190,6 +192,7 @@ const DEFAULTS: ParityConfig = {
       toolInterval: 10,
       minIntervalMinutes: 15,
       operators: [],
+      idleGracePeriodMs: 30_000, // LISO.9: 30 second grace period
     },
     curator: {
       enabled: true,
@@ -595,6 +598,13 @@ function applyEnvOverrides(config: ParityConfig): ParityConfig {
     c.skills.selfImprove.minIntervalMinutes,
     0,
     100_000,
+  );
+  // LISO.9: Idle grace period env var (FFT_NANO_LEARNING_IDLE_GRACE_MS)
+  c.skills.selfImprove.idleGracePeriodMs = envInt(
+    e.FFT_NANO_LEARNING_IDLE_GRACE_MS,
+    c.skills.selfImprove.idleGracePeriodMs,
+    0,
+    300_000,
   );
   if (e.FFT_NANO_SKILL_SELF_IMPROVE_OPERATORS?.trim()) {
     c.skills.selfImprove.operators =

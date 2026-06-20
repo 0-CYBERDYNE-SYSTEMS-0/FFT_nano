@@ -201,7 +201,7 @@ test('runOnboarding OpenCode Go choice writes provider env', async () => {
   assert.match(envBody, /^FFT_NANO_RUNTIME_PROVIDER_PRESET=opencode-go$/m);
   assert.match(envBody, /^PI_API=opencode-go$/m);
   assert.match(envBody, /^PI_MODEL=deepseek-v4-flash$/m);
-  assert.match(envBody, /^OPENCODE_API_KEY=go-key$/m);
+  assert.match(envBody, /^OPENCODE_GO_API_KEY=go-key$/m);
 });
 
 test('runOnboarding local LM Studio choice writes local endpoint defaults without requiring an API key', async () => {

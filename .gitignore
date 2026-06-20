@@ -5,6 +5,8 @@ web/control-center/node_modules/
 # Build output
 dist/
 dist-web/
+dist-electron/
+release/
 
 # Local data & auth
 store/

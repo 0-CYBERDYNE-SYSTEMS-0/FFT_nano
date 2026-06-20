@@ -48,7 +48,99 @@ export type RunOrigin =
   | 'interactive-main'
   | 'subagent'
   | 'headless'
-  | 'evaluator';
+  | 'evaluator'
+  | 'maintenance';
+
+// LISO.1: Session persistence mode for Pi runs
+export type SessionPersistence = 'normal' | 'ephemeral';
+
+// LISO.3: Turn-local learning evidence
+export interface LearningTurnInput {
+  turnId: string;
+  groupFolder: string;
+  latestUserText: string;
+  assistantResponse: string;
+  executionSummary: TurnExecutionSummary;
+}
+
+export interface TurnExecutionSummary {
+  toolsRequested: number;
+  toolsAllowed: number;
+  toolsDenied: number;
+  toolsFailed: number;
+  toolsCancelled: number;
+  selectedSkills: string[];
+  completionStatus: 'success' | 'error' | 'cancelled' | 'timeout';
+  hostDetectedCorrection: boolean;
+  explicitMemoryMarkers: boolean;
+  responseTruncated: boolean;
+  deliveryFailed: boolean;
+  permissionDenials: string[];
+}
+
+// LISO.4: Structured learning proposal schema
+export type LearningProposal =
+  | {
+      kind: 'noop';
+      reason: string;
+    }
+  | {
+      kind: 'memory';
+      intent: 'memory_append' | 'memory_promote';
+      target: string;
+      content: string;
+      rationale: string;
+      provenance: LearningProvenance;
+    }
+  | {
+      kind: 'skill';
+      intent: 'skill_create' | 'skill_patch';
+      skillName: string;
+      baseHash?: string;
+      content: string;
+      rationale: string;
+      provenance: LearningProvenance;
+    }
+  | {
+      kind: 'report';
+      issue: string;
+      recommendation: string;
+      provenance: LearningProvenance;
+    };
+
+export interface LearningProvenance {
+  reviewedTurnId: string;
+  source: 'explicit-correction' | 'explicit-memory' | 'tool-failure';
+  evidenceSummary: string;
+}
+
+// LISO.7: Maintenance lifecycle events
+export type MaintenanceEventKind =
+  | 'scheduled'
+  | 'idle_grace_started'
+  | 'idle_grace_cancelled'
+  | 'maintenance_started'
+  | 'maintenance_aborted'
+  | 'maintenance_timeout'
+  | 'proposal_parsed'
+  | 'proposal_rejected'
+  | 'proposal_applied'
+  | 'maintenance_completed_noop';
+
+export interface MaintenanceEventFields {
+  runId: string;
+  groupFolder: string;
+  reviewedTurnId: string;
+  kind: MaintenanceEventKind;
+  sessionPersistence: 'ephemeral';
+  promptMode: 'maintenance';
+  status: string;
+  abortReason?: string;
+  proposalKind?: string;
+  rejectionCode?: string;
+  mutationId?: string;
+  durationMs?: number;
+}
 
 // WS3: sender role for learning input provenance
 export type SenderRole = 'operator' | 'member' | 'unknown';
@@ -78,6 +170,9 @@ export interface RunAuthority {
   // Global pause stamp captured at run start — a mid-run pause applies to the
   // next loop tick, not to the in-flight run.
   startedDuringPause: boolean;
+  // /reflect dry-run: host hard-rejects skill and memory mutations for this run.
+  // Read-only actions remain allowed.
+  dryRun: boolean;
 }
 
 export interface RegisteredGroup {

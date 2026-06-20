@@ -4,6 +4,7 @@ type FenceSpan = {
   openLine: string;
   marker: string;
   indent: string;
+  info: string;
   closed: boolean;
 };
 
@@ -28,6 +29,7 @@ function parseFenceSpans(buffer: string): FenceSpan[] {
         openLine: string;
         marker: string;
         indent: string;
+        info: string;
       }
     | undefined;
 
@@ -41,6 +43,7 @@ function parseFenceSpans(buffer: string): FenceSpan[] {
     if (match) {
       const indent = match[1];
       const marker = match[2];
+      const info = match[3];
       const markerChar = marker[0];
       const markerLen = marker.length;
 
@@ -52,6 +55,7 @@ function parseFenceSpans(buffer: string): FenceSpan[] {
           openLine: line,
           marker,
           indent,
+          info,
         };
       } else if (
         open.markerChar === markerChar &&
@@ -63,6 +67,7 @@ function parseFenceSpans(buffer: string): FenceSpan[] {
           openLine: open.openLine,
           marker: open.marker,
           indent: open.indent,
+          info: open.info,
           closed: true,
         });
         open = undefined;
@@ -80,6 +85,7 @@ function parseFenceSpans(buffer: string): FenceSpan[] {
       openLine: open.openLine,
       marker: open.marker,
       indent: open.indent,
+      info: open.info,
       closed: false,
     });
   }
@@ -119,6 +125,7 @@ function renderInlineMarkdown(markdown: string): string {
   );
   text = text.replace(/\*\*([^\n*][^*\n]*?)\*\*/g, '<b>$1</b>');
   text = text.replace(/__([^\n_][^_\n]*?)__/g, '<b>$1</b>');
+  text = text.replace(/\*([^\s*][^*\n]*?)\*/g, '<i>$1</i>');
   text = text.replace(/~~([^\n~][^~\n]*?)~~/g, '<s>$1</s>');
   text = text.replace(
     /\|\|([^\n|][^|\n]*?)\|\|/g,
@@ -133,10 +140,19 @@ function renderInlineMarkdown(markdown: string): string {
   return text;
 }
 
+function fenceCodeOpenTag(info: string): string {
+  const lang = (info || '')
+    .trim()
+    .split(/\s+/)[0]
+    ?.replace(/[^\w+.#-]/g, '');
+  return lang ? `<pre><code class="language-${lang}">` : '<pre><code>';
+}
+
 function renderFenceCodeBlock(markdown: string, span: FenceSpan): string {
+  const openTag = fenceCodeOpenTag(span.info);
   const openLineEnd = markdown.indexOf('\n', span.start);
   if (openLineEnd === -1 || openLineEnd >= span.end) {
-    return '<pre><code>\n</code></pre>';
+    return `${openTag}\n</code></pre>`;
   }
 
   const codeStart = openLineEnd + 1;
@@ -155,7 +171,101 @@ function renderFenceCodeBlock(markdown: string, span: FenceSpan): string {
     code = `${code}\n`;
   }
 
-  return `<pre><code>${escapeHtml(code)}</code></pre>`;
+  return `${openTag}${escapeHtml(code)}</code></pre>`;
+}
+
+const BLOCKQUOTE_LINE = /^\s*>\s?/;
+// Long quotes collapse in Telegram clients; mark them expandable so the reader
+// gets an explicit expand control instead of a silently clipped block.
+const BLOCKQUOTE_EXPANDABLE_LINES = 8;
+const BLOCKQUOTE_EXPANDABLE_CHARS = 400;
+
+// Telegram has no table markup; GitHub-style pipe tables are rendered as an
+// aligned monospace <pre> block so columns line up in the proportional font.
+function splitTableRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((cell) => cell.trim());
+}
+
+function isTableDelimiterRow(line: string): boolean {
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
+
+function isTableStart(lines: string[], i: number): boolean {
+  return (
+    i + 1 < lines.length &&
+    lines[i].includes('|') &&
+    isTableDelimiterRow(lines[i + 1])
+  );
+}
+
+function renderTable(rows: string[][]): string {
+  const [header, ...body] = rows;
+  // GFM: the header row defines the column count. Extra body cells are dropped
+  // and missing ones padded, so the separator never desyncs from the header.
+  const cols = header.length;
+  const widths = Array.from({ length: cols }, (_, c) =>
+    Math.max(...rows.map((r) => (r[c] ?? '').length)),
+  );
+  const pad = (cell: string, c: number) => (cell ?? '').padEnd(widths[c]);
+  const headerLine = header
+    .map((cell, c) => pad(cell, c))
+    .join(' | ')
+    .trimEnd();
+  const sepLine = widths.map((w) => '-'.repeat(w)).join('-+-');
+  const bodyLines = body.map((row) =>
+    Array.from({ length: cols }, (_, c) => pad(row[c] ?? '', c))
+      .join(' | ')
+      .trimEnd(),
+  );
+  const table = [headerLine, sepLine, ...bodyLines].join('\n');
+  return `<pre>${escapeHtml(table)}</pre>`;
+}
+
+// Renders a non-fenced segment, lifting consecutive `> ` lines into Telegram
+// <blockquote> elements and pipe tables into <pre> before inline formatting.
+function renderBlockMarkdown(segment: string): string {
+  const lines = segment.split('\n');
+  const parts: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (isTableStart(lines, i)) {
+      const rows: string[][] = [splitTableRow(lines[i])];
+      i += 2; // skip header + delimiter
+      while (i < lines.length && lines[i].includes('|')) {
+        rows.push(splitTableRow(lines[i]));
+        i++;
+      }
+      parts.push(renderTable(rows));
+    } else if (BLOCKQUOTE_LINE.test(lines[i])) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && BLOCKQUOTE_LINE.test(lines[i])) {
+        quoteLines.push(lines[i].replace(BLOCKQUOTE_LINE, ''));
+        i++;
+      }
+      const inner = quoteLines.join('\n');
+      const expandable =
+        quoteLines.length > BLOCKQUOTE_EXPANDABLE_LINES ||
+        inner.length > BLOCKQUOTE_EXPANDABLE_CHARS;
+      const tag = expandable ? '<blockquote expandable>' : '<blockquote>';
+      parts.push(`${tag}${renderInlineMarkdown(inner)}</blockquote>`);
+    } else {
+      const textLines: string[] = [];
+      while (
+        i < lines.length &&
+        !BLOCKQUOTE_LINE.test(lines[i]) &&
+        !isTableStart(lines, i)
+      ) {
+        textLines.push(lines[i]);
+        i++;
+      }
+      parts.push(renderInlineMarkdown(textLines.join('\n')));
+    }
+  }
+  return parts.join('\n');
 }
 
 export function markdownToTelegramHtml(markdown: string): string {
@@ -164,20 +274,20 @@ export function markdownToTelegramHtml(markdown: string): string {
 
   const spans = parseFenceSpans(text);
   if (spans.length === 0) {
-    return renderInlineMarkdown(text);
+    return renderBlockMarkdown(text);
   }
 
   let out = '';
   let cursor = 0;
   for (const span of spans) {
     if (span.start > cursor) {
-      out += renderInlineMarkdown(text.slice(cursor, span.start));
+      out += renderBlockMarkdown(text.slice(cursor, span.start));
     }
     out += renderFenceCodeBlock(text, span);
     cursor = span.end;
   }
   if (cursor < text.length) {
-    out += renderInlineMarkdown(text.slice(cursor));
+    out += renderBlockMarkdown(text.slice(cursor));
   }
 
   return out;
@@ -368,7 +478,17 @@ export function chunkTelegramMarkdownText(
   return chunks;
 }
 
-const TELEGRAM_HTML_TAGS = ['b', 'i', 's', 'code', 'pre', 'tg-spoiler', 'a'];
+const TELEGRAM_HTML_TAGS = [
+  'b',
+  'i',
+  's',
+  'u',
+  'code',
+  'pre',
+  'tg-spoiler',
+  'blockquote',
+  'a',
+];
 
 export function rebalanceHtmlChunks(chunks: string[]): string[] {
   if (chunks.length <= 1) return chunks;

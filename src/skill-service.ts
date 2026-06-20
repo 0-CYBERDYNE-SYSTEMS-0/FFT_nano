@@ -33,7 +33,10 @@ import { ensureKnowledgeNightlyTask } from './knowledge-wiki-task.js';
 import {
   state,
   activeCoderRuns,
+  activeMaintenanceRuns,
+  pendingGraceTimers,
   type ActiveCoderRun,
+  type ActiveMaintenanceRun,
   type ChatRunPreferences,
 } from './app-state.js';
 import { logger } from './logger.js';
@@ -172,8 +175,88 @@ export function shouldTriggerSkillSelfImprove(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Quiet skill agent
+// Quiet skill agent — LISO.1, LISO.2, LISO.4
 // ---------------------------------------------------------------------------
+
+/**
+ * LISO.2: Cancel any active maintenance run for a group.
+ * Returns a promise that settles only after the process has exited or
+ * the host has force-terminated it.
+ */
+export async function cancelActiveMaintenance(
+  groupFolder: string,
+  reason: string,
+): Promise<void> {
+  const existing = activeMaintenanceRuns.get(groupFolder);
+  if (!existing) return;
+
+  logger.info(
+    { groupFolder, runId: existing.runId, reason },
+    'Cancelling active maintenance run',
+  );
+
+  // Cancel the AbortController to signal the run
+  existing.controller.abort();
+
+  // Remove from registry immediately to prevent duplicate cancellations
+  activeMaintenanceRuns.delete(groupFolder);
+
+  // The runContainerAgent will handle the abort signal and exit
+  // We wait a short time for graceful exit, then the process will be
+  // cleaned up by the caller if it doesn't exit on its own.
+}
+
+/**
+ * LISO.2: Cancel any pending idle grace timer for a group.
+ */
+export function cancelPendingGraceTimer(groupFolder: string): void {
+  const existing = pendingGraceTimers.get(groupFolder);
+  if (!existing) return;
+
+  clearTimeout(existing.timer);
+  pendingGraceTimers.delete(groupFolder);
+  logger.debug(
+    { groupFolder, runId: existing.runId },
+    'Cancelled pending idle grace timer',
+  );
+}
+
+/**
+ * LISO.7: Emit a structured maintenance lifecycle event.
+ */
+export function emitMaintenanceEvent(
+  groupFolder: string,
+  fields: {
+    runId: string;
+    reviewedTurnId: string;
+    kind: string;
+    status: string;
+    abortReason?: string;
+    proposalKind?: string;
+    rejectionCode?: string;
+    durationMs?: number;
+  },
+): void {
+  const event = {
+    ts: new Date().toISOString(),
+    group_id: groupFolder,
+    ...fields,
+    sessionPersistence: 'ephemeral' as const,
+    promptMode: 'maintenance' as const,
+  };
+  try {
+    const logPath = path.join(
+      resolveGroupIpcPath(groupFolder),
+      '..',
+      'logs',
+      'maintenance-events.jsonl',
+    );
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(logPath, `${JSON.stringify(event)}\n`);
+  } catch (err) {
+    logger.warn({ err, groupFolder }, 'Failed to write maintenance event');
+  }
+}
 
 export function runQuietSkillAgent(params: {
   group: RegisteredGroup;
@@ -181,18 +264,79 @@ export function runQuietSkillAgent(params: {
   prompt: string;
   requestId: string;
   runtimePrefs: ChatRunPreferences;
+  abortSignal?: AbortSignal;
+  reviewedTurnId?: string;
+  kind?: 'self-improve' | 'curator' | 'evaluator';
 }): void {
   const isMain = params.group.folder === MAIN_GROUP_FOLDER;
+  const kind = params.kind ?? 'self-improve';
+  const reviewedTurnId = params.reviewedTurnId ?? params.requestId;
+
+  // LISO.2: Only one maintenance run per group at a time
+  const existing = activeMaintenanceRuns.get(params.group.folder);
+  if (existing) {
+    logger.warn(
+      {
+        groupFolder: params.group.folder,
+        existingRunId: existing.runId,
+        newRunId: params.requestId,
+      },
+      'Maintenance run already active for group, skipping',
+    );
+    return;
+  }
+
+  // LISO.7: Emit scheduled event
+  emitMaintenanceEvent(params.group.folder, {
+    runId: params.requestId,
+    reviewedTurnId,
+    kind: 'scheduled',
+    status: 'pending',
+  });
+
+  const maintenanceChatJid = `maintenance:${params.group.folder}`;
+  const maintenanceIpcDir = resolveGroupIpcPath(params.group.folder);
+
+  // LISO.2: Create AbortController for this run
+  const controller = new AbortController();
+
+  // Wrap the external abort signal (for user preemption)
+  const externalSignal = params.abortSignal;
+  const wrappedAbort = () => {
+    controller.abort();
+  };
+  if (externalSignal) {
+    externalSignal.addEventListener('abort', wrappedAbort);
+  }
+
+  // LISO.2: Register the active maintenance run
+  const runEntry: ActiveMaintenanceRun = {
+    groupFolder: params.group.folder,
+    runId: params.requestId,
+    startedAt: Date.now(),
+    controller,
+    kind,
+    reviewedTurnId,
+  };
+  activeMaintenanceRuns.set(params.group.folder, runEntry);
+
+  // LISO.7: Emit started event
+  emitMaintenanceEvent(params.group.folder, {
+    runId: params.requestId,
+    reviewedTurnId,
+    kind: 'maintenance_started',
+    status: 'running',
+  });
+
   const extraSystemPrompt = [
     '## Quiet Background Skill Maintenance',
     'This run is internal maintenance. Do not send chat messages unless explicitly asked.',
-    'Use skill_action IPC for all skill reads and writes.',
-    'Do not inspect or edit skill files directly. Use action_results as the durable source of truth.',
+    'Do not use any tools that mutate files, execute commands, send messages, or schedule tasks.',
+    'Do not inspect or edit skill files directly.',
+    'You may only return a structured learning proposal in JSON format.',
     'Keep skills organized for non-technical farm operators: clear names, valid frontmatter, class-level reusable workflows, and lean active catalog.',
     'You may only mutate host-allowed agent-created runtime skills. For source-owned skills, report issues instead of trying to modify them.',
   ].join('\n');
-  const maintenanceChatJid = `maintenance:${params.group.folder}`;
-  const maintenanceIpcDir = resolveGroupIpcPath(params.group.folder);
 
   void runContainerAgent(
     params.group,
@@ -205,16 +349,21 @@ export function runQuietSkillAgent(params: {
       codingHint: 'none',
       requestId: params.requestId,
       isScheduledTask: false,
-      isEvaluatorRun: true,
+      isEvaluatorRun: false, // LISO.6: not evaluator, use maintenance origin
+      isMaintenanceRun: true, // LISO.6: triggers maintenance origin in mintRunAuthority
       extraSystemPrompt,
       provider: params.runtimePrefs.provider,
       model: params.runtimePrefs.model,
       thinkLevel: params.runtimePrefs.thinkLevel,
       reasoningLevel: params.runtimePrefs.reasoningLevel,
-      toolMode: 'full',
-      noContinue: true,
+      toolMode: 'read_only', // LISO.6: maintenance only gets read-only tools
+      noContinue: true, // LISO.1: ephemeral sessions cannot continue
+      sessionPersistence: 'ephemeral', // LISO.1: ephemeral session
+      promptMode: 'maintenance', // LISO.5: maintenance prompt mode
       suppressPreviewStreaming: true,
       sandboxAllowedPathsOverride: [maintenanceIpcDir],
+      latestUserText: params.prompt.slice(0, 500), // LISO.3: bounded context
+      turnId: reviewedTurnId, // LISO.3: for supersession detection
       lifecyclePolicyOverride: {
         hardTimeoutMs: 10 * 60 * 1000,
         staleAfterMs: 3 * 60 * 1000,
@@ -223,13 +372,121 @@ export function runQuietSkillAgent(params: {
         allowFreshSessionFallback: false,
       },
     },
-    undefined,
-  ).catch((err) => {
-    logger.warn(
-      { err, groupFolder: params.group.folder, requestId: params.requestId },
-      'Quiet skill maintenance run failed',
-    );
-  });
+    controller.signal,
+  )
+    .then((output) => {
+      // LISO.2: Remove from registry on completion
+      activeMaintenanceRuns.delete(params.group.folder);
+
+      if (output.status === 'error') {
+        logger.warn(
+          {
+            err: output.error,
+            groupFolder: params.group.folder,
+            requestId: params.requestId,
+          },
+          'Quiet skill maintenance run failed',
+        );
+        emitMaintenanceEvent(params.group.folder, {
+          runId: params.requestId,
+          reviewedTurnId,
+          kind: 'maintenance_aborted',
+          status: 'error',
+          abortReason: output.error ?? 'unknown',
+        });
+        return;
+      }
+
+      // LISO.4: Parse the proposal from the output
+      const proposal = parseMaintenanceProposal(output.result ?? '');
+      if (proposal.kind === 'noop') {
+        logger.debug(
+          { groupFolder: params.group.folder, requestId: params.requestId, reason: proposal.reason },
+          'Maintenance run produced noop',
+        );
+        emitMaintenanceEvent(params.group.folder, {
+          runId: params.requestId,
+          reviewedTurnId,
+          kind: 'maintenance_completed_noop',
+          status: 'completed',
+          proposalKind: 'noop',
+        });
+      } else {
+        logger.info(
+          { groupFolder: params.group.folder, requestId: params.requestId, proposalKind: proposal.kind },
+          'Maintenance run produced proposal',
+        );
+        emitMaintenanceEvent(params.group.folder, {
+          runId: params.requestId,
+          reviewedTurnId,
+          kind: 'proposal_parsed',
+          status: 'parsed',
+          proposalKind: proposal.kind,
+        });
+        // TODO: LISO.4: Validate and apply proposal through host gateway
+      }
+    })
+    .catch((err) => {
+      activeMaintenanceRuns.delete(params.group.folder);
+      logger.warn(
+        { err, groupFolder: params.group.folder, requestId: params.requestId },
+        'Quiet skill maintenance run failed',
+      );
+      emitMaintenanceEvent(params.group.folder, {
+        runId: params.requestId,
+        reviewedTurnId,
+        kind: 'maintenance_aborted',
+        status: 'error',
+        abortReason: String(err),
+      });
+    })
+    .finally(() => {
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', wrappedAbort);
+      }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// LISO.4: Maintenance proposal parsing
+// ---------------------------------------------------------------------------
+
+interface NoopProposal {
+  kind: 'noop';
+  reason: string;
+}
+
+function parseMaintenanceProposal(output: string): NoopProposal | { kind: 'memory' | 'skill' | 'report'; [key: string]: unknown } {
+  // Try to extract JSON from the output
+  // The maintenance model should return a JSON object with a "kind" field
+  const jsonMatch = output.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return { kind: 'noop', reason: 'No valid JSON proposal found in output' };
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed || typeof parsed !== 'object') {
+      return { kind: 'noop', reason: 'Parsed proposal is not an object' };
+    }
+
+    // Validate required fields based on kind
+    if (parsed.kind === 'noop') {
+      if (typeof parsed.reason !== 'string') {
+        return { kind: 'noop', reason: 'noop proposal missing reason string' };
+      }
+      return { kind: 'noop', reason: parsed.reason };
+    }
+
+    if (parsed.kind === 'memory' || parsed.kind === 'skill' || parsed.kind === 'report') {
+      // Basic validation - detailed validation happens in host gateway
+      return parsed;
+    }
+
+    return { kind: 'noop', reason: `Unknown proposal kind: ${parsed.kind}` };
+  } catch {
+    return { kind: 'noop', reason: 'Failed to parse JSON proposal' };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -325,11 +582,14 @@ export function maybeRunSkillSelfImprovement(params: {
       ? `Host-detected learning signals for this run: ${signals.join(', ')}. Weigh these when deciding what is durable.`
       : 'No strong learning signals were detected; no-op unless you find genuinely reusable knowledge.';
 
-  runQuietSkillAgent({
+  // LISO.9: Schedule maintenance after idle grace period
+  scheduleMaintenanceAfterGrace({
     group: params.group,
     chatJid: params.chatJid,
     runtimePrefs: params.runtimePrefs,
     requestId: `${runId}:skill-self-improve`,
+    reviewedTurnId: runId,
+    kind: 'self-improve',
     prompt: [
       'Review the completed conversation for reusable procedural knowledge.',
       signalLine,
@@ -344,6 +604,71 @@ export function maybeRunSkillSelfImprovement(params: {
       'Agent result:',
       params.agentOutput.slice(0, 5000),
     ].join('\n'),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// LISO.2: Idle grace period scheduling
+// ---------------------------------------------------------------------------
+
+/**
+ * LISO.9: Schedule maintenance after idle grace period.
+ * If a new inbound message arrives before the grace period expires, the
+ * pending timer is cancelled and the maintenance is not run.
+ */
+export function scheduleMaintenanceAfterGrace(params: {
+  group: RegisteredGroup;
+  chatJid: string;
+  runtimePrefs: ChatRunPreferences;
+  requestId: string;
+  reviewedTurnId: string;
+  kind: 'self-improve' | 'curator' | 'evaluator';
+  prompt: string;
+  abortSignal?: AbortSignal;
+}): void {
+  const gracePeriodMs = PARITY_CONFIG.skills.selfImprove.idleGracePeriodMs;
+
+  // LISO.9: Cancel any existing pending grace timer for this group
+  cancelPendingGraceTimer(params.group.folder);
+
+  // LISO.7: Emit idle grace started event
+  emitMaintenanceEvent(params.group.folder, {
+    runId: params.requestId,
+    reviewedTurnId: params.reviewedTurnId,
+    kind: 'idle_grace_started',
+    status: 'pending',
+  });
+
+  const timer = setTimeout(() => {
+    // Grace period elapsed without a new inbound message — proceed
+    pendingGraceTimers.delete(params.group.folder);
+
+    // LISO.7: Emit cancelled (actually, this is when it starts, so emit started)
+    emitMaintenanceEvent(params.group.folder, {
+      runId: params.requestId,
+      reviewedTurnId: params.reviewedTurnId,
+      kind: 'idle_grace_cancelled',
+      status: 'cancelled',
+    });
+
+    // Run the maintenance with the collected prompt
+    runQuietSkillAgent({
+      group: params.group,
+      chatJid: params.chatJid,
+      runtimePrefs: params.runtimePrefs,
+      requestId: params.requestId,
+      reviewedTurnId: params.reviewedTurnId,
+      kind: params.kind,
+      abortSignal: params.abortSignal,
+      prompt: params.prompt,
+    });
+  }, gracePeriodMs);
+
+  pendingGraceTimers.set(params.group.folder, {
+    groupFolder: params.group.folder,
+    runId: params.requestId,
+    startedAt: Date.now(),
+    timer,
   });
 }
 

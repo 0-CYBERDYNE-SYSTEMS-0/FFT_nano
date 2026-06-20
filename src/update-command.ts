@@ -118,6 +118,8 @@ const OUTPUT_LIMIT = 4000;
 const MAX_BUFFER = 8 * 1024 * 1024;
 const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_LOCK_STALE_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_HEALTH_SETTLE_MS = 8 * 1000;
+const DEFAULT_HEALTH_RECHECK_MS = 5 * 1000;
 
 function defaultRunner(
   command: string,
@@ -293,6 +295,51 @@ function findAutostashRef(stashList: string, marker: string): string | null {
   return null;
 }
 
+/**
+ * The install-recovery marker records that an update is partway through the
+ * dependency-install + build span (the window where node_modules is wiped by
+ * `npm ci` and the service cannot start). It is written before install and
+ * cleared after a successful build. If the worker dies mid-install (crash,
+ * reboot, kill), the launchd wrapper (scripts/run-launchd.sh) sees the marker
+ * on next boot and self-heals (reinstall + build, or rollback to the recorded
+ * SHA). Format: line 1 = pre-update SHA, line 2 = branch, line 3 = timestamp.
+ */
+export function getUpdateMarkerFile(cwd: string): string {
+  return path.join(cwd, 'data', 'update-incomplete');
+}
+
+export function writeUpdateMarker(
+  cwd: string,
+  info: { preSha: string; branch: string; at: string },
+): void {
+  try {
+    const file = getUpdateMarkerFile(cwd);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${info.preSha}\n${info.branch}\n${info.at}\n`);
+  } catch {
+    // Best-effort recovery insurance; never block an update on the marker.
+  }
+}
+
+export function clearUpdateMarker(cwd: string): void {
+  try {
+    fs.unlinkSync(getUpdateMarkerFile(cwd));
+  } catch {
+    // Already gone.
+  }
+}
+
+/** True when a command result looks like a spawn timeout (killed by the runner). */
+function isTimeoutResult(result: CommandRunResult): boolean {
+  if (!result.error) return false;
+  const code = (result.error as NodeJS.ErrnoException).code;
+  return (
+    code === 'ETIMEDOUT' ||
+    result.signal === 'SIGTERM' ||
+    result.signal === 'SIGKILL'
+  );
+}
+
 export function runUpdateCommand(
   options: RunUpdateCommandOptions = {},
 ): UpdateCommandResult {
@@ -305,6 +352,14 @@ export function runUpdateCommand(
   const stepTimeoutMs = parsePositiveInt(
     env.FFT_NANO_UPDATE_STEP_TIMEOUT_MS,
     DEFAULT_STEP_TIMEOUT_MS,
+  );
+  const healthSettleMs = parsePositiveInt(
+    env.FFT_NANO_UPDATE_HEALTH_SETTLE_MS,
+    DEFAULT_HEALTH_SETTLE_MS,
+  );
+  const healthRecheckMs = parsePositiveInt(
+    env.FFT_NANO_UPDATE_HEALTH_RECHECK_MS,
+    DEFAULT_HEALTH_RECHECK_MS,
   );
   const outputLines: string[] = [];
   let stashRef: string | null = null;
@@ -343,7 +398,14 @@ export function runUpdateCommand(
     const output = combinedOutput(result);
 
     if (result.error) {
-      outputLines.push(`Failed: ${result.error.message}`);
+      if (isTimeoutResult(result)) {
+        const secs = Math.round(stepTimeoutMs / 1000);
+        outputLines.push(
+          `${label} timed out after ${secs}s with no completion (${result.error.message}).`,
+        );
+      } else {
+        outputLines.push(`Failed: ${result.error.message}`);
+      }
       return { ok: false, result };
     }
 
@@ -452,64 +514,155 @@ export function runUpdateCommand(
       outputLines.push(`Saved local changes as ${stashRef}.`);
     }
 
-    // --- fetching phase ---
-    emit('fetching', 'git fetch origin', 'started');
-    let fetchStart = Date.now();
-    const fetch = runStep('git fetch', 'git', ['fetch', 'origin']);
-    if (!fetch.ok) {
-      emit(
-        'fetching',
-        'git fetch origin',
-        'failed',
-        fetch.result.stderr || 'failed',
-        Date.now() - fetchStart,
-      );
-      restoreAutostashAfterAbort();
-      return fail('Update aborted during fetch.');
-    }
-    emit(
-      'fetching',
-      'git fetch origin',
-      'completed',
-      undefined,
-      Date.now() - fetchStart,
-    );
-
-    // --- pulling phase ---
-    emit('pulling', 'git pull --ff-only', 'started');
-    let pullStart = Date.now();
+    // Resolve the target branch BEFORE fetch so the fetch can be scoped to a
+    // single ref (a bare `git fetch origin` can stall on repos with many refs).
     const branch = runRaw('git', ['symbolic-ref', '--short', 'HEAD']);
     const currentBranch =
       branch.status === 0 && branch.stdout?.trim()
         ? branch.stdout.trim()
         : null;
     let pullBranch = currentBranch || 'main';
-    if (currentBranch) {
-      const remoteBranchCheck = runRaw('git', [
-        'show-ref',
-        '--verify',
-        '--quiet',
-        `refs/remotes/origin/${currentBranch}`,
-      ]);
-      if (remoteBranchCheck.status !== 0) {
-        pullBranch = 'main';
-        outputLines.push(
-          `Remote branch origin/${currentBranch} not found; pulling origin/main instead.`,
-        );
-      }
+
+    // --- fetching phase ---
+    emit('fetching', `git fetch origin ${pullBranch}`, 'started');
+    let fetchStart = Date.now();
+    let fetch = runStep('git fetch', 'git', ['fetch', 'origin', pullBranch]);
+    if (!fetch.ok && currentBranch && pullBranch !== 'main') {
+      // Current branch may not exist on origin; fall back to main.
+      outputLines.push(
+        `origin/${pullBranch} not found; fetching origin/main instead.`,
+      );
+      pullBranch = 'main';
+      fetch = runStep('git fetch', 'git', ['fetch', 'origin', pullBranch]);
     }
-    const pullArgs = ['pull', '--ff-only', 'origin', pullBranch];
-    const pull = runStep('git pull', 'git', pullArgs);
-    if (!pull.ok) {
+    if (!fetch.ok) {
+      const stderr = fetch.result.stderr || '';
+      let reason = 'Update aborted during fetch.';
+      if (
+        /could not resolve host|unable to access|network is unreachable|temporary failure in name resolution|connection timed out/i.test(
+          stderr,
+        )
+      ) {
+        reason =
+          'Update aborted: network error — cannot reach origin. Check connectivity and retry.';
+      } else if (
+        /authentication failed|could not read username|permission denied \(publickey\)/i.test(
+          stderr,
+        )
+      ) {
+        reason =
+          'Update aborted: git authentication failed — check credentials or SSH key.';
+      } else if (isTimeoutResult(fetch.result)) {
+        reason =
+          'Update aborted: git fetch timed out. Check connectivity and retry.';
+      }
       emit(
-        'pulling',
-        'git pull --ff-only',
+        'fetching',
+        `git fetch origin ${pullBranch}`,
         'failed',
-        pull.result.stderr || 'failed',
-        Date.now() - pullStart,
+        stderr || reason,
+        Date.now() - fetchStart,
       );
       restoreAutostashAfterAbort();
-      return fail('Update aborted during pull.');
+      return fail(reason);
+    }
+    emit(
+      'fetching',
+      `git fetch origin ${pullBranch}`,
+      'completed',
+      undefined,
+      Date.now() - fetchStart,
+      true,
+    );
+
+    // --- up-to-date short-circuit ---
+    // Skip the expensive install/build/restart when origin has no new commits.
+    // Compare against FETCH_HEAD (always set by the fetch we just ran); a
+    // scoped `git fetch origin <branch>` does NOT update refs/remotes/origin/*.
+    const behind = runRaw('git', ['rev-list', '--count', 'HEAD..FETCH_HEAD']);
+    const behindCount =
+      behind.status === 0 ? Number((behind.stdout || '').trim()) : NaN;
+    if (Number.isFinite(behindCount) && behindCount === 0) {
+      if (stashRef) {
+        runStep('git stash apply', 'git', ['stash', 'apply', stashRef]);
+        runStep('git stash drop', 'git', ['stash', 'drop', stashRef]);
+      }
+      outputLines.push(
+        'Already up to date. No new commits on origin; skipping rebuild and restart.',
+      );
+      emit(
+        'complete',
+        'already up to date',
+        'completed',
+        undefined,
+        undefined,
+        true,
+      );
+      return { ok: true, text: outputLines.join('\n') };
+    }
+    if (Number.isFinite(behindCount)) {
+      outputLines.push(
+        `Found ${behindCount} new commit(s) on origin/${pullBranch}.`,
+      );
+    }
+
+    // Capture the pre-update commit so we can roll back if install/build/restart
+    // fails on the new code.
+    const headBefore = runRaw('git', ['rev-parse', 'HEAD']);
+    const preSha =
+      headBefore.status === 0 ? (headBefore.stdout || '').trim() : '';
+
+    // --- pulling phase ---
+    emit('pulling', 'git pull --ff-only', 'started');
+    let pullStart = Date.now();
+    const pull = runStep('git pull', 'git', [
+      'pull',
+      '--ff-only',
+      'origin',
+      pullBranch,
+    ]);
+    if (!pull.ok) {
+      // Fast-forward failed — history diverged. Reset to origin only when the
+      // local checkout has NO commits the remote lacks (the runtime should
+      // never carry local commits). Otherwise preserve and abort.
+      const ahead = runRaw('git', ['rev-list', '--count', 'FETCH_HEAD..HEAD']);
+      const aheadCount =
+        ahead.status === 0 ? Number((ahead.stdout || '').trim()) : NaN;
+      if (Number.isFinite(aheadCount) && aheadCount === 0) {
+        outputLines.push(
+          'Fast-forward not possible (history diverged); resetting to match origin.',
+        );
+        const reset = runStep('git reset --hard origin', 'git', [
+          'reset',
+          '--hard',
+          'FETCH_HEAD',
+        ]);
+        if (!reset.ok) {
+          emit(
+            'pulling',
+            'git pull --ff-only',
+            'failed',
+            reset.result.stderr || 'reset failed',
+            Date.now() - pullStart,
+          );
+          restoreAutostashAfterAbort();
+          return fail(
+            `Update aborted: could not reset to origin/${pullBranch}. Recover manually: git fetch origin && git reset --hard origin/${pullBranch}`,
+          );
+        }
+      } else {
+        emit(
+          'pulling',
+          'git pull --ff-only',
+          'failed',
+          pull.result.stderr || 'failed',
+          Date.now() - pullStart,
+        );
+        restoreAutostashAfterAbort();
+        return fail(
+          `Update aborted during pull: local history has ${Number.isFinite(aheadCount) ? aheadCount : 'unknown'} commit(s) not on origin/${pullBranch}. Resolve manually.`,
+        );
+      }
     }
     emit(
       'pulling',
@@ -517,8 +670,11 @@ export function runUpdateCommand(
       'completed',
       pull.result.stdout || undefined,
       Date.now() - pullStart,
+      true,
     );
 
+    // Reapply local changes onto the new code. Keep the stash ref until the
+    // build succeeds so a rollback can re-restore it after a hard reset.
     if (stashRef) {
       const apply = runStep('git stash apply', 'git', [
         'stash',
@@ -536,68 +692,310 @@ export function runUpdateCommand(
           `Update aborted: local changes could not be reapplied cleanly. Resolve conflicts, then recover with: git stash apply ${stashRef}`,
         );
       }
-
-      const drop = runStep('git stash drop', 'git', [
-        'stash',
-        'drop',
-        stashRef,
-      ]);
-      if (!drop.ok) {
-        outputLines.push(
-          `Warning: local changes were reapplied, but ${stashRef} could not be dropped. You may drop it manually after inspection.`,
-        );
-      }
     }
 
-    // --- installing phase ---
-    const isPackageLock = existsSync(path.join(cwd, 'package-lock.json'));
-    const installLabel = isPackageLock ? 'npm ci' : 'npm install';
-    emit('installing', installLabel, 'started');
-    let installStart = Date.now();
-    const installStep = isPackageLock
-      ? runStep('npm ci', 'npm', ['ci', '--include=dev'])
-      : runStep('npm install', 'npm', ['install', '--include=dev']);
+    // ===== Past this point the working tree is on new code. Any failure
+    // rolls back to preSha so the service always restarts on a known-good
+    // build. The install-recovery marker covers the node_modules-wiped window
+    // so a crash mid-install self-heals on next boot (scripts/run-launchd.sh).
+    const scriptPath = path.join(cwd, 'scripts', 'service.sh');
+    if (!existsSync(scriptPath)) {
+      outputLines.push(
+        'Service script not found (scripts/service.sh); aborting before install so the running service stays untouched.',
+      );
+      emit('restarting', 'service.sh restart', 'failed', 'script not found');
+      return fail('Update aborted: scripts/service.sh not found.');
+    }
 
-    if (!installStep.ok && existsSync(path.join(cwd, 'package-lock.json'))) {
-      outputLines.push('npm ci failed; falling back to npm install.');
-      const fallbackInstall = runStep('npm install', 'npm', [
-        'install',
-        '--include=dev',
-      ]);
-      if (!fallbackInstall.ok) {
+    const installDeps = (tag: string): boolean => {
+      const hasLock = existsSync(path.join(cwd, 'package-lock.json'));
+      const label = `${hasLock ? 'npm ci' : 'npm install'}${tag}`;
+      emit('installing', label, 'started');
+      const start = Date.now();
+      const primary = hasLock
+        ? runStep('npm ci', 'npm', ['ci', '--include=dev'])
+        : runStep('npm install', 'npm', ['install', '--include=dev']);
+      if (primary.ok) {
         emit(
           'installing',
-          'npm install',
-          'failed',
-          fallbackInstall.result.stderr || 'failed',
-          Date.now() - installStart,
+          label,
+          'completed',
+          primary.result.stdout || undefined,
+          Date.now() - start,
+          true,
         );
-        return fail('Update aborted during dependency installation.');
+        return true;
+      }
+      if (hasLock) {
+        outputLines.push('npm ci failed; falling back to npm install.');
+        const fb = runStep('npm install', 'npm', ['install', '--include=dev']);
+        if (fb.ok) {
+          emit(
+            'installing',
+            `npm install${tag}`,
+            'completed',
+            fb.result.stdout || undefined,
+            Date.now() - start,
+            true,
+          );
+          return true;
+        }
+        emit(
+          'installing',
+          `npm install${tag}`,
+          'failed',
+          fb.result.stderr || 'failed',
+          Date.now() - start,
+        );
+        return false;
       }
       emit(
         'installing',
-        'npm install',
-        'completed',
-        fallbackInstall.result.stdout || undefined,
-        Date.now() - installStart,
-      );
-    } else if (!installStep.ok) {
-      emit(
-        'installing',
-        installLabel,
+        label,
         'failed',
-        installStep.result.stderr || 'failed',
-        Date.now() - installStart,
+        primary.result.stderr || 'failed',
+        Date.now() - start,
       );
-      return fail('Update aborted during dependency installation.');
-    } else {
+      return false;
+    };
+
+    const readServicePid = (): number | null => {
+      const res = runRaw('bash', [scriptPath, 'pid']);
+      const n = Number((res.stdout || '').trim());
+      return Number.isInteger(n) && n > 0 ? n : null;
+    };
+
+    // Restart returns restarting=true when the restart terminated this caller
+    // (expected in host configs where the worker is inside the service tree).
+    const restartService = (
+      tag: string,
+    ): { ok: boolean; restarting: boolean; detail: string } => {
+      emit('restarting', `service.sh restart${tag}`, 'started');
+      const start = Date.now();
+      const res = run('bash', [scriptPath, 'restart'], {
+        cwd,
+        env: {
+          ...env,
+          FFT_NANO_GATEWAY_CALL: '1',
+          FFT_NANO_NONINTERACTIVE: '1',
+        },
+        timeoutMs: stepTimeoutMs,
+      });
+      const out = combinedOutput(res);
+      if (out) outputLines.push(boundedOutput(out));
+      if (
+        res.status === null &&
+        (res.signal === 'SIGTERM' || res.signal === 'SIGKILL')
+      ) {
+        emit(
+          'restarting',
+          `service.sh restart${tag}`,
+          'completed',
+          'SIGTERM received (expected)',
+          Date.now() - start,
+          true,
+        );
+        return {
+          ok: true,
+          restarting: true,
+          detail: 'caller terminated by restart (expected)',
+        };
+      }
+      if (res.error) {
+        emit(
+          'restarting',
+          `service.sh restart${tag}`,
+          'failed',
+          res.error.message,
+          Date.now() - start,
+        );
+        return { ok: false, restarting: false, detail: res.error.message };
+      }
+      if (res.status !== 0) {
+        emit(
+          'restarting',
+          `service.sh restart${tag}`,
+          'failed',
+          `exit code ${res.status ?? 'unknown'}`,
+          Date.now() - start,
+        );
+        return {
+          ok: false,
+          restarting: false,
+          detail: `service restart exited ${res.status ?? 'unknown'}`,
+        };
+      }
       emit(
-        'installing',
-        installLabel,
+        'restarting',
+        `service.sh restart${tag}`,
         'completed',
-        installStep.result.stdout || undefined,
-        Date.now() - installStart,
+        res.stdout || undefined,
+        Date.now() - start,
+        true,
       );
+      return { ok: true, restarting: false, detail: 'restarted' };
+    };
+
+    // Health gate: confirm the new process actually stays up. A stable,
+    // unchanged PID across two samples means it booted; a missing or changing
+    // PID means it failed or is crash-looping.
+    const verifyHealth = (): { ok: boolean; detail: string } => {
+      emit('verifying', 'service health check', 'started');
+      const vStart = Date.now();
+      runRaw('sleep', [String(Math.max(1, Math.round(healthSettleMs / 1000)))]);
+      const pid1 = readServicePid();
+      if (!pid1) {
+        emit(
+          'verifying',
+          'service health check',
+          'failed',
+          'no running PID after restart',
+          Date.now() - vStart,
+        );
+        return {
+          ok: false,
+          detail: 'service did not report a running process after restart',
+        };
+      }
+      runRaw('sleep', [
+        String(Math.max(1, Math.round(healthRecheckMs / 1000))),
+      ]);
+      const pid2 = readServicePid();
+      if (!pid2) {
+        emit(
+          'verifying',
+          'service health check',
+          'failed',
+          'process exited after restart',
+          Date.now() - vStart,
+        );
+        return { ok: false, detail: 'service exited shortly after restart' };
+      }
+      if (pid1 !== pid2) {
+        emit(
+          'verifying',
+          'service health check',
+          'failed',
+          `pid ${pid1} -> ${pid2} (crash-looping)`,
+          Date.now() - vStart,
+        );
+        return {
+          ok: false,
+          detail: `service is crash-looping (pid changed ${pid1} -> ${pid2})`,
+        };
+      }
+      emit(
+        'verifying',
+        'service health check',
+        'completed',
+        `healthy (pid ${pid1})`,
+        Date.now() - vStart,
+        true,
+      );
+      return { ok: true, detail: `healthy (pid ${pid1})` };
+    };
+
+    const rollbackToKnownGood = (reason: string): UpdateCommandResult => {
+      outputLines.push('--- rollback ---');
+      outputLines.push(`Update failed: ${reason}`);
+      if (!preSha) {
+        clearUpdateMarker(cwd);
+        return fail(
+          `${reason} Rollback unavailable: pre-update commit was not captured. Recover manually: git reflog && git reset --hard <previous-sha>.`,
+        );
+      }
+      emit(
+        'restarting',
+        `rolling back to ${preSha.slice(0, 10)}`,
+        'started',
+        reason,
+      );
+      writeUpdateMarker(cwd, {
+        preSha,
+        branch: pullBranch,
+        at: now().toISOString(),
+      });
+      const reset = runStep('git reset --hard (rollback)', 'git', [
+        'reset',
+        '--hard',
+        preSha,
+      ]);
+      if (!reset.ok) {
+        clearUpdateMarker(cwd);
+        emit('restarting', 'rollback', 'failed', 'git reset failed');
+        return fail(
+          `Rollback FAILED: could not reset to ${preSha.slice(0, 10)}. Recover manually: cd ${cwd} && git reset --hard ${preSha}`,
+        );
+      }
+      if (stashRef) {
+        runStep('git stash apply (rollback)', 'git', [
+          'stash',
+          'apply',
+          stashRef,
+        ]);
+      }
+      if (!installDeps(' (rollback)')) {
+        return fail(
+          `Rolled back code to ${preSha.slice(0, 10)} but dependency reinstall failed. Run: cd ${cwd} && npm ci && npm run build && bash scripts/service.sh restart`,
+        );
+      }
+      emit('building', 'npm run build (rollback)', 'started');
+      const rb = runStep('npm run build (rollback)', 'npm', ['run', 'build']);
+      if (!rb.ok) {
+        emit(
+          'building',
+          'npm run build (rollback)',
+          'failed',
+          rb.result.stderr || 'failed',
+        );
+        return fail(
+          `Rolled back code to ${preSha.slice(0, 10)} but rebuild failed. Run: cd ${cwd} && npm run build && bash scripts/service.sh restart`,
+        );
+      }
+      emit(
+        'building',
+        'npm run build (rollback)',
+        'completed',
+        undefined,
+        undefined,
+        true,
+      );
+      clearUpdateMarker(cwd);
+      const restart = restartService(' (rollback)');
+      emit(
+        'complete',
+        'rolled back to previous version',
+        'completed',
+        reason,
+        undefined,
+        false,
+      );
+      if (restart.restarting) {
+        return {
+          ok: false,
+          text: `${outputLines.join('\n')}\nRolled back to the previous working version (${preSha.slice(0, 10)}); service restarting.`,
+        };
+      }
+      if (!restart.ok) {
+        return {
+          ok: false,
+          text: `${outputLines.join('\n')}\nRolled back code to ${preSha.slice(0, 10)} but service restart failed: ${restart.detail}. Restart manually: bash scripts/service.sh restart`,
+        };
+      }
+      return {
+        ok: false,
+        text: `${outputLines.join('\n')}\nUpdate failed and was rolled back to the previous working version (${preSha.slice(0, 10)}). Service restarted on the prior build.`,
+      };
+    };
+
+    // --- installing phase ---
+    writeUpdateMarker(cwd, {
+      preSha,
+      branch: pullBranch,
+      at: now().toISOString(),
+    });
+    if (!installDeps('')) {
+      return rollbackToKnownGood('dependency installation failed.');
     }
 
     // --- building phase ---
@@ -612,7 +1010,7 @@ export function runUpdateCommand(
         build.result.stderr || 'failed',
         Date.now() - buildStart,
       );
-      return fail('Update aborted during build.');
+      return rollbackToKnownGood('build failed on the new code.');
     }
     emit(
       'building',
@@ -620,44 +1018,35 @@ export function runUpdateCommand(
       'completed',
       build.result.stdout || undefined,
       Date.now() - buildStart,
+      true,
     );
+
+    // Deps + dist are good. Clear the recovery marker before restart so a clean
+    // reboot during the restart window does not re-run boot recovery.
+    clearUpdateMarker(cwd);
+
+    // Drop the autostash now that the new build includes the local changes.
+    if (stashRef) {
+      const drop = runStep('git stash drop', 'git', [
+        'stash',
+        'drop',
+        stashRef,
+      ]);
+      if (!drop.ok) {
+        outputLines.push(
+          `Warning: local changes were reapplied, but ${stashRef} could not be dropped. Drop it manually after inspection.`,
+        );
+      }
+      stashRef = null;
+    }
 
     // --- restarting phase ---
     outputLines.push('--- restart ---');
-    const scriptPath = path.join(cwd, 'scripts', 'service.sh');
-    if (!existsSync(scriptPath)) {
-      outputLines.push('Service script not found. Restart manually.');
-      emit('restarting', 'service.sh restart', 'failed', 'script not found');
-      return { ok: false, text: outputLines.join('\n') };
-    }
-
-    emit('restarting', 'service.sh restart', 'started');
-    let restartStart = Date.now();
-    const restartResult = run('bash', [scriptPath, 'restart'], {
-      cwd,
-      env: {
-        ...env,
-        FFT_NANO_GATEWAY_CALL: '1',
-        FFT_NANO_NONINTERACTIVE: '1',
-      },
-      timeoutMs: stepTimeoutMs,
-    });
-
-    const restartOutput = combinedOutput(restartResult);
-    if (restartOutput) outputLines.push(boundedOutput(restartOutput));
-
-    if (
-      restartResult.status === null &&
-      (restartResult.signal === 'SIGTERM' || restartResult.signal === 'SIGKILL')
-    ) {
+    const restart = restartService('');
+    if (restart.restarting) {
+      // The restart terminated this caller; the new process is coming up and we
+      // cannot verify health from a dead process. Report success optimistically.
       outputLines.push('Update complete. Service restarting.');
-      emit(
-        'restarting',
-        'service.sh restart',
-        'completed',
-        'SIGTERM received (expected)',
-        Date.now() - restartStart,
-      );
       emit(
         'complete',
         'update complete',
@@ -668,66 +1057,19 @@ export function runUpdateCommand(
       );
       return { ok: true, text: outputLines.join('\n') };
     }
-
-    if (restartResult.error) {
-      outputLines.push(`Failed: ${restartResult.error.message}`);
-      emit(
-        'restarting',
-        'service.sh restart',
-        'failed',
-        restartResult.error.message,
-        Date.now() - restartStart,
-      );
-      return { ok: false, text: outputLines.join('\n') };
+    if (!restart.ok) {
+      return rollbackToKnownGood(`service restart failed: ${restart.detail}.`);
     }
 
-    if (restartResult.status !== 0) {
-      outputLines.push(
-        `Service restart failed with exit code ${restartResult.status ?? 'unknown'}. Update applied but service may need manual restart.`,
-      );
-      emit(
-        'restarting',
-        'service.sh restart',
-        'failed',
-        `exit code ${restartResult.status}`,
-        Date.now() - restartStart,
-      );
-      return { ok: false, text: outputLines.join('\n') };
+    // --- verifying phase: confirm the new build actually stays up ---
+    const health = verifyHealth();
+    if (!health.ok) {
+      return rollbackToKnownGood(health.detail);
     }
-    emit(
-      'restarting',
-      'service.sh restart',
-      'completed',
-      restartResult.stdout || undefined,
-      Date.now() - restartStart,
+
+    outputLines.push(
+      `Update complete. Service restarted and verified ${health.detail}.`,
     );
-
-    // --- verifying phase ---
-    emit('verifying', 'service.sh status', 'started');
-    let verifyStart = Date.now();
-    const statusCheck = runStep('service status check', 'bash', [
-      scriptPath,
-      'status',
-    ]);
-    if (!statusCheck.ok) {
-      emit(
-        'verifying',
-        'service.sh status',
-        'failed',
-        statusCheck.result.stderr || 'failed',
-        Date.now() - verifyStart,
-      );
-      return fail('Update applied, but service status verification failed.');
-    }
-    emit(
-      'verifying',
-      'service.sh status',
-      'completed',
-      statusCheck.result.stdout || undefined,
-      Date.now() - verifyStart,
-    );
-
-    outputLines.push('Update complete. Service restarted.');
     emit(
       'complete',
       'update complete',

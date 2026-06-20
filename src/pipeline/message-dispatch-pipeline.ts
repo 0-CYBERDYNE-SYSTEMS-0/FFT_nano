@@ -6,6 +6,10 @@ import type { NewMessage } from '../types.js';
 import type { CodingWorkerResult } from '../coding-orchestrator.js';
 import { mintRunAuthority, deriveEffectiveToolSet } from '../run-authority.js';
 import { runSampledChatEvaluation } from '../evaluator.js';
+import {
+  cancelActiveMaintenance,
+  cancelPendingGraceTimer,
+} from '../skill-service.js';
 
 export interface FinalizeCompletedRunParams {
   chatJid: string;
@@ -1837,6 +1841,28 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     if (classified.origin === 'user') {
       // Mark host activity so the idle curator only runs during true quiet.
       deps.state.lastInboundAt = Date.now();
+
+      // LISO.2: Cancel any active maintenance and pending grace timers for this group.
+      // This runs at the earliest common inbound dispatch point before starting
+      // the interactive turn.
+      const group = deps.state.registeredGroups[msg.chat_jid];
+      if (group) {
+        // Cancel pending grace timer first
+        cancelPendingGraceTimer(group.folder);
+
+        // Cancel active maintenance run and wait for graceful exit (max 2s)
+        const cancelPromise = cancelActiveMaintenance(
+          group.folder,
+          'user-inbound',
+        );
+        // Wait up to 2 seconds for graceful exit
+        const timeoutPromise = new Promise<void>((resolve) =>
+          setTimeout(resolve, 2000),
+        );
+        await Promise.race([cancelPromise, timeoutPromise]);
+        // If cancelPromise hasn't resolved, force-terminate is handled by the
+        // AbortController in runQuietSkillAgent
+      }
     }
     if (classified.origin === 'user' && deps.activeChatRuns.has(msg.chat_jid)) {
       enqueueInboundMessage(msg);

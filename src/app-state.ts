@@ -211,6 +211,24 @@ export interface TelegramToolProgressState {
   chain: Promise<void>;
 }
 
+// LISO.2: Active maintenance run registry
+export interface ActiveMaintenanceRun {
+  groupFolder: string;
+  runId: string;
+  startedAt: number;
+  controller: AbortController;
+  kind: 'self-improve' | 'curator' | 'evaluator';
+  reviewedTurnId: string;
+}
+
+// LISO.2: Pending idle grace timers
+export interface PendingGraceTimer {
+  groupFolder: string;
+  runId: string;
+  startedAt: number;
+  timer: NodeJS.Timeout;
+}
+
 // ---------------------------------------------------------------------------
 // Singleton mutable state — one object so ESM re-assignment works across modules
 // ---------------------------------------------------------------------------
@@ -244,6 +262,9 @@ export const state = {
   shuttingDown: false,
   heartbeatLastTargetAny: null as string | null,
   tuiGatewayServer: null as TuiGatewayServer | null,
+  tuiGatewayHealthy: true,
+  tuiGatewayLastError: null as string | null,
+  tuiGatewayLocalEndpoint: null as string | null,
   webControlCenterServer: null as WebControlCenterServer | null,
   piModelsCache: null as { entries: PiModelEntry[]; loadedAt: number } | null,
   // WS6.3: global kill-switch for all learning loops. Checked by
@@ -311,6 +332,12 @@ export const telegramToolProgressRuns = new Map<
   string,
   TelegramToolProgressState
 >();
+
+// LISO.2: Active maintenance runs registry — one per group
+export const activeMaintenanceRuns = new Map<string, ActiveMaintenanceRun>();
+
+// LISO.2: Pending idle grace timers — one per group
+export const pendingGraceTimers = new Map<string, PendingGraceTimer>();
 
 // ---------------------------------------------------------------------------
 // Stale-state pruning — call periodically to prevent unbounded map growth

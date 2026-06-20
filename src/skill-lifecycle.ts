@@ -637,7 +637,10 @@ function createSkill(params: {
     body,
     provenance: params.provenance,
   });
-  snapshotSkillFile(path.join(dir, 'SKILL.md'), PARITY_CONFIG.skills.historyRetentionDays);
+  snapshotSkillFile(
+    path.join(dir, 'SKILL.md'),
+    PARITY_CONFIG.skills.historyRetentionDays,
+  );
   writeTextFileAtomic(path.join(dir, 'SKILL.md'), normalized, {
     backupPath: defaultBackupPath(path.join(dir, 'SKILL.md')),
   });
@@ -1090,18 +1093,49 @@ export async function executeSkillAction(
       }
     }
 
-    const attribution: MutationAttribution = { authorityId, senderRole, jid: chatJid };
+    const attribution: MutationAttribution = {
+      authorityId,
+      senderRole,
+      jid: chatJid,
+    };
     const provenance =
       senderRole === 'operator' ? 'operator-requested' : 'agent-inferred';
 
     // Mutation-budget check: only for mutation-type actions
     const isMutationAction = [
-      'skill_create', 'skill_patch', 'skill_write_file',
-      'skill_archive', 'skill_restore', 'skill_rollback',
+      'skill_create',
+      'skill_patch',
+      'skill_write_file',
+      'skill_archive',
+      'skill_restore',
+      'skill_rollback',
     ].includes(parsed.action);
 
     if (isMutationAction) {
-      const budgetResult = checkMutationBudget({ groupFolder, attribution, mutationType: 'skill' });
+      if (authority?.dryRun) {
+        recordMutationAuditEvent(groupFolder, {
+          kind: 'noop',
+          authorityId,
+          senderRole,
+          mutationType: 'skill',
+          action: parsed.action,
+          targetName: parsed.params.name,
+          noopReason: 'dry-run',
+          success: false,
+        });
+        return {
+          requestId: parsed.requestId,
+          status: 'error',
+          error:
+            'Skill mutation blocked: dry-run run. Report what you would change; do not call mutating skill actions.',
+          executedAt,
+        };
+      }
+      const budgetResult = checkMutationBudget({
+        groupFolder,
+        attribution,
+        mutationType: 'skill',
+      });
       if (!budgetResult.allowed) {
         // Record no-op event
         recordMutationAuditEvent(groupFolder, {
