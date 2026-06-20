@@ -58,6 +58,9 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      - name: Install root dependencies
+        run: npm ci
+
       - name: Typecheck
         working-directory: apps/desktop
         run: npm run typecheck

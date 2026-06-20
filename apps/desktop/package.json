@@ -59,8 +59,7 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "msi"
+        "nsis"
       ],
       "artifactName": "${productName}-${version}-Setup.${ext}"
     },
@@ -71,6 +70,9 @@
         "rpm"
       ],
       "category": "Network",
+      "maintainer": "FFT_nano <ops@fft-nano.example>",
+      "vendor": "FFT_nano",
+      "description": "FFT_nano Desktop App - Native Electron desktop application",
       "artifactName": "${productName}-${version}.${ext}"
     },
     "nsis": {
