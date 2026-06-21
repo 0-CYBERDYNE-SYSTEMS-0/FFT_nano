@@ -34,11 +34,39 @@ test('ensureOpenCodeGoModels seeds DeepSeek V4 models without dropping existing 
 
   const body = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
   const provider = body.providers['opencode-go'];
-  assert.equal(provider.apiKey, 'OPENCODE_API_KEY');
+  assert.equal(provider.apiKey, 'OPENCODE_GO_API_KEY');
   const ids = provider.models.map((model: { id: string }) => model.id);
   assert.ok(ids.includes('custom-existing'));
   for (const model of OPENCODE_GO_DEEPSEEK_MODELS) {
     assert.ok(ids.includes(model.id));
   }
+});
+
+test('ensureOpenCodeGoModels self-heals stale OPENCODE_API_KEY reference', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-opencode-go-'));
+  const modelsPath = path.join(dir, 'models.json');
+  fs.writeFileSync(
+    modelsPath,
+    JSON.stringify(
+      {
+        providers: {
+          'opencode-go': {
+            apiKey: 'OPENCODE_API_KEY',
+            models: [],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    'utf-8',
+  );
+
+  const result = ensureOpenCodeGoModels(dir);
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+
+  const body = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+  assert.equal(body.providers['opencode-go'].apiKey, 'OPENCODE_GO_API_KEY');
 });
 

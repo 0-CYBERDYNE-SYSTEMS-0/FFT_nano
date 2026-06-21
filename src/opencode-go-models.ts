@@ -72,7 +72,9 @@ export function ensureOpenCodeGoModels(
       providers[OPENCODE_GO_PROVIDER] = {};
     }
     const provider = providers[OPENCODE_GO_PROVIDER] as JsonObject;
-    if (!provider.apiKey) provider.apiKey = 'OPENCODE_API_KEY';
+    if (!provider.apiKey || provider.apiKey === 'OPENCODE_API_KEY') {
+      provider.apiKey = 'OPENCODE_GO_API_KEY';
+    }
 
     const models = Array.isArray(provider.models) ? [...provider.models] : [];
     const byId = new Map<string, number>();
