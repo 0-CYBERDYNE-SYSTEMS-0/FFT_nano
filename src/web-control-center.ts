@@ -14,6 +14,7 @@ import {
   FFT_NANO_TUI_PORT,
   FEATURE_FARM,
   FFT_PROFILE,
+  GROUPS_DIR,
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
   PARITY_CONFIG,
@@ -44,12 +45,37 @@ import {
   captureKnowledgeRawNote,
   ensureKnowledgeWikiScaffold,
   readKnowledgeWikiStatus,
+  resolveKnowledgeWikiPaths,
   runKnowledgeWikiLint,
+  appendKnowledgeWikiLog,
 } from './knowledge-wiki.js';
 import { KNOWLEDGE_NIGHTLY_TASK_ID } from './knowledge-wiki-task.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { computeTaskNextRun } from './task-schedule.js';
-import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import {
+  isValidGroupFolder,
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+} from './group-folder.js';
+import { writeTextFileAtomic } from './atomic-write.js';
+import {
+  isAllowedMemoryRelativePath,
+  resolveAllowedMemoryFilePath,
+  resolveGroupWorkspaceDir,
+  resolveMemoryDir,
+  resolveCanonicalDir,
+  isCanonicalScaffoldContent,
+} from './memory-paths.js';
+import {
+  listMemoryHistory,
+  rollbackMemoryFile,
+  snapshotMemoryFile,
+} from './memory-history.js';
+import {
+  listSkillHistory,
+  rollbackSkillFile,
+  snapshotSkillFile,
+} from './skill-history.js';
 import {
   startWebControlCenterServer,
   type WebControlCenterAdapters,
@@ -404,6 +430,613 @@ export function getControlCenterMemoryOverview() {
   };
 }
 
+// --- Memory CRUD for the web UI ---------------------------------------------
+
+const MEMORY_DOC_FILES = [
+  'NANO.md',
+  'SOUL.md',
+  'TODOS.md',
+  'MEMORY.md',
+  'HEARTBEAT.md',
+  'BOOTSTRAP.md',
+];
+
+const MEMORY_KINDS_BY_FILENAME: Record<string, string> = {
+  'NANO.md': 'doc',
+  'SOUL.md': 'doc',
+  'TODOS.md': 'doc',
+  'MEMORY.md': 'doc',
+  'HEARTBEAT.md': 'doc',
+  'BOOTSTRAP.md': 'doc',
+};
+
+function statMemoryFile(
+  absolutePath: string,
+  relPath: string,
+): {
+  path: string;
+  name: string;
+  size: number;
+  modifiedAt: string;
+  kind: string;
+  exists: boolean;
+  scaffoldOnly?: boolean;
+} {
+  const exists =
+    fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile();
+  const stat = exists ? fs.statSync(absolutePath) : null;
+  const name = path.posix.basename(relPath);
+  let kind = 'doc';
+  if (relPath.startsWith('canonical/')) kind = 'canonical';
+  else if (relPath.startsWith('memory/')) kind = 'memory';
+  else kind = MEMORY_KINDS_BY_FILENAME[name] || 'doc';
+  return {
+    path: relPath,
+    name,
+    size: stat?.size ?? 0,
+    modifiedAt: stat ? stat.mtime.toISOString() : '',
+    kind,
+    exists,
+  };
+}
+
+function listMarkdownFilesRecursive(dir: string, baseDir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const out: string[] = [];
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+        out.push(path.relative(baseDir, full).replace(/\\/g, '/'));
+      }
+    }
+  }
+  out.sort();
+  return out;
+}
+
+function collectMemoryFilesForGroup(groupFolder: string) {
+  const workspaceDir = resolveGroupWorkspaceDir(groupFolder);
+  const seen = new Map<string, ReturnType<typeof statMemoryFile>>();
+
+  for (const name of MEMORY_DOC_FILES) {
+    const abs = path.join(workspaceDir, name);
+    const stat = statMemoryFile(abs, name);
+    seen.set(name, stat);
+  }
+
+  for (const rel of listMarkdownFilesRecursive(
+    resolveCanonicalDir(groupFolder),
+    workspaceDir,
+  )) {
+    if (seen.has(rel)) continue;
+    const abs = path.join(workspaceDir, rel);
+    const stat = statMemoryFile(abs, rel);
+    if (stat.exists) {
+      let content = '';
+      try {
+        content = fs.readFileSync(abs, 'utf-8');
+      } catch {
+        // ignore
+      }
+      const fileName = path.posix.basename(rel);
+      stat.kind = 'canonical';
+      stat.scaffoldOnly = isCanonicalScaffoldContent(fileName, content);
+    }
+    seen.set(rel, stat);
+  }
+
+  for (const rel of listMarkdownFilesRecursive(
+    resolveMemoryDir(groupFolder),
+    workspaceDir,
+  )) {
+    if (seen.has(rel)) continue;
+    const abs = path.join(workspaceDir, rel);
+    const stat = statMemoryFile(abs, rel);
+    if (stat.exists) stat.kind = 'memory';
+    seen.set(rel, stat);
+  }
+
+  return Array.from(seen.values()).sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export function listControlCenterMemoryGroups() {
+  const main: {
+    folder: string;
+    workspaceDir: string;
+    isMain: boolean;
+    isGlobal: boolean;
+  } = {
+    folder: MAIN_GROUP_FOLDER,
+    workspaceDir: MAIN_WORKSPACE_DIR,
+    isMain: true,
+    isGlobal: false,
+  };
+  const groups: Array<typeof main> = [main];
+
+  try {
+    if (fs.existsSync(GROUPS_DIR)) {
+      for (const entry of fs.readdirSync(GROUPS_DIR)) {
+        if (!isValidGroupFolder(entry)) continue;
+        if (entry === MAIN_GROUP_FOLDER) continue;
+        groups.push({
+          folder: entry,
+          workspaceDir: resolveGroupFolderPath(entry),
+          isMain: false,
+          isGlobal: false,
+        });
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to enumerate memory groups');
+  }
+
+  return { groups };
+}
+
+export function listControlCenterMemoryFiles(payload: { group?: string }) {
+  const group = (payload.group || '').trim() || MAIN_GROUP_FOLDER;
+  if (group !== MAIN_GROUP_FOLDER && !isValidGroupFolder(group)) {
+    throw new Error(`Unknown group: ${group}`);
+  }
+  const files = collectMemoryFilesForGroup(group);
+  return {
+    group,
+    workspaceDir: resolveGroupWorkspaceDir(group),
+    files,
+  };
+}
+
+export function readControlCenterMemoryFile(payload: {
+  group?: string;
+  path?: string;
+}) {
+  const group = (payload.group || '').trim() || MAIN_GROUP_FOLDER;
+  if (group !== MAIN_GROUP_FOLDER && !isValidGroupFolder(group)) {
+    throw new Error(`Unknown group: ${group}`);
+  }
+  const relPath = (payload.path || '').trim();
+  if (!relPath) throw new Error('path is required');
+  if (!isAllowedMemoryRelativePath(relPath)) {
+    throw new Error(`Path "${relPath}" is not an allowed memory file`);
+  }
+  const absPath = resolveAllowedMemoryFilePath(group, relPath);
+  const exists = fs.existsSync(absPath) && fs.statSync(absPath).isFile();
+  const content = exists ? fs.readFileSync(absPath, 'utf-8') : '';
+  const stat = exists ? fs.statSync(absPath) : null;
+  return {
+    group,
+    path: relPath.replace(/\\/g, '/'),
+    exists,
+    content,
+    size: stat?.size ?? 0,
+    modifiedAt: stat ? stat.mtime.toISOString() : '',
+  };
+}
+
+export function writeControlCenterMemoryFile(payload: {
+  group?: string;
+  path?: string;
+  content?: string;
+}) {
+  const group = (payload.group || '').trim() || MAIN_GROUP_FOLDER;
+  if (group !== MAIN_GROUP_FOLDER && !isValidGroupFolder(group)) {
+    throw new Error(`Unknown group: ${group}`);
+  }
+  const relPath = (payload.path || '').trim();
+  if (!relPath) throw new Error('path is required');
+  if (!isAllowedMemoryRelativePath(relPath)) {
+    throw new Error(`Path "${relPath}" is not an allowed memory file`);
+  }
+  const content = typeof payload.content === 'string' ? payload.content : '';
+  const absPath = resolveAllowedMemoryFilePath(group, relPath);
+  // Snapshot the prior content (no-op for first write) so the change is reversible.
+  if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+    snapshotMemoryFile(absPath, {
+      authorityId: 'control-center',
+      senderRole: 'operator',
+    });
+  }
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  writeTextFileAtomic(absPath, content);
+  const stat = fs.statSync(absPath);
+  return {
+    group,
+    path: relPath.replace(/\\/g, '/'),
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+  };
+}
+
+export function listControlCenterMemoryHistoryEntries(payload: {
+  group?: string;
+  path?: string;
+}) {
+  const group = (payload.group || '').trim() || MAIN_GROUP_FOLDER;
+  if (group !== MAIN_GROUP_FOLDER && !isValidGroupFolder(group)) {
+    throw new Error(`Unknown group: ${group}`);
+  }
+  const relPath = (payload.path || '').trim();
+  if (!relPath) throw new Error('path is required');
+  if (!isAllowedMemoryRelativePath(relPath)) {
+    throw new Error(`Path "${relPath}" is not an allowed memory file`);
+  }
+  const absPath = resolveAllowedMemoryFilePath(group, relPath);
+  const entries = listMemoryHistory(absPath);
+  const versions = entries.map((entry) => {
+    const stat = fs.statSync(entry.path);
+    return {
+      version: entry.version,
+      size: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+    };
+  });
+  return { group, path: relPath.replace(/\\/g, '/'), versions };
+}
+
+export function rollbackControlCenterMemoryFile(payload: {
+  group?: string;
+  path?: string;
+  version?: string;
+}) {
+  const group = (payload.group || '').trim() || MAIN_GROUP_FOLDER;
+  if (group !== MAIN_GROUP_FOLDER && !isValidGroupFolder(group)) {
+    throw new Error(`Unknown group: ${group}`);
+  }
+  const relPath = (payload.path || '').trim();
+  if (!relPath) throw new Error('path is required');
+  if (!isAllowedMemoryRelativePath(relPath)) {
+    throw new Error(`Path "${relPath}" is not an allowed memory file`);
+  }
+  const absPath = resolveAllowedMemoryFilePath(group, relPath);
+  const version = rollbackMemoryFile(absPath, { version: payload.version });
+  if (!version) {
+    throw new Error('No history available to roll back');
+  }
+  const stat = fs.existsSync(absPath) ? fs.statSync(absPath) : null;
+  return {
+    group,
+    path: relPath.replace(/\\/g, '/'),
+    version,
+    size: stat?.size ?? 0,
+    modifiedAt: stat ? stat.mtime.toISOString() : '',
+  };
+}
+
+// --- Knowledge CRUD for the web UI ------------------------------------------
+
+function listKnowledgeDirFiles(
+  dir: string,
+  rootDir: string,
+  kind:
+    | 'knowledge-raw'
+    | 'knowledge-wiki'
+    | 'knowledge-schema'
+    | 'knowledge-report'
+    | 'knowledge-readme',
+): Array<{
+  path: string;
+  name: string;
+  size: number;
+  modifiedAt: string;
+  kind: string;
+  exists: boolean;
+}> {
+  if (!fs.existsSync(dir)) return [];
+  const out: Array<{
+    path: string;
+    name: string;
+    size: number;
+    modifiedAt: string;
+    kind: string;
+    exists: boolean;
+  }> = [];
+  for (const entry of fs.readdirSync(dir)) {
+    if (entry.startsWith('.')) continue;
+    const abs = path.join(dir, entry);
+    if (!fs.statSync(abs).isFile()) continue;
+    if (!entry.toLowerCase().endsWith('.md')) continue;
+    const stat = fs.statSync(abs);
+    const rel = path.relative(rootDir, abs).replace(/\\/g, '/');
+    out.push({
+      path: rel,
+      name: entry,
+      size: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+      kind,
+      exists: true,
+    });
+  }
+  out.sort((a, b) => a.path.localeCompare(b.path));
+  return out;
+}
+
+const KNOWLEDGE_ALLOWED_PREFIXES = [
+  'wiki/',
+  'raw/',
+  'schema/',
+  'reports/',
+  'README.md',
+];
+
+function isAllowedKnowledgeRelativePath(relPath: string): boolean {
+  const normalized = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized) return false;
+  if (normalized.includes('..')) return false;
+  return KNOWLEDGE_ALLOWED_PREFIXES.some((prefix) =>
+    prefix.endsWith('/')
+      ? normalized.startsWith(prefix)
+      : normalized === prefix,
+  );
+}
+
+function resolveKnowledgeFile(workspaceDir: string, relPath: string) {
+  const normalized = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!isAllowedKnowledgeRelativePath(normalized)) {
+    throw new Error(`Path "${relPath}" is not an allowed knowledge file`);
+  }
+  const paths = resolveKnowledgeWikiPaths(workspaceDir);
+  const rootReal = fs.realpathSync
+    ? (() => {
+        try {
+          return fs.realpathSync(workspaceDir);
+        } catch {
+          return path.resolve(workspaceDir);
+        }
+      })()
+    : path.resolve(workspaceDir);
+  const abs = path.resolve(rootReal, normalized);
+  const rel = path.relative(rootReal, abs);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Resolved path escapes knowledge root');
+  }
+  return { absPath: abs, rootReal };
+}
+
+export function listControlCenterKnowledgeFiles() {
+  const scaffold = ensureKnowledgeWikiScaffold({
+    workspaceDir: MAIN_WORKSPACE_DIR,
+  });
+  const rootDir = scaffold.paths.rootDir;
+  return {
+    workspaceDir: MAIN_WORKSPACE_DIR,
+    rootDir,
+    files: [
+      ...listKnowledgeDirFiles(scaffold.paths.rawDir, rootDir, 'knowledge-raw'),
+      ...listKnowledgeDirFiles(
+        scaffold.paths.wikiDir,
+        rootDir,
+        'knowledge-wiki',
+      ),
+      ...listKnowledgeDirFiles(
+        scaffold.paths.schemaDir,
+        rootDir,
+        'knowledge-schema',
+      ),
+      ...listKnowledgeDirFiles(
+        scaffold.paths.reportsDir,
+        rootDir,
+        'knowledge-report',
+      ),
+      ...listKnowledgeDirFiles(rootDir, rootDir, 'knowledge-readme'),
+    ],
+  };
+}
+
+export function readControlCenterKnowledgeFile(payload: { path?: string }) {
+  const relPath = (payload.path || '').trim();
+  if (!relPath) throw new Error('path is required');
+  const { absPath, rootReal } = resolveKnowledgeFile(
+    MAIN_WORKSPACE_DIR,
+    relPath,
+  );
+  const exists = fs.existsSync(absPath) && fs.statSync(absPath).isFile();
+  const content = exists ? fs.readFileSync(absPath, 'utf-8') : '';
+  const stat = exists ? fs.statSync(absPath) : null;
+  return {
+    workspaceDir: MAIN_WORKSPACE_DIR,
+    path: path.relative(rootReal, absPath).replace(/\\/g, '/'),
+    exists,
+    content,
+    size: stat?.size ?? 0,
+    modifiedAt: stat ? stat.mtime.toISOString() : '',
+  };
+}
+
+export function writeControlCenterKnowledgeFile(payload: {
+  path?: string;
+  content?: string;
+  mode?: 'replace' | 'append';
+}) {
+  const relPath = (payload.path || '').trim();
+  if (!relPath) throw new Error('path is required');
+  const { absPath, rootReal } = resolveKnowledgeFile(
+    MAIN_WORKSPACE_DIR,
+    relPath,
+  );
+  const content = typeof payload.content === 'string' ? payload.content : '';
+  const mode = payload.mode === 'append' ? 'append' : 'replace';
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  if (mode === 'append') {
+    if (fs.existsSync(absPath)) {
+      snapshotMemoryFile(absPath, {
+        authorityId: 'control-center',
+        senderRole: 'operator',
+      });
+    }
+    fs.appendFileSync(absPath, content, 'utf-8');
+  } else {
+    if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+      snapshotMemoryFile(absPath, {
+        authorityId: 'control-center',
+        senderRole: 'operator',
+      });
+    }
+    writeTextFileAtomic(absPath, content);
+  }
+  const stat = fs.statSync(absPath);
+  const effectiveRel = path.relative(rootReal, absPath).replace(/\\/g, '/');
+  appendKnowledgeWikiLog({
+    workspaceDir: MAIN_WORKSPACE_DIR,
+    entry: `[ui-edit] mode=${mode} path=${effectiveRel} size=${stat.size}`,
+  });
+  return {
+    path: effectiveRel,
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+    mode,
+  };
+}
+
+// --- Skills read/write for the web UI ----------------------------------------
+
+const MAX_SKILL_FILE_BYTES = 256 * 1024;
+
+function resolveSkillFile(rootPath: string, skillPath: string) {
+  const normalized = skillPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized) throw new Error('path is required');
+  if (normalized.includes('..')) {
+    throw new Error('Path escapes skill root');
+  }
+  // Must be a SKILL.md file at the end of a non-empty directory path
+  if (!/^.+?\/SKILL\.md$/i.test(normalized)) {
+    throw new Error('Only SKILL.md files under a skill directory are editable');
+  }
+  const abs = path.resolve(rootPath, normalized);
+  const rootReal = fs.existsSync(rootPath)
+    ? fs.realpathSync(rootPath)
+    : path.resolve(rootPath);
+  // Resolve the absolute path too so the boundary check holds across
+  // symlinked prefixes (e.g. macOS /var/folders → /private/var/folders).
+  const absReal = fs.existsSync(abs) ? fs.realpathSync(abs) : abs;
+  const rel = path.relative(rootReal, absReal);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Path escapes skill root');
+  }
+  return { absPath: absReal, rootReal, relPath: normalized };
+}
+
+function findSkillRootById(
+  rootId: string,
+  roots: Array<{ id: string; path: string; label: string }>,
+) {
+  const target = roots.find((root) => root.id === rootId);
+  if (!target) throw new Error(`Unknown skill root: ${rootId}`);
+  return target;
+}
+
+export function readControlCenterSkillFile(
+  payload: { root?: string; path?: string },
+  roots: Array<{ id: string; path: string; label: string }>,
+) {
+  const rootId = (payload.root || '').trim();
+  if (!rootId) throw new Error('root is required');
+  const skillPath = (payload.path || '').trim();
+  if (!skillPath) throw new Error('path is required');
+  const root = findSkillRootById(rootId, roots);
+  const { absPath, rootReal, relPath } = resolveSkillFile(root.path, skillPath);
+  const exists = fs.existsSync(absPath) && fs.statSync(absPath).isFile();
+  const stat = exists ? fs.statSync(absPath) : null;
+  if (exists && stat && stat.size > MAX_SKILL_FILE_BYTES) {
+    throw new Error(`Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes`);
+  }
+  const content = exists ? fs.readFileSync(absPath, 'utf-8') : '';
+  return {
+    root: { id: root.id, label: root.label, path: rootReal },
+    path: relPath,
+    exists,
+    content,
+    size: stat?.size ?? 0,
+    modifiedAt: stat ? stat.mtime.toISOString() : '',
+  };
+}
+
+export function writeControlCenterSkillFile(
+  payload: { root?: string; path?: string; content?: string },
+  roots: Array<{ id: string; path: string; label: string }>,
+) {
+  const rootId = (payload.root || '').trim();
+  if (!rootId) throw new Error('root is required');
+  const skillPath = (payload.path || '').trim();
+  if (!skillPath) throw new Error('path is required');
+  const content = typeof payload.content === 'string' ? payload.content : '';
+  if (Buffer.byteLength(content, 'utf-8') > MAX_SKILL_FILE_BYTES) {
+    throw new Error(`Skill content exceeds ${MAX_SKILL_FILE_BYTES} bytes`);
+  }
+  const root = findSkillRootById(rootId, roots);
+  const { absPath, rootReal, relPath } = resolveSkillFile(root.path, skillPath);
+  if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+    snapshotSkillFile(absPath);
+  }
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  writeTextFileAtomic(absPath, content);
+  const stat = fs.statSync(absPath);
+  return {
+    root: { id: root.id, label: root.label, path: rootReal },
+    path: relPath,
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+  };
+}
+
+export function listControlCenterSkillHistoryEntries(
+  payload: { root?: string; path?: string },
+  roots: Array<{ id: string; path: string; label: string }>,
+) {
+  const rootId = (payload.root || '').trim();
+  if (!rootId) throw new Error('root is required');
+  const skillPath = (payload.path || '').trim();
+  if (!skillPath) throw new Error('path is required');
+  const root = findSkillRootById(rootId, roots);
+  const { absPath, rootReal, relPath } = resolveSkillFile(root.path, skillPath);
+  const entries = listSkillHistory(absPath);
+  return {
+    root: { id: root.id, label: root.label, path: rootReal },
+    path: relPath,
+    versions: entries.map((entry) => {
+      const stat = fs.statSync(entry.path);
+      return {
+        version: entry.version,
+        size: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      };
+    }),
+  };
+}
+
+export function rollbackControlCenterSkillFile(
+  payload: { root?: string; path?: string; version?: string },
+  roots: Array<{ id: string; path: string; label: string }>,
+) {
+  const rootId = (payload.root || '').trim();
+  if (!rootId) throw new Error('root is required');
+  const skillPath = (payload.path || '').trim();
+  if (!skillPath) throw new Error('path is required');
+  const root = findSkillRootById(rootId, roots);
+  const { absPath, rootReal, relPath } = resolveSkillFile(root.path, skillPath);
+  const version = rollbackSkillFile(absPath, { version: payload.version });
+  if (!version) throw new Error('No skill history to roll back');
+  const stat = fs.statSync(absPath);
+  return {
+    root: { id: root.id, label: root.label, path: rootReal },
+    path: relPath,
+    version,
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+  };
+}
+
 export function getControlCenterKnowledgeStatus() {
   const scaffold = ensureKnowledgeWikiScaffold({
     workspaceDir: MAIN_WORKSPACE_DIR,
@@ -434,6 +1067,18 @@ export function getControlCenterKnowledgeStatus() {
 export function createWebControlCenterAdapters(
   deps: WebControlCenterDeps,
 ): WebControlCenterAdapters {
+  const skillFileRoots: Array<{ id: string; path: string; label: string }> = [
+    {
+      id: 'skills-project',
+      label: 'Project Skills',
+      path: path.resolve(process.cwd(), 'skills'),
+    },
+    {
+      id: 'skills-user',
+      label: 'User Skills',
+      path: path.join(MAIN_WORKSPACE_DIR, 'skills'),
+    },
+  ];
   return {
     getRuntimeStatus: () => ({
       runtime: getContainerRuntime(),
@@ -478,7 +1123,17 @@ export function createWebControlCenterAdapters(
     taskAction: (payload) => performControlCenterTaskAction(payload),
     getPipelines: () => getControlCenterPipelines(),
     getMemoryOverview: () => getControlCenterMemoryOverview(),
+    listMemoryGroups: () => listControlCenterMemoryGroups(),
+    listMemoryFiles: (payload) => listControlCenterMemoryFiles(payload),
+    readMemoryFile: (payload) => readControlCenterMemoryFile(payload),
+    writeMemoryFile: (payload) => writeControlCenterMemoryFile(payload),
+    listMemoryHistory: (payload) =>
+      listControlCenterMemoryHistoryEntries(payload),
+    rollbackMemoryFile: (payload) => rollbackControlCenterMemoryFile(payload),
     getKnowledgeStatus: () => getControlCenterKnowledgeStatus(),
+    listKnowledgeFiles: () => listControlCenterKnowledgeFiles(),
+    readKnowledgeFile: (payload) => readControlCenterKnowledgeFile(payload),
+    writeKnowledgeFile: (payload) => writeControlCenterKnowledgeFile(payload),
     knowledgeCapture: (payload) =>
       captureKnowledgeRawNote({
         workspaceDir: MAIN_WORKSPACE_DIR,
@@ -487,6 +1142,14 @@ export function createWebControlCenterAdapters(
       }),
     knowledgeLint: () =>
       runKnowledgeWikiLint({ workspaceDir: MAIN_WORKSPACE_DIR }),
+    readSkillFile: (payload) =>
+      readControlCenterSkillFile(payload, skillFileRoots),
+    writeSkillFile: (payload) =>
+      writeControlCenterSkillFile(payload, skillFileRoots),
+    listSkillHistory: (payload) =>
+      listControlCenterSkillHistoryEntries(payload, skillFileRoots),
+    rollbackSkillFile: (payload) =>
+      rollbackControlCenterSkillFile(payload, skillFileRoots),
     validateSkills: () => {
       const result = spawnSync('npm', ['run', 'validate:skills'], {
         cwd: process.cwd(),

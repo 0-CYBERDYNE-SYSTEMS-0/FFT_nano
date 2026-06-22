@@ -36,7 +36,10 @@
     "fft-nano": "./bin/fft.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run web:build",
+    "build:host": "tsc",
+    "build:web": "npm run web:build",
+    "build:all": "tsc && npm run web:build",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "node --import tsx --test $(find tests -type f -name '*.test.ts' | tr '\\n' ' ')",
@@ -44,6 +47,7 @@
     "web:install": "npm --prefix web/control-center ci",
     "web:build": "npm --prefix web/control-center run build",
     "web:dev": "npm --prefix web/control-center run dev",
+    "web:open": "bash scripts/web.sh --open",
     "tui": "node dist/tui/start.js",
     "tui:dev": "tsx src/tui/start.ts",
     "tui:client": "node dist/tui/client.js",

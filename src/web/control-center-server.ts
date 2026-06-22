@@ -112,6 +112,61 @@ interface KnowledgeCapturePayload {
   source?: string;
 }
 
+interface KnowledgeFileWritePayload {
+  path?: string;
+  content?: string;
+  mode?: 'replace' | 'append';
+}
+
+interface MemoryFileWritePayload {
+  group?: string;
+  path?: string;
+  content?: string;
+}
+
+interface MemoryRollbackPayload {
+  group?: string;
+  path?: string;
+  version?: string;
+}
+
+interface SkillFileWritePayload {
+  root?: string;
+  path?: string;
+  content?: string;
+}
+
+export interface MemoryFileEntry {
+  path: string;
+  name: string;
+  size: number;
+  modifiedAt: string;
+  kind:
+    | 'doc'
+    | 'canonical'
+    | 'memory'
+    | 'knowledge-raw'
+    | 'knowledge-wiki'
+    | 'knowledge-schema'
+    | 'knowledge-report'
+    | 'knowledge-readme';
+  exists: boolean;
+  scaffoldOnly?: boolean;
+}
+
+export interface MemoryGroupSummary {
+  folder: string;
+  workspaceDir: string;
+  isMain: boolean;
+  isGlobal: boolean;
+}
+
+export interface MemoryHistoryEntryPayload {
+  version: string;
+  size: number;
+  modifiedAt: string;
+}
+
 export interface WebControlCenterFileRoot {
   id: string;
   label: string;
@@ -154,11 +209,48 @@ export interface WebControlCenterAdapters {
   ) => Promise<unknown> | unknown;
   getPipelines?: () => Promise<unknown> | unknown;
   getMemoryOverview?: () => Promise<unknown> | unknown;
+  listMemoryGroups?: () => Promise<unknown> | unknown;
+  listMemoryFiles?: (payload: { group?: string }) => Promise<unknown> | unknown;
+  readMemoryFile?: (payload: {
+    group?: string;
+    path?: string;
+  }) => Promise<unknown> | unknown;
+  writeMemoryFile?: (
+    payload: MemoryFileWritePayload,
+  ) => Promise<unknown> | unknown;
+  listMemoryHistory?: (payload: {
+    group?: string;
+    path?: string;
+  }) => Promise<unknown> | unknown;
+  rollbackMemoryFile?: (
+    payload: MemoryRollbackPayload,
+  ) => Promise<unknown> | unknown;
   getKnowledgeStatus?: () => Promise<unknown> | unknown;
+  listKnowledgeFiles?: () => Promise<unknown> | unknown;
+  readKnowledgeFile?: (payload: {
+    path?: string;
+  }) => Promise<unknown> | unknown;
+  writeKnowledgeFile?: (
+    payload: KnowledgeFileWritePayload,
+  ) => Promise<unknown> | unknown;
   knowledgeCapture?: (
     payload: KnowledgeCapturePayload,
   ) => Promise<unknown> | unknown;
   knowledgeLint?: () => Promise<unknown> | unknown;
+  readSkillFile?: (payload: {
+    root?: string;
+    path?: string;
+  }) => Promise<unknown> | unknown;
+  writeSkillFile?: (
+    payload: SkillFileWritePayload,
+  ) => Promise<unknown> | unknown;
+  listSkillHistory?: (payload: {
+    root?: string;
+    path?: string;
+  }) => Promise<unknown> | unknown;
+  rollbackSkillFile?: (
+    payload: SkillFileWritePayload & { version?: string },
+  ) => Promise<unknown> | unknown;
   validateSkills?: () => Promise<unknown> | unknown;
 }
 
@@ -957,6 +1049,355 @@ export async function startWebControlCenterServer(
           ok: true,
           result: await adapters.knowledgeLint(),
         });
+        return;
+      }
+
+      if (requestPath === '/api/memory/groups') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.listMemoryGroups) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Memory groups API unavailable',
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          ...((await adapters.listMemoryGroups()) as Record<string, unknown>),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/memory/files') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.listMemoryFiles) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Memory files API unavailable',
+          });
+          return;
+        }
+        try {
+          const group = (url.searchParams.get('group') || '').trim();
+          const result = await adapters.listMemoryFiles({ group });
+          sendJson(res, 200, {
+            ok: true,
+            ...((result as Record<string, unknown>) || {}),
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/memory/read') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.readMemoryFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Memory read API unavailable',
+          });
+          return;
+        }
+        try {
+          const group = (url.searchParams.get('group') || '').trim();
+          const filePath = (url.searchParams.get('path') || '').trim();
+          const result = await adapters.readMemoryFile({
+            group,
+            path: filePath,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            ...((result as Record<string, unknown>) || {}),
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/memory/write') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.writeMemoryFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Memory write API unavailable',
+          });
+          return;
+        }
+        try {
+          const body = await readJsonBody<MemoryFileWritePayload>(req);
+          const result = await adapters.writeMemoryFile(body);
+          sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/memory/history') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.listMemoryHistory) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Memory history API unavailable',
+          });
+          return;
+        }
+        try {
+          const group = (url.searchParams.get('group') || '').trim();
+          const filePath = (url.searchParams.get('path') || '').trim();
+          const result = await adapters.listMemoryHistory({
+            group,
+            path: filePath,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            ...((result as Record<string, unknown>) || {}),
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/memory/rollback') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.rollbackMemoryFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Memory rollback API unavailable',
+          });
+          return;
+        }
+        try {
+          const body = await readJsonBody<MemoryRollbackPayload>(req);
+          const result = await adapters.rollbackMemoryFile(body);
+          sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/knowledge/files') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.listKnowledgeFiles) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Knowledge files API unavailable',
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          ...((await adapters.listKnowledgeFiles()) as Record<string, unknown>),
+        });
+        return;
+      }
+
+      if (requestPath === '/api/knowledge/read') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.readKnowledgeFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Knowledge read API unavailable',
+          });
+          return;
+        }
+        try {
+          const filePath = (url.searchParams.get('path') || '').trim();
+          const result = await adapters.readKnowledgeFile({ path: filePath });
+          sendJson(res, 200, {
+            ok: true,
+            ...((result as Record<string, unknown>) || {}),
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/knowledge/write') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.writeKnowledgeFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Knowledge write API unavailable',
+          });
+          return;
+        }
+        try {
+          const body = await readJsonBody<KnowledgeFileWritePayload>(req);
+          const result = await adapters.writeKnowledgeFile(body);
+          sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/skills/read') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.readSkillFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Skill read API unavailable',
+          });
+          return;
+        }
+        try {
+          const root = (url.searchParams.get('root') || '').trim();
+          const filePath = (url.searchParams.get('path') || '').trim();
+          const result = await adapters.readSkillFile({
+            root,
+            path: filePath,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            ...((result as Record<string, unknown>) || {}),
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/skills/write') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.writeSkillFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Skill write API unavailable',
+          });
+          return;
+        }
+        try {
+          const body = await readJsonBody<SkillFileWritePayload>(req);
+          const result = await adapters.writeSkillFile(body);
+          sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/skills/history') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.listSkillHistory) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Skill history API unavailable',
+          });
+          return;
+        }
+        try {
+          const root = (url.searchParams.get('root') || '').trim();
+          const filePath = (url.searchParams.get('path') || '').trim();
+          const result = await adapters.listSkillHistory({
+            root,
+            path: filePath,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            ...((result as Record<string, unknown>) || {}),
+          });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
+      if (requestPath === '/api/skills/rollback') {
+        if (method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.rollbackSkillFile) {
+          sendJson(res, 501, {
+            ok: false,
+            error: 'Skill rollback API unavailable',
+          });
+          return;
+        }
+        try {
+          const body = await readJsonBody<
+            SkillFileWritePayload & { version?: string }
+          >(req);
+          const result = await adapters.rollbackSkillFile(body);
+          sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         return;
       }
 

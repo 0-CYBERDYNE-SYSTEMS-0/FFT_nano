@@ -131,3 +131,76 @@ test('gateway rejects unauthorized method calls until connect token handshake su
     await gateway.close();
   }
 });
+
+test('gateway accepts both gateway.service and service.gateway method names', async () => {
+  const port = await getFreePort();
+  const eventHub = new HostEventBus();
+  const gateway = await startTuiGatewayServer(
+    {
+      getStatus: () => ({ runtime: 'docker', sessions: 1, activeRuns: 0 }),
+      listSessions: () => [],
+      resolveChatJid: () => null,
+      getSessionKeyForChat: () => 'main',
+      getSessionPrefs: () => ({}),
+      patchSessionPrefs: () => ({}),
+      resetSession: () => ({ ok: true, reason: 'ok' }),
+      getHistory: async () => [],
+      sendChat: async () => ({ runId: 'r1', status: 'started' as const }),
+      abortChat: async () => ({ aborted: false }),
+      serviceGateway: ({ action }: { action: 'status' | 'doctor' | 'restart' }) => ({
+        ok: true,
+        text: `service: ${action}`,
+      }),
+    },
+    eventHub,
+    {
+      host: '127.0.0.1',
+      port,
+      authToken: '',
+    },
+  );
+
+  try {
+    const ws = await connectWs(`ws://127.0.0.1:${port}`);
+    ws.send(
+      JSON.stringify({
+        id: 'connect-1',
+        method: 'connect',
+      }),
+    );
+    const connectResp = await waitForMessage<{ ok: boolean }>(ws);
+    assert.equal(connectResp.ok, true);
+
+    ws.send(
+      JSON.stringify({
+        id: 'service-1',
+        method: 'service.gateway',
+        params: { action: 'status' },
+      }),
+    );
+    const serviceResp = await waitForMessage<{
+      ok: boolean;
+      result?: { text: string };
+    }>(ws);
+    assert.equal(serviceResp.ok, true);
+    assert.equal(serviceResp.result?.text, 'service: status');
+
+    ws.send(
+      JSON.stringify({
+        id: 'service-2',
+        method: 'gateway.service',
+        params: { action: 'doctor' },
+      }),
+    );
+    const gatewayResp = await waitForMessage<{
+      ok: boolean;
+      result?: { text: string };
+    }>(ws);
+    assert.equal(gatewayResp.ok, true);
+    assert.equal(gatewayResp.result?.text, 'service: doctor');
+
+    ws.close();
+  } finally {
+    await gateway.close();
+  }
+});

@@ -1102,3 +1102,423 @@ test('web control center exposes tasks, pipelines, memory, and knowledge APIs', 
     await server.close();
   }
 });
+
+test('web control center memory CRUD endpoints list, read, write, and roll back files', async () => {
+  const port = await getFreePort();
+  const staticDir = createStaticDir();
+  const logsDir = createLogsDir();
+
+  const groupsPayload: { groups: Array<{ folder: string }> } = {
+    groups: [
+      { folder: 'main', workspaceDir: '/tmp', isMain: true, isGlobal: false },
+    ],
+  };
+  const filesPayload = {
+    group: 'main',
+    workspaceDir: '/tmp',
+    files: [
+      {
+        path: 'MEMORY.md',
+        name: 'MEMORY.md',
+        size: 0,
+        modifiedAt: '2026-06-21T00:00:00.000Z',
+        kind: 'doc',
+        exists: false,
+      },
+      {
+        path: 'canonical/_hot.md',
+        name: '_hot.md',
+        size: 0,
+        modifiedAt: '2026-06-21T00:00:00.000Z',
+        kind: 'canonical',
+        exists: false,
+      },
+    ],
+  };
+  const readPayload = {
+    group: 'main',
+    path: 'MEMORY.md',
+    exists: false,
+    content: '',
+    size: 0,
+    modifiedAt: '',
+  };
+  const writePayload = {
+    group: 'main',
+    path: 'MEMORY.md',
+    size: 12,
+    modifiedAt: '2026-06-21T00:00:01.000Z',
+  };
+  const historyPayload = {
+    group: 'main',
+    path: 'MEMORY.md',
+    versions: [
+      {
+        version: 'v1',
+        size: 5,
+        modifiedAt: '2026-06-20T00:00:00.000Z',
+      },
+    ],
+  };
+  const rollbackPayload = {
+    group: 'main',
+    path: 'MEMORY.md',
+    version: 'v1',
+    size: 5,
+    modifiedAt: '2026-06-20T00:00:00.000Z',
+  };
+  let writeBody: { group?: string; path?: string; content?: string } | null =
+    null;
+  let rollbackBody:
+    | { group?: string; path?: string; version?: string }
+    | null = null;
+
+  const server = await startWebControlCenterServer(
+    {
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 0,
+        activeRuns: 0,
+      }),
+      getProfileStatus: () => ({
+        profile: 'core',
+        featureFarm: false,
+        profileDetection: { source: 'explicit', reason: 'test' },
+      }),
+      getBuildInfo: () => ({
+        startedAt: '2026-06-21T00:00:00.000Z',
+        version: '0.2.2',
+      }),
+      getGatewayStatus: () => ({
+        host: '127.0.0.1',
+        port: 28989,
+        authRequired: false,
+      }),
+      listMemoryGroups: () => groupsPayload,
+      listMemoryFiles: () => filesPayload,
+      readMemoryFile: () => readPayload,
+      writeMemoryFile: (payload) => {
+        writeBody = payload;
+        return writePayload;
+      },
+      listMemoryHistory: () => historyPayload,
+      rollbackMemoryFile: (payload) => {
+        rollbackBody = payload;
+        return rollbackPayload;
+      },
+    },
+    {
+      host: '127.0.0.1',
+      port,
+      accessMode: 'localhost',
+      authToken: '',
+      staticDir,
+      logsDir,
+      fileRoots: [],
+    },
+  );
+
+  try {
+    const groupsRes = await fetch(
+      `http://127.0.0.1:${port}/api/memory/groups`,
+    );
+    assert.equal(groupsRes.status, 200);
+    const groupsJson = (await groupsRes.json()) as {
+      ok: boolean;
+      groups: Array<{ folder: string }>;
+    };
+    assert.equal(groupsJson.ok, true);
+    assert.equal(groupsJson.groups[0]?.folder, 'main');
+
+    const filesRes = await fetch(
+      `http://127.0.0.1:${port}/api/memory/files?group=main`,
+    );
+    assert.equal(filesRes.status, 200);
+    const filesJson = (await filesRes.json()) as {
+      ok: boolean;
+      files: Array<{ path: string; kind: string }>;
+    };
+    assert.equal(filesJson.ok, true);
+    assert.equal(filesJson.files.length, 2);
+    assert.equal(filesJson.files[0]?.kind, 'doc');
+
+    const readRes = await fetch(
+      `http://127.0.0.1:${port}/api/memory/read?group=main&path=MEMORY.md`,
+    );
+    assert.equal(readRes.status, 200);
+    const readJson = (await readRes.json()) as { ok: boolean; exists: boolean };
+    assert.equal(readJson.ok, true);
+    assert.equal(readJson.exists, false);
+
+    const writeRes = await fetch(
+      `http://127.0.0.1:${port}/api/memory/write`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          group: 'main',
+          path: 'MEMORY.md',
+          content: '# MEMORY\n',
+        }),
+      },
+    );
+    assert.equal(writeRes.status, 200);
+    assert.deepEqual(writeBody, {
+      group: 'main',
+      path: 'MEMORY.md',
+      content: '# MEMORY\n',
+    });
+
+    const histRes = await fetch(
+      `http://127.0.0.1:${port}/api/memory/history?group=main&path=MEMORY.md`,
+    );
+    assert.equal(histRes.status, 200);
+    const histJson = (await histRes.json()) as {
+      ok: boolean;
+      versions: Array<{ version: string }>;
+    };
+    assert.equal(histJson.ok, true);
+    assert.equal(histJson.versions[0]?.version, 'v1');
+
+    const rbRes = await fetch(
+      `http://127.0.0.1:${port}/api/memory/rollback`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group: 'main', path: 'MEMORY.md', version: 'v1' }),
+      },
+    );
+    assert.equal(rbRes.status, 200);
+    assert.deepEqual(rollbackBody, {
+      group: 'main',
+      path: 'MEMORY.md',
+      version: 'v1',
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test('web control center knowledge CRUD and skills read/write/rollback endpoints', async () => {
+  const port = await getFreePort();
+  const staticDir = createStaticDir();
+  const logsDir = createLogsDir();
+
+  const knowledgeFilesPayload = {
+    workspaceDir: '/tmp',
+    rootDir: '/tmp/knowledge',
+    files: [
+      {
+        path: 'wiki/index.md',
+        name: 'index.md',
+        size: 0,
+        modifiedAt: '2026-06-21T00:00:00.000Z',
+        kind: 'knowledge-wiki',
+        exists: false,
+      },
+    ],
+  };
+  const readKnowledgePayload = {
+    workspaceDir: '/tmp',
+    path: 'wiki/index.md',
+    exists: false,
+    content: '',
+    size: 0,
+    modifiedAt: '',
+  };
+  const writeKnowledgePayload = {
+    path: 'wiki/index.md',
+    size: 4,
+    modifiedAt: '2026-06-21T00:00:01.000Z',
+    mode: 'replace' as const,
+  };
+  let capturedWrite:
+    | { path?: string; content?: string; mode?: 'replace' | 'append' }
+    | null = null;
+
+  const readSkillPayload = {
+    root: { id: 'skills-project', label: 'Project Skills', path: '/tmp/skills' },
+    path: 'example-skill/SKILL.md',
+    exists: true,
+    content: '---\nname: x\n---\n# x\n',
+    size: 20,
+    modifiedAt: '2026-06-21T00:00:00.000Z',
+  };
+  const writeSkillPayload = {
+    root: { id: 'skills-project', label: 'Project Skills', path: '/tmp/skills' },
+    path: 'example-skill/SKILL.md',
+    size: 20,
+    modifiedAt: '2026-06-21T00:00:01.000Z',
+  };
+  const historySkillPayload = {
+    root: { id: 'skills-project', label: 'Project Skills', path: '/tmp/skills' },
+    path: 'example-skill/SKILL.md',
+    versions: [
+      {
+        version: 'v1',
+        size: 18,
+        modifiedAt: '2026-06-20T00:00:00.000Z',
+      },
+    ],
+  };
+  const rollbackSkillPayload = {
+    root: { id: 'skills-project', label: 'Project Skills', path: '/tmp/skills' },
+    path: 'example-skill/SKILL.md',
+    version: 'v1',
+    size: 18,
+    modifiedAt: '2026-06-20T00:00:00.000Z',
+  };
+  let capturedSkillWrite: { root?: string; path?: string; content?: string } | null =
+    null;
+  let capturedSkillRollback:
+    | { root?: string; path?: string; version?: string }
+    | null = null;
+
+  const server = await startWebControlCenterServer(
+    {
+      getRuntimeStatus: () => ({
+        runtime: 'docker',
+        sessions: 0,
+        activeRuns: 0,
+      }),
+      getProfileStatus: () => ({
+        profile: 'core',
+        featureFarm: false,
+        profileDetection: { source: 'explicit', reason: 'test' },
+      }),
+      getBuildInfo: () => ({
+        startedAt: '2026-06-21T00:00:00.000Z',
+        version: '0.2.2',
+      }),
+      getGatewayStatus: () => ({
+        host: '127.0.0.1',
+        port: 28989,
+        authRequired: false,
+      }),
+      listKnowledgeFiles: () => knowledgeFilesPayload,
+      readKnowledgeFile: () => readKnowledgePayload,
+      writeKnowledgeFile: (payload) => {
+        capturedWrite = payload;
+        return writeKnowledgePayload;
+      },
+      readSkillFile: () => readSkillPayload,
+      writeSkillFile: (payload) => {
+        capturedSkillWrite = payload;
+        return writeSkillPayload;
+      },
+      listSkillHistory: () => historySkillPayload,
+      rollbackSkillFile: (payload) => {
+        capturedSkillRollback = payload;
+        return rollbackSkillPayload;
+      },
+    },
+    {
+      host: '127.0.0.1',
+      port,
+      accessMode: 'localhost',
+      authToken: '',
+      staticDir,
+      logsDir,
+      fileRoots: [],
+    },
+  );
+
+  try {
+    const kfRes = await fetch(
+      `http://127.0.0.1:${port}/api/knowledge/files`,
+    );
+    assert.equal(kfRes.status, 200);
+    const kfJson = (await kfRes.json()) as {
+      ok: boolean;
+      files: Array<{ kind: string }>;
+    };
+    assert.equal(kfJson.ok, true);
+    assert.equal(kfJson.files[0]?.kind, 'knowledge-wiki');
+
+    const krRes = await fetch(
+      `http://127.0.0.1:${port}/api/knowledge/read?path=wiki/index.md`,
+    );
+    assert.equal(krRes.status, 200);
+    const krJson = (await krRes.json()) as { ok: boolean; exists: boolean };
+    assert.equal(krJson.ok, true);
+    assert.equal(krJson.exists, false);
+
+    const kwRes = await fetch(
+      `http://127.0.0.1:${port}/api/knowledge/write`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: 'wiki/index.md',
+          content: '# x\n',
+          mode: 'replace',
+        }),
+      },
+    );
+    assert.equal(kwRes.status, 200);
+    assert.deepEqual(capturedWrite, {
+      path: 'wiki/index.md',
+      content: '# x\n',
+      mode: 'replace',
+    });
+
+    const srRes = await fetch(
+      `http://127.0.0.1:${port}/api/skills/read?root=skills-project&path=example-skill/SKILL.md`,
+    );
+    assert.equal(srRes.status, 200);
+    const srJson = (await srRes.json()) as { ok: boolean; content: string };
+    assert.equal(srJson.ok, true);
+    assert.match(srJson.content, /name: x/);
+
+    const swRes = await fetch(
+      `http://127.0.0.1:${port}/api/skills/write`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          root: 'skills-project',
+          path: 'example-skill/SKILL.md',
+          content: 'updated',
+        }),
+      },
+    );
+    assert.equal(swRes.status, 200);
+    assert.deepEqual(capturedSkillWrite, {
+      root: 'skills-project',
+      path: 'example-skill/SKILL.md',
+      content: 'updated',
+    });
+
+    const shRes = await fetch(
+      `http://127.0.0.1:${port}/api/skills/history?root=skills-project&path=example-skill/SKILL.md`,
+    );
+    assert.equal(shRes.status, 200);
+    const shJson = (await shRes.json()) as {
+      ok: boolean;
+      versions: Array<{ version: string }>;
+    };
+    assert.equal(shJson.ok, true);
+    assert.equal(shJson.versions[0]?.version, 'v1');
+
+    const srbRes = await fetch(
+      `http://127.0.0.1:${port}/api/skills/rollback`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          root: 'skills-project',
+          path: 'example-skill/SKILL.md',
+          version: 'v1',
+        }),
+      },
+    );
+    assert.equal(srbRes.status, 200);
+    assert.deepEqual(capturedSkillRollback, {
+      root: 'skills-project',
+      path: 'example-skill/SKILL.md',
+      version: 'v1',
+    });
+  } finally {
+    await server.close();
+  }
+});

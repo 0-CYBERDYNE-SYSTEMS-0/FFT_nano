@@ -569,7 +569,8 @@ export async function startTuiGatewayServer(
         break;
       }
 
-      case 'gateway.service': {
+      case 'gateway.service':
+      case 'service.gateway': {
         const actionRaw = asText(params.action).trim().toLowerCase();
         const action =
           actionRaw === 'restart'
