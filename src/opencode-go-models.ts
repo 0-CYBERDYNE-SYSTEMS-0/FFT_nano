@@ -1,34 +1,24 @@
 import fs from 'fs';
 import path from 'path';
 
-export const OPENCODE_GO_PROVIDER = 'opencode-go';
-export const OPENCODE_GO_DEFAULT_MODEL = 'deepseek-v4-pro';
-export const OPENCODE_GO_COMPACTION_MODEL = 'deepseek-v4-flash';
+import {
+  OPENCODE_GO_PROVIDER,
+  OPENCODE_GO_DEFAULT_MODEL,
+  OPENCODE_GO_COMPACTION_MODEL,
+  OPENCODE_GO_DEEPSEEK_MODELS,
+  getProviderApiKeyRef,
+} from './model-catalog.js';
 
 type JsonObject = Record<string, any>;
 
-export const OPENCODE_GO_DEEPSEEK_MODELS = [
-  {
-    id: 'deepseek-v4-pro',
-    name: 'DeepSeek V4 Pro',
-    api: 'openai-completions',
-    reasoning: true,
-    input: ['text'],
-    contextWindow: 1_000_000,
-    maxTokens: 384_000,
-    cost: { input: 1.74, output: 3.48, cacheRead: 0.01, cacheWrite: 0 },
-  },
-  {
-    id: 'deepseek-v4-flash',
-    name: 'DeepSeek V4 Flash',
-    api: 'openai-completions',
-    reasoning: true,
-    input: ['text'],
-    contextWindow: 1_000_000,
-    maxTokens: 384_000,
-    cost: { input: 0.14, output: 0.28, cacheRead: 0.01, cacheWrite: 0 },
-  },
-] as const;
+// Back-compat re-exports for tests and external consumers. The actual data
+// lives in `config/model-catalog.json` under `providers["opencode-go"].enriched`.
+export {
+  OPENCODE_GO_PROVIDER,
+  OPENCODE_GO_DEFAULT_MODEL,
+  OPENCODE_GO_COMPACTION_MODEL,
+  OPENCODE_GO_DEEPSEEK_MODELS,
+};
 
 export interface EnsureOpenCodeGoModelsResult {
   ok: boolean;
@@ -72,8 +62,12 @@ export function ensureOpenCodeGoModels(
       providers[OPENCODE_GO_PROVIDER] = {};
     }
     const provider = providers[OPENCODE_GO_PROVIDER] as JsonObject;
+    // apiKey is sourced from the catalog; legacy `OPENCODE_API_KEY` references
+    // are self-healed to the dedicated opencode-go env var on the next seed.
+    const defaultApiKeyRef =
+      getProviderApiKeyRef(OPENCODE_GO_PROVIDER) || 'OPENCODE_GO_API_KEY';
     if (!provider.apiKey || provider.apiKey === 'OPENCODE_API_KEY') {
-      provider.apiKey = 'OPENCODE_GO_API_KEY';
+      provider.apiKey = defaultApiKeyRef;
     }
 
     const models = Array.isArray(provider.models) ? [...provider.models] : [];
