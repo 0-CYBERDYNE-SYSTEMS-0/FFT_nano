@@ -1,17 +1,8 @@
-const ALLOWED_PI_API_KEY_PROVIDERS = new Set([
-  'ollama',
-  'openai',
-  'opencode-go',
-  'opencode-zen',
-  'minimax',
-  'minimax-cn',
-  'stepfun',
-  'openrouter',
-  'anthropic',
-  'gemini',
-  'zai',
-  'kimi-coding',
-]);
+import { RUNTIME_PROVIDER_DEFINITIONS } from './runtime-config.js';
+
+const ALLOWED_PI_API_KEY_PROVIDERS = new Set(
+  RUNTIME_PROVIDER_DEFINITIONS.map((definition) => definition.piApi),
+);
 
 interface ProviderAuthOverrideInput {
   provider?: string;

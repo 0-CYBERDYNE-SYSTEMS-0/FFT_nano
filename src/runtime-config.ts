@@ -20,6 +20,13 @@ export const RUNTIME_PROVIDER_PRESET_ENV = 'FFT_NANO_RUNTIME_PROVIDER_PRESET';
 
 export type RuntimeProviderModelInputMode = 'picker' | 'typed';
 
+export interface RuntimeProviderSetupUrls {
+  signupUrl?: string;
+  docsUrl?: string;
+  localSetupUrl?: string;
+  note?: string;
+}
+
 export interface RuntimeProviderDefinition {
   id: RuntimeProviderPreset;
   label: string;
@@ -31,6 +38,7 @@ export interface RuntimeProviderDefinition {
   defaultApiKeyValue?: string;
   apiKeyRequired?: boolean;
   modelInputMode?: RuntimeProviderModelInputMode;
+  setupUrls?: RuntimeProviderSetupUrls;
 }
 
 export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
@@ -41,6 +49,10 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     defaultModel: 'gpt-4o-mini',
     apiKeyEnv: 'OPENAI_API_KEY',
     endpointEnv: 'OPENAI_BASE_URL',
+    setupUrls: {
+      signupUrl: 'https://platform.openai.com/api-keys',
+      docsUrl: 'https://platform.openai.com/docs',
+    },
   },
   {
     id: 'lm-studio',
@@ -53,6 +65,10 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     defaultApiKeyValue: 'lm-studio',
     apiKeyRequired: false,
     modelInputMode: 'typed',
+    setupUrls: {
+      localSetupUrl: 'https://lmstudio.ai/',
+      note: 'Local OpenAI-compatible provider. Start the local server in LM Studio first.',
+    },
   },
   {
     id: 'anthropic',
@@ -60,6 +76,10 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     piApi: 'anthropic',
     defaultModel: 'claude-3-5-sonnet-latest',
     apiKeyEnv: 'ANTHROPIC_API_KEY',
+    setupUrls: {
+      signupUrl: 'https://console.anthropic.com/settings/keys',
+      docsUrl: 'https://docs.anthropic.com/',
+    },
   },
   {
     id: 'gemini',
@@ -67,6 +87,10 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     piApi: 'gemini',
     defaultModel: 'gemini-2.0-flash',
     apiKeyEnv: 'GEMINI_API_KEY',
+    setupUrls: {
+      signupUrl: 'https://aistudio.google.com/app/apikey',
+      docsUrl: 'https://ai.google.dev/gemini-api/docs',
+    },
   },
   {
     id: 'openrouter',
@@ -74,6 +98,11 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     piApi: 'openrouter',
     defaultModel: 'anthropic/claude-3.5-sonnet',
     apiKeyEnv: 'OPENROUTER_API_KEY',
+    setupUrls: {
+      signupUrl: 'https://openrouter.ai/keys',
+      docsUrl: 'https://openrouter.ai/docs',
+      note: 'The `openrouter/free` model routes to a random free model per request. Some free models log your prompts for training — review before sharing sensitive data.',
+    },
   },
   {
     id: 'opencode-go',
@@ -83,6 +112,11 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     apiKeyEnv: 'OPENCODE_GO_API_KEY',
     endpointEnv: 'OPENCODE_GO_BASE_URL',
     defaultEndpointValue: 'https://opencode.ai/zen/go/v1',
+    setupUrls: {
+      signupUrl: 'https://opencode.ai/go',
+      docsUrl: 'https://opencode.ai/docs/go/',
+      note: 'Subscription: $5 first month, $10/mo after. Same OpenCode account as OpenCode Zen.',
+    },
   },
   {
     id: 'opencode-zen',
@@ -92,6 +126,11 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     apiKeyEnv: 'OPENCODE_API_KEY',
     endpointEnv: 'OPENCODE_ZEN_BASE_URL',
     defaultEndpointValue: 'https://opencode.ai/zen/v1',
+    setupUrls: {
+      signupUrl: 'https://opencode.ai/auth',
+      docsUrl: 'https://opencode.ai/docs/zen/',
+      note: 'Pay-as-you-go. Auto-reload $20 if balance < $5. Same OpenCode account works for Zen and Go.',
+    },
   },
   {
     id: 'zai',
@@ -99,6 +138,10 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     piApi: 'zai',
     defaultModel: 'glm-4.7',
     apiKeyEnv: 'ZAI_API_KEY',
+    setupUrls: {
+      signupUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
+      docsUrl: 'https://docs.bigmodel.cn/',
+    },
   },
   {
     id: 'minimax',
@@ -108,6 +151,12 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     apiKeyEnv: 'MINIMAX_API_KEY',
     endpointEnv: 'MINIMAX_BASE_URL',
     defaultEndpointValue: 'https://api.minimax.io/anthropic',
+    setupUrls: {
+      signupUrl:
+        'https://platform.minimax.io/user-center/basic-information/interface-key',
+      docsUrl: 'https://platform.minimax.io/docs',
+      note: 'Global endpoint at https://api.minimax.io/anthropic. Same MiniMax account as MiniMax-CN.',
+    },
   },
   {
     id: 'minimax-cn',
@@ -117,6 +166,12 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     apiKeyEnv: 'MINIMAX_CN_API_KEY',
     endpointEnv: 'MINIMAX_CN_BASE_URL',
     defaultEndpointValue: 'https://api.minimaxi.com/anthropic',
+    setupUrls: {
+      signupUrl:
+        'https://platform.minimaxi.com/user-center/basic-information/interface-key',
+      docsUrl: 'https://platform.minimaxi.com/document',
+      note: 'Domestic China endpoint at https://api.minimaxi.com/anthropic. Get API key from the CN console.',
+    },
   },
   {
     id: 'stepfun',
@@ -126,6 +181,11 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     apiKeyEnv: 'STEPFUN_API_KEY',
     endpointEnv: 'STEPFUN_BASE_URL',
     defaultEndpointValue: 'https://api.stepfun.ai/step_plan/v1',
+    setupUrls: {
+      signupUrl: 'https://platform.stepfun.ai/step-plan',
+      docsUrl: 'https://platform.stepfun.ai/docs/en/step-plan/overview',
+      note: 'Subscription ($6.99-$99/mo). Uses the dedicated /step_plan/v1 endpoint, NOT the standard /v1.',
+    },
   },
   {
     id: 'kimi-coding',
@@ -133,6 +193,10 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     piApi: 'kimi-coding',
     defaultModel: 'kimi-for-coding',
     apiKeyEnv: 'KIMI_API_KEY',
+    setupUrls: {
+      signupUrl: 'https://platform.moonshot.ai/console/api-keys',
+      docsUrl: 'https://platform.moonshot.ai/docs',
+    },
   },
   {
     // Ollama uses OpenAI-compatible API at localhost:11434/v1 — no real API key needed.
@@ -148,6 +212,10 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     defaultEndpointValue: 'http://localhost:11434/v1',
     defaultApiKeyValue: 'ollama',
     apiKeyRequired: false,
+    setupUrls: {
+      localSetupUrl: 'https://ollama.com/download',
+      note: 'Local provider. Install Ollama and pull a model; no hosted API key is required.',
+    },
   },
 ];
 

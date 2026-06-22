@@ -111,68 +111,12 @@ export const PROVIDER_SETUP_URLS: Record<
     localSetupUrl?: string;
     note?: string;
   }
-> = {
-  openai: {
-    signupUrl: 'https://platform.openai.com/api-keys',
-    docsUrl: 'https://platform.openai.com/docs',
-  },
-  anthropic: {
-    signupUrl: 'https://console.anthropic.com/settings/keys',
-    docsUrl: 'https://docs.anthropic.com/',
-  },
-  gemini: {
-    signupUrl: 'https://aistudio.google.com/app/apikey',
-    docsUrl: 'https://ai.google.dev/gemini-api/docs',
-  },
-  openrouter: {
-    signupUrl: 'https://openrouter.ai/keys',
-    docsUrl: 'https://openrouter.ai/docs',
-    note: 'The `openrouter/free` model routes to a random free model per request. Some free models log your prompts for training — review before sharing sensitive data.',
-  },
-  zai: {
-    signupUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
-    docsUrl: 'https://docs.bigmodel.cn/',
-  },
-  minimax: {
-    signupUrl:
-      'https://platform.minimax.io/user-center/basic-information/interface-key',
-    docsUrl: 'https://platform.minimax.io/docs',
-    note: 'Global endpoint at https://api.minimax.io/anthropic. Same MiniMax account as MiniMax-CN.',
-  },
-  'minimax-cn': {
-    signupUrl:
-      'https://platform.minimaxi.com/user-center/basic-information/interface-key',
-    docsUrl: 'https://platform.minimaxi.com/document',
-    note: 'Domestic China endpoint at https://api.minimaxi.com/anthropic. Get API key from the CN console.',
-  },
-  stepfun: {
-    signupUrl: 'https://platform.stepfun.ai/step-plan',
-    docsUrl: 'https://platform.stepfun.ai/docs/en/step-plan/overview',
-    note: 'Subscription ($6.99-$99/mo). Uses the dedicated /step_plan/v1 endpoint, NOT the standard /v1.',
-  },
-  'opencode-go': {
-    signupUrl: 'https://opencode.ai/go',
-    docsUrl: 'https://opencode.ai/docs/go/',
-    note: 'Subscription: $5 first month, $10/mo after. Same OpenCode account as OpenCode Zen.',
-  },
-  'opencode-zen': {
-    signupUrl: 'https://opencode.ai/auth',
-    docsUrl: 'https://opencode.ai/docs/zen/',
-    note: 'Pay-as-you-go. Auto-reload $20 if balance < $5. Same OpenCode account works for Zen and Go.',
-  },
-  'kimi-coding': {
-    signupUrl: 'https://platform.moonshot.ai/console/api-keys',
-    docsUrl: 'https://platform.moonshot.ai/docs',
-  },
-  ollama: {
-    localSetupUrl: 'https://ollama.com/download',
-    note: 'Local provider. Install Ollama and pull a model; no hosted API key is required.',
-  },
-  'lm-studio': {
-    localSetupUrl: 'https://lmstudio.ai/',
-    note: 'Local OpenAI-compatible provider. Start the local server in LM Studio first.',
-  },
-};
+> = Object.fromEntries(
+  RUNTIME_PROVIDER_DEFINITIONS.map((provider) => [
+    provider.id,
+    provider.setupUrls ?? {},
+  ]),
+);
 
 export function getControlCenterProviderSetup() {
   return RUNTIME_PROVIDER_DEFINITIONS.map((provider) => ({
@@ -183,7 +127,7 @@ export function getControlCenterProviderSetup() {
     apiKeyEnv: provider.apiKeyEnv,
     apiKeyRequired: provider.apiKeyRequired !== false,
     endpointEnv: provider.endpointEnv,
-    ...PROVIDER_SETUP_URLS[provider.id],
+    ...(provider.setupUrls ?? {}),
   }));
 }
 
