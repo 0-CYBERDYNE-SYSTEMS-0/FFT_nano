@@ -15,6 +15,29 @@ const LOCAL_PROVIDER_MARKER = 'fft-nano-local-discovery';
 // its own `api` field. See https://opencode.ai/docs/go and /docs/zen for the
 // full endpoint matrix.
 
+const CURATED_OLLAMA = [
+  'qwen3.5:4b',
+  'qwen3.5:2b',
+  'qwen3.5:0.8b',
+  'llama3.2:1b',
+  'llama3.2:3b',
+  'deepseek-r1:1.5b',
+  'deepseek-r1:8b',
+  'granite3.1-dense:2b',
+  'granite3.1-moe:latest',
+  'granite3.1-moe:1b',
+  'deepscaler:latest',
+  'sam860/lucy:1.7b',
+];
+
+const CURATED_LM_STUDIO = [
+  'qwen2.5-coder-7b-instruct',
+  'qwen2.5-coder-14b-instruct',
+  'qwen2.5-7b-instruct',
+  'llama-3.1-8b-instruct',
+  'mistral-nemo',
+];
+
 interface RemoteProviderConfig {
   providerId: string;
   baseUrlEnv: string;
@@ -31,6 +54,7 @@ export interface EnsureLocalProviderModelsResult {
   changed: boolean;
   discovered: Record<string, string[]>;
   errors: string[];
+  unconfiguredProviders: string[];
 }
 
 function stableJson(value: unknown): string {
@@ -315,6 +339,7 @@ export function ensureLocalProviderModels(
   const modelsPath = path.join(piAgentDir, 'models.json');
   const discovered: Record<string, string[]> = {};
   const errors: string[] = [];
+  const unconfiguredProviders: string[] = [];
 
   try {
     fs.mkdirSync(piAgentDir, { recursive: true });
@@ -330,6 +355,7 @@ export function ensureLocalProviderModels(
           changed: false,
           discovered,
           errors: ['models.json root must be an object'],
+          unconfiguredProviders: [],
         };
       }
     }
@@ -342,9 +368,35 @@ export function ensureLocalProviderModels(
       typeof legacyKimiProvider.baseUrl === 'string' &&
       legacyKimiProvider.baseUrl.includes('api.moonshot.')
     ) {
-      delete providers['kimi-coding'];
+      // Migrate the legacy Moonshot-AI-based kimi-coding entry to the
+      // canonical api.kimi.com/coding baseUrl + anthropic-messages api,
+      // while preserving its models. The kimi-coding remoteProviders
+      // entry below will merge its curated list on top.
+      legacyKimiProvider.baseUrl = 'https://api.kimi.com/coding';
+      legacyKimiProvider.api = 'anthropic-messages';
+      if (!('compat' in legacyKimiProvider)) {
+        legacyKimiProvider.compat = {
+          supportsDeveloperRole: false,
+          supportsReasoningEffort: false,
+        };
+      }
     }
 
+    const seedOllamaCurated = (): void => {
+      const ollamaBase = normalizeOllamaBaseUrl(
+        env.OLLAMA_BASE_URL || 'http://localhost:11434',
+      );
+      upsertProvider(
+        providers,
+        'ollama',
+        managedProvider({
+          baseUrl: `${ollamaBase}/v1`,
+          apiKey: 'ollama',
+          models: [...CURATED_OLLAMA],
+        }),
+      );
+      unconfiguredProviders.push('ollama');
+    };
     try {
       const ollama = discoverOllamaModels(env);
       if (ollama.models.length > 0) {
@@ -358,14 +410,32 @@ export function ensureLocalProviderModels(
             models: ollama.models,
           }),
         );
+      } else {
+        // Daemon reachable but no models pulled yet — still offer the curated
+        // list so the operator can pull a model via `ollama pull <model>`.
+        seedOllamaCurated();
       }
-    } catch (err) {
-      errors.push(
-        `ollama: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      if (isManagedLocalProvider(providers.ollama)) delete providers.ollama;
+    } catch {
+      // Daemon not running or unreachable. Still offer Ollama as an option
+      // with the curated list — a missing local daemon is not a hard error.
+      seedOllamaCurated();
     }
 
+    const seedLmStudioCurated = (): void => {
+      const lmsBase = normalizeOpenAiBaseUrl(
+        env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:1234/v1',
+      );
+      upsertProvider(
+        providers,
+        'lm-studio',
+        managedProvider({
+          baseUrl: lmsBase,
+          apiKey: 'lm-studio',
+          models: [...CURATED_LM_STUDIO],
+        }),
+      );
+      unconfiguredProviders.push('lm-studio');
+    };
     try {
       const lmStudio = discoverLmStudioModels(env);
       if (lmStudio.models.length > 0) {
@@ -379,14 +449,15 @@ export function ensureLocalProviderModels(
             models: lmStudio.models,
           }),
         );
+      } else {
+        // Server reachable but no model loaded — still offer the curated
+        // list so the operator can load a model in the LM Studio UI.
+        seedLmStudioCurated();
       }
-    } catch (err) {
-      errors.push(
-        `lm-studio: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      if (isManagedLocalProvider(providers['lm-studio'])) {
-        delete providers['lm-studio'];
-      }
+    } catch {
+      // Server not running. Still offer LM Studio as an option with the
+      // curated list — a missing local server is not a hard error.
+      seedLmStudioCurated();
     }
 
     // Discover remote OpenAI-compatible providers. opencode-go is intentionally
@@ -398,12 +469,31 @@ export function ensureLocalProviderModels(
         providerId: 'openai',
         baseUrlEnv: 'OPENAI_BASE_URL',
         apiKeyEnv: 'OPENAI_API_KEY',
+        defaultBaseUrl: 'https://api.openai.com/v1',
+        curated: getCuratedModels('openai'),
       },
       {
         providerId: 'moonshotai',
         baseUrlEnv: 'MOONSHOT_BASE_URL',
         apiKeyEnv: 'MOONSHOT_API_KEY',
         defaultBaseUrl: 'https://api.moonshot.ai/v1',
+        curated: getCuratedModels('moonshotai'),
+      },
+      {
+        providerId: 'anthropic',
+        baseUrlEnv: 'ANTHROPIC_BASE_URL',
+        apiKeyEnv: 'ANTHROPIC_API_KEY',
+        defaultBaseUrl: 'https://api.anthropic.com',
+        defaultApi: 'anthropic-messages',
+        curated: getCuratedModels('anthropic'),
+      },
+      {
+        providerId: 'gemini',
+        baseUrlEnv: 'GEMINI_BASE_URL',
+        apiKeyEnv: 'GEMINI_API_KEY',
+        defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        defaultApi: 'openai-completions',
+        curated: getCuratedModels('gemini'),
       },
       {
         providerId: 'minimax',
@@ -428,6 +518,21 @@ export function ensureLocalProviderModels(
         defaultBaseUrl: 'https://api.stepfun.ai/step_plan/v1',
         defaultApi: 'openai-completions',
         curated: getCuratedModels('stepfun'),
+      },
+      {
+        providerId: 'zai',
+        baseUrlEnv: 'ZAI_BASE_URL',
+        apiKeyEnv: 'ZAI_API_KEY',
+        defaultBaseUrl: 'https://api.z.ai/api/paas/v4',
+        curated: getCuratedModels('zai'),
+      },
+      {
+        providerId: 'kimi-coding',
+        baseUrlEnv: 'KIMI_BASE_URL',
+        apiKeyEnv: 'KIMI_API_KEY',
+        defaultBaseUrl: 'https://api.kimi.com/coding',
+        defaultApi: 'anthropic-messages',
+        curated: getCuratedModels('kimi-coding'),
       },
       {
         providerId: 'opencode-zen',
@@ -463,9 +568,28 @@ export function ensureLocalProviderModels(
               if (!modelIds.includes(curatedId)) modelIds.push(curatedId);
             }
           }
-        } else if (rp.curated && !result.unconfigured) {
-          modelIds = [...rp.curated];
-          if (!result.ok && result.error) {
+        } else if (rp.curated) {
+          // Always seed the curated list, even when no key is configured yet.
+          // The provider stays available as an option in /setup and the web
+          // control center; a missing key is a soft "needs configuration"
+          // state, not a hard error. Live discovery failures (network, 4xx)
+          // are still reported via the errors list.
+          //
+          // If the provider is already present on disk (managed by us),
+          // merge the curated list with the existing models so we never
+          // clobber operator-picked models.
+          const existingOnDisk = providers[rp.providerId];
+          const existingModelIds =
+            isManagedLocalProvider(existingOnDisk) &&
+            Array.isArray(existingOnDisk.models)
+              ? (existingOnDisk.models as JsonObject[])
+                  .map((m) => (isObject(m) && typeof m.id === 'string' ? m.id : ''))
+                  .filter(Boolean)
+              : [];
+          modelIds = uniqueSorted([...rp.curated, ...existingModelIds]);
+          if (result.unconfigured) {
+            unconfiguredProviders.push(rp.providerId);
+          } else if (!result.ok && result.error) {
             errors.push(`${rp.providerId}: ${result.error}`);
           }
         } else if (!result.ok && result.error && !result.unconfigured) {
@@ -474,7 +598,11 @@ export function ensureLocalProviderModels(
         if (modelIds.length > 0) {
           discovered[rp.providerId] = modelIds;
           const baseUrl = env[rp.baseUrlEnv] || rp.defaultBaseUrl || '';
-          const apiKeyRef = env[rp.apiKeyEnv] ? rp.apiKeyEnv : 'PI_API_KEY';
+          // Always reference the per-provider env var so the operator can
+          // fill it via /setup, the web control center, or .env. This
+          // guarantees the provider appears in models.json regardless of
+          // current key state.
+          const apiKeyRef = `$${rp.apiKeyEnv}`;
           upsertProvider(
             providers,
             rp.providerId,
@@ -500,10 +628,24 @@ export function ensureLocalProviderModels(
       : '';
     if (prevBody !== nextBody) {
       fs.writeFileSync(modelsPath, nextBody, 'utf-8');
-      return { ok: true, path: modelsPath, changed: true, discovered, errors };
+      return {
+        ok: true,
+        path: modelsPath,
+        changed: true,
+        discovered,
+        errors,
+        unconfiguredProviders,
+      };
     }
 
-    return { ok: true, path: modelsPath, changed: false, discovered, errors };
+    return {
+      ok: true,
+      path: modelsPath,
+      changed: false,
+      discovered,
+      errors,
+      unconfiguredProviders,
+    };
   } catch (err) {
     return {
       ok: false,
@@ -511,6 +653,7 @@ export function ensureLocalProviderModels(
       changed: false,
       discovered,
       errors: [err instanceof Error ? err.message : String(err)],
+      unconfiguredProviders: [],
     };
   }
 }

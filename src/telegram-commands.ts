@@ -139,6 +139,7 @@ export interface TelegramCommandDeps {
     prompt: string,
   ) => Promise<void>;
   clearTelegramSetupInputState: (chatJid: string) => void;
+  setTelegramSetupInputState: (chatJid: string, kind: 'api-key') => void;
   setTelegramSetupInputProvider: (chatJid: string, provider: string) => void;
   getTelegramSetupInputState: (chatJid: string) => SetupState | null;
   getTelegramSettingsPanelAction: (chatJid: string, data: string) => any;
@@ -249,7 +250,20 @@ export interface TelegramCommandDeps {
   buildRuntimeProviderPresetUpdates: (
     params: any,
   ) => Record<string, string | undefined>;
+  getRuntimeProviderDefinitionByPreset: (
+    preset: string,
+  ) =>
+    | {
+        id: string;
+        label: string;
+        piApi: string;
+        defaultModel: string;
+        apiKeyEnv: string;
+        apiKeyRequired?: boolean;
+      }
+    | undefined;
   getRuntimeConfigEnv: () => Record<string, string | undefined>;
+  hasMeaningfulSecret: (raw: string | undefined) => boolean;
   persistRuntimeConfigUpdates: (
     updates: Record<string, string | undefined>,
   ) => void;
@@ -1377,7 +1391,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             kind: 'show-home',
           });
           return;
-        case 'set-setup-provider':
+        case 'set-setup-provider': {
+          const providerDef = deps.getRuntimeProviderDefinitionByPreset(
+            settingsAction.preset,
+          );
           deps.persistRuntimeConfigUpdates(
             deps.buildRuntimeProviderPresetUpdates({
               preset: settingsAction.preset,
@@ -1386,12 +1403,38 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             }),
           );
           deps.clearTelegramSetupInputState(q.chatJid);
+          // If the newly-selected provider has no key yet, prompt for the
+          // key first so the operator can complete the setup in one
+          // cascade: Provider -> Key -> Models. Otherwise jump straight
+          // to the model picker.
+          const env = deps.getRuntimeConfigEnv();
+          const keyMissing =
+            providerDef !== undefined &&
+            providerDef.apiKeyRequired !== false &&
+            !deps.hasMeaningfulSecret(env[providerDef.apiKeyEnv]);
+          if (keyMissing && providerDef) {
+            deps.setTelegramSetupInputState(q.chatJid, 'api-key');
+            deps.setTelegramSetupInputProvider(
+              q.chatJid,
+              settingsAction.preset,
+            );
+            await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+              kind: 'show-setup-api-key',
+            });
+            await deps.promptTelegramSetupInput(
+              q.chatJid,
+              'api-key',
+              `Send the API key for ${providerDef.apiKeyEnv}. Paste it in your next message.`,
+            );
+            return;
+          }
           await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
             kind: 'show-setup-models',
             preset: settingsAction.preset,
             page: 0,
           });
           return;
+        }
         case 'set-setup-model':
           deps.persistRuntimeConfigUpdates(
             deps.buildRuntimeProviderPresetUpdates({
@@ -1477,6 +1520,26 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             `Send the API key for ${deps.resolveRuntimeConfigSnapshot(deps.getRuntimeConfigEnv()).apiKeyEnv}.`,
           );
           return;
+        case 'prompt-setup-provider-key': {
+          const providerDef = deps.getRuntimeProviderDefinitionByPreset(
+            settingsAction.preset,
+          );
+          if (!providerDef) return;
+          deps.setTelegramSetupInputState(q.chatJid, 'api-key');
+          deps.setTelegramSetupInputProvider(
+            q.chatJid,
+            settingsAction.preset,
+          );
+          await deps.editTelegramSettingsPanel(q.chatJid, q.messageId, {
+            kind: 'show-setup-api-key',
+          });
+          await deps.promptTelegramSetupInput(
+            q.chatJid,
+            'api-key',
+            `Send the API key for ${providerDef.apiKeyEnv} (provider: ${providerDef.label}). Paste it in your next message.`,
+          );
+          return;
+        }
         case 'clear-setup-api-key': {
           const snapshot = deps.resolveRuntimeConfigSnapshot(
             deps.getRuntimeConfigEnv(),
@@ -1722,17 +1785,36 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             // Best-effort cleanup; Telegram may reject deletion by age/rights.
           }
         }
-        const snapshot = deps.resolveRuntimeConfigSnapshot(
-          deps.getRuntimeConfigEnv(),
-        );
-        deps.persistRuntimeConfigUpdates({ [snapshot.apiKeyEnv]: content });
+        // The pending input state may carry a target provider id (set by
+        // prompt-setup-provider-key or the set-setup-provider cascade).
+        // Honor it so the operator can set a key for a provider that is
+        // not yet the active one.
+        let targetEnv = '';
+        let targetLabel = '';
+        if (pending.provider) {
+          const providerDef = deps.getRuntimeProviderDefinitionByPreset(
+            pending.provider,
+          );
+          if (providerDef) {
+            targetEnv = providerDef.apiKeyEnv;
+            targetLabel = providerDef.label;
+          }
+        }
+        if (!targetEnv) {
+          const snapshot = deps.resolveRuntimeConfigSnapshot(
+            deps.getRuntimeConfigEnv(),
+          );
+          targetEnv = snapshot.apiKeyEnv;
+        }
+        deps.persistRuntimeConfigUpdates({ [targetEnv]: content });
         deps.clearTelegramSetupInputState(m.chatJid);
         await deps.sendTelegramSettingsPanel(m.chatJid, {
           kind: 'show-setup-home',
         });
+        const tail = targetLabel ? ` (provider: ${targetLabel})` : '';
         await deps.sendMessage(
           m.chatJid,
-          `Saved API key in ${snapshot.apiKeyEnv}. The key message was removed when Telegram permissions allowed it.`,
+          `Saved API key in ${targetEnv}${tail}. The key message was removed when Telegram permissions allowed it.`,
         );
         return true;
       }

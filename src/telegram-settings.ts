@@ -697,17 +697,43 @@ export function buildTelegramSetupProviderPanel(chatJid: string): {
   text: string;
   keyboard: TelegramInlineKeyboard;
 } {
+  const env = getRuntimeConfigEnv();
   const rows: TelegramInlineKeyboard = [];
   for (let i = 0; i < RUNTIME_PROVIDER_DEFINITIONS.length; i += 2) {
     rows.push(
-      RUNTIME_PROVIDER_DEFINITIONS.slice(i, i + 2).map((provider) => ({
-        text: provider.label,
-        callbackData: registerTelegramSettingsPanelAction(chatJid, {
-          kind: 'set-setup-provider',
-          preset: provider.id,
-        }),
-      })),
+      RUNTIME_PROVIDER_DEFINITIONS.slice(i, i + 2).map((provider) => {
+        const keySet = hasMeaningfulSecret(env[provider.apiKeyEnv]);
+        const label = keySet
+          ? `${provider.label} (key set)`
+          : `${provider.label} - set key`;
+        return {
+          text: label,
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'set-setup-provider',
+            preset: provider.id,
+          }),
+        };
+      }),
     );
+  }
+  // Per-provider "Set API Key" shortcut row. One button per provider whose
+  // env var is not configured yet. Lets the operator add a key without
+  // having to first switch the active provider.
+  const providersNeedingKey = RUNTIME_PROVIDER_DEFINITIONS.filter(
+    (p) => !hasMeaningfulSecret(env[p.apiKeyEnv]) && p.apiKeyRequired !== false,
+  );
+  if (providersNeedingKey.length > 0) {
+    for (let i = 0; i < providersNeedingKey.length; i += 2) {
+      rows.push(
+        providersNeedingKey.slice(i, i + 2).map((provider) => ({
+          text: `Set ${provider.label} key`,
+          callbackData: registerTelegramSettingsPanelAction(chatJid, {
+            kind: 'prompt-setup-provider-key',
+            preset: provider.id,
+          }),
+        })),
+      );
+    }
   }
   rows.push([
     {
@@ -730,7 +756,7 @@ export function buildTelegramSetupProviderPanel(chatJid: string): {
       'Choose a default provider preset:',
       ...getRuntimeConfigSummaryLines(),
       '',
-      'Manual provider writes raw PI_API and uses PI_API_KEY.',
+      'Tap a provider to set it as active and pick a model. Providers whose key is not set are marked "- set key"; tap a "Set ... key" button below to add a key without changing the active provider.',
     ].join('\n'),
     keyboard: rows,
   };
