@@ -47,26 +47,38 @@
       "curated": [
         "glm-5.2",
         "glm-5.1",
+        "glm-5",
+        "kimi-k2.7-code",
         "kimi-k2.7",
         "kimi-k2.6",
+        "kimi-k2.5",
         "mimo-v2.5",
         "mimo-v2.5-pro",
+        "mimo-v2-pro",
+        "mimo-v2-omni",
         "minimax-m3",
         "minimax-m2.7",
         "minimax-m2.5",
         "qwen3.7-max",
         "qwen3.7-plus",
         "qwen3.6-plus",
+        "qwen3.5-plus",
         "deepseek-v4-pro",
-        "deepseek-v4-flash"
+        "deepseek-v4-flash",
+        "hy3-preview"
       ],
       "perModelApi": {
         "glm-5.2": "openai-completions",
         "glm-5.1": "openai-completions",
+        "glm-5": "openai-completions",
+        "kimi-k2.7-code": "openai-completions",
         "kimi-k2.7": "openai-completions",
         "kimi-k2.6": "openai-completions",
+        "kimi-k2.5": "openai-completions",
         "mimo-v2.5": "openai-completions",
         "mimo-v2.5-pro": "openai-completions",
+        "mimo-v2-pro": "openai-completions",
+        "mimo-v2-omni": "openai-completions",
         "deepseek-v4-pro": "openai-completions",
         "deepseek-v4-flash": "openai-completions",
         "minimax-m3": "anthropic-messages",
@@ -74,7 +86,9 @@
         "minimax-m2.5": "anthropic-messages",
         "qwen3.7-max": "anthropic-messages",
         "qwen3.7-plus": "anthropic-messages",
-        "qwen3.6-plus": "anthropic-messages"
+        "qwen3.6-plus": "anthropic-messages",
+        "qwen3.5-plus": "anthropic-messages",
+        "hy3-preview": "openai-completions"
       },
       "enriched": [
         {

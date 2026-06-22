@@ -6,6 +6,8 @@ import {
   OPENCODE_GO_DEFAULT_MODEL,
   OPENCODE_GO_COMPACTION_MODEL,
   OPENCODE_GO_DEEPSEEK_MODELS,
+  getCuratedModels,
+  getPerModelApi,
   getProviderApiKeyRef,
 } from './model-catalog.js';
 
@@ -88,6 +90,30 @@ export function ensureOpenCodeGoModels(
           ...next,
         };
       }
+    }
+
+    const seededModelIds = new Set(
+      models.flatMap((model) => {
+        const id = isObject(model) ? model.id : undefined;
+        return typeof id === 'string' ? [id] : [];
+      }),
+    );
+    const perModelApi = getPerModelApi(OPENCODE_GO_PROVIDER);
+
+    // Seed all other curated models so they appear in the Telegram model panel.
+    for (const modelId of getCuratedModels(OPENCODE_GO_PROVIDER)) {
+      if (seededModelIds.has(modelId)) continue;
+      const api = perModelApi[modelId] || 'openai-completions';
+      models.push({
+        id: modelId,
+        name: modelId,
+        api,
+        reasoning: false,
+        input: ['text'],
+        contextWindow: 128_000,
+        maxTokens: 16_384,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      });
     }
     provider.models = models;
 
