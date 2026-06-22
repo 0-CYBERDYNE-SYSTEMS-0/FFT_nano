@@ -148,7 +148,7 @@ function PanelHeader({
 }: {
   title: string;
   collapse?: { open: boolean; toggle: () => void };
-  actions?: JSX.Element;
+  actions?: JSX.Element | null;
 }): JSX.Element {
   return (
     <div className="panel-head">
@@ -177,6 +177,175 @@ function shortTime(input: string | number | undefined): string {
   const dt = new Date(input);
   if (Number.isNaN(dt.getTime())) return String(input);
   return dt.toLocaleString();
+}
+
+type EditorMode = 'edit' | 'split' | 'preview';
+
+function Editor({
+  title,
+  subtitle,
+  value,
+  original,
+  onChange,
+  onSave,
+  onReload,
+  saveDisabled,
+  status,
+  saveLabel = 'Save',
+  reloadLabel = 'Reload',
+  showPreview = true,
+  extraActions,
+  emptyHint,
+}: {
+  title: string;
+  subtitle?: string;
+  value: string;
+  original: string;
+  onChange: (next: string) => void;
+  onSave?: () => void;
+  onReload?: () => void;
+  saveDisabled?: boolean;
+  status?: string;
+  saveLabel?: string;
+  reloadLabel?: string;
+  showPreview?: boolean;
+  extraActions?: JSX.Element;
+  emptyHint?: string;
+}): JSX.Element {
+  const [mode, setMode] = useState<EditorMode>('edit');
+  const dirty = value !== original;
+  const lines = value.length === 0 ? 0 : value.split('\n').length;
+  const chars = value.length;
+  const words = value.trim().length === 0 ? 0 : value.trim().split(/\s+/).length;
+  const statusClass = status && /fail|error/i.test(status)
+    ? 'editor-shell__status--error'
+    : dirty
+      ? 'editor-shell__status--dirty'
+      : 'editor-shell__status--saved';
+  const statusText = status
+    ? status
+    : dirty
+      ? 'Unsaved changes'
+      : 'Saved';
+
+  const editor = (
+    <div className="editor-shell__pane editor-shell__pane--edit">
+      <textarea
+        className="editor-area"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck={false}
+        placeholder={emptyHint}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+            event.preventDefault();
+            if (onSave && !saveDisabled) onSave();
+          }
+        }}
+      />
+    </div>
+  );
+
+  const preview = (
+    <div className="editor-shell__pane editor-shell__pane--preview">
+      <MarkdownLite text={value} />
+    </div>
+  );
+
+  return (
+    <div className="editor-shell">
+      <div className="editor-shell__head">
+        <div className="editor-shell__title">
+          <strong title={title}>{title}</strong>
+          {subtitle ? <small title={subtitle}>{subtitle}</small> : null}
+        </div>
+        <div className="editor-shell__actions">
+          {showPreview ? (
+            <div
+              className="editor-shell__modes"
+              role="tablist"
+              aria-label="Editor mode"
+            >
+              <button
+                type="button"
+                className={mode === 'edit' ? 'active' : ''}
+                onClick={() => setMode('edit')}
+                title="Edit only"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className={mode === 'split' ? 'active' : ''}
+                onClick={() => setMode('split')}
+                title="Edit and preview side by side"
+              >
+                Split
+              </button>
+              <button
+                type="button"
+                className={mode === 'preview' ? 'active' : ''}
+                onClick={() => setMode('preview')}
+                title="Preview only"
+              >
+                Preview
+              </button>
+            </div>
+          ) : null}
+          {extraActions}
+          {onReload ? (
+            <button
+              type="button"
+              onClick={onReload}
+              title="Re-read from disk (discard local changes)"
+            >
+              {reloadLabel}
+            </button>
+          ) : null}
+          {onSave ? (
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saveDisabled}
+              title="Write changes to disk (Ctrl/Cmd+S)"
+            >
+              {saveLabel}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="editor-shell__body">
+        {showPreview && mode === 'split' ? (
+          <>
+            {editor}
+            {preview}
+          </>
+        ) : showPreview && mode === 'preview' ? (
+          preview
+        ) : value.length === 0 ? (
+          <div className="editor-shell__empty">
+            {emptyHint || 'Nothing to display yet.'}
+          </div>
+        ) : (
+          editor
+        )}
+      </div>
+      <div className="editor-shell__footer">
+        <span className={`editor-shell__status ${statusClass}`}>{statusText}</span>
+        <span className="editor-shell__stats">
+          <span>
+            <strong>{lines}</strong> lines
+          </span>
+          <span>
+            <strong>{words}</strong> words
+          </span>
+          <span>
+            <strong>{chars}</strong> chars
+          </span>
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function asText(value: unknown): string {
@@ -215,7 +384,7 @@ function summarizeAgentEvent(payload: unknown): string {
 }
 
 export function App(): JSX.Element {
-  const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const [activeTab, setActiveTab] = useState<TabId>('chat');
   const [tokenInput, setTokenInput] = useState(
     () => localStorage.getItem(TOKEN_KEY) || '',
   );
@@ -277,6 +446,76 @@ export function App(): JSX.Element {
   const [fileError, setFileError] = useState('');
   const [creatingPath, setCreatingPath] = useState('');
 
+  // Memory tab state
+  const [memoryGroups, setMemoryGroups] = useState<
+    Array<{
+      folder: string;
+      workspaceDir: string;
+      isMain: boolean;
+      isGlobal: boolean;
+    }>
+  >([]);
+  const [activeMemoryGroup, setActiveMemoryGroup] = useState('');
+  const [memoryFiles, setMemoryFiles] = useState<
+    Array<{
+      path: string;
+      name: string;
+      size: number;
+      modifiedAt: string;
+      kind: string;
+      exists: boolean;
+      scaffoldOnly?: boolean;
+    }>
+  >([]);
+  const [activeMemoryFile, setActiveMemoryFile] = useState<{
+    group: string;
+    path: string;
+  } | null>(null);
+  const [memoryFileContent, setMemoryFileContent] = useState('');
+  const [memoryFileOriginal, setMemoryFileOriginal] = useState('');
+  const [memoryFileStatus, setMemoryFileStatus] = useState('');
+  const [memoryHistory, setMemoryHistory] = useState<
+    Array<{ version: string; size: number; modifiedAt: string }>
+  >([]);
+
+  // Skills tab state
+  const [activeSkill, setActiveSkill] = useState<{
+    root: string;
+    path: string;
+    name: string;
+  } | null>(null);
+  const [skillFileContent, setSkillFileContent] = useState('');
+  const [skillFileOriginal, setSkillFileOriginal] = useState('');
+  const [skillFileStatus, setSkillFileStatus] = useState('');
+  const [skillHistory, setSkillHistory] = useState<
+    Array<{ version: string; size: number; modifiedAt: string }>
+  >([]);
+
+  // Knowledge tab state
+  const [knowledgeFiles, setKnowledgeFiles] = useState<
+    Array<{
+      path: string;
+      name: string;
+      size: number;
+      modifiedAt: string;
+      kind: string;
+      exists: boolean;
+    }>
+  >([]);
+  const [activeKnowledgeFile, setActiveKnowledgeFile] = useState<{
+    path: string;
+    name: string;
+  } | null>(null);
+  const [knowledgeFileContent, setKnowledgeFileContent] = useState('');
+  const [knowledgeFileOriginal, setKnowledgeFileOriginal] = useState('');
+  const [knowledgeWriteMode, setKnowledgeWriteMode] = useState<
+    'replace' | 'append'
+  >('replace');
+  const [knowledgeFileStatus, setKnowledgeFileStatus] = useState('');
+  const [lastKnowledgeSaveMode, setLastKnowledgeSaveMode] = useState<
+    'replace' | 'append' | null
+  >(null);
+
   // Collapsible state
   const overviewRuntime = useCollapse('overview.runtime', true);
   const overviewProfile = useCollapse('overview.profile', true);
@@ -300,6 +539,14 @@ export function App(): JSX.Element {
   const knowledgeCuratorPanel = useCollapse('knowledge.curator', false);
   const hostLogsPanel = useCollapse('logs.host', true);
   const errorLogsPanel = useCollapse('logs.error', true);
+
+  // Tab-level sidebar collapse (left sidebar for file tree, right for inspector)
+  const memorySidebarLeft = useCollapse('sidebar.memory.left', true);
+  const memorySidebarRight = useCollapse('sidebar.memory.right', true);
+  const skillsSidebarLeft = useCollapse('sidebar.skills.left', true);
+  const skillsSidebarRight = useCollapse('sidebar.skills.right', true);
+  const knowledgeSidebarLeft = useCollapse('sidebar.knowledge.left', true);
+  const knowledgeSidebarRight = useCollapse('sidebar.knowledge.right', true);
   const view = useViewState();
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -403,7 +650,318 @@ export function App(): JSX.Element {
       fetchJson<Record<string, unknown>>('/api/knowledge')
         .then(setKnowledge)
         .catch(() => null),
+      refreshMemoryGroups().catch(() => null),
+      refreshKnowledgeFiles().catch(() => null),
     ]);
+  };
+
+  const refreshMemoryGroups = async () => {
+    const res = await fetchJson<{
+      ok: boolean;
+      groups: Array<{
+        folder: string;
+        workspaceDir: string;
+        isMain: boolean;
+        isGlobal: boolean;
+      }>;
+    }>('/api/memory/groups');
+    setMemoryGroups(res.groups || []);
+    if (!activeMemoryGroup && res.groups?.[0]) {
+      setActiveMemoryGroup(res.groups[0].folder);
+    }
+  };
+
+  const refreshMemoryFiles = async (group: string) => {
+    if (!group) {
+      setMemoryFiles([]);
+      return;
+    }
+    const res = await fetchJson<{
+      ok: boolean;
+      files: typeof memoryFiles;
+    }>(`/api/memory/files?group=${encodeURIComponent(group)}`);
+    setMemoryFiles(res.files || []);
+  };
+
+  const openMemoryFile = async (group: string, filePath: string) => {
+    if (
+      memoryFileContent !== memoryFileOriginal &&
+      memoryFileOriginal &&
+      activeMemoryFile &&
+      (activeMemoryFile.path !== filePath || activeMemoryFile.group !== group)
+    ) {
+      const ok = window.confirm('Discard unsaved changes to the current memory file?');
+      if (!ok) return;
+    }
+    setMemoryFileStatus('Loading…');
+    try {
+      const res = await fetchJson<{
+        ok: boolean;
+        content: string;
+        path: string;
+        size: number;
+        modifiedAt: string;
+        exists: boolean;
+      }>(
+        `/api/memory/read?group=${encodeURIComponent(group)}&path=${encodeURIComponent(filePath)}`,
+      );
+      setActiveMemoryFile({ group, path: filePath });
+      setMemoryFileContent(res.content || '');
+      setMemoryFileOriginal(res.content || '');
+      setMemoryFileStatus(res.exists ? 'Loaded.' : 'New file (empty).');
+      await loadMemoryHistory(group, filePath);
+    } catch (err) {
+      setMemoryFileStatus(
+        `Load failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  const loadMemoryHistory = async (group: string, filePath: string) => {
+    try {
+      const hist = await fetchJson<{
+        ok: boolean;
+        versions: typeof memoryHistory;
+      }>(
+        `/api/memory/history?group=${encodeURIComponent(group)}&path=${encodeURIComponent(filePath)}`,
+      );
+      setMemoryHistory(hist.versions || []);
+    } catch {
+      setMemoryHistory([]);
+    }
+  };
+
+  const saveMemoryFile = async () => {
+    if (!activeMemoryFile) return;
+    setMemoryFileStatus('Saving…');
+    try {
+      await fetchJson('/api/memory/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          group: activeMemoryFile.group,
+          path: activeMemoryFile.path,
+          content: memoryFileContent,
+        }),
+      });
+      setMemoryFileOriginal(memoryFileContent);
+      setMemoryFileStatus('Saved.');
+      await refreshMemoryFiles(activeMemoryFile.group);
+      // Re-fetch history
+      try {
+        const hist = await fetchJson<{
+          ok: boolean;
+          versions: typeof memoryHistory;
+        }>(
+          `/api/memory/history?group=${encodeURIComponent(activeMemoryFile.group)}&path=${encodeURIComponent(activeMemoryFile.path)}`,
+        );
+        setMemoryHistory(hist.versions || []);
+      } catch {
+        setMemoryHistory([]);
+      }
+    } catch (err) {
+      setMemoryFileStatus(
+        `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  const rollbackMemoryFile = async (version: string) => {
+    if (!activeMemoryFile) return;
+    if (!window.confirm(`Roll back to version ${version}?`)) return;
+    setMemoryFileStatus('Rolling back…');
+    try {
+      await fetchJson('/api/memory/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          group: activeMemoryFile.group,
+          path: activeMemoryFile.path,
+          version,
+        }),
+      });
+      await openMemoryFile(activeMemoryFile.group, activeMemoryFile.path);
+      setMemoryFileStatus(`Rolled back to ${version}.`);
+    } catch (err) {
+      setMemoryFileStatus(
+        `Rollback failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  const openSkillFile = async (
+    root: { id: string; label: string },
+    skill: { name: string; path: string; dir: string },
+  ) => {
+    if (
+      skillFileContent !== skillFileOriginal &&
+      skillFileOriginal &&
+      activeSkill &&
+      (activeSkill.path !== skill.path || activeSkill.root !== root.id)
+    ) {
+      const ok = window.confirm('Discard unsaved changes to the current skill?');
+      if (!ok) return;
+    }
+    setSkillFileStatus('Loading…');
+    try {
+      const res = await fetchJson<{
+        ok: boolean;
+        content: string;
+        path: string;
+        size: number;
+        modifiedAt: string;
+        exists: boolean;
+      }>(
+        `/api/skills/read?root=${encodeURIComponent(root.id)}&path=${encodeURIComponent(skill.path)}`,
+      );
+      setActiveSkill({ root: root.id, name: skill.name, path: skill.path });
+      setSkillFileContent(res.content || '');
+      setSkillFileOriginal(res.content || '');
+      setSkillFileStatus(res.exists ? 'Loaded.' : 'Empty.');
+      try {
+        const hist = await fetchJson<{
+          ok: boolean;
+          versions: typeof skillHistory;
+        }>(
+          `/api/skills/history?root=${encodeURIComponent(root.id)}&path=${encodeURIComponent(skill.path)}`,
+        );
+        setSkillHistory(hist.versions || []);
+      } catch {
+        setSkillHistory([]);
+      }
+    } catch (err) {
+      setSkillFileStatus(
+        `Load failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  const saveSkillFile = async () => {
+    if (!activeSkill) return;
+    setSkillFileStatus('Saving…');
+    try {
+      await fetchJson('/api/skills/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          root: activeSkill.root,
+          path: activeSkill.path,
+          content: skillFileContent,
+        }),
+      });
+      setSkillFileOriginal(skillFileContent);
+      setSkillFileStatus('Saved.');
+      await refreshSkills();
+      try {
+        const hist = await fetchJson<{
+          ok: boolean;
+          versions: typeof skillHistory;
+        }>(
+          `/api/skills/history?root=${encodeURIComponent(activeSkill.root)}&path=${encodeURIComponent(activeSkill.path)}`,
+        );
+        setSkillHistory(hist.versions || []);
+      } catch {
+        setSkillHistory([]);
+      }
+    } catch (err) {
+      setSkillFileStatus(
+        `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  const rollbackSkillFile = async (version: string) => {
+    if (!activeSkill) return;
+    if (!window.confirm(`Roll back to version ${version}?`)) return;
+    setSkillFileStatus('Rolling back…');
+    try {
+      await fetchJson('/api/skills/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          root: activeSkill.root,
+          path: activeSkill.path,
+          version,
+        }),
+      });
+      await openSkillFile(
+        { id: activeSkill.root, label: '' },
+        { name: activeSkill.name, path: activeSkill.path, dir: '' },
+      );
+      setSkillFileStatus(`Rolled back to ${version}.`);
+    } catch (err) {
+      setSkillFileStatus(
+        `Rollback failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  const refreshKnowledgeFiles = async () => {
+    const res = await fetchJson<{
+      ok: boolean;
+      files: typeof knowledgeFiles;
+    }>('/api/knowledge/files');
+    setKnowledgeFiles(res.files || []);
+  };
+
+  const openKnowledgeFile = async (filePath: string, name: string) => {
+    if (
+      knowledgeFileContent !== knowledgeFileOriginal &&
+      knowledgeFileOriginal &&
+      activeKnowledgeFile &&
+      activeKnowledgeFile.path !== filePath
+    ) {
+      const ok = window.confirm('Discard unsaved changes to the current knowledge file?');
+      if (!ok) return;
+    }
+    setKnowledgeFileStatus('Loading…');
+    try {
+      const res = await fetchJson<{
+        ok: boolean;
+        content: string;
+        path: string;
+        size: number;
+        modifiedAt: string;
+        exists: boolean;
+      }>(`/api/knowledge/read?path=${encodeURIComponent(filePath)}`);
+      setActiveKnowledgeFile({ path: filePath, name });
+      setKnowledgeFileContent(res.content || '');
+      setKnowledgeFileOriginal(res.content || '');
+      setKnowledgeFileStatus(res.exists ? 'Loaded.' : 'Empty.');
+    } catch (err) {
+      setKnowledgeFileStatus(
+        `Load failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  const saveKnowledgeFile = async () => {
+    if (!activeKnowledgeFile) return;
+    setKnowledgeFileStatus('Saving…');
+    try {
+      await fetchJson('/api/knowledge/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: activeKnowledgeFile.path,
+          content: knowledgeFileContent,
+          mode: knowledgeWriteMode,
+        }),
+      });
+      if (knowledgeWriteMode === 'replace') {
+        setKnowledgeFileOriginal(knowledgeFileContent);
+      }
+      setKnowledgeFileStatus(`Saved (${knowledgeWriteMode}).`);
+      setLastKnowledgeSaveMode(knowledgeWriteMode);
+      await refreshKnowledgeFiles();
+      await fetchJson<Record<string, unknown>>('/api/knowledge')
+        .then(setKnowledge)
+        .catch(() => null);
+    } catch (err) {
+      setKnowledgeFileStatus(
+        `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   };
 
   const wsRequest = <T,>(
@@ -836,6 +1394,66 @@ export function App(): JSX.Element {
     }
   }, [fileRoots.length]);
 
+  // Memory file tree refresh when active group changes
+  useEffect(() => {
+    if (activeMemoryGroup) {
+      void refreshMemoryFiles(activeMemoryGroup);
+    }
+  }, [activeMemoryGroup]);
+
+  // Lazy-load memory groups/knowledge files on first tab visit
+  useEffect(() => {
+    if (activeTab === 'memory' && memoryGroups.length === 0) {
+      void refreshMemoryGroups();
+    }
+    if (activeTab === 'knowledge' && knowledgeFiles.length === 0) {
+      void refreshKnowledgeFiles();
+    }
+  }, [activeTab, memoryGroups.length, knowledgeFiles.length]);
+
+  // Memory tab: once groups + files are loaded and no file is open,
+  // auto-open the first file so the editor is never empty and clicking
+  // a file in the sidebar always has a previous-selection context.
+  useEffect(() => {
+    if (
+      activeTab !== 'memory' ||
+      memoryGroups.length === 0 ||
+      activeMemoryFile
+    ) {
+      return;
+    }
+    const targetGroup =
+      activeMemoryGroup || memoryGroups[0]?.folder || '';
+    if (!targetGroup || memoryFiles.length === 0) return;
+    const firstReadable = memoryFiles.find((file) => file.exists) ||
+      memoryFiles[0];
+    if (firstReadable) {
+      void openMemoryFile(targetGroup, firstReadable.path);
+    }
+  }, [
+    activeTab,
+    memoryGroups.length,
+    activeMemoryGroup,
+    memoryFiles.length,
+    activeMemoryFile,
+  ]);
+
+  // System tab: auto-load the composed system prompt on first visit and
+  // when the active session changes, so the tab is never blank.
+  useEffect(() => {
+    if (activeTab === 'system' && systemPreview === null) {
+      void loadSystemPreview().catch(() => null);
+    }
+  }, [activeTab, systemPreview, activeSession]);
+
+  // System tab: auto-load the main-group file list so the system file
+  // cards are populated without manual reload.
+  useEffect(() => {
+    if (activeTab === 'system') {
+      void refreshMemoryFiles('main').catch(() => null);
+    }
+  }, [activeTab]);
+
   const activeProvider = providers.find(
     (provider) => provider.id === setupProvider,
   );
@@ -860,7 +1478,9 @@ export function App(): JSX.Element {
 
   return (
     <OnboardingGate token={token}>
-      <div className={`app app--${view.layout}${view.chatFocus ? ' app--chat-focus' : ''}`}>
+      <div className={`app app--${view.layout}${
+        view.chatFocus && activeTab === 'chat' ? ' app--chat-focus' : ''
+      }`}>
         <header className="masthead panel">
           <div className="masthead__title">
             <h1>FFT CONTROL CENTER</h1>
@@ -888,10 +1508,18 @@ export function App(): JSX.Element {
             >
               Stacked
             </button>
-            <label className="masthead__focus">
+            <label
+              className={`masthead__focus${activeTab === 'chat' ? '' : ' masthead__focus--disabled'}`}
+              title={
+                activeTab === 'chat'
+                  ? 'Hide everything except the chat panel'
+                  : 'Switch to the Chat tab to use chat focus'
+              }
+            >
               <input
                 type="checkbox"
                 checked={view.chatFocus}
+                disabled={activeTab !== 'chat'}
                 onChange={(event) => view.setChatFocus(event.target.checked)}
               />
               <span>Chat focus</span>
@@ -1046,7 +1674,11 @@ export function App(): JSX.Element {
             className={`panel chat-panel${chatComposerPanel.open ? '' : ' panel--collapsed'}`}
           >
             <PanelHeader
-              title={`Live Chat · ${activeSession}`}
+              title={
+                activeTab === 'sessions'
+                  ? `History · ${activeSession}`
+                  : `Live Chat · ${activeSession}`
+              }
               collapse={chatComposerPanel}
               actions={
                 <button
@@ -1063,7 +1695,9 @@ export function App(): JSX.Element {
                 <div className="scroll-block history">
                   {history.length === 0 ? (
                     <p className="empty-state">
-                      No messages yet. Send a prompt to start a run.
+                      {activeTab === 'sessions'
+                        ? 'No messages yet for this session. Switch to the Chat tab to send a prompt.'
+                        : 'No messages yet. Send a prompt to start a run.'}
                     </p>
                   ) : (
                     history.map((msg, index) => {
@@ -1098,6 +1732,7 @@ export function App(): JSX.Element {
                     })
                   )}
                 </div>
+                {activeTab === 'chat' ? (
                 <div className="composer">
                   <textarea
                     value={chatInput}
@@ -1136,9 +1771,11 @@ export function App(): JSX.Element {
                     <span className="composer-hint">⌘+Enter to send</span>
                   </div>
                 </div>
+                ) : null}
               </>
             ) : null}
           </article>
+          {activeTab === 'chat' ? (
           <div className="service-column">
             <article
               className={`panel service-panel${chatServicePanel.open ? '' : ' panel--collapsed'}`}
@@ -1298,6 +1935,7 @@ export function App(): JSX.Element {
               ) : null}
             </article>
           </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -1610,174 +2248,424 @@ export function App(): JSX.Element {
                   : 'Editor'
               }
               collapse={filesEditorPanel}
-              actions={
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (activeFile) void openFile(activeFile.root, activeFile.path);
-                    }}
-                    disabled={!activeFile}
-                    title="Re-read from disk (discard local changes)"
-                  >
-                    Reload
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void saveFile()}
-                    disabled={!activeFile || fileContent === fileOriginal}
-                    title="Write changes to disk"
-                  >
-                    Save
-                  </button>
-                </>
-              }
             />
             {filesEditorPanel.open ? (
-              activeFile ? (
-                <>
-                  <p className="files-path">
-                    {activeFile.root}:{activeFile.path}
-                    {fileContent !== fileOriginal ? ' · unsaved changes' : ' · saved'}
-                  </p>
-                  <textarea
-                    className="editor-area"
-                    value={fileContent}
-                    onChange={(event) => setFileContent(event.target.value)}
-                    spellCheck={false}
-                  />
-                </>
-              ) : (
-                <p className="empty-state">
-                  Select a file in the browser to edit it.
-                </p>
-              )
+              <Editor
+                title={activeFile ? activeFile.path : 'No file selected'}
+                subtitle={
+                  activeFile
+                    ? `${activeFile.root} · ${fileStatus || (fileContent === fileOriginal ? 'loaded' : 'modified')}`
+                    : 'Pick a file on the left'
+                }
+                value={fileContent}
+                original={fileOriginal}
+                onChange={setFileContent}
+                showPreview={activeFile?.path.toLowerCase().endsWith('.md') || activeFile?.path.toLowerCase().endsWith('.markdown') || false}
+                onReload={
+                  activeFile
+                    ? () => void openFile(activeFile.root, activeFile.path)
+                    : undefined
+                }
+                onSave={activeFile ? () => void saveFile() : undefined}
+                saveDisabled={!activeFile || fileContent === fileOriginal}
+                status={fileStatus}
+                emptyHint={
+                  activeFile
+                    ? 'File is empty.'
+                    : 'Select a file in the browser to view or edit it.'
+                }
+              />
             ) : null}
           </article>
         </section>
       ) : null}
 
       {activeTab === 'system' ? (
-        <section className="grid system-grid">
-          <article
-            className={`panel${systemPreviewPanel.open ? '' : ' panel--collapsed'}`}
-          >
+        <section className="system-tab-section">
+          <article className="panel system-files-panel">
             <PanelHeader
-              title="Composed System Prompt"
-              collapse={systemPreviewPanel}
+              title="System Files"
               actions={
-                <button type="button" onClick={() => void loadSystemPreview()}>
-                  Load Preview
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void loadSystemPreview()}
+                    title="Show the composed system prompt"
+                  >
+                    Composed
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void refreshMemoryFiles('main')}
+                    title="Reload file list from disk"
+                  >
+                    Reload
+                  </button>
+                </>
               }
             />
-            {systemPreviewPanel.open ? (
-              <>
-                <p className="files-path">
-                  Preview only. It does not store or send another system message.
-                </p>
-                <pre className="system-preview">
-                  {(systemPreview as { text?: string } | null)?.text ||
-                    'No preview loaded.'}
-                </pre>
-              </>
-            ) : null}
+            <p className="files-path">
+              Markdown files in the main workspace that shape the system message.
+              Click to view.
+            </p>
+            <div className="system-file-list">
+              {(() => {
+                const SYSTEM_FILE_ORDER = [
+                  'NANO.md',
+                  'SOUL.md',
+                  'IDENTITY.md',
+                  'TOOLS.md',
+                  'USER.md',
+                  'AGENTS.md',
+                  'PRINCIPLES.md',
+                  'HEARTBEAT.md',
+                  'BOOTSTRAP.md',
+                ];
+                const sysFiles = memoryFiles.filter((f) =>
+                  SYSTEM_FILE_ORDER.includes(f.name),
+                );
+                const ordered = SYSTEM_FILE_ORDER.map((name) =>
+                  sysFiles.find((f) => f.name === name),
+                ).filter(Boolean);
+                if (ordered.length === 0) {
+                  return (
+                    <p className="empty-state">
+                      Loading system files… If this persists, click Reload.
+                    </p>
+                  );
+                }
+                return ordered.map((file) => (
+                  <button
+                    key={file!.path}
+                    type="button"
+                    className={`system-file-card${
+                      activeMemoryFile &&
+                      activeMemoryFile.path === file!.path
+                        ? ' active'
+                        : ''
+                    }`}
+                    onClick={() => void openMemoryFile('main', file!.path)}
+                  >
+                    <div className="system-file-card__head">
+                      <strong>{file!.name}</strong>
+                      <span className="meta">
+                        {file!.exists ? `${file!.size}b` : 'missing'} ·{' '}
+                        {shortTime(file!.modifiedAt)}
+                      </span>
+                    </div>
+                    <p className="system-file-card__hint">
+                      {file!.name === 'NANO.md' && 'Agent identity, role, and capabilities.'}
+                      {file!.name === 'SOUL.md' && 'Core values, principles, voice.'}
+                      {file!.name === 'IDENTITY.md' && 'Who the agent is and how it presents itself.'}
+                      {file!.name === 'TOOLS.md' && 'Tool surface and usage conventions.'}
+                      {file!.name === 'USER.md' && 'About the human in the loop.'}
+                      {file!.name === 'AGENTS.md' && 'Subagent patterns and delegation rules.'}
+                      {file!.name === 'PRINCIPLES.md' && 'Operating principles.'}
+                      {file!.name === 'HEARTBEAT.md' && 'Periodic self-check cadence.'}
+                      {file!.name === 'BOOTSTRAP.md' && 'First-run setup script.'}
+                    </p>
+                  </button>
+                ));
+              })()}
+            </div>
           </article>
           <article
-            className={`panel${systemReportPanel.open ? '' : ' panel--collapsed'}`}
+            className="panel system-viewer-panel"
+            style={{ flex: 1, minWidth: 0, minHeight: 0 }}
           >
-            <PanelHeader title="Report" collapse={systemReportPanel} />
-            {systemReportPanel.open ? (
-              <pre className="service-output">
-                {JSON.stringify(
-                  (systemPreview as { report?: unknown } | null)?.report || {},
-                  null,
-                  2,
-                )}
-              </pre>
-            ) : null}
+            {activeMemoryFile && activeMemoryFile.group === 'main' ? (
+              <Editor
+                title={activeMemoryFile.path}
+                subtitle={`group=${activeMemoryFile.group} · system prompt source`}
+                value={memoryFileContent}
+                original={memoryFileOriginal}
+                onChange={setMemoryFileContent}
+                onReload={() =>
+                  void openMemoryFile(activeMemoryFile.group, activeMemoryFile.path)
+                }
+                onSave={() => void saveMemoryFile()}
+                saveDisabled={memoryFileContent === memoryFileOriginal}
+                status={memoryFileStatus}
+                showPreview={true}
+                emptyHint="Pick a system file from the left to view or edit it."
+              />
+            ) : (
+              <div className="editor-shell">
+                <div className="editor-shell__head">
+                  <div className="editor-shell__title">
+                    <strong>System Prompt Editor</strong>
+                    <small>Pick a system file from the left to begin</small>
+                  </div>
+                </div>
+                <div className="editor-shell__empty">
+                  These .md files are concatenated into the system message sent
+                  to the model. Edits take effect on the next run. Click
+                  <strong> Composed</strong> above to preview the final
+                  assembled system prompt.
+                </div>
+                <div className="editor-shell__footer">
+                  <span className="editor-shell__status editor-shell__status--saved">
+                    Ready
+                  </span>
+                  <span className="editor-shell__stats">
+                    <span>
+                      <strong>0</strong> lines
+                    </span>
+                    <span>
+                      <strong>0</strong> words
+                    </span>
+                    <span>
+                      <strong>0</strong> chars
+                    </span>
+                  </span>
+                </div>
+              </div>
+            )}
           </article>
         </section>
       ) : null}
 
       {activeTab === 'skills' ? (
-        <section className="grid skills-grid">
-          <article
-            className={`panel${skillsPanelState.open ? '' : ' panel--collapsed'}`}
-          >
-            <PanelHeader
-              title="Skills Catalog"
-              collapse={skillsPanelState}
-              actions={
-                <>
-                  <button type="button" onClick={() => void refreshSkills()}>
-                    Refresh
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void fetchJson('/api/skills/validate', {
-                        method: 'POST',
-                      }).then((r) => setSkillStatus(JSON.stringify(r, null, 2)))
-                    }
-                  >
-                    Validate
-                  </button>
-                </>
-              }
-            />
-            {skillsPanelState.open ? (
-              <>
-                <input
-                  type="text"
-                  placeholder="filter by name, path, description"
-                  onChange={(event) => {
-                    const q = event.target.value;
-                    if (!q) {
-                      void refreshSkills();
-                      return;
-                    }
-                    setSkillGroups((prev) =>
-                      prev.map((group) => ({
-                        ...group,
-                        skills: group.skills.filter((skill) =>
-                          `${skill.name} ${skill.path} ${skill.description}`
-                            .toLowerCase()
-                            .includes(q.toLowerCase()),
-                        ),
-                      })),
-                    );
+        <section
+          className={
+            skillsSidebarLeft.open && skillsSidebarRight.open
+              ? 'tab-sidebar-grid'
+              : skillsSidebarLeft.open
+                ? 'tab-sidebar-grid tab-sidebar-grid--no-inspector'
+                : skillsSidebarRight.open
+                  ? 'tab-sidebar-grid tab-sidebar-grid--no-sidebar'
+                  : 'tab-sidebar-grid tab-sidebar-grid--solo'
+          }
+        >
+          {skillsSidebarLeft.open ? (
+            <aside className="sidebar-left">
+              <div className="sidebar-resizer">
+                <h2>Skills ({skillGroups.reduce((n, g) => n + g.skills.length, 0)})</h2>
+                <span className="sidebar-resizer-spacer" />
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={skillsSidebarLeft.toggle}
+                  title="Hide left sidebar"
+                >
+                  ◀
+                </button>
+              </div>
+              <input
+                type="text"
+                placeholder="filter by name, path, description"
+                className="files-filter"
+                onChange={(event) => {
+                  const q = event.target.value;
+                  if (!q) {
+                    void refreshSkills();
+                    return;
+                  }
+                  setSkillGroups((prev) =>
+                    prev.map((group) => ({
+                      ...group,
+                      skills: group.skills.filter((skill) =>
+                        `${skill.name} ${skill.path} ${skill.description}`
+                          .toLowerCase()
+                          .includes(q.toLowerCase()),
+                      ),
+                    })),
+                  );
+                }}
+              />
+              <div className="sidebar-list">
+                {skillGroups.length === 0 ? (
+                  <p className="sidebar-empty">
+                    No skills indexed. Click Refresh.
+                  </p>
+                ) : (
+                  skillGroups.map((group) => (
+                    <div key={group.root.id}>
+                      <p className="sidebar-group">{group.root.label}</p>
+                      {group.skills.length === 0 ? (
+                        <p className="sidebar-empty">no skills</p>
+                      ) : (
+                        group.skills.map((skill) => (
+                          <button
+                            key={`${group.root.id}:${skill.path}`}
+                            type="button"
+                            className={`sidebar-list-item${
+                              activeSkill &&
+                              activeSkill.root === group.root.id &&
+                              activeSkill.path === skill.path
+                                ? ' active'
+                                : ''
+                            }`}
+                            onClick={() => void openSkillFile(group.root, skill)}
+                          >
+                            <strong>{skill.name}</strong>
+                            <span className="meta">
+                              {skill.path} · {skill.description || 'no description'}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="composer-actions">
+                <button type="button" onClick={() => void refreshSkills()}>
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void fetchJson('/api/skills/validate', { method: 'POST' }).then(
+                      (r) => setSkillStatus(JSON.stringify(r, null, 2)),
+                    )
+                  }
+                >
+                  Validate
+                </button>
+              </div>
+            </aside>
+          ) : (
+            <div className="sidebar-collapsed">
+              <button
+                type="button"
+                className="tab-sidebar-toggle"
+                onClick={skillsSidebarLeft.toggle}
+                title="Show left sidebar"
+              >
+                ▶ Skills
+              </button>
+            </div>
+          )}
+          <div className="tab-main">
+            <article
+              className="panel"
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                padding: 0,
+                border: 0,
+                boxShadow: 'none',
+                background: 'transparent',
+              }}
+            >
+              {activeSkill ? (
+                <Editor
+                  title={activeSkill.name}
+                  subtitle={`${activeSkill.root}:${activeSkill.path}`}
+                  value={skillFileContent}
+                  original={skillFileOriginal}
+                  onChange={setSkillFileContent}
+                  onReload={() => {
+                    const target = skillGroups
+                      .flatMap((g) =>
+                        g.skills.map((s) => ({ root: g.root, skill: s })),
+                      )
+                      .find(
+                        (x) =>
+                          x.root.id === activeSkill.root &&
+                          x.skill.path === activeSkill.path,
+                      );
+                    if (target) void openSkillFile(target.root, target.skill);
                   }}
+                  onSave={() => void saveSkillFile()}
+                  saveDisabled={skillFileContent === skillFileOriginal}
+                  status={skillFileStatus}
+                  emptyHint="Select a skill on the left to view or edit its SKILL.md."
                 />
-                <div className="scroll-block skills-scroll">
-                  {skillGroups.map((group) => (
-                    <details key={group.root.id} open>
-                      <summary>
-                        <strong>{group.root.label}</strong>{' '}
-                        <span>{group.skills.length}</span>
-                      </summary>
-                      {group.skills.map((skill) => (
-                        <div
-                          className="skill-item"
-                          key={`${group.root.id}:${skill.path}`}
-                        >
-                          <div>
-                            <p className="skill-title">{skill.name}</p>
-                            <p className="files-path">{skill.path}</p>
-                            <p>{skill.description || 'No description.'}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </details>
-                  ))}
+              ) : (
+                <div className="editor-shell">
+                  <div className="editor-shell__head">
+                    <div className="editor-shell__title">
+                      <strong>Skill Editor</strong>
+                      <small>Pick a skill from the left sidebar to begin</small>
+                    </div>
+                  </div>
+                  <div className="editor-shell__empty">
+                    Select a skill on the left to view or edit its SKILL.md.
+                  </div>
+                  <div className="editor-shell__footer">
+                    <span className="editor-shell__status editor-shell__status--saved">
+                      No file open
+                    </span>
+                    <span className="editor-shell__stats">
+                      <span>
+                        <strong>0</strong> lines
+                      </span>
+                    </span>
+                  </div>
                 </div>
-                <pre className="service-output">
-                  {skillStatus ||
-                    'Use the Files tab to edit a SKILL.md. Catalog is read-only.'}
-                </pre>
-              </>
-            ) : null}
-          </article>
+              )}
+            </article>
+          </div>
+          {skillsSidebarRight.open ? (
+            <aside className="sidebar-right">
+              <div className="sidebar-resizer">
+                <h2>History &amp; Status</h2>
+                <span className="sidebar-resizer-spacer" />
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={skillsSidebarRight.toggle}
+                  title="Hide right sidebar"
+                >
+                  ▶
+                </button>
+              </div>
+              {activeSkill ? (
+                <>
+                  <p className="files-path">
+                    Versions: {skillHistory.length} snapshot(s)
+                  </p>
+                  <div className="history-list">
+                    {skillHistory.length === 0 ? (
+                      <p className="sidebar-empty">No history yet.</p>
+                    ) : (
+                      skillHistory
+                        .slice()
+                        .reverse()
+                        .map((entry) => (
+                          <div key={entry.version} className="history-item">
+                            <div>
+                              <strong>{entry.version}</strong>
+                              <br />
+                              <span className="meta">
+                                {entry.size}b · {shortTime(entry.modifiedAt)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void rollbackSkillFile(entry.version)}
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="sidebar-empty">Select a skill to view history.</p>
+              )}
+              <h3>Validation</h3>
+              <pre className="service-output">
+                {skillStatus || 'Run Validate to see results.'}
+              </pre>
+            </aside>
+          ) : (
+            <div className="sidebar-collapsed">
+              <button
+                type="button"
+                className="tab-sidebar-toggle"
+                onClick={skillsSidebarRight.toggle}
+                title="Show right sidebar"
+              >
+                ◀ History
+              </button>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -1866,78 +2754,520 @@ export function App(): JSX.Element {
         </section>
       ) : null}
       {activeTab === 'memory' ? (
-        <section className="panel">
-          <h2>Memory + Canonical Files</h2>
-          <pre className="service-output">
-            {JSON.stringify(memory, null, 2)}
-          </pre>
+        <section
+          className={
+            memorySidebarLeft.open && memorySidebarRight.open
+              ? 'tab-sidebar-grid'
+              : memorySidebarLeft.open
+                ? 'tab-sidebar-grid tab-sidebar-grid--no-inspector'
+                : memorySidebarRight.open
+                  ? 'tab-sidebar-grid tab-sidebar-grid--no-sidebar'
+                  : 'tab-sidebar-grid tab-sidebar-grid--solo'
+          }
+        >
+          {memorySidebarLeft.open ? (
+            <aside className="sidebar-left">
+              <div className="sidebar-resizer">
+                <h2>Memory Groups</h2>
+                <span className="sidebar-resizer-spacer" />
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={() => {
+                    void refreshMemoryGroups();
+                    if (activeMemoryGroup) {
+                      void refreshMemoryFiles(activeMemoryGroup);
+                    }
+                  }}
+                  title="Reload groups and files from disk"
+                >
+                  ↻
+                </button>
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={memorySidebarLeft.toggle}
+                  title="Hide left sidebar"
+                >
+                  ◀
+                </button>
+              </div>
+              <div className="sidebar-list">
+                {memoryGroups.length === 0 ? (
+                  <p className="sidebar-empty">No groups found.</p>
+                ) : (
+                  memoryGroups.map((group) => (
+                    <button
+                      key={group.folder}
+                      type="button"
+                      className={`sidebar-list-item${
+                        activeMemoryGroup === group.folder ? ' active' : ''
+                      }`}
+                      onClick={() => {
+                        setActiveMemoryGroup(group.folder);
+                        setActiveMemoryFile(null);
+                        setMemoryFileContent('');
+                        setMemoryFileOriginal('');
+                        setMemoryHistory([]);
+                      }}
+                    >
+                      <strong>
+                        {group.isMain
+                          ? 'main (workspace)'
+                          : group.folder}
+                      </strong>
+                      <span className="meta">{group.workspaceDir}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+              <p className="sidebar-group">
+                Files ({memoryFiles.length})
+              </p>
+              <div className="sidebar-list">
+                {memoryFiles.length === 0 ? (
+                  <p className="sidebar-empty">
+                    {activeMemoryGroup
+                      ? 'No files indexed.'
+                      : 'Select a group above.'}
+                  </p>
+                ) : (
+                  memoryFiles.map((file) => (
+                    <button
+                      key={file.path}
+                      type="button"
+                      className={`sidebar-list-item${
+                        activeMemoryFile &&
+                        activeMemoryFile.group === activeMemoryGroup &&
+                        activeMemoryFile.path === file.path
+                          ? ' active'
+                          : ''
+                      }`}
+                      onClick={() => {
+                        const group = activeMemoryGroup ||
+                          memoryGroups[0]?.folder || '';
+                        if (!group) return;
+                        if (group !== activeMemoryGroup) {
+                          setActiveMemoryGroup(group);
+                          setActiveMemoryFile(null);
+                        }
+                        void openMemoryFile(group, file.path);
+                      }}
+                    >
+                      <strong>{file.name}</strong>
+                      <span className="meta">
+                        <span className="sidebar-kind">{file.kind}</span> ·{' '}
+                        {file.exists ? `${file.size}b` : 'missing'} ·{' '}
+                        {shortTime(file.modifiedAt)}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </aside>
+          ) : (
+            <div className="sidebar-collapsed">
+              <button
+                type="button"
+                className="tab-sidebar-toggle"
+                onClick={memorySidebarLeft.toggle}
+                title="Show left sidebar"
+              >
+                ▶ Memory
+              </button>
+            </div>
+          )}
+          <div className="tab-main">
+            <article
+              className="panel"
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                padding: 0,
+                border: 0,
+                boxShadow: 'none',
+                background: 'transparent',
+              }}
+            >
+              {activeMemoryFile ? (
+                <Editor
+                  title={activeMemoryFile.path}
+                  subtitle={`group=${activeMemoryFile.group} · ${activeMemoryFile.path}`}
+                  value={memoryFileContent}
+                  original={memoryFileOriginal}
+                  onChange={setMemoryFileContent}
+                  onReload={() =>
+                    void openMemoryFile(
+                      activeMemoryFile.group,
+                      activeMemoryFile.path,
+                    )
+                  }
+                  onSave={() => void saveMemoryFile()}
+                  saveDisabled={memoryFileContent === memoryFileOriginal}
+                  status={memoryFileStatus}
+                  emptyHint="Select a group and a file in the left sidebar to view or edit durable memory, canonical notes, or NANO/SOUL/TODOS files."
+                />
+              ) : (
+                <div className="editor-shell">
+                  <div className="editor-shell__head">
+                    <div className="editor-shell__title">
+                      <strong>Memory Editor</strong>
+                      <small>Pick a group and file from the left sidebar</small>
+                    </div>
+                  </div>
+                  <div className="editor-shell__empty">
+                    Select a group and a file in the left sidebar to view or edit
+                    durable memory, canonical notes, or NANO/SOUL/TODOS files.
+                  </div>
+                  <div className="editor-shell__footer">
+                    <span className="editor-shell__status editor-shell__status--saved">
+                      No file open
+                    </span>
+                    <span className="editor-shell__stats">
+                      <span>
+                        <strong>0</strong> lines
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              )}
+            </article>
+          </div>
+          {memorySidebarRight.open ? (
+            <aside className="sidebar-right">
+              <div className="sidebar-resizer">
+                <h2>Version History</h2>
+                <span className="sidebar-resizer-spacer" />
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={() => {
+                    if (activeMemoryFile) {
+                      void loadMemoryHistory(
+                        activeMemoryFile.group,
+                        activeMemoryFile.path,
+                      );
+                    }
+                  }}
+                  title="Reload version history from disk"
+                >
+                  ↻
+                </button>
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={memorySidebarRight.toggle}
+                  title="Hide right sidebar"
+                >
+                  ▶
+                </button>
+              </div>
+              {activeMemoryFile ? (
+                <>
+                  <p className="files-path">
+                    {memoryHistory.length} snapshot(s)
+                  </p>
+                  <div className="history-list">
+                    {memoryHistory.length === 0 ? (
+                      <p className="sidebar-empty">No history yet.</p>
+                    ) : (
+                      memoryHistory
+                        .slice()
+                        .reverse()
+                        .map((entry) => (
+                          <div key={entry.version} className="history-item">
+                            <div>
+                              <strong>{entry.version}</strong>
+                              <br />
+                              <span className="meta">
+                                {entry.size}b · {shortTime(entry.modifiedAt)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void rollbackMemoryFile(entry.version)}
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="sidebar-empty">
+                  Open a file to view its history.
+                </p>
+              )}
+              <h3>Active File</h3>
+              <pre className="service-output">
+                {activeMemoryFile
+                  ? JSON.stringify(
+                      {
+                        group: activeMemoryFile.group,
+                        path: activeMemoryFile.path,
+                        bytes: memoryFileOriginal.length,
+                        snapshots: memoryHistory.length,
+                        lastStatus: memoryFileStatus,
+                      },
+                      null,
+                      2,
+                    )
+                  : 'No file open.'}
+              </pre>
+            </aside>
+          ) : (
+            <div className="sidebar-collapsed">
+              <button
+                type="button"
+                className="tab-sidebar-toggle"
+                onClick={memorySidebarRight.toggle}
+                title="Show right sidebar"
+              >
+                ◀ History
+              </button>
+            </div>
+          )}
         </section>
       ) : null}
 
       {activeTab === 'knowledge' ? (
-        <section className="grid knowledge-grid">
-          <article
-            className={`panel${knowledgeCapturePanel.open ? '' : ' panel--collapsed'}`}
-          >
-            <PanelHeader
-              title="Knowledge Wiki"
-              collapse={knowledgeCapturePanel}
-            />
-            {knowledgeCapturePanel.open ? (
-              <>
-                <p>
-                  ready {knowledgeStatus?.ready ? 'yes' : 'no'} · raw{' '}
-                  {knowledgeStatus?.rawCaptureCount ?? 0} · wiki docs{' '}
-                  {knowledgeStatus?.wikiDocCount ?? 0}
-                </p>
-                <textarea
-                  value={knowledgeNote}
-                  onChange={(event) => setKnowledgeNote(event.target.value)}
-                  placeholder="Capture a raw knowledge note for later curation..."
-                />
-                <div className="composer-actions">
-                  <button
-                    type="button"
-                    onClick={() => void captureKnowledge()}
-                    disabled={!knowledgeNote.trim()}
-                  >
-                    Capture Note
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void fetchJson('/api/knowledge/lint', { method: 'POST' })
-                        .then(() =>
-                          fetchJson<Record<string, unknown>>('/api/knowledge'),
+        <section
+          className={
+            knowledgeSidebarLeft.open && knowledgeSidebarRight.open
+              ? 'tab-sidebar-grid'
+              : knowledgeSidebarLeft.open
+                ? 'tab-sidebar-grid tab-sidebar-grid--no-inspector'
+                : knowledgeSidebarRight.open
+                  ? 'tab-sidebar-grid tab-sidebar-grid--no-sidebar'
+                  : 'tab-sidebar-grid tab-sidebar-grid--solo'
+          }
+        >
+          {knowledgeSidebarLeft.open ? (
+            <aside className="sidebar-left">
+              <div className="sidebar-resizer">
+                <h2>Knowledge Files</h2>
+                <span className="sidebar-resizer-spacer" />
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={knowledgeSidebarLeft.toggle}
+                  title="Hide left sidebar"
+                >
+                  ◀
+                </button>
+              </div>
+              <p className="files-path">
+                ready {knowledgeStatus?.ready ? 'yes' : 'no'} · raw{' '}
+                {knowledgeStatus?.rawCaptureCount ?? 0} · wiki docs{' '}
+                {knowledgeStatus?.wikiDocCount ?? 0}
+              </p>
+              <p className="sidebar-group">Capture</p>
+              <textarea
+                value={knowledgeNote}
+                onChange={(event) => setKnowledgeNote(event.target.value)}
+                placeholder="Capture a raw knowledge note for later curation..."
+                style={{ minHeight: 60 }}
+              />
+              <div className="composer-actions">
+                <button
+                  type="button"
+                  onClick={() => void captureKnowledge()}
+                  disabled={!knowledgeNote.trim()}
+                >
+                  Capture Note
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void fetchJson('/api/knowledge/lint', { method: 'POST' })
+                      .then(() =>
+                        fetchJson<Record<string, unknown>>('/api/knowledge'),
+                      )
+                      .then(setKnowledge)
+                  }
+                >
+                  Run Lint
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void refreshKnowledgeFiles()}
+                >
+                  Refresh
+                </button>
+              </div>
+              <p className="sidebar-group">Files ({knowledgeFiles.length})</p>
+              <div className="sidebar-list">
+                {knowledgeFiles.length === 0 ? (
+                  <p className="sidebar-empty">No knowledge files yet.</p>
+                ) : (
+                  knowledgeFiles.map((file) => (
+                    <button
+                      key={file.path}
+                      type="button"
+                      className={`sidebar-list-item${
+                        activeKnowledgeFile &&
+                        activeKnowledgeFile.path === file.path
+                          ? ' active'
+                          : ''
+                      }`}
+                      onClick={() => void openKnowledgeFile(file.path, file.name)}
+                    >
+                      <strong>{file.name}</strong>
+                      <span className="meta">
+                        <span className="sidebar-kind">{file.kind}</span> ·{' '}
+                        {file.size}b · {shortTime(file.modifiedAt)}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </aside>
+          ) : (
+            <div className="sidebar-collapsed">
+              <button
+                type="button"
+                className="tab-sidebar-toggle"
+                onClick={knowledgeSidebarLeft.toggle}
+                title="Show left sidebar"
+              >
+                ▶ Knowledge
+              </button>
+            </div>
+          )}
+          <div className="tab-main">
+            <article
+              className="panel"
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                padding: 0,
+                border: 0,
+                boxShadow: 'none',
+                background: 'transparent',
+              }}
+            >
+              {activeKnowledgeFile ? (
+                <Editor
+                  title={activeKnowledgeFile.name}
+                  subtitle={activeKnowledgeFile.path}
+                  value={knowledgeFileContent}
+                  original={knowledgeFileOriginal}
+                  onChange={setKnowledgeFileContent}
+                  extraActions={
+                    <select
+                      value={knowledgeWriteMode}
+                      onChange={(event) =>
+                        setKnowledgeWriteMode(
+                          event.target.value as 'replace' | 'append',
                         )
-                        .then(setKnowledge)
-                    }
-                  >
-                    Run Lint
-                  </button>
+                      }
+                      title="Save mode"
+                      style={{
+                        fontSize: '0.7rem',
+                        padding: '0.25rem 0.4rem',
+                        border: '2px solid var(--border)',
+                        background: '#fff',
+                        color: 'var(--ink)',
+                        fontFamily:
+                          'Menlo, SFMono-Regular, IBM Plex Mono, monospace',
+                      }}
+                    >
+                      <option value="replace">Replace</option>
+                      <option value="append">Append</option>
+                    </select>
+                  }
+                  onReload={() =>
+                    void openKnowledgeFile(
+                      activeKnowledgeFile.path,
+                      activeKnowledgeFile.name,
+                    )
+                  }
+                  onSave={() => void saveKnowledgeFile()}
+                  saveLabel={`Save (${knowledgeWriteMode})`}
+                  status={
+                    lastKnowledgeSaveMode === 'append'
+                      ? 'Append mode — current content will be kept'
+                      : knowledgeFileStatus
+                  }
+                  emptyHint="Select a knowledge file on the left to view or edit the curated wiki, raw captures, schema, or reports."
+                />
+              ) : (
+                <div className="editor-shell">
+                  <div className="editor-shell__head">
+                    <div className="editor-shell__title">
+                      <strong>Knowledge Editor</strong>
+                      <small>Pick a file from the left sidebar</small>
+                    </div>
+                  </div>
+                  <div className="editor-shell__empty">
+                    Select a knowledge file on the left to view or edit the
+                    curated wiki, raw captures, schema, or reports.
+                  </div>
+                  <div className="editor-shell__footer">
+                    <span className="editor-shell__status editor-shell__status--saved">
+                      No file open
+                    </span>
+                    <span className="editor-shell__stats">
+                      <span>
+                        <strong>0</strong> lines
+                      </span>
+                    </span>
+                  </div>
                 </div>
-                <h3>Index</h3>
-                <MarkdownLite text={knowledgeWiki?.index || ''} />
-                <h3>Progress</h3>
-                <MarkdownLite text={knowledgeWiki?.progress || ''} />
-              </>
-            ) : null}
-          </article>
-          <aside
-            className={`panel logs-panel${knowledgeCuratorPanel.open ? '' : ' panel--collapsed'}`}
-          >
-            <PanelHeader
-              title="Curator Log"
-              collapse={knowledgeCuratorPanel}
-            />
-            {knowledgeCuratorPanel.open ? (
-              <>
-                <MarkdownLite text={knowledgeWiki?.log || ''} />
-                <h3>Recent Reports</h3>
-                <pre>{JSON.stringify(knowledgeRecord.reports || [], null, 2)}</pre>
-              </>
-            ) : null}
-          </aside>
+              )}
+            </article>
+            <article
+              className="panel"
+              style={{ flexShrink: 0, maxHeight: 240, overflow: 'auto' }}
+            >
+              <PanelHeader title="Curator Log" />
+              <MarkdownLite text={knowledgeWiki?.log || ''} />
+            </article>
+          </div>
+          {knowledgeSidebarRight.open ? (
+            <aside className="sidebar-right">
+              <div className="sidebar-resizer">
+                <h2>Wiki &amp; Reports</h2>
+                <span className="sidebar-resizer-spacer" />
+                <button
+                  type="button"
+                  className="tab-sidebar-toggle"
+                  onClick={knowledgeSidebarRight.toggle}
+                  title="Hide right sidebar"
+                >
+                  ▶
+                </button>
+              </div>
+              <h3>Index</h3>
+              <MarkdownLite text={knowledgeWiki?.index || ''} />
+              <h3>Progress</h3>
+              <MarkdownLite text={knowledgeWiki?.progress || ''} />
+              <h3>Recent Reports</h3>
+              <pre className="service-output">
+                {JSON.stringify(knowledgeRecord.reports || [], null, 2)}
+              </pre>
+              <h3>Status JSON</h3>
+              <pre className="service-output">
+                {JSON.stringify(knowledgeStatus || {}, null, 2)}
+              </pre>
+            </aside>
+          ) : (
+            <div className="sidebar-collapsed">
+              <button
+                type="button"
+                className="tab-sidebar-toggle"
+                onClick={knowledgeSidebarRight.toggle}
+                title="Show right sidebar"
+              >
+                ◀ Wiki
+              </button>
+            </div>
+          )}
         </section>
       ) : null}
 

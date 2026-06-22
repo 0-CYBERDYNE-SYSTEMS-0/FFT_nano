@@ -79,6 +79,8 @@ function parseSnapshot(
   if (!fileName.startsWith(prefix)) return null;
   const version = fileName.slice(prefix.length);
   if (!version) return null;
+  // Skip companion files (e.g. `<base>.<version>.attr.json`).
+  if (version.endsWith('.attr.json')) return null;
   return { path: '', base, version };
 }
 
