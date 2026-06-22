@@ -474,9 +474,7 @@ export function ensureLocalProviderModels(
         if (modelIds.length > 0) {
           discovered[rp.providerId] = modelIds;
           const baseUrl = env[rp.baseUrlEnv] || rp.defaultBaseUrl || '';
-          const apiKeyRef = env[rp.apiKeyEnv]
-            ? `$${rp.apiKeyEnv}`
-            : '$PI_API_KEY';
+          const apiKeyRef = env[rp.apiKeyEnv] ? rp.apiKeyEnv : 'PI_API_KEY';
           upsertProvider(
             providers,
             rp.providerId,
