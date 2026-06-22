@@ -15,7 +15,7 @@ test('ensureLocalProviderModels falls back to curated MiniMax models when live p
         xFftNanoManaged: 'fft-nano-local-discovery',
         baseUrl: 'https://api.minimax.io/v1',
         api: 'openai-completions',
-        apiKey: '$MINIMAX_API_KEY',
+        apiKey: 'MINIMAX_API_KEY',
         models: [{ id: 'MiniMax-M2.5' }],
       },
     },
@@ -33,7 +33,7 @@ test('ensureLocalProviderModels falls back to curated MiniMax models when live p
   const after = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
   assert.equal(after.providers.minimax.baseUrl, 'https://api.minimax.io/anthropic');
   assert.equal(after.providers.minimax.api, 'anthropic-messages');
-  assert.equal(after.providers.minimax.apiKey, '$MINIMAX_API_KEY');
+  assert.equal(after.providers.minimax.apiKey, 'MINIMAX_API_KEY');
   assert.ok(
     after.providers.minimax.models.length >= 8,
     'curated MiniMax list should be seeded when probe fails',
@@ -54,7 +54,7 @@ test('ensureLocalProviderModels preserves managed Moonshot models on discovery f
         xFftNanoManaged: 'fft-nano-local-discovery',
         baseUrl: 'https://api.moonshot.ai/v1',
         api: 'openai-completions',
-        apiKey: '$MOONSHOT_API_KEY',
+        apiKey: 'MOONSHOT_API_KEY',
         models: [{ id: 'kimi-k2.6' }],
       },
     },
@@ -72,7 +72,7 @@ test('ensureLocalProviderModels preserves managed Moonshot models on discovery f
 
   const after = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
   assert.deepEqual(after.providers.moonshotai.models, [{ id: 'kimi-k2.6' }]);
-  assert.equal(after.providers.moonshotai.apiKey, '$MOONSHOT_API_KEY');
+  assert.equal(after.providers.moonshotai.apiKey, 'MOONSHOT_API_KEY');
 });
 
 test('ensureLocalProviderModels registers discovered Moonshot models for Pi', () => {
@@ -103,7 +103,7 @@ test('ensureLocalProviderModels registers discovered Moonshot models for Pi', ()
       fs.readFileSync(path.join(dir, 'models.json'), 'utf-8'),
     );
     assert.equal(after.providers.moonshotai.baseUrl, 'https://api.moonshot.ai/v1');
-    assert.equal(after.providers.moonshotai.apiKey, '$MOONSHOT_API_KEY');
+    assert.equal(after.providers.moonshotai.apiKey, 'MOONSHOT_API_KEY');
     assert.deepEqual(
       after.providers.moonshotai.models.map(
         (model: { id: string }) => model.id,
@@ -128,7 +128,7 @@ test('ensureLocalProviderModels removes the legacy Moonshot override for Kimi Co
             xFftNanoManaged: 'fft-nano-local-discovery',
             baseUrl: 'https://api.moonshot.ai/v1',
             api: 'openai-completions',
-            apiKey: '$KIMI_API_KEY',
+            apiKey: 'KIMI_API_KEY',
             models: [{ id: 'kimi-k2.7-code' }],
           },
         },
