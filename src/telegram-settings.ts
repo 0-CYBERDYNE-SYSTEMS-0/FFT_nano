@@ -780,9 +780,15 @@ export function buildTelegramSetupModelPanel(
       keyboard: [
         [
           {
-            text: 'Type Model',
+            text: 'Add Model ID',
             callbackData: registerTelegramSettingsPanelAction(chatJid, {
               kind: 'prompt-setup-model-typed',
+            }),
+          },
+          {
+            text: 'API Key',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-setup-api-key',
             }),
           },
         ],
@@ -812,9 +818,15 @@ export function buildTelegramSetupModelPanel(
       keyboard: [
         [
           {
-            text: 'Type Model',
+            text: 'Add Model ID',
             callbackData: registerTelegramSettingsPanelAction(chatJid, {
               kind: 'prompt-setup-model-typed',
+            }),
+          },
+          {
+            text: 'API Key',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-setup-api-key',
             }),
           },
         ],
@@ -844,9 +856,15 @@ export function buildTelegramSetupModelPanel(
       keyboard: [
         [
           {
-            text: 'Type Model',
+            text: 'Add Model ID',
             callbackData: registerTelegramSettingsPanelAction(chatJid, {
               kind: 'prompt-setup-model-typed',
+            }),
+          },
+          {
+            text: 'API Key',
+            callbackData: registerTelegramSettingsPanelAction(chatJid, {
+              kind: 'show-setup-api-key',
             }),
           },
         ],
@@ -915,11 +933,19 @@ export function buildTelegramSetupModelPanel(
   }
   rows.push([
     {
-      text: 'Type Model',
+      text: 'Add Model ID',
       callbackData: registerTelegramSettingsPanelAction(chatJid, {
         kind: 'prompt-setup-model-typed',
       }),
     },
+    {
+      text: 'API Key',
+      callbackData: registerTelegramSettingsPanelAction(chatJid, {
+        kind: 'show-setup-api-key',
+      }),
+    },
+  ]);
+  rows.push([
     {
       text: 'Providers',
       callbackData: registerTelegramSettingsPanelAction(chatJid, {
