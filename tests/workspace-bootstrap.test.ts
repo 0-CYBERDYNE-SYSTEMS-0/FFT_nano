@@ -152,3 +152,53 @@ test('seeded TODOS mission-control template is generic and contains no install-s
   assert.match(todosBody, /MISSION CONTROL/i);
   assert.ok(!/scrim|wiggins/i.test(todosBody));
 });
+
+test('fresh workspace seeds today\'s memory/YYYY-MM-DD.md daily journal using pinned now', () => {
+  const workspaceDir = makeTmpWorkspace();
+  const pinnedNow = new Date('2026-06-23T15:00:00.000Z');
+  ensureMainWorkspaceBootstrap({
+    workspaceDir,
+    now: () => pinnedNow,
+  });
+  const memoryDir = path.join(workspaceDir, 'memory');
+  assert.ok(fs.existsSync(memoryDir));
+  const entries = fs.readdirSync(memoryDir).filter((n) => n.endsWith('.md'));
+  // With the pinned now, the journal filename is deterministic and the
+  // bootstrap should not have created any other dated files.
+  assert.deepEqual(
+    entries,
+    ['2026-06-23.md'],
+    `expected exactly 2026-06-23.md, got ${entries.join(',')}`,
+  );
+  const body = fs.readFileSync(path.join(memoryDir, '2026-06-23.md'), 'utf-8');
+  assert.match(body, /# 2026-06-23/);
+  assert.match(body, /## Session Notes/);
+});
+
+test('seeded BOOTSTRAP.md is a real onboarding ritual that drives canonical/ population', () => {
+  const workspaceDir = makeTmpWorkspace();
+  ensureMainWorkspaceBootstrap({
+    workspaceDir,
+    now: () => new Date('2026-06-23T15:00:00.000Z'),
+  });
+  const body = readText(path.join(workspaceDir, 'BOOTSTRAP.md'));
+  assert.match(body, /## Goal/);
+  assert.match(body, /canonical\/constraints\.md/);
+  assert.match(body, /canonical\/commitments\.md/);
+  assert.match(body, /canonical\/projects\.md/);
+  assert.match(body, /memory\/YYYY-MM-DD\.md/);
+  assert.match(body, /## Order of operations/);
+});
+
+test('seeded MEMORY.md documents the layer split explicitly', () => {
+  const workspaceDir = makeTmpWorkspace();
+  ensureMainWorkspaceBootstrap({
+    workspaceDir,
+    now: () => new Date('2026-06-23T15:00:00.000Z'),
+  });
+  const body = readText(path.join(workspaceDir, 'MEMORY.md'));
+  assert.match(body, /Layer split/);
+  assert.match(body, /canonical\/_hot\.md/);
+  assert.match(body, /memory\/YYYY-MM-DD\.md/);
+  assert.match(body, /Compaction summaries/);
+});

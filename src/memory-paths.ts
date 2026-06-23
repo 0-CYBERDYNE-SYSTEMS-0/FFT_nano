@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { GROUPS_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
+import { getLocalDateKey, getEffectiveTimezone } from './time-context.js';
 
 const MEMORY_FILE_NAME = 'MEMORY.md';
 const MEMORY_DIR_NAME = 'memory';
@@ -21,14 +22,20 @@ const DEFAULT_NANO_BODY = [
   '1. Read NANO.md',
   '2. Read SOUL.md',
   '3. Read TODOS.md',
-  '4. Retrieve durable canon from canonical/*.md when needed',
-  '5. Read BOOTSTRAP.md (if present)',
+  '4. Read MEMORY.md',
+  '5. Retrieve durable canon from canonical/*.md when needed',
+  "6. Read today's memory/YYYY-MM-DD.md (auto-created on scaffold)",
+  '7. Read BOOTSTRAP.md (if present)',
   '',
   'Heartbeat and scheduled maintenance runs also read HEARTBEAT.md.',
   '',
   'Memory policy:',
-  '- Durable memory belongs in canonical/*.md.',
-  '- Daily staging and compaction notes belong in memory/*.md.',
+  '- canonical/*.md is the typed durable layer. _hot.md is always injected; the',
+  '  others are retrieved on demand by path-bonus scoring.',
+  '- memory/YYYY-MM-DD.md is the daily journal. One file per local-tz day;',
+  "  append-only. Scaffold auto-creates today's file if missing.",
+  '- MEMORY.md is operator-curated long-term memory plus compaction summaries.',
+  '  Promote here only when the operator asks or a long-lived decision is made.',
   '- Keep SOUL.md stable; do not use it as compaction log storage.',
   '- TODOS.md is mission control for active execution state.',
   '',
@@ -61,6 +68,25 @@ const DEFAULT_TODOS_BODY = [
   '',
   '## 📝 MISSION LOG',
   '- [00:00] - Mission control initialized.',
+].join('\n');
+
+const DEFAULT_MEMORY_BODY = [
+  '# MEMORY',
+  '',
+  'Long-term curated memory and compaction summaries for this group.',
+  '',
+  'Layer split (do not collapse these into one file):',
+  '- canonical/_hot.md            — always-injected high-priority durable memory',
+  '- canonical/identity.md        — stable operator profile facts',
+  '- canonical/constraints.md     — standing hard constraints and prohibitions',
+  '- canonical/commitments.md     — active long-lived commitments',
+  '- canonical/projects.md        — long-lived project context',
+  '- memory/YYYY-MM-DD.md         — daily journal (auto-created, append-only)',
+  '- MEMORY.md (this file)        — curated long-term memory + compaction summaries',
+  '',
+  'When you learn something durable, write it to the right canonical/*.md file.',
+  "When you learn something transient, write it to today's memory/YYYY-MM-DD.md.",
+  'Compaction summaries from long sessions land here.',
 ].join('\n');
 
 const DEFAULT_CANONICAL_BODIES: Record<string, string> = {
@@ -151,6 +177,46 @@ export function resolveCanonicalDir(groupFolder: string): string {
   return path.join(resolveGroupWorkspaceDir(groupFolder), CANONICAL_DIR_NAME);
 }
 
+function buildDailyJournalBody(localDateKey: string): string {
+  return [
+    `# ${localDateKey}`,
+    '',
+    '> Daily journal. Append-only. Use bullets; promote durable facts to canonical/*.md.',
+    '',
+    '## Session Notes',
+    '',
+    '## Decisions',
+    '',
+    '## Open Questions',
+    '',
+  ].join('\n');
+}
+
+export function ensureDailyMemoryJournal(
+  groupFolder: string,
+  opts?: {
+    now?: () => Date;
+    timezone?: string;
+    createIfMissing?: boolean;
+    workspaceDir?: string;
+  },
+): { relPath: string; absolutePath: string; created: boolean } {
+  const create = opts?.createIfMissing !== false;
+  const now = opts?.now ? opts.now() : new Date();
+  const tz = opts?.timezone ?? getEffectiveTimezone();
+  const localDateKey = getLocalDateKey(now, tz);
+  const relPath = `memory/${localDateKey}.md`;
+  const baseDir =
+    opts?.workspaceDir ?? resolveGroupWorkspaceDir(groupFolder);
+  const absolutePath = path.join(baseDir, relPath);
+  const created = create && !fs.existsSync(absolutePath);
+  if (created) {
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.writeFileSync(absolutePath, buildDailyJournalBody(localDateKey));
+  }
+  return { relPath, absolutePath, created };
+}
+
 export function ensureMemoryScaffold(
   groupFolder: string,
   opts?: { createIfMissing?: boolean },
@@ -184,10 +250,7 @@ export function ensureMemoryScaffold(
     }
     fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
     if (!fs.existsSync(memoryPath)) {
-      fs.writeFileSync(
-        memoryPath,
-        '# MEMORY\n\nDurable facts, decisions, and compaction summaries belong here.\n',
-      );
+      fs.writeFileSync(memoryPath, `${DEFAULT_MEMORY_BODY}\n`);
     }
     fs.mkdirSync(memoryDir, { recursive: true });
     fs.mkdirSync(canonicalDir, { recursive: true });
@@ -195,6 +258,7 @@ export function ensureMemoryScaffold(
       const filePath = path.join(canonicalDir, fileName);
       if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, body);
     }
+    ensureDailyMemoryJournal(groupFolder);
   }
 
   return { memoryPath, memoryDir, canonicalDir, nanoPath, soulPath, todosPath };

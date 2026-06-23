@@ -93,3 +93,7 @@ docs/superpowers/
 
 # Local runtime lock (not for VCS)
 .claude/scheduled_tasks.lock
+
+# Stray shell redirect artifacts (e.g. `cmd > nul` from Windows-style
+# redirection accidentally run on macOS/Linux).
+/nul
