@@ -337,6 +337,58 @@ test('upgradeKnowledgeWikiScaffold overwrites stale README, preserves page bodie
   }
 });
 
+test('upgradeKnowledgeWikiScaffold never overwrites index/progress/log live content', () => {
+  const workspaceDir = makeTmpDir('fft-knowledge-upgrade-data-');
+  try {
+    ensureKnowledgeWikiScaffold({ workspaceDir });
+    const versionPath = path.join(
+      workspaceDir,
+      'knowledge',
+      '.scaffold-version',
+    );
+    const readmePath = path.join(workspaceDir, 'knowledge', 'README.md');
+    const indexPath = path.join(workspaceDir, 'knowledge', 'wiki', 'index.md');
+    const progressPath = path.join(
+      workspaceDir,
+      'knowledge',
+      'wiki',
+      'progress.md',
+    );
+    const logPath = path.join(workspaceDir, 'knowledge', 'wiki', 'log.md');
+
+    // Simulate a pre-v2 workspace with curated/appended live content.
+    fs.writeFileSync(versionPath, '0\n', 'utf-8');
+    fs.writeFileSync(readmePath, '# Stale\n\nold wording\n', 'utf-8');
+    const curatedIndex = '# Wiki Index\n\n## Pages\n- [Foo](./foo.md)\n';
+    const curatedProgress = '# Progress Tracker\n\n- 2026-06-01 did things\n';
+    const appendedLog =
+      '# Maintenance Log (Append Only)\n\n- real history line\n';
+    fs.writeFileSync(indexPath, curatedIndex, 'utf-8');
+    fs.writeFileSync(progressPath, curatedProgress, 'utf-8');
+    fs.writeFileSync(logPath, appendedLog, 'utf-8');
+
+    const result = upgradeKnowledgeWikiScaffold({
+      workspaceDir,
+      now: new Date('2026-06-23T21:00:00.000Z'),
+    });
+    assert.equal(result.upgraded, true);
+    // README (static doctrine) WAS overlaid.
+    assert.equal(result.changed.includes('knowledge/README.md'), true);
+    // Live data files were NOT in the change set.
+    assert.equal(result.changed.includes('knowledge/wiki/index.md'), false);
+    assert.equal(result.changed.includes('knowledge/wiki/progress.md'), false);
+    assert.equal(result.changed.includes('knowledge/wiki/log.md'), false);
+    // And their content is byte-identical (the upgrade appends one [upgrade]
+    // line to log.md via appendKnowledgeWikiLog, so log.md is allowed to grow
+    // by that single appended line but must still contain the prior history).
+    assert.equal(fs.readFileSync(indexPath, 'utf-8'), curatedIndex);
+    assert.equal(fs.readFileSync(progressPath, 'utf-8'), curatedProgress);
+    assert.match(fs.readFileSync(logPath, 'utf-8'), /real history line/);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 // ---- W2: page triage routing ------------------------------------------------
 
 test('classifyWikiPages buckets legacy pages; never moves files', () => {

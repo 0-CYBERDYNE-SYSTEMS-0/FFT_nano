@@ -141,6 +141,17 @@ const REQUIRED_FILE_TEMPLATES: Record<string, string> = {
   ].join('\n'),
 };
 
+// Files `upgradeKnowledgeWikiScaffold` is allowed to overlay on an existing
+// workspace. ONLY the static doctrine files belong here. `wiki/index.md`
+// (curated page list), `wiki/progress.md` (rolling tracker), and `wiki/log.md`
+// (append-only history) hold live operator/librarian content and must NEVER be
+// overwritten by an upgrade — they are seeded once by ensureKnowledgeWikiScaffold
+// and owned thereafter.
+const STATIC_OVERLAY_FILES: string[] = [
+  path.join(KNOWLEDGE_ROOT_DIRNAME, 'README.md'),
+  path.join(KNOWLEDGE_ROOT_DIRNAME, 'schema', 'qualia-schema.md'),
+];
+
 export interface KnowledgeWikiPaths {
   rootDir: string;
   rawDir: string;
@@ -360,12 +371,14 @@ function templateNeedsUpgrade(existing: string, template: string): boolean {
  *     makes no changes; the caller should run ensureKnowledgeWikiScaffold first.
  *   - If the workspace is already at SCAFFOLD_VERSION, returns reason='already-current'
  *     and makes no changes. Idempotent.
- *   - Otherwise: for each static template file (README.md, schema/qualia-schema.md,
- *     wiki/index.md, wiki/progress.md, wiki/log.md) whose current contents differ
- *     from the v2 template, the old file is copied into
- *     `knowledge/.scaffold-backups/<ts>/<relative-path>` and then overwritten with
- *     the template. `wiki/*.md` page bodies are never touched. The
- *     `knowledge/.scaffold-version` stamp is then updated.
+ *   - Otherwise: for each STATIC doctrine file (README.md and
+ *     schema/qualia-schema.md — see STATIC_OVERLAY_FILES) whose current
+ *     contents differ from the v2 template, the old file is copied into
+ *     `knowledge/.scaffold-backups/<ts>/<relative-path>` and then overwritten
+ *     with the template. The `knowledge/.scaffold-version` stamp is then
+ *     updated. `wiki/index.md`, `wiki/progress.md`, and `wiki/log.md` hold live
+ *     curated/appended content and are NEVER overwritten; `wiki/*.md` page
+ *     bodies are never touched.
  *
  * Reformat of memory-shaped wiki pages to v2 schema is the librarian's job (W2).
  */
@@ -410,9 +423,9 @@ export function upgradeKnowledgeWikiScaffold(params: {
   fs.mkdirSync(backupDir, { recursive: true });
 
   const changed: string[] = [];
-  for (const [relativePath, template] of Object.entries(
-    REQUIRED_FILE_TEMPLATES,
-  )) {
+  for (const relativePath of STATIC_OVERLAY_FILES) {
+    const template = REQUIRED_FILE_TEMPLATES[relativePath];
+    if (!template) continue;
     const absolutePath = path.join(params.workspaceDir, relativePath);
     if (!fs.existsSync(absolutePath)) {
       // Missing file: write template directly. This should not happen for a
