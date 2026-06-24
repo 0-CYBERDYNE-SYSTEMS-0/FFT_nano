@@ -1055,6 +1055,23 @@ function renderBasePrompt(params: {
     );
     lines.push('Wait for status=success before relying on a skill mutation.');
     lines.push('');
+    lines.push('## Subagent IPC');
+    lines.push(
+      `Spawn a focused subagent to do isolated engineering work in its own ephemeral worktree. Write the request into ${params.paths.ipcDir}/actions/*.json and read the result from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
+    );
+    lines.push(
+      '- Use this to delegate a self-contained task (a code change, an investigation, a build/test pass) so it runs without blocking your turn.',
+    );
+    lines.push(
+      '- Spawn: {"type":"subagent_action","action":"spawn_subagent","requestId":"<id>","params":{"task":"clear, complete instructions for the subagent","mode":"execute"}}',
+    );
+    lines.push(
+      '- mode: "execute" (default, full tools, can edit) or "plan" (read-only analysis).',
+    );
+    lines.push(
+      '- The subagent runs asynchronously; poll action_results/<requestId>.json and wait for status=success (its output is in result) before relying on its work. Subagents cannot themselves spawn subagents.',
+    );
+    lines.push('');
     lines.push('## File Delivery IPC');
     lines.push(
       `To send files/images back to the Telegram chat, write delivery requests into ${params.paths.ipcDir}/deliver_files/*.json:`,
