@@ -799,6 +799,7 @@ export function resolveExtensionPaths(projectRoot = process.cwd()): string[] {
       'deepseek-v4-flash-compaction.js',
     ],
     ['pi-autoresearch', 'pi-autoresearch/index.ts', 'pi-autoresearch/index.js'],
+    ['fft-ask-user', 'fft-ask-user.ts', 'fft-ask-user.js'],
   ];
   const found: string[] = [];
   for (const [, srcName, distName] of extensions) {
@@ -896,7 +897,11 @@ function buildPiArgs(params: {
         : 'read,bash,edit,write,grep,find,ls',
     );
   } else {
-    args.push('--tools', 'read,bash,edit,write,grep,find,ls,agent');
+    // Note: the `agent` token used to live in this allowlist but no built-in
+    // tool, extension, or custom tool currently registers a name of `agent`.
+    // We keep the allowlist limited to the tools we know exist so the run
+    // cannot start in a state that silently downgrades to a no-op.
+    args.push('--tools', 'read,bash,edit,write,grep,find,ls');
   }
 
   if (transportMode === 'json') {
@@ -1886,7 +1891,12 @@ export async function runContainerAgent(
           (request.timeout ?? 60_000) + 1_000,
         );
         noteWaitState(waitBudgetMs, request.method !== 'confirm');
-        if (request.method === 'confirm') {
+        // Extend the hard runner timeout for any extension UI request that
+        // sets its own `request.timeout`. Both `confirm` (permission gate)
+        // and `select` (ask_user) can block long enough — up to 30 minutes
+        // for ask_user — to blow the default 10-minute hard timeout, so
+        // either kind of wait must extend it.
+        if (typeof request.timeout === 'number' && request.timeout > 0) {
           extendHardTimeoutForWait?.(request.timeout);
         }
 

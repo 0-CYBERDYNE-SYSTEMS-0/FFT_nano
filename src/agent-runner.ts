@@ -32,6 +32,7 @@ import {
 } from './streaming/active-consumers.js';
 import { getTelegramPreviewRunKey } from './telegram-streaming.js';
 import { cancelPendingConfirmationsForChat } from './permission-gate-ui.js';
+import { cancelPendingAskUsersForChat } from './ask-user-ui.js';
 import { isUserAbortedErrorMessage } from './status-report.js';
 import { listPendingDeliveryFiles } from './state-persistence.js';
 import { logger } from './logger.js';
@@ -756,6 +757,7 @@ export async function runAgent(
         throw err;
       }
       cancelPendingConfirmationsForChat(chatJid);
+      cancelPendingAskUsersForChat(chatJid);
       runToolsInvoked = output.toolExecutions?.length ?? 0;
       runToolExecutions = output.toolExecutions ?? [];
 

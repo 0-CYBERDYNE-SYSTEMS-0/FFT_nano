@@ -489,6 +489,7 @@ import {
   refreshTelegramCommandMenus as tdRefreshTelegramCommandMenus,
   logTelegramCommandAudit as tdLogTelegramCommandAudit,
   handlePermissionGateRequest as tdHandlePermissionGateRequest,
+  handleAskUserRequest as tdHandleAskUserRequest,
   handleTelegramCallbackQuery as tdHandleTelegramCallbackQuery,
   formatStatusText as tdFormatStatusText,
   summarizeTask as tdSummarizeTask,
@@ -2164,12 +2165,27 @@ function buildHostCoordinationDeps(): HostCoordinationDeps {
   };
 }
 
+// Dispatch extension UI requests by method. The agent-runner always calls
+// a single onExtensionUIRequest callback regardless of request.method, so
+// the host picks the right concrete handler here. Today the only methods
+// are 'confirm' (permission gate) and 'select' (ask_user); unknown methods
+// fall through to a logged no-op.
+async function dispatchExtensionUIRequest(
+  chatJid: string,
+  request: ExtensionUIRequest,
+): Promise<ExtensionUIResponse> {
+  if (request.method === 'select') {
+    return tdHandleAskUserRequest(chatJid, request);
+  }
+  return tdHandlePermissionGateRequest(chatJid, request);
+}
+
 // Wire agent-runner module with its dependencies
 initAgentRunner({
   statusTelemetry,
   getSessionKeyForChat,
   emitTuiToolEvent,
-  handlePermissionGateRequest,
+  handlePermissionGateRequest: dispatchExtensionUIRequest,
   updateChatRunPreferences,
   updateChatUsage,
   setTyping,
