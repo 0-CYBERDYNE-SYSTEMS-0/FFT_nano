@@ -83,6 +83,15 @@ import {
   getExpiredConfirmation,
   shouldPromptPermissionGate,
 } from './permission-gate-ui.js';
+import {
+  parseAskUserCallback,
+  createPendingAskUser,
+  resolvePendingAskUser,
+  getExpiredAskUser,
+  getPendingAskUser,
+  cancelPendingAskUsersForChat,
+  shouldPromptAskUser,
+} from './ask-user-ui.js';
 import type { ExtensionUIRequest, ExtensionUIResponse } from './pi-runner.js';
 import type { TelegramInboundCallbackQuery } from './telegram.js';
 
@@ -735,6 +744,86 @@ export async function handlePermissionGateRequest(
     return { confirmed: false };
   }
   return { cancelled: true };
+}
+
+// --- Ask user (ask_user tool) ---
+
+/**
+ * Handle an `extension_ui_request` for the `ask_user` tool. Mirrors the
+ * permission-gate flow: send a Telegram inline-keyboard message, await the
+ * callback, resolve with the chosen option label.
+ *
+ * The agent's ask_user tool calls `ctx.ui.select(title, options, opts)`, which
+ * pi serializes as an `extension_ui_request` frame with `method: 'select'`.
+ * The host's `runContainerAgent` forwards it to `onExtensionUIRequest`, which
+ * is the dispatcher in wiring.ts — that dispatcher routes `method === 'select'`
+ * here.
+ */
+export async function handleAskUserRequest(
+  chatJid: string,
+  request: ExtensionUIRequest,
+): Promise<ExtensionUIResponse> {
+  const options = Array.isArray(request.options)
+    ? request.options.filter((o): o is string => typeof o === 'string' && o.length > 0)
+    : [];
+  const timeoutMs = request.timeout ?? 5 * 60_000;
+
+  if (
+    shouldPromptAskUser(request) &&
+    options.length >= 2 &&
+    options.length <= 6 &&
+    isTelegramJid(chatJid) &&
+    state.telegramBot
+  ) {
+    const { promise } = createPendingAskUser(
+      request.id,
+      chatJid,
+      options,
+      timeoutMs,
+    );
+    // One button per row keeps long option labels readable on mobile.
+    // The callback is `au:<requestId>:<index>` (single digit 0-5) so option
+    // label length never affects `callback_data` size — we are well under
+    // Telegram's 64-byte cap regardless of how long the labels are.
+    const keyboard = options.map((opt, i) => [
+      {
+        text: opt,
+        callbackData: `au:${request.id}:${i}`,
+      },
+    ]);
+    const seconds = Math.round(timeoutMs / 1000);
+    // The extension embeds the full question + context + numbered options
+    // in the `title` slot of `ctx.ui.select` (pi's select RPC frame only
+    // carries title + options + timeout, no `message` field). We render
+    // `request.title` verbatim; only fall back to a generic string if the
+    // extension sent nothing (defense in depth).
+    const promptBody = (request.title ?? '').trim() || 'User input needed';
+    await state.telegramBot.sendMessageWithKeyboard(
+      chatJid,
+      `${promptBody}\n\n_Reply within ${seconds}s or the first option is used as the default._`,
+      keyboard,
+    );
+    const response = await promise;
+    const expired = getExpiredAskUser(request.id);
+    if (!response.value && expired?.reason === 'timeout') {
+      await state.telegramBot.sendMessage(
+        chatJid,
+        `ask_user timed out after ${seconds}s; defaulting to: ${options[0]}`,
+      );
+    }
+    return response;
+  }
+
+  logger.warn(
+    {
+      requestId: request.id,
+      method: request.method,
+      chatJid,
+      optionCount: options.length,
+    },
+    'Ask-user request: no UI available or invalid options, returning empty (extension will use timeout default)',
+  );
+  return {};
 }
 
 // --- Status / task text formatters ---
@@ -1462,6 +1551,93 @@ export async function handleTelegramCallbackQuery(
     };
   },
 ): Promise<void> {
+  const auCallback = parseAskUserCallback(q.data);
+  if (auCallback) {
+    const { requestId, index } = auCallback;
+    // Look up the pending ask_user by requestId; the index in the callback
+    // points into the original options array. This indirection is what
+    // keeps `callback_data` short (a single digit) regardless of label length.
+    const pending = getPendingAskUser(requestId);
+    if (!pending) {
+      // Stale or unknown callback — could be a different question that
+      // reused the namespace, or a tampered/timing-out callback. Hand off
+      // to the same expired-pending path as a timeout.
+      const resolved = resolvePendingAskUser(requestId, {});
+      const expired = resolved ? null : getExpiredAskUser(requestId);
+      const bot = state.telegramBot;
+      if (bot) {
+        try {
+          await bot.answerCallbackQuery?.(
+            q.id,
+            expired ? 'This question has expired.' : 'This question is no longer active.',
+          );
+        } catch {
+          // Ignore duplicate callback acknowledgements.
+        }
+      }
+      logger.warn(
+        { requestId, index, chatJid: q.chatJid },
+        'Ignoring ask_user callback for unknown requestId',
+      );
+      return;
+    }
+    const chosen = pending.options[index];
+    if (typeof chosen !== 'string') {
+      logger.warn(
+        { requestId, index, optionsLen: pending.options.length, chatJid: q.chatJid },
+        'Ignoring ask_user callback with out-of-range index',
+      );
+      const bot = state.telegramBot;
+      if (bot) {
+        try {
+          await bot.answerCallbackQuery?.(q.id, 'Invalid option.');
+        } catch {
+          // Ignore.
+        }
+      }
+      return;
+    }
+    const resolved = resolvePendingAskUser(requestId, { value: chosen });
+    const expired = resolved ? null : getExpiredAskUser(requestId);
+    const bot = state.telegramBot;
+    if (bot) {
+      try {
+        await bot.answerCallbackQuery?.(
+          q.id,
+          resolved
+            ? undefined
+            : expired
+              ? 'This question has expired.'
+              : 'This question is no longer active.',
+        );
+      } catch {
+        // Ignore duplicate callback acknowledgements.
+      }
+      if (!resolved) {
+        logger.warn(
+          {
+            requestId,
+            chatJid: q.chatJid,
+            expiredReason: expired?.reason,
+          },
+          'Ignoring stale ask_user callback',
+        );
+        return;
+      }
+      try {
+        await bot.editMessageWithKeyboard(
+          q.chatJid,
+          q.messageId,
+          `✅ Chose: ${chosen}`,
+          [],
+        );
+      } catch {
+        // Message may have been deleted already.
+      }
+    }
+    return;
+  }
+
   const pgRequestId = parsePermissionGateCallback(q.data);
   if (pgRequestId) {
     const confirmed = q.data.startsWith('pg_allow:');
