@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 
 const HEARTBEAT_TOKEN = 'HEARTBEAT_OK';
+const HEARTBEAT_ALERT_MARKER = 'HEARTBEAT_ALERT';
 const DEFAULT_ACK_MAX_CHARS = 300;
 const HEARTBEAT_OK_TEXT_RE = /^heartbeat\s+(?:ok|okay)[\s.!?]*$/i;
 const DAY_INDEX: Record<string, number> = {
@@ -134,6 +135,29 @@ export function stripHeartbeatToken(
     return { shouldSkip: true, text: '', didStrip: true };
   }
   return { shouldSkip: false, text: rest, didStrip: true };
+}
+
+export interface HeartbeatAlert {
+  isAlert: boolean;
+  text: string;
+}
+
+// A heartbeat result is only delivered to the user when it explicitly leads
+// with the HEARTBEAT_ALERT marker. Free-form narration of the checks performed
+// (the validator's "observations") has no marker and is therefore suppressed.
+export function extractHeartbeatAlert(raw?: string): HeartbeatAlert {
+  if (!raw?.trim()) return { isAlert: false, text: '' };
+  const normalized = raw.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ');
+  const marker = new RegExp(`${HEARTBEAT_ALERT_MARKER}\\s*:?`, 'i');
+  const match = marker.exec(normalized);
+  if (!match) return { isAlert: false, text: '' };
+  const text = normalized
+    .slice(match.index + match[0].length)
+    .replace(/[*`~_]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return { isAlert: false, text: '' };
+  return { isAlert: true, text };
 }
 
 function parseTimeToMinute(text: string): number | null {

@@ -5,6 +5,7 @@ import path from 'path';
 import test from 'node:test';
 
 import {
+  extractHeartbeatAlert,
   isHeartbeatContentEffectivelyEmpty,
   isHeartbeatFileEffectivelyEmpty,
   isWithinHeartbeatActiveHours,
@@ -81,6 +82,42 @@ test('stripHeartbeatToken treats plain heartbeat okay as ack-only', () => {
       didStrip: true,
     },
   );
+});
+
+test('extractHeartbeatAlert delivers only marked alerts and suppresses narration', () => {
+  // Free-form narration of the checks performed must not be treated as an alert.
+  assert.deepEqual(
+    extractHeartbeatAlert(
+      'I read HEARTBEAT.md and checked the pumps, tasks, and logs. Everything looks fine.',
+    ),
+    { isAlert: false, text: '' },
+  );
+  // A clean OK ack is not an alert.
+  assert.deepEqual(extractHeartbeatAlert('HEARTBEAT_OK'), {
+    isAlert: false,
+    text: '',
+  });
+  // An explicit marker is delivered, carrying only the summary after the marker.
+  assert.deepEqual(
+    extractHeartbeatAlert('HEARTBEAT_ALERT: valve 4 has been offline for 15m'),
+    { isAlert: true, text: 'valve 4 has been offline for 15m' },
+  );
+  // Marker survives markdown/markup wrapping.
+  assert.deepEqual(
+    extractHeartbeatAlert('**HEARTBEAT_ALERT:** pump 3 fault'),
+    { isAlert: true, text: 'pump 3 fault' },
+  );
+  // Marker is case-insensitive.
+  assert.deepEqual(extractHeartbeatAlert('heartbeat_alert: tank low'), {
+    isAlert: true,
+    text: 'tank low',
+  });
+  // A bare marker with no summary is not a deliverable alert.
+  assert.deepEqual(extractHeartbeatAlert('HEARTBEAT_ALERT:'), {
+    isAlert: false,
+    text: '',
+  });
+  assert.deepEqual(extractHeartbeatAlert(''), { isAlert: false, text: '' });
 });
 
 test('parseHeartbeatActiveHours and isWithinHeartbeatActiveHours support day ranges', () => {

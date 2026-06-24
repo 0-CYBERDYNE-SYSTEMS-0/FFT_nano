@@ -170,7 +170,7 @@ const DEFAULTS: ParityConfig = {
     enabled: true,
     every: '4h',
     prompt:
-      'Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.',
+      'Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. Do not narrate or describe the checks you performed. If nothing needs attention, reply with exactly HEARTBEAT_OK and nothing else. Only if there is a concrete, user-actionable problem, reply with a single line beginning HEARTBEAT_ALERT: followed by a one-sentence summary.',
     target: 'main',
     to: null,
     accountId: null,
