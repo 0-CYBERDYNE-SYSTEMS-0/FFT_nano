@@ -2162,6 +2162,7 @@ function buildHostCoordinationDeps(): HostCoordinationDeps {
     registerGroup,
     syncGroupMetadata,
     getAvailableGroups,
+    runCodingTask,
   };
 }
 

@@ -409,6 +409,31 @@ export interface SkillActionRequest {
   requestId: string;
 }
 
+/**
+ * Subagent spawn request. The agent writes this to <ipcDir>/actions/*.json to
+ * launch a focused worker run (isSubagent=true, ephemeral worktree). The host
+ * runs it asynchronously and writes the outcome to action_results/<requestId>.json.
+ */
+export interface SubagentActionRequest {
+  type: 'subagent_action';
+  action: 'spawn_subagent';
+  requestId: string;
+  params: {
+    /** The task for the subagent to execute. */
+    task: string;
+    /** "execute" (default) does the work; "plan" is read-only. */
+    mode?: 'execute' | 'plan';
+  };
+}
+
+export interface SubagentActionResult {
+  requestId: string;
+  status: 'success' | 'error';
+  result?: string;
+  error?: string;
+  executedAt: string;
+}
+
 export interface MemorySearchHit {
   source: 'memory_doc' | 'session_transcript';
   score: number;

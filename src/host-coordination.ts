@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ASSISTANT_NAME,
   DATA_DIR,
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
@@ -52,7 +53,9 @@ import type {
   FarmActionRequest,
   MemoryActionRequest,
   SkillActionRequest,
+  SubagentActionRequest,
 } from './types.js';
+import type { CodingWorkerRequest } from './coding-orchestrator.js';
 import type { CronV2Schedule } from './cron/types.js';
 import {
   resolveCronExecutionPlan,
@@ -89,6 +92,126 @@ export interface HostCoordinationDeps {
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force?: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
+  // Launches an agent-requested subagent worker run. Returns ok + final result.
+  runCodingTask?: (
+    params: Omit<CodingWorkerRequest, 'workspaceRoot'> & {
+      workspaceRoot?: string;
+    },
+  ) => Promise<{ ok: boolean; result: string | null }>;
+}
+
+// Caps how many agent-spawned subagents may run concurrently per group, so the
+// agent cannot fork-bomb the host. Keyed by source group folder.
+const agentSubagentInFlight = new Map<string, number>();
+const MAX_AGENT_SUBAGENTS_PER_GROUP = 3;
+
+/**
+ * Handles an agent-authored subagent spawn request. Runs the worker
+ * asynchronously (subagent runs can take minutes — never block the IPC loop)
+ * and writes the outcome to action_results/<requestId>.json for the agent to
+ * poll. A subagent may not itself spawn subagents (no recursive forking).
+ */
+function spawnAgentSubagent(params: {
+  request: SubagentActionRequest;
+  sourceGroup: string;
+  resultPath: string;
+  deps: HostCoordinationDeps;
+}): void {
+  const { request, sourceGroup, resultPath, deps } = params;
+  const writeResult = (status: 'success' | 'error', body: string) => {
+    try {
+      writeJsonFileAtomic(resultPath, {
+        requestId: request.requestId,
+        status,
+        ...(status === 'success' ? { result: body } : { error: body }),
+        executedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.error(
+        { err, requestId: request.requestId },
+        'Failed to write subagent action result',
+      );
+    }
+  };
+
+  const task = request.params?.task?.trim();
+  if (!task) {
+    writeResult('error', 'spawn_subagent requires a non-empty params.task');
+    return;
+  }
+  if (!deps.runCodingTask) {
+    writeResult('error', 'Subagent execution is unavailable on this host');
+    return;
+  }
+
+  // Recursion guard: a subagent/headless origin may not spawn more subagents.
+  const origin = runAuthorityRegistry.get(sourceGroup)?.origin;
+  if (origin === 'subagent' || origin === 'headless') {
+    writeResult('error', 'Subagents may not spawn further subagents');
+    return;
+  }
+
+  const inFlight = agentSubagentInFlight.get(sourceGroup) ?? 0;
+  if (inFlight >= MAX_AGENT_SUBAGENTS_PER_GROUP) {
+    writeResult(
+      'error',
+      `Too many concurrent subagents for this group (max ${MAX_AGENT_SUBAGENTS_PER_GROUP}). Wait for one to finish.`,
+    );
+    return;
+  }
+
+  const targetEntry = Object.entries(state.registeredGroups).find(
+    ([, group]) => group.folder === sourceGroup,
+  );
+  if (!targetEntry) {
+    writeResult('error', `Source group ${sourceGroup} is not registered`);
+    return;
+  }
+  const [targetJid, group] = targetEntry;
+  const mode = request.params?.mode === 'plan' ? 'plan' : 'execute';
+
+  agentSubagentInFlight.set(sourceGroup, inFlight + 1);
+  logger.info(
+    { sourceGroup, requestId: request.requestId, mode },
+    'Agent-spawned subagent starting',
+  );
+
+  void deps
+    .runCodingTask({
+      requestId: request.requestId,
+      mode,
+      config: {
+        toolMode: mode === 'plan' ? 'read_only' : 'full',
+        isSubagent: true,
+        workspaceMode:
+          mode === 'plan' ? 'read_only' : 'ephemeral_worktree',
+      },
+      originChatJid: targetJid,
+      originGroupFolder: sourceGroup,
+      taskText: task,
+      timeoutSeconds: 1800,
+      allowFanout: false,
+      sessionContext: `[SUBAGENT ${mode.toUpperCase()} REQUEST]\n${task}`,
+      assistantName: ASSISTANT_NAME,
+      sessionKey: deps.getSessionKeyForChat(targetJid),
+      group,
+      runtimePrefs: state.chatRunPreferences?.[targetJid] || {},
+    })
+    .then((run) => {
+      writeResult(
+        run.ok ? 'success' : 'error',
+        run.ok
+          ? run.result || 'Subagent completed with no output.'
+          : run.result || 'Subagent run failed.',
+      );
+    })
+    .catch((err) => {
+      writeResult('error', err instanceof Error ? err.message : String(err));
+    })
+    .finally(() => {
+      const current = agentSubagentInFlight.get(sourceGroup) ?? 1;
+      agentSubagentInFlight.set(sourceGroup, Math.max(0, current - 1));
+    });
 }
 
 // ── Telegram stream state helpers ──────────────────────────────────────────
@@ -788,7 +911,8 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
               const request = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as
                 | FarmActionRequest
                 | MemoryActionRequest
-                | SkillActionRequest;
+                | SkillActionRequest
+                | SubagentActionRequest;
 
               const resultDir = path.join(
                 ipcBaseDir,
@@ -797,7 +921,19 @@ export function startIpcWatcher(deps: HostCoordinationDeps): void {
               );
               fs.mkdirSync(resultDir, { recursive: true });
 
-              if (
+              if (request.type === 'subagent_action') {
+                // Fire-and-forget: subagent runs are long; the agent polls the
+                // result file. Never await here or the IPC loop stalls.
+                spawnAgentSubagent({
+                  request,
+                  sourceGroup,
+                  resultPath: path.join(
+                    resultDir,
+                    `${request.requestId}.json`,
+                  ),
+                  deps,
+                });
+              } else if (
                 request.type === 'farm_action' ||
                 request.type === 'memory_action' ||
                 request.type === 'skill_action'
