@@ -539,6 +539,7 @@ function buildNonMainContextEntries(params: {
     path: `${params.globalDir}/NANO.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
+    includeMissing: false,
     lineLevelRedaction: true,
   });
   if (remaining > 0) {
@@ -561,6 +562,7 @@ function buildNonMainContextEntries(params: {
     path: `${params.globalDir}/SOUL.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
+    includeMissing: false,
     lineLevelRedaction: true,
   });
   if (remaining > 0) {
