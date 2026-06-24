@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { isHeartbeatFileEffectivelyEmpty } from './heartbeat-policy.js';
-import { stripHeartbeatToken } from './heartbeat-policy.js';
+import { extractHeartbeatAlert } from './heartbeat-policy.js';
 import { verifySkillCleanupMemoryClaim } from './memory-claim-verifier.js';
 
 export interface HeartbeatChecklistInput {
@@ -51,9 +51,8 @@ function classifyHeartbeatOutcome(
   if (!ok) return 'error';
   const trimmed = result?.trim() || '';
   if (!trimmed) return 'empty';
-  if (stripHeartbeatToken(trimmed, { mode: 'heartbeat' }).shouldSkip)
-    return 'ok';
-  return 'alert';
+  if (extractHeartbeatAlert(trimmed).isAlert) return 'alert';
+  return 'ok';
 }
 
 export function buildHeartbeatChecklist(

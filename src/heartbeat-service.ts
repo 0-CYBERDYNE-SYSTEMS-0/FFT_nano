@@ -21,6 +21,7 @@ import {
   parseHeartbeatActiveHours,
   shouldSuppressDuplicateHeartbeat,
   stripHeartbeatToken,
+  extractHeartbeatAlert,
   isHeartbeatFileEffectivelyEmpty,
 } from './heartbeat-policy.js';
 import { writeHeartbeatChecklist } from './heartbeat-checklist.js';
@@ -298,12 +299,16 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     deps.updateChatUsage(mainChatJid, run.usage);
     if (run.streamed || !run.result) return;
 
-    const normalized = stripHeartbeatToken(run.result, {
-      mode: 'heartbeat',
-      maxAckChars: HEARTBEAT_ACK_MAX_CHARS,
-    });
-    if (normalized.shouldSkip || !normalized.text.trim()) {
-      if (HEARTBEAT_SHOW_OK && normalized.didStrip) {
+    const alert = extractHeartbeatAlert(run.result);
+    if (!alert.isAlert) {
+      // No explicit HEARTBEAT_ALERT marker: this is either a clean OK ack or
+      // free-form narration of the checks performed. Neither is a user-actionable
+      // alert, so suppress it rather than leaking the validator's observations.
+      const ack = stripHeartbeatToken(run.result, {
+        mode: 'heartbeat',
+        maxAckChars: HEARTBEAT_ACK_MAX_CHARS,
+      });
+      if (HEARTBEAT_SHOW_OK && ack.shouldSkip && ack.didStrip) {
         const destination = resolveHeartbeatTargetJid(mainChatJid, deps);
         if (!destination) {
           logHeartbeatSkip('no-destination', { chatJid: mainChatJid, reason });
@@ -319,9 +324,9 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
           rememberHeartbeatTarget(destination);
         }
       }
-      logHeartbeatSkip('ack-token', {
+      logHeartbeatSkip(ack.shouldSkip ? 'ack-token' : 'no-alert-marker', {
         chatJid: mainChatJid,
-        didStrip: normalized.didStrip,
+        didStrip: ack.didStrip,
         reason,
       });
       return;
@@ -335,7 +340,7 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     const previous = heartbeatLastSent.get(mainChatJid);
     if (
       shouldSuppressDuplicateHeartbeat({
-        text: normalized.text,
+        text: alert.text,
         nowMs,
         previousText: previous?.text,
         previousSentAt: previous?.sentAt,
@@ -356,7 +361,7 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
         'Heartbeat accountId configured but ignored (single-account channels in FFT_nano)',
       );
     }
-    const sent = await deps.sendMessage(destination, normalized.text);
+    const sent = await deps.sendMessage(destination, alert.text);
     if (!sent) {
       logger.error(
         { chatJid: mainChatJid, destination, reason },
@@ -384,7 +389,7 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       }
     }
     heartbeatLastSent.set(mainChatJid, {
-      text: normalized.text,
+      text: alert.text,
       sentAt: nowMs,
     });
   } catch (err) {
