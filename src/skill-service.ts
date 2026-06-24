@@ -28,6 +28,10 @@ import {
   captureKnowledgeRawNote,
   formatKnowledgeWikiStatusText,
   runKnowledgeWikiLint,
+  upgradeKnowledgeWikiScaffold,
+  writeWikiPageTriageManifest,
+  reingestArchivedCapture,
+  listArchivedCaptures,
 } from './knowledge-wiki.js';
 import { ensureKnowledgeNightlyTask } from './knowledge-wiki-task.js';
 import {
@@ -401,7 +405,11 @@ export function runQuietSkillAgent(params: {
       const proposal = parseMaintenanceProposal(output.result ?? '');
       if (proposal.kind === 'noop') {
         logger.debug(
-          { groupFolder: params.group.folder, requestId: params.requestId, reason: proposal.reason },
+          {
+            groupFolder: params.group.folder,
+            requestId: params.requestId,
+            reason: proposal.reason,
+          },
           'Maintenance run produced noop',
         );
         emitMaintenanceEvent(params.group.folder, {
@@ -413,7 +421,11 @@ export function runQuietSkillAgent(params: {
         });
       } else {
         logger.info(
-          { groupFolder: params.group.folder, requestId: params.requestId, proposalKind: proposal.kind },
+          {
+            groupFolder: params.group.folder,
+            requestId: params.requestId,
+            proposalKind: proposal.kind,
+          },
           'Maintenance run produced proposal',
         );
         emitMaintenanceEvent(params.group.folder, {
@@ -456,7 +468,11 @@ interface NoopProposal {
   reason: string;
 }
 
-function parseMaintenanceProposal(output: string): NoopProposal | { kind: 'memory' | 'skill' | 'report'; [key: string]: unknown } {
+function parseMaintenanceProposal(
+  output: string,
+):
+  | NoopProposal
+  | { kind: 'memory' | 'skill' | 'report'; [key: string]: unknown } {
   // Try to extract JSON from the output
   // The maintenance model should return a JSON object with a "kind" field
   const jsonMatch = output.match(/\{[\s\S]*\}/);
@@ -478,7 +494,11 @@ function parseMaintenanceProposal(output: string): NoopProposal | { kind: 'memor
       return { kind: 'noop', reason: parsed.reason };
     }
 
-    if (parsed.kind === 'memory' || parsed.kind === 'skill' || parsed.kind === 'report') {
+    if (
+      parsed.kind === 'memory' ||
+      parsed.kind === 'skill' ||
+      parsed.kind === 'report'
+    ) {
       // Basic validation - detailed validation happens in host gateway
       return parsed;
     }
@@ -936,10 +956,14 @@ export function handleLibrarianCommand(
 
   if (action === 'help') {
     return [
-      'Usage: /librarian <status|init|task|lint|capture|run|dry-run|log|progress|help>',
+      'Usage: /librarian <status|init|upgrade|triage|archived|reingest|task|lint|capture|run|dry-run|log|progress|help>',
       '',
       '- /librarian status       — show wiki status and nightly task info',
       '- /librarian init         — create wiki scaffold',
+      '- /librarian upgrade      — overlay current v2 templates (backs up old, keeps pages)',
+      '- /librarian triage       — classify wiki pages (source vs memory) → manifest',
+      '- /librarian archived     — list archived raw captures',
+      '- /librarian reingest <f> — promote an archived capture back for re-curation',
       '- /librarian task         — ensure nightly task is registered',
       '- /librarian lint         — run wiki lint and show report',
       '- /librarian capture <n>  — capture a raw note',
@@ -1020,6 +1044,84 @@ export function handleLibrarianCommand(
       `- path: ${capture.relativePath}`,
       `- captured_at: ${capture.capturedAt}`,
     ].join('\n');
+  }
+
+  if (action === 'upgrade') {
+    const result = upgradeKnowledgeWikiScaffold({
+      workspaceDir: MAIN_WORKSPACE_DIR,
+    });
+    const lines = [
+      `Knowledge scaffold upgrade: ${result.reason}.`,
+      `- from_version: v${result.currentVersion}`,
+      `- to_version: v${result.targetVersion}`,
+      `- files_changed: ${result.changed.length}`,
+    ];
+    if (result.backupRelativeDir) {
+      lines.push(`- backup: ${result.backupRelativeDir}`);
+    }
+    if (result.changed.length > 0) {
+      lines.push(
+        '',
+        'Changed:',
+        ...result.changed.map((entry) => `- ${entry}`),
+      );
+    }
+    return lines.join('\n');
+  }
+
+  if (action === 'triage') {
+    const report = writeWikiPageTriageManifest({
+      workspaceDir: MAIN_WORKSPACE_DIR,
+    });
+    return [
+      'Wiki page triage manifest written (no files moved).',
+      `- manifest: ${report.manifestRelativePath}`,
+      `- total_pages: ${report.totalPages}`,
+      `- source-derived: ${report.counts['source-derived']}`,
+      `- memory-shaped: ${report.counts['memory-shaped']}`,
+      `- ambiguous: ${report.counts.ambiguous}`,
+      '',
+      'Review the manifest, then relocate memory-shaped/ambiguous pages explicitly.',
+    ].join('\n');
+  }
+
+  if (action === 'archived') {
+    const archived = listArchivedCaptures({ workspaceDir: MAIN_WORKSPACE_DIR });
+    if (archived.length === 0) {
+      return 'No archived captures in knowledge/raw/_archived/.';
+    }
+    return [
+      `Archived captures (${archived.length}), newest first:`,
+      ...archived.slice(0, 30).map((entry) => `- ${entry}`),
+      archived.length > 30 ? `… and ${archived.length - 30} more` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  if (action === 'reingest') {
+    if (!params.input.trim()) {
+      return 'Usage: /librarian reingest <archived-capture-filename>  (see /librarian archived)';
+    }
+    const result = reingestArchivedCapture({
+      workspaceDir: MAIN_WORKSPACE_DIR,
+      archivedFileName: params.input.trim(),
+    });
+    if (result.status === 'not-found') {
+      return `Archived capture not found: ${params.input.trim()}. Run /librarian archived to list.`;
+    }
+    if (result.status === 'not-archived') {
+      return `That capture is already live in knowledge/raw/, not archived: ${result.activeRelativePath}`;
+    }
+    const lines = [
+      `Re-ingested archived capture for re-curation (${result.status}).`,
+      `- from: ${result.archivedRelativePath}`,
+      `- to: ${result.activeRelativePath}`,
+    ];
+    if (result.backupRelativePath) {
+      lines.push(`- prior_live_backup: ${result.backupRelativePath}`);
+    }
+    return lines.join('\n');
   }
 
   if (action === 'log') {
