@@ -24,7 +24,6 @@ groups/testrun_aborted_*/
 groups/**/coder-runs/
 groups/**/logs/
 groups/main/*
-!groups/main/.gitkeep
 
 # Secrets
 *.keys.json
@@ -93,3 +92,7 @@ docs/superpowers/
 
 # Local runtime lock (not for VCS)
 .claude/scheduled_tasks.lock
+
+# Stray shell redirect artifacts (e.g. `cmd > nul` from Windows-style
+# redirection accidentally run on macOS/Linux).
+/nul

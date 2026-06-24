@@ -59,3 +59,18 @@ test('getPiApiKeyOverride uses PI_API selected provider without explicit input p
     'opencode-key',
   );
 });
+
+test('getPiApiKeyOverride uses STEPFUN_API_KEY for the stepfun preset', () => {
+  assert.equal(
+    getPiApiKeyOverride(
+      {},
+      {
+        PI_API: 'stepfun',
+        PI_API_KEY: 'stale-key',
+        STEPFUN_API_KEY: 'stepfun-key',
+        FFT_NANO_RUNTIME_PROVIDER_PRESET: 'stepfun',
+      },
+    ),
+    'stepfun-key',
+  );
+});

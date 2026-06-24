@@ -369,6 +369,48 @@ test('buildSystemPrompt loads non-main control-plane files plus durable memory f
   assert.match(text, /## \/workspace\/group\/MEMORY\.md/);
 });
 
+test('buildSystemPrompt silently skips missing global/NANO.md and global/SOUL.md (no [MISSING] placeholder)', () => {
+  // Regression: a missing groups/global/NANO.md or groups/global/SOUL.md must
+  // not inject a '[MISSING] Expected at: <abs path>' marker into the stable
+  // system prompt, which leaks filesystem paths into the LLM context.
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', 'group nano'],
+    ['/workspace/group/SOUL.md', 'group soul'],
+    ['/workspace/group/TODOS.md', 'group todos'],
+    ['/workspace/group/MEMORY.md', 'group memory'],
+  ]);
+  // Note: global/NANO.md and global/SOUL.md are intentionally absent.
+
+  const { text, report } = buildSystemPrompt(
+    makeInput({
+      isMain: false,
+      groupFolder: 'telegram-123',
+      codingHint: 'none',
+      noContinue: true,
+    }),
+    DEFAULT_PATHS,
+    {
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+
+  // Per-group fallbacks must still be present.
+  assert.match(text, /## \/workspace\/group\/NANO\.md/);
+  assert.match(text, /## \/workspace\/group\/SOUL\.md/);
+
+  // The placeholder must never appear in the rendered prompt, regardless of
+  // how the runtime serializes it.
+  assert.doesNotMatch(text, /\[MISSING\]/);
+  assert.doesNotMatch(text, /Expected at:/);
+
+  // And the report must not have any context entry whose content is the marker.
+  for (const entry of report.contextEntries) {
+    if (typeof entry.content === 'string') {
+      assert.doesNotMatch(entry.content, /\[MISSING\]/);
+    }
+  }
+});
+
 test('buildSystemPrompt falls back to legacy non-main memory.md when MEMORY.md is absent', () => {
   const files = new Map<string, string>([
     ['/workspace/global/SOUL.md', 'global soul'],

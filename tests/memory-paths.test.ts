@@ -5,6 +5,7 @@ import path from 'path';
 
 import { MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from '../src/config.js';
 import {
+  ensureDailyMemoryJournal,
   ensureMemoryScaffold,
   isAllowedMemoryRelativePath,
   resolveAllowedMemoryFilePath,
@@ -14,6 +15,7 @@ import {
   resolveMemoryPath,
   resolveSoulPath,
 } from '../src/memory-paths.js';
+import { getEffectiveTimezone, getLocalDateKey } from '../src/time-context.js';
 
 test('resolves main workspace and non-main group paths', () => {
   assert.equal(resolveGroupWorkspaceDir(MAIN_GROUP_FOLDER), MAIN_WORKSPACE_DIR);
@@ -71,4 +73,66 @@ test('resolveAllowedMemoryFilePath resolves inside workspace only', () => {
     () => resolveAllowedMemoryFilePath(MAIN_GROUP_FOLDER, '../outside.md'),
     /not an allowed memory file/i,
   );
+});
+
+
+test('ensureDailyMemoryJournal creates today\'s memory/YYYY-MM-DD.md with section template', () => {
+  const folder = `test-daily-journal-${Date.now()}`;
+  const workspaceDir = path.join(process.cwd(), 'groups', folder);
+  try {
+    const out = ensureDailyMemoryJournal(folder, {
+      now: () => new Date('2026-06-23T15:00:00.000Z'),
+    });
+    assert.equal(out.created, true);
+    const expectedKey = getLocalDateKey(
+      new Date('2026-06-23T15:00:00.000Z'),
+      getEffectiveTimezone(),
+    );
+    assert.equal(out.relPath, `memory/${expectedKey}.md`);
+    const body = fs.readFileSync(out.absolutePath, 'utf-8');
+    assert.match(body, new RegExp(`# ${expectedKey}`));
+    assert.match(body, /## Session Notes/);
+    assert.match(body, /## Decisions/);
+    assert.match(body, /## Open Questions/);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test('ensureDailyMemoryJournal is idempotent: re-running does not overwrite', () => {
+  const folder = `test-daily-journal-idem-${Date.now()}`;
+  const workspaceDir = path.join(process.cwd(), 'groups', folder);
+  try {
+    const first = ensureDailyMemoryJournal(folder, {
+      now: () => new Date('2026-06-23T15:00:00.000Z'),
+    });
+    fs.appendFileSync(first.absolutePath, '\n## Operator-added\n- keep this\n');
+    const second = ensureDailyMemoryJournal(folder, {
+      now: () => new Date('2026-06-23T16:00:00.000Z'),
+    });
+    assert.equal(second.created, false);
+    const body = fs.readFileSync(second.absolutePath, 'utf-8');
+    assert.match(body, /## Operator-added/);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test('ensureMemoryScaffold creates today\'s daily journal in addition to MEMORY.md', () => {
+  const folder = `test-scaffold-journal-${Date.now()}`;
+  const workspaceDir = path.join(process.cwd(), 'groups', folder);
+  try {
+    const out = ensureMemoryScaffold(folder);
+    const memoryDir = out.memoryDir;
+    const entries = fs.readdirSync(memoryDir).filter((n) => n.endsWith('.md'));
+    assert.ok(entries.length >= 1, 'expected at least one daily journal file');
+    const todayFile = entries.find((n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n));
+    assert.ok(todayFile, `expected YYYY-MM-DD.md in ${memoryDir}, got ${entries.join(',')}`);
+    const body = fs.readFileSync(path.join(memoryDir, todayFile), 'utf-8');
+    assert.match(body, /## Session Notes/);
+    const memoryBody = fs.readFileSync(out.memoryPath, 'utf-8');
+    assert.match(memoryBody, /Layer split/);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
 });

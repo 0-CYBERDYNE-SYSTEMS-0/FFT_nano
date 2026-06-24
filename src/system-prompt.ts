@@ -539,6 +539,7 @@ function buildNonMainContextEntries(params: {
     path: `${params.globalDir}/NANO.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
+    includeMissing: false,
     lineLevelRedaction: true,
   });
   if (remaining > 0) {
@@ -561,6 +562,7 @@ function buildNonMainContextEntries(params: {
     path: `${params.globalDir}/SOUL.md`,
     fileMaxChars: params.fileMaxChars,
     remainingTotalChars: remaining,
+    includeMissing: false,
     lineLevelRedaction: true,
   });
   if (remaining > 0) {
@@ -925,7 +927,7 @@ function renderBasePrompt(params: {
   lines.push('- Daily memory files (memory/YYYY-MM-DD.md) for today and recent past.');
   lines.push('On disk only — fetch on demand:');
   lines.push(
-    '- knowledge/raw/ → capture staging for the nightly librarian (operator-curated intake).',
+    '- knowledge/ → knowledge base for external sources the operator has given the agent (NOT agent memory). The operator owns knowledge/raw/; the agent curates knowledge/wiki/ from it. See knowledge/schema/qualia-schema.md for the page format. The agent\'s own working memory lives in canonical/, MEMORY.md, and memory/ — do not write any of those into knowledge/wiki/.',
   );
   lines.push(
     '- canonical/*.md → durable structured memory (operator-curated; safe to read, ask before writing).',

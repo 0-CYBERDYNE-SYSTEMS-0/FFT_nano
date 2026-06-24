@@ -4,6 +4,17 @@ const ALLOWED_PI_API_KEY_PROVIDERS = new Set(
   RUNTIME_PROVIDER_DEFINITIONS.map((definition) => definition.piApi),
 );
 
+const API_KEY_ENV_BY_PROVIDER: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  gemini: 'GEMINI_API_KEY',
+  'kimi-coding': 'KIMI_API_KEY',
+  minimax: 'MINIMAX_API_KEY',
+  'minimax-cn': 'MINIMAX_CN_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  stepfun: 'STEPFUN_API_KEY',
+  zai: 'ZAI_API_KEY',
+};
+
 interface ProviderAuthOverrideInput {
   provider?: string;
 }
@@ -40,6 +51,9 @@ export function getPiApiKeyOverride(
       ? apiKey
       : undefined;
   }
+
+  const providerApiKey = API_KEY_ENV_BY_PROVIDER[provider];
+  if (providerApiKey) return env[providerApiKey]?.trim() || apiKey;
 
   return !preset || preset === 'manual' ? apiKey : undefined;
 }

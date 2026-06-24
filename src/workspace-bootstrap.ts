@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 
-import { PARITY_CONFIG } from './config.js';
+import { MAIN_GROUP_FOLDER, PARITY_CONFIG } from './config.js';
 import { ensureKnowledgeWikiScaffold } from './knowledge-wiki.js';
+import { ensureDailyMemoryJournal } from './memory-paths.js';
 
 export const WORKSPACE_TEMPLATE_FILENAMES = [
   'NANO.md',
@@ -170,20 +171,62 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
   'BOOTSTRAP.md': [
     '# BOOTSTRAP',
     '',
-    'You just came online in a fresh workspace.',
+    'Main workspace onboarding is pending. This file is the interview script.',
+    'Delete it after the ritual completes (the gateway watches for removal).',
     '',
-    'First-run ritual:',
-    '- Start conversationally: "Hey, I just came online. Who am I? Who are you?"',
-    '- Capture operational guidance in NANO.md and durable identity guidance in SOUL.md.',
-    '- Initialize mission state in TODOS.md.',
-    '- Promote durable facts/decisions into canonical/*.md.',
-    '- Keep the flow practical and concise.',
-    '- Delete this file after the ritual is complete.',
+    '## Goal',
+    '',
+    'Capture enough operator context that the long-term memory layer',
+    '(canonical/*.md + MEMORY.md) is populated for the next session,',
+    'and that identity/tone/standing-rules are recorded where the runtime',
+    'expects them.',
+    '',
+    '## Order of operations',
+    '',
+    '1. Open conversationally: "Hey, I just came online. Who am I, who',
+    '   are you, and what are the standing rules for this workspace?"',
+    '2. Capture identity in IDENTITY.md (your name, role, function).',
+    '3. Capture operator profile in USER.md (name, operation, preferences,',
+    '   safety notes).',
+    '4. Capture persona/tone in SOUL.md. Do not duplicate the identity facts.',
+    '5. Capture standing hard rules in canonical/constraints.md. Ask explicitly:',
+    '   "What must I never do, no matter what?"',
+    '6. Capture active long-lived commitments in canonical/commitments.md.',
+    '7. Capture long-lived project context in canonical/projects.md.',
+    '8. Capture high-priority durable memory in canonical/_hot.md (only',
+    '   things that should be in the system prompt on every turn).',
+    '9. Capture operator-curated long-term memory in MEMORY.md (start',
+    '   empty, add only what the operator explicitly asks you to remember).',
+    "10. Initialize mission state in TODOS.md (active objective + first task).",
+    "11. Append today's entry to memory/YYYY-MM-DD.md summarising what you",
+    '    learned this session and any decisions made.',
+    '',
+    '## Cadence',
+    '',
+    'Ask one concise question at a time. Keep the exchange practical. Do not',
+    'silently invent canonical/* content; only write what the operator confirms.',
+    'When everything is captured, delete this file and emit the onboarding-',
+    'completion token on its own line in the final reply.',
   ].join('\n'),
   'MEMORY.md': [
     '# MEMORY',
     '',
-    'Durable facts, decisions, and compaction summaries belong here.',
+    'Operator-curated long-term memory and compaction summaries for this',
+    'workspace. Most durable facts belong in canonical/*.md; this file is',
+    'for cross-cutting memory and session compaction summaries.',
+    '',
+    '## Layer split (do not collapse these into one file)',
+    '',
+    '- canonical/_hot.md            — always-injected high-priority durable memory',
+    '- canonical/identity.md        — stable operator profile facts',
+    '- canonical/constraints.md     — standing hard constraints and prohibitions',
+    '- canonical/commitments.md     — active long-lived commitments',
+    '- canonical/projects.md        — long-lived project context',
+    '- memory/YYYY-MM-DD.md         — daily journal (auto-created, append-only)',
+    '- MEMORY.md (this file)        — curated long-term memory + compaction summaries',
+    '',
+    '## Compaction summaries',
+    '',
   ].join('\n'),
 };
 
@@ -448,6 +491,8 @@ export function ensureMainWorkspaceBootstrap(params: {
     path.join(canonicalDir, 'projects.md'),
     '# projects\n\nLong-lived project context and architecture notes.',
   );
+  ensureDailyMemoryJournal(MAIN_GROUP_FOLDER, { workspaceDir, now: params.now });
+
   if (PARITY_CONFIG.workspace.enableBootMd) {
     writeFileIfMissing(
       path.join(workspaceDir, 'BOOT.md'),
