@@ -1036,7 +1036,12 @@ export async function runContainerAgent(
   // and the override is not set.
   {
     const mode = getSandboxMode();
-    const overrideSet = process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS === '1';
+    // Accept common truthy values in addition to '1' so paste-trimmed or
+    // shell-escaped values in .env still unlock the headless override.
+    const overrideRaw = (process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS || '')
+      .trim()
+      .toLowerCase();
+    const overrideSet = ['1', 'true', 'yes', 'on'].includes(overrideRaw);
     const hasMutatingTools = runAuthority.effectiveToolSet.some((t) =>
       ['bash', 'edit', 'write'].includes(t),
     );

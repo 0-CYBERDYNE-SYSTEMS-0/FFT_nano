@@ -578,6 +578,12 @@ export function buildArtifactVerification(
 export function buildEvaluatorContainerInput(
   ctx: EvaluatorContext,
 ): ContainerInput {
+  // Pin the QA evaluator to the host's main provider/model (PI_API/PI_MODEL
+  // from .env / process.env) so the QA pass cannot drift to a stale or
+  // external provider set in the calling shell. Operators who want a
+  // different evaluator model can set the env vars in .env.
+  const envProvider = (process.env.PI_API || '').trim();
+  const envModel = (process.env.PI_MODEL || '').trim();
   return {
     prompt: buildEvaluatorPrompt(ctx),
     groupFolder: ctx.group.folder,
@@ -589,6 +595,8 @@ export function buildEvaluatorContainerInput(
     codingHint: 'none',
     workspaceDirOverride: ctx.workspaceDirOverride,
     suppressPreviewStreaming: true,
+    ...(envProvider ? { provider: envProvider } : {}),
+    ...(envModel ? { model: envModel } : {}),
     lifecyclePolicyOverride: {
       hardTimeoutMs: 90_000,
       staleAfterMs: 60_000,
