@@ -439,7 +439,10 @@ function checkRuntimeProfile(): CheckResult {
 
 function checkSandboxMode(): CheckResult {
   const mode = getSandboxMode();
-  const overrideSet = process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS === '1';
+  const overrideRaw = (process.env.FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS || '')
+    .trim()
+    .toLowerCase();
+  const overrideSet = ['1', 'true', 'yes', 'on'].includes(overrideRaw);
   const overrideVar = 'FFT_NANO_ALLOW_UNSANDBOXED_HEADLESS';
 
   // pass: sandbox is active (bwrap/docker) OR override is set
