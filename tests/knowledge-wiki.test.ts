@@ -112,3 +112,69 @@ test('ensureKnowledgeNightlyTask provisions one stable scheduled task', () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+import { buildKnowledgeNightlyPrompt } from '../src/knowledge-wiki-task.js';
+
+test('seeded qualia-schema.md is a knowledge-base schema, not a memory schema', () => {
+  const workspaceDir = makeTmpDir('fft-knowledge-schema-');
+  try {
+    ensureKnowledgeWikiScaffold({ workspaceDir });
+    const schemaBody = fs.readFileSync(
+      path.join(workspaceDir, 'knowledge', 'schema', 'qualia-schema.md'),
+      'utf-8',
+    );
+    // The schema must declare itself explicitly NOT a memory schema.
+    assert.match(schemaBody, /NOT a memory schema/i);
+    // Karpathy-faithful: pages cite sources and surface contradictions, not
+    // the memory-style "Decisions / Open Questions" vocabulary.
+    assert.match(schemaBody, /Required frontmatter/);
+    assert.match(schemaBody, /\*\*Sources\*\*/);  // a 'Sources' section
+    assert.match(schemaBody, /Contradictions/);
+    assert.match(schemaBody, /raw\//);
+    // The schema must explicitly point readers away from the memory subsystem.
+    assert.match(schemaBody, /canonical\/identity\.md/);
+    assert.match(schemaBody, /memory\/YYYY-MM-DD\.md/);
+    // Negative: the old memory-style section names should not appear as
+    // ##-level top-level sections any more (the schema uses *bold* list
+    // items now, not headings).
+    assert.doesNotMatch(schemaBody, /^## Facts\b/m);
+    assert.doesNotMatch(schemaBody, /^## Decisions\b/m);
+    assert.doesNotMatch(schemaBody, /^## Open Questions\b/m);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test('seeded knowledge/README.md frames the wiki as a source library', () => {
+  const workspaceDir = makeTmpDir('fft-knowledge-readme-');
+  try {
+    ensureKnowledgeWikiScaffold({ workspaceDir });
+    const readme = fs.readFileSync(
+      path.join(workspaceDir, 'knowledge', 'README.md'),
+      'utf-8',
+    );
+    assert.match(readme, /knowledge base, not a memory system/i);
+    assert.match(readme, /external sources/);
+    assert.match(readme, /operator owns/);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test('nightly librarian prompt targets external sources and forbids memory writes', () => {
+  const prompt = buildKnowledgeNightlyPrompt();
+  // Must explicitly say what the wiki is for and what it is not for.
+  assert.match(prompt, /knowledge-base curator/i);
+  assert.match(prompt, /NOT a memory task/i);
+  // Must read from the operator's source-of-truth dir.
+  assert.match(prompt, /knowledge\/raw\//);
+  // Must forbid mutating raw captures.
+  assert.match(prompt, /Never modify anything in `knowledge\/raw\/`/);
+  // Must forbid writing the agent's own working memory into the wiki.
+  assert.match(prompt, /Never write the agent's own working notes/i);
+  // Must require source citations on non-obvious claims.
+  assert.match(prompt, /\[raw\/[^\]]+\]/);
+  // Must mention contradictions surfacing (Karpathy: "noting where new data
+  // contradicts old claims").
+  assert.match(prompt, /contradict/i);
+});
