@@ -575,32 +575,18 @@ export function runUpdateCommand(
       true,
     );
 
-    // --- up-to-date short-circuit ---
-    // Skip the expensive install/build/restart when origin has no new commits.
+    // --- remote comparison ---
     // Compare against FETCH_HEAD (always set by the fetch we just ran); a
     // scoped `git fetch origin <branch>` does NOT update refs/remotes/origin/*.
     const behind = runRaw('git', ['rev-list', '--count', 'HEAD..FETCH_HEAD']);
     const behindCount =
       behind.status === 0 ? Number((behind.stdout || '').trim()) : NaN;
-    if (Number.isFinite(behindCount) && behindCount === 0) {
-      if (stashRef) {
-        runStep('git stash apply', 'git', ['stash', 'apply', stashRef]);
-        runStep('git stash drop', 'git', ['stash', 'drop', stashRef]);
-      }
+    const alreadyUpToDate = Number.isFinite(behindCount) && behindCount === 0;
+    if (alreadyUpToDate) {
       outputLines.push(
-        'Already up to date. No new commits on origin; skipping rebuild and restart.',
+        'Already up to date. No new commits on origin; rebuilding generated assets and restarting service.',
       );
-      emit(
-        'complete',
-        'already up to date',
-        'completed',
-        undefined,
-        undefined,
-        true,
-      );
-      return { ok: true, text: outputLines.join('\n') };
-    }
-    if (Number.isFinite(behindCount)) {
+    } else if (Number.isFinite(behindCount)) {
       outputLines.push(
         `Found ${behindCount} new commit(s) on origin/${pullBranch}.`,
       );
@@ -612,68 +598,79 @@ export function runUpdateCommand(
     const preSha =
       headBefore.status === 0 ? (headBefore.stdout || '').trim() : '';
 
-    // --- pulling phase ---
-    emit('pulling', 'git pull --ff-only', 'started');
-    let pullStart = Date.now();
-    const pull = runStep('git pull', 'git', [
-      'pull',
-      '--ff-only',
-      'origin',
-      pullBranch,
-    ]);
-    if (!pull.ok) {
-      // Fast-forward failed — history diverged. Reset to origin only when the
-      // local checkout has NO commits the remote lacks (the runtime should
-      // never carry local commits). Otherwise preserve and abort.
-      const ahead = runRaw('git', ['rev-list', '--count', 'FETCH_HEAD..HEAD']);
-      const aheadCount =
-        ahead.status === 0 ? Number((ahead.stdout || '').trim()) : NaN;
-      if (Number.isFinite(aheadCount) && aheadCount === 0) {
-        outputLines.push(
-          'Fast-forward not possible (history diverged); resetting to match origin.',
-        );
-        const reset = runStep('git reset --hard origin', 'git', [
-          'reset',
-          '--hard',
-          'FETCH_HEAD',
-        ]);
-        if (!reset.ok) {
+    if (!alreadyUpToDate) {
+      // --- pulling phase ---
+      emit('pulling', 'git pull --ff-only', 'started');
+      let pullStart = Date.now();
+      const pull = runStep('git pull', 'git', [
+        'pull',
+        '--ff-only',
+        'origin',
+        pullBranch,
+      ]);
+      if (!pull.ok) {
+        // Fast-forward failed — history diverged. Reset to origin only when the
+        // local checkout has NO commits the remote lacks (the runtime should
+        // never carry local commits). Otherwise preserve and abort.
+        const ahead = runRaw('git', ['rev-list', '--count', 'FETCH_HEAD..HEAD']);
+        const aheadCount =
+          ahead.status === 0 ? Number((ahead.stdout || '').trim()) : NaN;
+        if (Number.isFinite(aheadCount) && aheadCount === 0) {
+          outputLines.push(
+            'Fast-forward not possible (history diverged); resetting to match origin.',
+          );
+          const reset = runStep('git reset --hard origin', 'git', [
+            'reset',
+            '--hard',
+            'FETCH_HEAD',
+          ]);
+          if (!reset.ok) {
+            emit(
+              'pulling',
+              'git pull --ff-only',
+              'failed',
+              reset.result.stderr || 'reset failed',
+              Date.now() - pullStart,
+            );
+            restoreAutostashAfterAbort();
+            return fail(
+              `Update aborted: could not reset to origin/${pullBranch}. Recover manually: git fetch origin && git reset --hard origin/${pullBranch}`,
+            );
+          }
+        } else {
           emit(
             'pulling',
             'git pull --ff-only',
             'failed',
-            reset.result.stderr || 'reset failed',
+            pull.result.stderr || 'failed',
             Date.now() - pullStart,
           );
           restoreAutostashAfterAbort();
           return fail(
-            `Update aborted: could not reset to origin/${pullBranch}. Recover manually: git fetch origin && git reset --hard origin/${pullBranch}`,
+            `Update aborted during pull: local history has ${Number.isFinite(aheadCount) ? aheadCount : 'unknown'} commit(s) not on origin/${pullBranch}. Resolve manually.`,
           );
         }
-      } else {
-        emit(
-          'pulling',
-          'git pull --ff-only',
-          'failed',
-          pull.result.stderr || 'failed',
-          Date.now() - pullStart,
-        );
-        restoreAutostashAfterAbort();
-        return fail(
-          `Update aborted during pull: local history has ${Number.isFinite(aheadCount) ? aheadCount : 'unknown'} commit(s) not on origin/${pullBranch}. Resolve manually.`,
-        );
       }
+      emit(
+        'pulling',
+        'git pull --ff-only',
+        'completed',
+        pull.result.stdout || undefined,
+        Date.now() - pullStart,
+        true,
+      );
+    } else {
+      emit(
+        'pulling',
+        'git pull --ff-only',
+        'completed',
+        'already up to date',
+        undefined,
+        true,
+      );
     }
-    emit(
-      'pulling',
-      'git pull --ff-only',
-      'completed',
-      pull.result.stdout || undefined,
-      Date.now() - pullStart,
-      true,
-    );
 
-    // Reapply local changes onto the new code. Keep the stash ref until the
+    // Reapply local changes onto the current/new code. Keep the stash ref until the
     // build succeeds so a rollback can re-restore it after a hard reset.
     if (stashRef) {
       const apply = runStep('git stash apply', 'git', [
