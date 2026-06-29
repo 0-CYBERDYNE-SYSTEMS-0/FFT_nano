@@ -249,9 +249,9 @@ test('runUpdateCommand falls back to origin/main when branch upstream is gone', 
   assert.equal(remaining.length, 0);
 });
 
-// --- up-to-date short-circuit ---------------------------------------------
+// --- up-to-date rebuild ----------------------------------------------------
 
-test('runUpdateCommand short-circuits when origin has no new commits', () => {
+test('runUpdateCommand rebuilds and restarts when origin has no new commits', () => {
   const { run, calls, remaining } = makeRunner([
     ...guard(),
     { command: 'git', args: ['status', '--porcelain'], result: ok('') },
@@ -266,6 +266,9 @@ test('runUpdateCommand short-circuits when origin has no new commits', () => {
       args: ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
       result: ok('0\n'),
     },
+    { command: 'git', args: ['rev-parse', 'HEAD'], result: ok(`${preSha}\n`) },
+    ...installBuild(),
+    ...restartVerifyHealthy(),
   ]);
 
   const result = runUpdateCommand({ cwd, run, existsSync: lockAndScript });
@@ -275,8 +278,8 @@ test('runUpdateCommand short-circuits when origin has no new commits', () => {
   assert.equal(remaining.length, 0);
   assert.equal(
     calls.some((c) => c.command === 'npm'),
-    false,
-    'no install/build when nothing to update',
+    true,
+    'install/build still runs so ignored dist-web output cannot stay stale',
   );
   assert.equal(
     calls.some((c) => c.command === 'git' && c.args[0] === 'pull'),
@@ -285,7 +288,7 @@ test('runUpdateCommand short-circuits when origin has no new commits', () => {
   );
 });
 
-test('runUpdateCommand restores stash on a no-op (dirty) short-circuit', () => {
+test('runUpdateCommand restores stash before up-to-date rebuild', () => {
   const { run, remaining } = makeRunner([
     ...guard(),
     {
@@ -314,12 +317,15 @@ test('runUpdateCommand restores stash on a no-op (dirty) short-circuit', () => {
       args: ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
       result: ok('0\n'),
     },
+    { command: 'git', args: ['rev-parse', 'HEAD'], result: ok(`${preSha}\n`) },
     { command: 'git', args: ['stash', 'apply', 'stash@{0}'], result: ok('') },
+    ...installBuild(),
     {
       command: 'git',
       args: ['stash', 'drop', 'stash@{0}'],
       result: ok('Dropped stash@{0}\n'),
     },
+    ...restartVerifyHealthy(),
   ]);
 
   const result = runUpdateCommand({

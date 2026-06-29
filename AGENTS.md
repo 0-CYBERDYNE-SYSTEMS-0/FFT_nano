@@ -194,6 +194,14 @@ npm run build
 ./scripts/service.sh restart
 ```
 
+Web UI update rule:
+- The browser does not serve `web/control-center/src` directly.
+- The web UI is served from generated, gitignored build output at `dist-web/control-center/`.
+- A `git pull` alone is not enough to update the running web UI.
+- After pulling changes that affect the host or web UI, run `npm run build` from the checkout that the installed service actually uses, then restart the service.
+- On macOS, verify the active service checkout with `launchctl print gui/$(id -u)/com.fft_nano`; the `WorkingDirectory` and `ProgramArguments` paths are authoritative.
+- Verify the served runtime with `./scripts/web.sh` and `curl -sS http://127.0.0.1:28990/api/runtime/status`. The status JSON should report branch `main` and the expected commit.
+
 Equivalent direct macOS restart:
 
 ```bash
