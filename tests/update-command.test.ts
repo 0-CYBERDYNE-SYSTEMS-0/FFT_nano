@@ -836,7 +836,7 @@ test('startDetachedUpdateCommand allows chatless starts for non-Telegram surface
 // ----------------------------------------------------------------------------
 
 test('runUpdateCommand refuses to run from a -dev worktree (path convention)', () => {
-  const fakeCwd = '/Users/someone/fft_nano-dev';
+  const fakeCwd = '/Users/username/fft_nano-dev';
   const result = runUpdateCommand({ cwd: fakeCwd, env: {} });
   assert.equal(result.ok, false);
   assert.match(result.text, /Update refused/);
