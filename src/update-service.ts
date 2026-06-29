@@ -55,6 +55,89 @@ function buildCompletionText(record: UpdateNotificationRecord): string {
   return `Update failed — ${firstLine}`;
 }
 
+function formatEventLine(event: UpdateProgressEvent): string {
+  if (event.status === 'completed') {
+    const dur =
+      typeof event.durationMs === 'number'
+        ? ` (${Math.round(event.durationMs / 100) / 10}s)`
+        : '';
+    return `✓ ${event.phase}: ${event.label}${dur}`;
+  }
+  if (event.status === 'failed') {
+    return `✗ ${event.phase}: ${event.label} — ${event.message ?? 'failed'}`;
+  }
+  return `▸ ${event.phase}: ${event.label}`;
+}
+
+/**
+ * Ensure the report has a preview message. Always tries to seed one (even if
+ * events already exist) — the previous version only seeded when there were no
+ * new events, which meant a worker writing fast would skip seeding entirely
+ * and the user would see "Update started" once, then nothing.
+ */
+async function ensurePreview(
+  reportFile: string,
+  record: UpdateNotificationRecord,
+): Promise<UpdateNotificationRecord> {
+  if (record.previewMessageId || record.previewFailed) return record;
+  if (!state.telegramBot || !deps) return record;
+  const bot = state.telegramBot;
+  const registry = deps.previewRegistry;
+  if (!registry) {
+    deps.previewRegistry = new TelegramPreviewRegistry(300_000);
+  }
+
+  try {
+    const result = await updateTelegramPreview({
+      bot,
+      registry: deps.previewRegistry!,
+      chatJid: record.chatJid,
+      requestId: record.id,
+      text: buildStartedPreviewText(record),
+    });
+
+    if (result.messageId) {
+      const updated: UpdateNotificationRecord = {
+        ...record,
+        previewMessageId: result.messageId,
+        updatedAt: new Date().toISOString(),
+      };
+      writeUpdateNotification(reportFile, updated);
+      logger.debug(
+        { reportId: record.id, messageId: result.messageId },
+        'Update preview seeded',
+      );
+      return updated;
+    }
+
+    // Preview send returned no id and no error — mark fallback so the next
+    // event uses plain sendMessage.
+    const updated: UpdateNotificationRecord = {
+      ...record,
+      previewFailed: true,
+      updatedAt: new Date().toISOString(),
+    };
+    writeUpdateNotification(reportFile, updated);
+    logger.warn(
+      { reportId: record.id },
+      'Update preview send returned no messageId; switching to fallback',
+    );
+    return updated;
+  } catch (err) {
+    const updated: UpdateNotificationRecord = {
+      ...record,
+      previewFailed: true,
+      updatedAt: new Date().toISOString(),
+    };
+    writeUpdateNotification(reportFile, updated);
+    logger.warn(
+      { err, reportId: record.id },
+      'Update preview send threw; switching to fallback',
+    );
+    return updated;
+  }
+}
+
 async function processReport(
   reportFile: string,
   record: UpdateNotificationRecord,
@@ -67,20 +150,25 @@ async function processReport(
   const sendMessage = deps.sendMessage;
   const now = new Date();
   const startedAt = new Date(record.startedAt);
-  const elapsedMs = now.getTime() - startedAt.getTime();
 
-  // If status is 'complete', handle final delivery
+  // 1. Terminal: always reach the user via plain sendMessage if we never
+  //    managed to set up a preview. Previous logic only sent a plain message
+  //    when previewFailed was true, which silently dropped terminal updates
+  //    for any report that lost its previewMessageId mid-run.
   if (record.status === 'complete') {
+    if (record.sentAt) return;
+
     const completionText = buildCompletionText(record);
+    let delivered = false;
 
     if (record.previewMessageId) {
-      // We have an active preview - edit it to terminal wording
       try {
         await bot.editStreamMessage(
           record.chatJid,
           record.previewMessageId,
           completionText,
         );
+        delivered = true;
       } catch (err) {
         logger.warn(
           {
@@ -93,19 +181,27 @@ async function processReport(
       }
     }
 
-    // If preview failed at any point, send final via plain sendMessage
-    if (record.previewFailed) {
-      await sendMessage(record.chatJid, completionText);
+    if (!delivered) {
+      // Always send the terminal message. This is the user-visible "your
+      // update finished" message — it must reach the chat no matter what.
+      try {
+        await sendMessage(record.chatJid, completionText);
+        delivered = true;
+      } catch (err) {
+        logger.error(
+          { err, reportId: record.id, chatJid: record.chatJid },
+          'Failed to send update terminal message',
+        );
+      }
     }
 
-    // Mark as sent if not already
-    if (!record.sentAt) {
-      const sentAt = now.toISOString();
-      writeUpdateNotification(reportFile, {
-        ...record,
-        sentAt,
-        updatedAt: sentAt,
-      });
+    const sentAt = new Date().toISOString();
+    writeUpdateNotification(reportFile, {
+      ...record,
+      sentAt,
+      updatedAt: sentAt,
+    });
+    if (delivered) {
       logger.info(
         { reportId: record.id, chatJid: record.chatJid, ok: record.ok },
         'Update notification delivered',
@@ -114,139 +210,72 @@ async function processReport(
     return;
   }
 
-  // Status is 'started' - handle preview messaging
-  const progress = record.progress || [];
-  const lastIndex = record.lastProgressIndex ?? -1;
+  // 2. Mid-run: ensure we have a preview message first, then walk new events.
+  const seeded = await ensurePreview(reportFile, record);
+
+  const progress = seeded.progress || [];
+  const lastIndex = seeded.lastProgressIndex ?? -1;
   const newEvents = progress.slice(lastIndex + 1);
+  if (newEvents.length === 0) return;
 
-  // If no new progress events and no preview exists, seed one
-  if (newEvents.length === 0 && !record.previewMessageId) {
-    // Seed the preview with initial text
-    const previewText = buildStartedPreviewText(record);
-    try {
-      const result = await updateTelegramPreview({
-        bot,
-        registry: registry!,
-        chatJid: record.chatJid,
-        requestId: record.id,
-        text: previewText,
-      });
-
-      if (result.messageId) {
-        const updatedRecord: UpdateNotificationRecord = {
-          ...record,
-          previewMessageId: result.messageId,
-          updatedAt: new Date().toISOString(),
-        };
-        writeUpdateNotification(reportFile, updatedRecord);
-        logger.debug(
-          { reportId: record.id, messageId: result.messageId },
-          'Update preview seeded',
-        );
-      } else if (result.disabled || result.error) {
-        // Preview send failed - mark for fallback mode
-        const updatedRecord: UpdateNotificationRecord = {
-          ...record,
-          previewFailed: true,
-          updatedAt: new Date().toISOString(),
-        };
-        writeUpdateNotification(reportFile, updatedRecord);
-        logger.warn(
-          { err: result.error, reportId: record.id },
-          'Update preview send failed; will use fallback mode',
-        );
-      }
-    } catch (err) {
-      // Preview send threw - mark for fallback mode
-      const updatedRecord: UpdateNotificationRecord = {
-        ...record,
-        previewFailed: true,
-        updatedAt: new Date().toISOString(),
-      };
-      writeUpdateNotification(reportFile, updatedRecord);
-      logger.warn(
-        { err, reportId: record.id },
-        'Update preview send threw; will use fallback mode',
-      );
-    }
-    return;
-  }
-
-  // If preview failed, use plain sendMessage for each new event
-  if (record.previewFailed) {
-    for (const event of newEvents) {
-      if (event.status === 'completed' || event.status === 'failed') {
-        // Skip intermediate completed events in fallback mode
-        continue;
-      }
-      const msg = `▸ ${event.phase}: ${event.label}`;
-      await sendMessage(record.chatJid, msg);
-    }
-
-    // Update lastProgressIndex even in fallback mode
-    if (newEvents.length > 0) {
-      const lastEvent = newEvents[newEvents.length - 1];
-      const newIndex = progress.indexOf(lastEvent);
-      const updatedRecord: UpdateNotificationRecord = {
-        ...record,
-        lastProgressIndex: newIndex >= 0 ? newIndex : record.lastProgressIndex,
-        updatedAt: new Date().toISOString(),
-      };
-      writeUpdateNotification(reportFile, updatedRecord);
-    }
-    return;
-  }
-
-  // Normal mode: edit preview in place for each new event
-  if (!record.previewMessageId || newEvents.length === 0) return;
-
+  let lastDeliveredIndex = lastIndex;
   for (const event of newEvents) {
-    // Find the index of this event in the progress array
     const eventIndex = progress.indexOf(event);
     if (eventIndex < 0) continue;
-
-    // Determine current phase text (use phase name directly)
-    const currentPhase = event.phase;
-
-    // Calculate elapsed time up to this event
     const eventTime = new Date(event.at);
     const eventElapsedMs = eventTime.getTime() - startedAt.getTime();
 
-    const previewText = buildProgressPreviewText(
-      record,
-      currentPhase,
-      eventElapsedMs,
-      event.status,
-    );
+    const previewText = seeded.previewMessageId
+      ? buildProgressPreviewText(
+          seeded,
+          event.phase,
+          eventElapsedMs,
+          event.status,
+        )
+      : formatEventLine(event);
 
-    try {
-      await updateTelegramPreview({
-        bot,
-        registry: registry!,
-        chatJid: record.chatJid,
-        requestId: record.id,
-        text: previewText,
-      });
-    } catch (err) {
-      logger.warn(
-        { err, reportId: record.id, event },
-        'Failed to edit update preview',
-      );
+    let delivered = false;
+    if (seeded.previewMessageId && registry) {
+      try {
+        await updateTelegramPreview({
+          bot,
+          registry,
+          chatJid: record.chatJid,
+          requestId: record.id,
+          text: previewText,
+        });
+        delivered = true;
+      } catch (err) {
+        logger.warn(
+          { err, reportId: record.id, event },
+          'Failed to edit update preview',
+        );
+      }
+    }
+    if (!delivered) {
+      // Fallback: send every event as a plain message. Surface ALL events
+      // (started + completed + failed) so the user sees real progress even
+      // when preview editing is unavailable.
+      try {
+        await sendMessage(record.chatJid, formatEventLine(event));
+      } catch (err) {
+        logger.warn(
+          { err, reportId: record.id, event },
+          'Failed to send update fallback message',
+        );
+      }
     }
 
-    // Update lastProgressIndex
-    const updatedRecord: UpdateNotificationRecord = {
-      ...record,
+    lastDeliveredIndex = eventIndex;
+    writeUpdateNotification(reportFile, {
+      ...seeded,
       lastProgressIndex: eventIndex,
       updatedAt: new Date().toISOString(),
-    };
-    writeUpdateNotification(reportFile, updatedRecord);
-
-    // If this was a failed event, trigger completion handling
-    if (event.status === 'failed' || event.phase === 'complete') {
-      await processReport(reportFile, updatedRecord);
-    }
+    });
   }
+
+  // If the worker signaled a terminal-style event, let the next poll deliver
+  // the completion text (it will arrive as soon as status flips to complete).
 }
 
 async function processPendingUpdateNotifications(): Promise<void> {

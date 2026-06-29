@@ -51,29 +51,44 @@ const baseRecord: UpdateNotificationRecord = existing || {
 
 const progressEvents: UpdateProgressEvent[] = [];
 
+/**
+ * Flush the current progress to disk, preserving any fields the host may have
+ * written between our reads (notably `previewMessageId` and `previewFailed`).
+ * Without this re-read the worker would clobber the host's preview message id
+ * on every progress event, which is the root cause of "one Telegram message
+ * and then nothing" — the polling service sees the previewMessageId vanish
+ * before it can edit the message.
+ */
+function flushProgress(file: string): void {
+  try {
+    const onDisk = readUpdateNotification(file);
+    writeUpdateNotification(file, {
+      ...(onDisk || baseRecord),
+      status: 'started',
+      progress: [...progressEvents],
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {
+    // Best-effort: a write failure must not abort the run.
+  }
+}
+
 try {
   const result = runUpdateCommand({
     cwd,
     onProgress: (event) => {
       progressEvents.push(event);
-      // Flush each event to the report file so the host's notification loop
-      // can render live phase-by-phase progress instead of a silent gap until
-      // the run completes. Best-effort: a write failure must not abort the run.
-      try {
-        writeUpdateNotification(reportFile, {
-          ...baseRecord,
-          status: 'started',
-          progress: [...progressEvents],
-          updatedAt: new Date().toISOString(),
-        });
-      } catch {
-        // Ignore; the final write below still records the outcome.
-      }
+      flushProgress(reportFile);
     },
   });
   writeUpdateNotification(
     reportFile,
-    completeRecord(baseRecord, result.ok, result.text, progressEvents),
+    completeRecord(
+      readUpdateNotification(reportFile) || baseRecord,
+      result.ok,
+      result.text,
+      progressEvents,
+    ),
   );
   process.exit(result.ok ? 0 : 1);
 } catch (err) {
@@ -81,7 +96,7 @@ try {
   writeUpdateNotification(
     reportFile,
     completeRecord(
-      baseRecord,
+      readUpdateNotification(reportFile) || baseRecord,
       false,
       `Update worker crashed: ${message}`,
       progressEvents,

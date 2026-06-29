@@ -365,6 +365,58 @@ export function runUpdateCommand(
   let stashRef: string | null = null;
   let lockFile: string | null = null;
 
+  // SAFETY: refuse to run an update from a "dev" worktree. The runtime
+  // worktree (e.g. ~/fft_nano, ~/FFT_nano) is the only place that owns the
+  // launchd-managed service. Pulling + rebuilding inside a feature-branch
+  // checkout like ~/fft_nano-dev risks (a) resetting unmerged feature work
+  // when the feature branch has no remote counterpart and (b) leaving the
+  // launchd service still pointing at the runtime worktree so the "update"
+  // becomes a no-op from the user's perspective.
+  const projectName = path.basename(cwd);
+  const pathMatchesDevConvention =
+    projectName.endsWith('-dev') ||
+    projectName.endsWith('-dev/') ||
+    /[\\/].*-dev$/.test(cwd);
+
+  // Also detect git worktrees: a worktree has a .git file pointing back to
+  // the main checkout's worktrees/ dir, while the main checkout has a .git
+  // directory. `git rev-parse --git-common-dir` returns the shared main
+  // checkout path; `--git-dir` returns the worktree-specific path. They
+  // differ on a worktree, match on a main checkout.
+  let isGitWorktree = false;
+  try {
+    const gitDir = spawnSync(
+      'git',
+      ['rev-parse', '--git-dir'],
+      { cwd, encoding: 'utf8' },
+    ).stdout?.trim();
+    const commonDir = spawnSync(
+      'git',
+      ['rev-parse', '--git-common-dir'],
+      { cwd, encoding: 'utf8' },
+    ).stdout?.trim();
+    if (gitDir && commonDir && gitDir !== commonDir) {
+      isGitWorktree = true;
+    }
+  } catch {
+    // ignore — fall through to the convention check
+  }
+
+  if (
+    (pathMatchesDevConvention || isGitWorktree) &&
+    env.FFT_NANO_ALLOW_DEV_UPDATE !== '1'
+  ) {
+    const fallback = path.join(path.dirname(cwd), 'fft_nano');
+    const message =
+      `Update refused: ${cwd} looks like a dev worktree ` +
+      `(path-match=${pathMatchesDevConvention}, git-worktree=${isGitWorktree}).\n` +
+      `Run \`fft update\` from the runtime worktree instead ` +
+      `(e.g. \`cd ${fallback} && fft update\`).\n` +
+      `If you really want to update this checkout, set FFT_NANO_ALLOW_DEV_UPDATE=1.`;
+    outputLines.push(message);
+    return { ok: false, text: outputLines.join('\n') };
+  }
+
   const emit = (
     phase: UpdateProgressPhase,
     label: string,

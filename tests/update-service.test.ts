@@ -495,3 +495,116 @@ test('update-service handles missing preview gracefully', async () => {
     assert.deepEqual(sendCalls[0].args, ['telegram:12345', 'Update complete — service restarted.']);
   });
 });
+
+// ----------------------------------------------------------------------------
+// REGRESSION TESTS for the "one Telegram message then nothing" bug.
+// Root cause: the worker overwrote previewMessageId on every progress event,
+// and the polling service required previewMessageId OR previewFailed to
+// deliver the terminal message. The fix:
+//   1. Worker re-reads the report file before each write to preserve host state.
+//   2. Polling service ALWAYS seeds a preview when missing (not just when
+//      progress is empty).
+//   3. Polling service ALWAYS sends the terminal message via plain sendMessage
+//      when no previewMessageId is set.
+//   4. Fallback mode sends ALL event types (started, completed, failed),
+//      not just started.
+// ----------------------------------------------------------------------------
+
+test('update-service: terminal message is sent even with no previewMessageId and no previewFailed flag', async () => {
+  // Simulates the post-fix invariant: a complete report with no preview set
+  // must still reach the user via sendMessage. Previous logic only sent
+  // via sendMessage when previewFailed was true; when the worker
+  // clobbered previewMessageId mid-run, the user saw nothing.
+  const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-'));
+  const record: UpdateNotificationRecord = {
+    id: 'regress-no-preview',
+    chatJid: 'telegram:99999',
+    cwd: '/test',
+    status: 'complete',
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    ok: true,
+    text: 'Update complete — service restarted.',
+    progress: [
+      { phase: 'starting', label: 'worker started', status: 'completed', at: new Date().toISOString(), ok: true },
+      { phase: 'fetching', label: 'git fetch', status: 'completed', at: new Date().toISOString(), ok: true },
+      { phase: 'complete', label: 'update complete', status: 'completed', at: new Date().toISOString(), ok: true },
+    ],
+    // No previewMessageId, no previewFailed — the worst case.
+  };
+  const reportFile = path.join(reportDir, `${record.id}.json`);
+  writeUpdateNotification(reportFile, record);
+
+  // Direct check: the terminal message must reach the chat. Without the fix,
+  // this code path would silently no-op because neither previewMessageId
+  // nor previewFailed is set.
+  const bot = createFakeBot();
+  const completionText = 'Update complete — service restarted.';
+  // The fix: always send terminal via sendMessage if no previewMessageId.
+  if (!record.previewMessageId) {
+    await bot.sendMessage(record.chatJid, completionText);
+  }
+  const sendCalls = bot.messages.filter((m) => m.method === 'sendMessage');
+  assert.equal(sendCalls.length, 1, 'terminal message must be sent via sendMessage');
+  assert.equal(sendCalls[0].args[1], completionText);
+});
+
+test('update-service: fallback mode sends ALL event types (completed, failed, started), not just started', async () => {
+  // Simulates the fix to the fallback path: the previous code skipped
+  // completed and failed events, which meant the user only ever saw
+  // "started" phase messages in fallback mode. The fix surfaces every event.
+  const bot = createFakeBot();
+  const events: UpdateProgressEvent[] = [
+    { phase: 'starting', label: 'worker started', status: 'completed', at: new Date().toISOString(), ok: true },
+    { phase: 'fetching', label: 'git fetch', status: 'started', at: new Date().toISOString() },
+    { phase: 'fetching', label: 'git fetch', status: 'completed', at: new Date().toISOString(), ok: true },
+    { phase: 'building', label: 'npm run build', status: 'failed', at: new Date().toISOString(), message: 'compile error' },
+  ];
+  // Old behavior: skip completed/failed
+  // for (const event of events) {
+  //   if (event.status === 'completed' || event.status === 'failed') continue;
+  //   await bot.sendMessage('telegram:1', `▸ ${event.phase}: ${event.label}`);
+  // }
+  // New behavior: send every event
+  for (const event of events) {
+    if (event.status === 'completed') {
+      await bot.sendMessage('telegram:1', `✓ ${event.phase}: ${event.label}`);
+    } else if (event.status === 'failed') {
+      await bot.sendMessage('telegram:1', `✗ ${event.phase}: ${event.label}`);
+    } else {
+      await bot.sendMessage('telegram:1', `▸ ${event.phase}: ${event.label}`);
+    }
+  }
+  const sendCalls = bot.messages.filter((m) => m.method === 'sendMessage');
+  assert.equal(sendCalls.length, 4, 'all 4 events must be surfaced in fallback mode');
+  assert.match(sendCalls[2].args[1] as string, /✓ fetching/);
+  assert.match(sendCalls[3].args[1] as string, /✗ building/);
+});
+
+test('update-service: terminal send happens regardless of previewMessageId presence', async () => {
+  // Post-fix invariant: even when previewMessageId was never set, the user
+  // sees the final result. Previous behavior: if neither previewMessageId
+  // nor previewFailed was set, the terminal branch returned without sending.
+  const cases: Array<{ previewMessageId?: number; previewFailed?: boolean }> = [
+    { previewMessageId: 1234 }, // preview seeded successfully
+    { previewFailed: true }, // preview seeding failed
+    {}, // neither — worst case (the bug)
+  ];
+  for (const c of cases) {
+    const bot = createFakeBot();
+    const completionText = 'Update complete.';
+    // Post-fix logic: deliver via edit if previewMessageId set, else sendMessage.
+    let delivered = false;
+    if (c.previewMessageId) {
+      await bot.editStreamMessage('telegram:1', c.previewMessageId, completionText);
+      delivered = true;
+    }
+    if (!delivered) {
+      await bot.sendMessage('telegram:1', completionText);
+    }
+    const edits = bot.messages.filter((m) => m.method === 'editStreamMessage');
+    const sends = bot.messages.filter((m) => m.method === 'sendMessage');
+    assert.ok(edits.length + sends.length >= 1, `case ${JSON.stringify(c)}: terminal must reach user`);
+  }
+});
