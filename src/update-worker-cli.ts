@@ -91,6 +91,12 @@ function runCliUpdate(cwd: string): void {
 
   if (failed || !result.ok) {
     process.stdout.write(`Update failed.\n`);
+    if (result.text) {
+      // Surface the human-readable reason — guards, aborts, and the dev-worktree
+      // refusal all set this. Without printing it the operator has to dig into
+      // log files to find out why `fft update` returned non-zero.
+      process.stdout.write(`\n${result.text}\n`);
+    }
     process.exit(1);
   }
 

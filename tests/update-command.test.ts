@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import {
@@ -829,4 +830,74 @@ test('startDetachedUpdateCommand allows chatless starts for non-Telegram surface
   const report = readUpdateNotification(result.reportFile || '');
   assert.equal(report?.chatJid, '');
   assert.equal(report?.status, 'started');
+});
+
+// ----------------------------------------------------------------------------
+// REGRESSION TEST: dev-worktree safety guard.
+// The runtime worktree (e.g. ~/fft_nano) is the only place that should run
+// fft update. Running from a feature-branch worktree (path ends in -dev or
+// detected as a git worktree) used to silently fall through to a "no commits
+// to pull" short-circuit — losing any unmerged work. The fix refuses with
+// a clear message.
+// ----------------------------------------------------------------------------
+
+test('runUpdateCommand refuses to run from a -dev worktree (path convention)', () => {
+  const fakeCwd = '/Users/username/fft_nano-dev';
+  const result = runUpdateCommand({ cwd: fakeCwd, env: {} });
+  assert.equal(result.ok, false);
+  assert.match(result.text, /Update refused/);
+  assert.match(result.text, /dev worktree/);
+  assert.match(result.text, /runtime worktree/);
+  assert.match(result.text, /FFT_NANO_ALLOW_DEV_UPDATE=1/);
+});
+
+test('runUpdateCommand refuses to run from a -dev worktree (env override allows it)', () => {
+  // With FFT_NANO_ALLOW_DEV_UPDATE=1 the guard does NOT short-circuit
+  // with "Update refused". Use a real temp dir so the run can proceed
+  // past the guard (it will still fail downstream at git since the
+  // temp dir isn't a real repo, but the failure must NOT mention the
+  // dev-worktree guard).
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-override-'));
+  const fakeCwd = path.join(tmpDir, 'fft_nano-dev');
+  fs.mkdirSync(fakeCwd, { recursive: true });
+  try {
+    const result = runUpdateCommand({
+      cwd: fakeCwd,
+      env: { FFT_NANO_ALLOW_DEV_UPDATE: '1' },
+    });
+    if (!result.ok) {
+      assert.doesNotMatch(result.text, /Update refused/);
+      assert.doesNotMatch(result.text, /dev worktree/);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('runUpdateCommand refuses to run from a git worktree (auto-detected)', () => {
+  // Build a real git worktree to trigger the auto-detection path.
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-regress-'));
+  const main = path.join(tmpRoot, 'main');
+  const wt = path.join(tmpRoot, 'wt');
+  fs.mkdirSync(main);
+  spawnSync('git', ['init', '--bare', path.join(tmpRoot, 'origin.git')], { stdio: 'ignore' });
+  spawnSync('git', ['init'], { cwd: main, stdio: 'ignore' });
+  spawnSync('git', ['config', 'user.email', 't@t'], { cwd: main });
+  spawnSync('git', ['config', 'user.name', 'T'], { cwd: main });
+  spawnSync('git', ['remote', 'add', 'origin', path.join(tmpRoot, 'origin.git')], { cwd: main });
+  fs.writeFileSync(path.join(main, 'README.md'), 'x');
+  spawnSync('git', ['add', '.'], { cwd: main, stdio: 'ignore' });
+  spawnSync('git', ['commit', '-m', 'init'], { cwd: main, stdio: 'ignore' });
+  spawnSync('git', ['push', 'origin', 'main'], { cwd: main, stdio: 'ignore' });
+  spawnSync('git', ['worktree', 'add', wt, '-b', 'feature/x'], { cwd: main, stdio: 'ignore' });
+
+  try {
+    const result = runUpdateCommand({ cwd: wt, env: {} });
+    assert.equal(result.ok, false, 'git-worktree update should be refused');
+    assert.match(result.text, /Update refused/);
+    assert.match(result.text, /git-worktree=true/);
+  } finally {
+    spawnSync('git', ['worktree', 'remove', '--force', wt], { cwd: main, stdio: 'ignore' });
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });
