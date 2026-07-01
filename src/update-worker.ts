@@ -1,6 +1,7 @@
 import {
   readUpdateNotification,
   runUpdateCommand,
+  withUpdateReportLock,
   writeUpdateNotification,
   type UpdateNotificationRecord,
   type UpdateProgressEvent,
@@ -58,9 +59,14 @@ const progressEvents: UpdateProgressEvent[] = [];
  * on every progress event, which is the root cause of "one Telegram message
  * and then nothing" — the polling service sees the previewMessageId vanish
  * before it can edit the message.
+ *
+ * Wrapped in the per-report advisory lock so we don't race the host's
+ * concurrent writes to the same file. Falls back to an unlocked write if the
+ * peer holds the lock beyond our timeout; the alternative (dropping the
+ * event entirely) is worse — losing a progress event re-triggers F-3 / F-16.
  */
 function flushProgress(file: string): void {
-  try {
+  const write = () => {
     const onDisk = readUpdateNotification(file);
     writeUpdateNotification(file, {
       ...(onDisk || baseRecord),
@@ -68,8 +74,17 @@ function flushProgress(file: string): void {
       progress: [...progressEvents],
       updatedAt: new Date().toISOString(),
     });
+  };
+  try {
+    withUpdateReportLock(file, write, 200);
   } catch {
-    // Best-effort: a write failure must not abort the run.
+    // Lock acquire/timeout threw unexpectedly — try one unlocked write as
+    // a last-ditch fallback so a transient lock failure doesn't kill the run.
+    try {
+      write();
+    } catch {
+      // Best-effort: a write failure must not abort the run.
+    }
   }
 }
 
@@ -81,26 +96,50 @@ try {
       flushProgress(reportFile);
     },
   });
-  writeUpdateNotification(
-    reportFile,
-    completeRecord(
-      readUpdateNotification(reportFile) || baseRecord,
-      result.ok,
-      result.text,
-      progressEvents,
-    ),
-  );
+  const finalize = () => {
+    writeUpdateNotification(
+      reportFile,
+      completeRecord(
+        readUpdateNotification(reportFile) || baseRecord,
+        result.ok,
+        result.text,
+        progressEvents,
+      ),
+    );
+  };
+  try {
+    withUpdateReportLock(reportFile, finalize, 500);
+  } catch {
+    try {
+      finalize();
+    } catch {
+      // Best-effort: a write failure here would mean the host never sees
+      // the terminal record; the launcher-side timeout will surface that.
+    }
+  }
   process.exit(result.ok ? 0 : 1);
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
-  writeUpdateNotification(
-    reportFile,
-    completeRecord(
-      readUpdateNotification(reportFile) || baseRecord,
-      false,
-      `Update worker crashed: ${message}`,
-      progressEvents,
-    ),
-  );
+  const finalize = () => {
+    writeUpdateNotification(
+      reportFile,
+      completeRecord(
+        readUpdateNotification(reportFile) || baseRecord,
+        false,
+        `Update worker crashed: ${message}`,
+        progressEvents,
+      ),
+    );
+  };
+  try {
+    withUpdateReportLock(reportFile, finalize, 500);
+  } catch {
+    try {
+      finalize();
+    } catch {
+      // Best-effort: a write failure here would mean the host never sees
+      // the terminal record; the launcher-side timeout will surface that.
+    }
+  }
   process.exit(1);
 }

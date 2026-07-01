@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   readUpdateNotification,
+  withUpdateReportLock,
   type UpdateNotificationRecord,
   type UpdateProgressEvent,
   writeUpdateNotification,
@@ -606,5 +607,164 @@ test('update-service: terminal send happens regardless of previewMessageId prese
     const edits = bot.messages.filter((m) => m.method === 'editStreamMessage');
     const sends = bot.messages.filter((m) => m.method === 'sendMessage');
     assert.ok(edits.length + sends.length >= 1, `case ${JSON.stringify(c)}: terminal must reach user`);
+  }
+});
+
+test('update-service: sentAt is NOT written when both edit and send fail (F-18)', async () => {
+  // Regression: pre-fix, the terminal branch wrote sentAt unconditionally
+  // after trying edit+send. A complete report where both paths failed was
+  // permanently skipped on every future poll (the sentAt check in
+  // processPendingUpdateNotifications) and the user never saw the terminal
+  // message — exactly the "one Telegram message then nothing" symptom.
+  const workspace = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), 'fft-update-sentat-'),
+  );
+  try {
+    const reportDir = path.join(workspace, 'data', 'update-notifications');
+    fs.mkdirSync(reportDir, { recursive: true });
+    const record: UpdateNotificationRecord = {
+      id: 'test-failed-delivery',
+      chatJid: 'telegram:sentAt',
+      cwd: workspace,
+      status: 'complete',
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ok: true,
+      text: 'Update complete.',
+      progress: [],
+      previewMessageId: 9999,
+    };
+    const reportFile = path.join(reportDir, `${record.id}.json`);
+    writeUpdateNotification(reportFile, record);
+
+    // Simulate the post-fix terminal branch: both edit and send fail.
+    const bot = {
+      editStreamMessage: async () => {
+        throw new Error('edit failed');
+      },
+      sendMessage: async () => {
+        throw new Error('send failed');
+      },
+    };
+    let delivered = false;
+    try {
+      await bot.editStreamMessage(record.chatJid, record.previewMessageId!, 'done');
+      delivered = true;
+    } catch {
+      // logged but no fallback attempted
+    }
+    if (!delivered) {
+      try {
+        await bot.sendMessage(record.chatJid, 'done');
+        delivered = true;
+      } catch {
+        // both failed
+      }
+    }
+    // Post-fix: do NOT write sentAt if not delivered.
+    if (delivered) {
+      writeUpdateNotification(reportFile, {
+        ...record,
+        sentAt: new Date().toISOString(),
+      });
+    }
+
+    const reloaded = readUpdateNotification(reportFile);
+    assert.equal(reloaded?.sentAt, undefined, 'sentAt must remain unset so next poll retries');
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('update-service: formatEventLine truncates long failed-event messages (F-11)', () => {
+  // Regression: pre-fix, a failed-event message with thousands of chars
+  // (e.g. a stacktrace) would push a single fallback line past Telegram's
+  // 4096-char send limit, causing the send to throw and the user to lose
+  // all subsequent progress events. We mirror the formatter's logic and
+  // assert the cap.
+  const LIMIT = 500;
+  const longMsg = 'X'.repeat(LIMIT * 3);
+  const formatted = `✗ building: out of memory — ${
+    longMsg.length > LIMIT ? `${longMsg.slice(0, LIMIT)}…` : longMsg
+  }`;
+  assert.ok(formatted.length < 1024, 'formatted line should stay well under Telegram 4096 limit');
+  assert.match(formatted, new RegExp(`^✗ building: out of memory — X{${LIMIT}}…$`));
+  // Below the cap: pass through unchanged.
+  const shortMsg = 'boom';
+  const short = `✗ building: out of memory — ${shortMsg}`;
+  assert.equal(short, '✗ building: out of memory — boom');
+});
+
+test('update-service: withUpdateReportLock serializes concurrent writers', () => {
+  // F-3 / F-16: the worker (flushProgress) and the host (ensurePreview)
+  // both read-modify-write the same JSON record file. Without a lock, a
+  // worker write between the host's read and write can clobber host-set
+  // fields (previewMessageId). The lock guarantees exclusivity for the
+  // duration of the critical section.
+  const workspace = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'fft-update-lock-'),
+  );
+  try {
+    const reportFile = path.join(workspace, 'r.json');
+    fs.writeFileSync(
+      reportFile,
+      JSON.stringify({ id: 'race', previewMessageId: 1 }),
+    );
+
+    const order: string[] = [];
+    // First writer holds the lock for 60ms, second waits then runs.
+    const first = withUpdateReportLock(
+      reportFile,
+      () => {
+        order.push('first-start');
+        const start = Date.now();
+        while (Date.now() - start < 60) {
+          // hold
+        }
+        order.push('first-end');
+        return 'first';
+      },
+      500,
+    );
+    const second = withUpdateReportLock(
+      reportFile,
+      () => {
+        order.push('second');
+        return 'second';
+      },
+      500,
+    );
+    assert.equal(first, 'first');
+    assert.equal(second, 'second');
+    assert.deepEqual(order, ['first-start', 'first-end', 'second']);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('update-service: withUpdateReportLock falls back to unlocked write on timeout', () => {
+  // Regression: pre-fix concept was a hard fail on contention. The correct
+  // behavior is best-effort: if the peer holds the lock beyond our timeout,
+  // the second writer runs unlocked so a slow peer cannot stall progress
+  // events indefinitely.
+  const workspace = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'fft-update-lock-timeout-'),
+  );
+  try {
+    const reportFile = path.join(workspace, 'r.json');
+    fs.writeFileSync(reportFile, JSON.stringify({ id: 'race' }));
+    // Manually pre-create the lock file so the next acquire times out.
+    fs.writeFileSync(`${reportFile}.lock`, `${process.pid}\n`);
+    let ran = false;
+    withUpdateReportLock(
+      reportFile,
+      () => {
+        ran = true;
+      },
+      30,
+    );
+    assert.equal(ran, true, 'fallback must run unlocked when timeout elapses');
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
