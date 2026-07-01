@@ -287,6 +287,101 @@ export function readUpdateNotification(
   }
 }
 
+/**
+ * Per-report advisory lock used to serialize cross-process access between the
+ * detached update worker (src/update-worker.ts) and the host polling service
+ * (src/update-service.ts). Both processes read-modify-write the same JSON
+ * record file, and a worker that flushes progress while the host is seeding
+ * the preview message can race — either clobbering host-set fields
+ * (previewMessageId, previewFailed) on the worker side, or vice versa.
+ *
+ * Uses POSIX `O_CREAT|O_EXCL` semantics via `fs.openSync(path, 'wx')` for
+ * atomic exclusive create, so the lock is correct across processes without a
+ * third-party dep. Caller passes a `timeoutMs`; on timeout, the second arg's
+ * function runs unlocked as a best-effort fallback so we never abort an update
+ * just because the peer is slow.
+ */
+export function acquireUpdateReportLock(
+  reportFile: string,
+  timeoutMs: number,
+): { release: () => void; held: boolean } {
+  const lockFile = `${reportFile}.lock`;
+  const start = Date.now();
+  let backoff = 5;
+  let handle: number | null = null;
+  // Bounded exponential backoff; cap single-iteration wait at 20ms so we
+  // stay responsive to a peer that's about to release.
+  while (Date.now() - start < timeoutMs) {
+    try {
+      handle = fs.openSync(lockFile, 'wx');
+      break;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') {
+        // Lock file path may be unwritable; degrade to unlocked.
+        return { release: () => {}, held: false };
+      }
+      const wait = Math.min(backoff, 20);
+      backoff = Math.min(backoff * 2, 20);
+      const endTime = start + timeoutMs;
+      const remaining = endTime - Date.now();
+      if (remaining <= 0) break;
+      const syncWait = Math.min(wait, remaining);
+      // Busy-wait up to `wait` ms, polling for release. Using sync blocking
+      // here keeps the lock semantics simple and avoids another async
+      // scheduling layer in flushProgress which itself is sync.
+      const deadline = Date.now() + syncWait;
+      while (Date.now() < deadline) {
+        // intentional spin
+      }
+    }
+  }
+  if (handle === null) {
+    return { release: () => {}, held: false };
+  }
+  try {
+    fs.writeSync(handle, `${process.pid}\n`);
+  } catch {
+    // Best-effort: lockfile owner info is diagnostic only.
+  }
+  return {
+    release: () => {
+      try {
+        fs.closeSync(handle as number);
+      } catch {
+        // ignore
+      }
+      try {
+        fs.unlinkSync(lockFile);
+      } catch {
+        // ignore
+      }
+    },
+    held: true,
+  };
+}
+
+export function releaseUpdateReportLock(release: () => void): void {
+  try {
+    release();
+  } catch {
+    // ignore
+  }
+}
+
+export function withUpdateReportLock<T>(
+  reportFile: string,
+  fn: () => T,
+  timeoutMs: number,
+): T {
+  const lock = acquireUpdateReportLock(reportFile, timeoutMs);
+  try {
+    return fn();
+  } finally {
+    releaseUpdateReportLock(lock.release);
+  }
+}
+
 function findAutostashRef(stashList: string, marker: string): string | null {
   for (const line of stashList.split(/\r?\n/)) {
     const [ref, subject] = line.split('\0');

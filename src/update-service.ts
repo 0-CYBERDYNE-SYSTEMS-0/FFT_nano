@@ -8,6 +8,7 @@ import {
   readUpdateNotification,
   type UpdateNotificationRecord,
   type UpdateProgressEvent,
+  withUpdateReportLock,
   writeUpdateNotification,
 } from './update-command.js';
 import {
@@ -64,10 +65,21 @@ function formatEventLine(event: UpdateProgressEvent): string {
     return `✓ ${event.phase}: ${event.label}${dur}`;
   }
   if (event.status === 'failed') {
-    return `✗ ${event.phase}: ${event.label} — ${event.message ?? 'failed'}`;
+    // Cap message at 500 chars to stay well under Telegram's 4096-char send
+    // limit even when several fail events stack up in a single fallback stream.
+    const raw = event.message ?? 'failed';
+    const msg = raw.length > 500 ? `${raw.slice(0, 500)}…` : raw;
+    return `✗ ${event.phase}: ${event.label} — ${msg}`;
   }
   return `▸ ${event.phase}: ${event.label}`;
 }
+
+/**
+ * Internal — exposed for tests. Cap on the failed-event message length that
+ * keeps a single fallback line well under Telegram's 4096-char send limit
+ * regardless of how many events stack up in one stream.
+ */
+export const FORMAT_EVENT_LINE_MESSAGE_LIMIT = 500;
 
 /**
  * Ensure the report has a preview message. Always tries to seed one (even if
@@ -102,7 +114,13 @@ async function ensurePreview(
         previewMessageId: result.messageId,
         updatedAt: new Date().toISOString(),
       };
-      writeUpdateNotification(reportFile, updated);
+      withUpdateReportLock(
+        reportFile,
+        () => {
+          writeUpdateNotification(reportFile, updated);
+        },
+        500,
+      );
       logger.debug(
         { reportId: record.id, messageId: result.messageId },
         'Update preview seeded',
@@ -117,7 +135,13 @@ async function ensurePreview(
       previewFailed: true,
       updatedAt: new Date().toISOString(),
     };
-    writeUpdateNotification(reportFile, updated);
+    withUpdateReportLock(
+      reportFile,
+      () => {
+        writeUpdateNotification(reportFile, updated);
+      },
+      500,
+    );
     logger.warn(
       { reportId: record.id },
       'Update preview send returned no messageId; switching to fallback',
@@ -129,7 +153,13 @@ async function ensurePreview(
       previewFailed: true,
       updatedAt: new Date().toISOString(),
     };
-    writeUpdateNotification(reportFile, updated);
+    withUpdateReportLock(
+      reportFile,
+      () => {
+        writeUpdateNotification(reportFile, updated);
+      },
+      500,
+    );
     logger.warn(
       { err, reportId: record.id },
       'Update preview send threw; switching to fallback',
@@ -195,16 +225,34 @@ async function processReport(
       }
     }
 
-    const sentAt = new Date().toISOString();
-    writeUpdateNotification(reportFile, {
-      ...record,
-      sentAt,
-      updatedAt: sentAt,
-    });
+    // Only mark sentAt when delivery succeeded. If we wrote sentAt
+    // unconditionally, a complete report where both editStreamMessage and
+    // sendMessage failed would be permanently skipped on every future poll
+    // (the sentAt check in processPendingUpdateNotifications) and the user
+    // would never see the terminal message — exactly the "one Telegram
+    // message then nothing" symptom this PR fixes. Leaving sentAt unset
+    // makes the next poll re-enter this branch and retry.
     if (delivered) {
+      const sentAt = new Date().toISOString();
+      withUpdateReportLock(
+        reportFile,
+        () => {
+          writeUpdateNotification(reportFile, {
+            ...record,
+            sentAt,
+            updatedAt: sentAt,
+          });
+        },
+        200,
+      );
       logger.info(
         { reportId: record.id, chatJid: record.chatJid, ok: record.ok },
         'Update notification delivered',
+      );
+    } else {
+      logger.error(
+        { reportId: record.id, chatJid: record.chatJid },
+        'Update terminal delivery failed on both paths; leaving sentAt unset so next poll retries',
       );
     }
     return;
@@ -267,11 +315,17 @@ async function processReport(
     }
 
     lastDeliveredIndex = eventIndex;
-    writeUpdateNotification(reportFile, {
-      ...seeded,
-      lastProgressIndex: eventIndex,
-      updatedAt: new Date().toISOString(),
-    });
+    withUpdateReportLock(
+      reportFile,
+      () => {
+        writeUpdateNotification(reportFile, {
+          ...seeded,
+          lastProgressIndex: eventIndex,
+          updatedAt: new Date().toISOString(),
+        });
+      },
+      200,
+    );
   }
 
   // If the worker signaled a terminal-style event, let the next poll deliver
