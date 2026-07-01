@@ -158,7 +158,7 @@ test('VAL-WS6-019: task-audit.jsonl records learning-paused noop_reason when pau
       'Audit line should have noop_reason=learning-paused',
     );
   } finally {
-    fs.rmSync(path.dirname(path.dirname(logsDir)), {
+    fs.rmSync(resolveGroupFolderPath(groupFolder), {
       recursive: true,
       force: true,
     });
@@ -509,7 +509,7 @@ test('VAL-XARE-017: operator-created cron task delivers even when paused; no lea
     state.learningPaused = originalPause;
   } finally {
     state.learningPaused = false;
-    fs.rmSync(path.dirname(path.dirname(logsDir)), {
+    fs.rmSync(resolveGroupFolderPath(groupFolder), {
       recursive: true,
       force: true,
     });
