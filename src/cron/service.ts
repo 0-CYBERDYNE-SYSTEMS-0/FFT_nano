@@ -32,6 +32,7 @@ import { recordTaskAuditEvent } from '../task-audit.js';
 import { resolveNoContinueForTask } from './adapters.js';
 import { getEffectiveTimezone } from '../time-context.js';
 import type { OutboxDeliverer } from '../outbox.js';
+import { maybeFireErrorStreakAlert } from '../scheduled-maintenance.js';
 
 export interface CronServiceDependencies {
   sendMessage: (jid: string, text: string) => Promise<boolean>;
@@ -63,6 +64,36 @@ export function computeErrorBackoffMs(consecutiveErrors: number): number {
     ERROR_BACKOFF_MS.length - 1,
   );
   return ERROR_BACKOFF_MS[idx];
+}
+
+/**
+ * SPEC-06: cross-cutting ops witness for an unhealthy task. Forwards to the
+ * outbox-deliverer-aware helper in scheduled-maintenance.ts. Failure here is
+ * non-fatal (the witness is best-effort; the task's own delivery path handles
+ * announce/webhook as before). Returns whether an outbox row was queued.
+ */
+async function fireErrorStreakAlertIfNeeded(
+  task: ScheduledTask,
+  consecutiveErrors: number,
+  deps: CronServiceDependencies,
+): Promise<boolean> {
+  if (!deps.outbox) return false;
+  const destination = task.chat_jid;
+  if (!destination) return false;
+  try {
+    return await maybeFireErrorStreakAlert({
+      task,
+      consecutiveErrors,
+      destination,
+      outbox: deps.outbox,
+    });
+  } catch (err) {
+    logger.warn(
+      { err, taskId: task.id, consecutiveErrors },
+      'Error-streak witness dispatch threw',
+    );
+    return false;
+  }
 }
 
 function parseTaskScheduleJson(task: ScheduledTask): {
@@ -344,6 +375,8 @@ export async function runScheduledTaskV2(
       status,
       consecutiveErrors,
     });
+    // SPEC-06: error-streak witness — independent of delivery_mode.
+    void fireErrorStreakAlertIfNeeded(task, consecutiveErrors, deps);
     return;
   }
 
@@ -519,6 +552,15 @@ export async function runScheduledTaskV2(
     result: hadError ? null : outputResult,
     error: outputError,
   });
+
+  // SPEC-06: error-streak witness — independent of delivery_mode. Fires when
+  // consecutiveErrors crosses FFT_NANO_TASK_ERROR_ALERT_THRESHOLD (3 by
+  // default) and at every Nth multiple thereafter. Delivery is via the same
+  // outbox used for announce/webhook, dedupe key
+  // `task-error-streak:<id>:<consecutiveErrors>`.
+  if (hadError) {
+    void fireErrorStreakAlertIfNeeded(task, consecutiveErrors, deps);
+  }
 
   if (task.schedule_type === 'once' && task.delete_after_run && !hadError) {
     // WS2.4: Write audit line for delete_after_run before deleting the row
