@@ -94,6 +94,41 @@ const HEARTBEAT_SHOW_OK = PARITY_CONFIG.heartbeat.visibility.showOk;
 const HEARTBEAT_SHOW_ALERTS = PARITY_CONFIG.heartbeat.visibility.showAlerts;
 const HEARTBEAT_INCLUDE_REASONING = PARITY_CONFIG.heartbeat.includeReasoning;
 
+// SPEC-02 witness #2: the heartbeat must notice a stale kill switch even when
+// the agent's own reply is a plain HEARTBEAT_OK. Pure so the escalation rule
+// is testable without spinning up a full heartbeat run.
+export interface LearningPauseHeartbeatContext {
+  contextLine: string | null;
+  alert: boolean;
+  ageDays: number | null;
+}
+
+export function buildLearningPauseHeartbeatContext(params: {
+  learningPaused: boolean;
+  learningPausedAt: string | null;
+  alertThresholdDays: number;
+  now?: Date;
+}): LearningPauseHeartbeatContext {
+  if (!params.learningPaused) {
+    return { contextLine: null, alert: false, ageDays: null };
+  }
+  const now = params.now ?? new Date();
+  const pausedMs = params.learningPausedAt
+    ? new Date(params.learningPausedAt).getTime()
+    : NaN;
+  const ageDays = Number.isNaN(pausedMs)
+    ? null
+    : Math.floor((now.getTime() - pausedMs) / (24 * 60 * 60 * 1000));
+  const sinceLabel = params.learningPausedAt || 'unknown';
+  const ageLabel = ageDays === null ? 'unknown' : String(ageDays);
+  const contextLine = `LEARNING: PAUSED since ${sinceLabel} (${ageLabel} days)`;
+  const alert =
+    params.alertThresholdDays > 0 &&
+    ageDays !== null &&
+    ageDays > params.alertThresholdDays;
+  return { contextLine, alert, ageDays };
+}
+
 function resolveHeartbeatTimezoneLabel(raw: string | undefined): string {
   const value = (raw || '').trim();
   if (!value) return TIMEZONE;

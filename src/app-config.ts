@@ -436,4 +436,14 @@ export const FFT_NANO_PROVIDER_FALLBACK_ENABLED = envFlag(
   true,
 );
 
+// SPEC-02: days a learning-pause may run before the heartbeat witness
+// escalates from HEARTBEAT_OK to an alert. 0 disables the escalation only
+// (the heartbeat still reports the pause line either way).
+export const FFT_NANO_LEARNING_PAUSE_ALERT_DAYS = envInt(
+  process.env.FFT_NANO_LEARNING_PAUSE_ALERT_DAYS,
+  3,
+  0,
+  3650,
+);
+
 export { PARITY_CONFIG, PARITY_CONFIG_PATH };

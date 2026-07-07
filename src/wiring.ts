@@ -307,7 +307,7 @@ import {
   wrapLegacyActionEnvelope,
   wrapLegacyMessageEnvelope,
 } from './runtime/boundary-ipc.js';
-import { createAppRuntime } from './app.js';
+import { createAppRuntime, runLearningPauseBootWitness } from './app.js';
 import {
   consumeTelegramHostCompletedRun as hcConsumeHostCompletedRun,
   consumeTelegramHostStreamState as hcConsumeHostStreamState,
@@ -363,6 +363,7 @@ import {
 import { createTelegramCommandHandlers } from './telegram-commands.js';
 import { createLongRunService } from './long-run-service.js';
 import { createOutboxDeliverer } from './outbox.js';
+import { initSelfImproveWitness } from './self-improve-signals.js';
 import {
   getSessionKeyForChat as tuiGetSessionKeyForChat,
   resolveChatJidForSessionKey as tuiResolveChatJidForSessionKey,
@@ -1562,6 +1563,11 @@ const longRunService = createLongRunService({
 // the same pending entries.
 const outboxDeliverer = createOutboxDeliverer({ sendMessage, logger });
 
+// SPEC-02 witness #3: gives recordSelfImproveEvent a way to notify the main
+// chat after 10 consecutive learning-paused no-ops without self-improve-
+// signals.ts importing the transport layer directly.
+initSelfImproveWitness({ outbox: outboxDeliverer, findMainChatJid });
+
 function getCodingOrchestrator(): ReturnType<typeof createCodingOrchestrator> {
   return getCodingOrchestratorImpl();
 }
@@ -1952,6 +1958,13 @@ const appRuntime = createAppRuntime({
   getContainerRuntime,
   resumeRecoverableLongRuns: () => longRunService.resumeRecoverableRuns(),
   flushDeliveryOutbox: () => outboxDeliverer.flushPending(),
+  runLearningPauseBootWitness: () =>
+    runLearningPauseBootWitness({
+      state,
+      outbox: outboxDeliverer,
+      findMainChatJid,
+      logger,
+    }),
   runCuratorTick: () => {
     try {
       const mainChatJid = findMainChatJid();
