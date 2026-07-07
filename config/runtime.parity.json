@@ -44,6 +44,9 @@
   "doctor": {
     "enabled": true
   },
+  "evaluator": {
+    "chatSampleRate": 0.25
+  },
   "prompt": {
     "recentConversationMaxMessages": 50,
     "recentConversationMaxChars": 16000,

@@ -3,6 +3,11 @@ import fs from 'fs';
 import path from 'path';
 import { pruneStaleState } from './app-state.js';
 import { getPlatformAdapter } from './platform/index.js';
+import {
+  EVALUATOR_CONFIG_EXPLICIT,
+  PARITY_CONFIG,
+  PARITY_CONFIG_PATH,
+} from './parity-config.js';
 
 export interface AppRuntimeDeps {
   state: {
@@ -601,6 +606,19 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     ) {
       throw new Error(
         'No channels enabled and TUI gateway is unavailable. Set WHATSAPP_ENABLED=1, TELEGRAM_BOT_TOKEN, or enable a working TUI gateway.',
+      );
+    }
+    // SPEC-03 fix #3 — boot witness for implicit evaluator config.
+    // Log-only (not outbox-delivered): this is an operator-facing config
+    // visibility gap, not a user-facing incident. Same witness pattern as
+    // SPEC-02's runLearningPauseBootWitness.
+    if (!EVALUATOR_CONFIG_EXPLICIT) {
+      deps.logger.warn?.(
+        {
+          effectiveChatSampleRate: PARITY_CONFIG.evaluator.chatSampleRate,
+          configPath: PARITY_CONFIG_PATH,
+        },
+        'Evaluator chatSampleRate is running on the code default (config file has no `evaluator` block); add an explicit `evaluator.chatSampleRate` to silence this',
       );
     }
     if (tuiOnlyMode) {

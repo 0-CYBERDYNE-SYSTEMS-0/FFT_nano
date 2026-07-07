@@ -782,3 +782,20 @@ export const PARITY_CONFIG_PATH = path.resolve(
 export const PARITY_CONFIG: ParityConfig = applyEnvOverrides(
   mergeParityConfig(readJsonIfExists(PARITY_CONFIG_PATH)),
 );
+
+/**
+ * SPEC-03 fix #3 — boot witness for implicit default.
+ * True iff the loaded runtime.parity.json explicitly sets the `evaluator`
+ * key. False when the evaluator block is omitted and the code default
+ * (chatSampleRate = 0.1) silently takes over. Callers (notably
+ * `src/app.ts main()`) emit a one-time WARN at boot when this is false so
+ * operators are never running on an unreviewed default.
+ *
+ * Note: env overrides are layered on top of the file value, so an explicit
+ * `FFT_NANO_EVALUATOR_CHAT_SAMPLE_RATE` does NOT count as "explicit file
+ * config" — it is itself a transient override and deserves the same warning.
+ * The boot witness fires whenever the loaded JSON file is missing the
+ * `evaluator` key, regardless of env overrides.
+ */
+export const EVALUATOR_CONFIG_EXPLICIT: boolean =
+  readJsonIfExists(PARITY_CONFIG_PATH).evaluator !== undefined;
