@@ -1270,9 +1270,26 @@ export function formatLearningDigest(): string {
   }
 
   // Section 6: Pause status (VAL-INV-I6-002)
-  lines.push(
-    `Pause status: ${state.learningPaused ? 'Learning is paused' : 'Learning is active'}`,
-  );
+  if (state.learningPaused) {
+    const pausedAt = state.learningPausedAt;
+    if (pausedAt) {
+      const pausedMs = new Date(pausedAt).getTime();
+      if (!Number.isNaN(pausedMs)) {
+        const ageDays = Math.floor(
+          (Date.now() - pausedMs) / (24 * 60 * 60 * 1000),
+        );
+        lines.push(
+          `Pause status: Learning is paused since ${pausedAt} (${ageDays} days)`,
+        );
+      } else {
+        lines.push('Pause status: Learning is paused');
+      }
+    } else {
+      lines.push('Pause status: Learning is paused');
+    }
+  } else {
+    lines.push('Pause status: Learning is active');
+  }
 
   return lines.join('\n');
 }

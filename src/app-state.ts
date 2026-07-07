@@ -272,6 +272,10 @@ export const state = {
   // maybeRunSkillSelfImprovement, maybeRunSkillManager, and the WS2
   // auto-approve path. Wired to state-persistence.ts by WS6.3.
   learningPaused: false,
+  // Regression guard for the pause switch: timestamp of the most recent
+  // /learning pause, cleared to null on /learning resume. Lets the boot and
+  // heartbeat witnesses (SPEC-02) report how long learning has been off.
+  learningPausedAt: null as string | null,
 };
 
 // ---------------------------------------------------------------------------
