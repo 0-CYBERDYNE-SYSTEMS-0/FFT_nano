@@ -7,6 +7,8 @@ import {
   TIMEZONE,
 } from './config.js';
 import { logger } from './logger.js';
+import { GIT_INFO } from './state-persistence.js';
+import { runDriftWitnessBootWithDb } from './drift-witness-service.js';
 import {
   state,
   activeChatRuns,
@@ -614,6 +616,19 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
     }
     activeChatRunsById.delete(requestId);
     await deps.setTyping(mainChatJid, false);
+    // SPEC-08: drift witness — best-effort. Runs after every heartbeat, so
+    // the CLEAN / behind-N line shows up in the heartbeat's log surface at
+    // least every 4h (default cadence). Outbox dedupe key is local:remote
+    // so a partial deploy (same local, same remote) cannot spam.
+    try {
+      await runDriftWitnessBootWithDb({
+        gitInfo: GIT_INFO,
+        findMainChatJid: () => deps.findMainChatJid() ?? null,
+        logger: { info: (p, m) => logger.debug(p, m), warn: (p, m) => logger.warn(p, m) },
+      });
+    } catch (err) {
+      logger.debug({ err, reason }, 'Drift witness heartbeat check failed');
+    }
   }
 }
 

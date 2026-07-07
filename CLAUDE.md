@@ -51,12 +51,27 @@ import { state, activeChatRuns, hostEventBus } from './app-state.js';
 
 Two-track, two-worktree model. **The two worktrees share one `.git`; a branch can be checked out in only one at a time.**
 
-- **`origin/dev`** — active integration line; the runtime runs from it. Direct fast-forward pushes allowed; force-push blocked.
-- **`origin/main`** — blessed/release-only. PR-gated; moves only when `dev` is merged in + a release tagged. Rollback floor.
-- **`~/fft_nano-dev`** — edit/build/test worktree. Work on FEATURE branches here, never on `dev`.
-- **`~/fft_nano`** (= `/Users/username/FFT_nano`, case-insensitive FS) — runtime worktree on `dev`; **never hand-edit**. Builds + restarts the launchd service.
+- **`origin/main`** — canonical deployment line. All PRs merge here. The runtime
+  worktree tracks `main`. Direct fast-forward pushes to your own feature branch
+  are allowed; **force-push to `main` is forbidden** (cherry-pick or revert for
+  rollback). `origin/dev` is retired; merge it in or stop pushing to it.
+- **`~/fft_nano-dev`** — edit/build/test worktree. Work on FEATURE branches
+  here, never on `main`.
+- **`~/fft_nano`** (= `/Users/username/FFT_nano`, case-insensitive FS) — runtime
+  worktree on `main`; **never hand-edit**. Builds + restarts the launchd service.
 
-**Ship loop:** feature branch in `fft_nano-dev` → push → fast-forward `origin/dev` (`git push origin <feat>:dev`) → in `~/fft_nano`: `git pull --ff-only origin dev` → `npm run build` → `launchctl kickstart -k gui/$(id -u)/com.fft_nano` → verify new PID + clean `logs/fft_nano.log`. **The service runs `dist/`, so a build is mandatory after every pull.** Live DB: `~/fft_nano/store/messages.db`. Promote `dev → main` only via PR + release tag.
+**Ship loop:** feature branch in `fft_nano-dev` → PR to `main` → merge →
+in `~/fft_nano`: `git pull --ff-only origin main` → `npm run build` →
+`launchctl kickstart -k gui/$(id -u)/com.fft_nano` → verify new PID + clean
+`logs/fft_nano.log`. **The service runs `dist/`, so a build is mandatory after
+every pull.** Live DB: `~/fft_nano/store/messages.db`.
+
+A drift witness (`src/drift-witness-service.ts`) fires at boot and on every
+heartbeat. If `~/fft_nano` is more than `FFT_NANO_DRIFT_THRESHOLD` commits
+(default 4) behind `main` for more than 2 days, it warns in the log and enqueues
+a dedupe-keyed Telegram notice (`drift-witness:<local>:<remote>`). Threshold
+of `0` disables drift detection entirely. Set `FFT_NANO_CANONICAL_BRANCH` to
+override `main` for forks / branched deployments.
 
 ## Build & Test
 
