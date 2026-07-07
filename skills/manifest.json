@@ -19,6 +19,7 @@
     "fft-farm-ops",
     "fft-setup",
     "fft-telegram-ops",
+    "loops",
     "rapid-research",
     "web-search"
   ],
