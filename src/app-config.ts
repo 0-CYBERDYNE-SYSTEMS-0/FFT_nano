@@ -478,6 +478,30 @@ export const FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS = envInt(
   10,
 );
 
+// SPEC-09: scheduled workspace-hygiene retention. All three flags default
+// to safe values: the master switch is off, retention windows are operator
+// tunables. Trash moves into `~/nano/memory/trash-archive-YYYY-MM/`; old
+// test-/scratch-/temp-* group folders are tarred into
+// `~/fft_nano/archive/purged-groups/` and removed from the live `groups/`
+// tree. `checkWorktreeCleanliness()` reads git status only; it is
+// observational and never deletes anything.
+export const FFT_NANO_WORKSPACE_MAINTENANCE_ENABLED = envFlag(
+  process.env.FFT_NANO_WORKSPACE_MAINTENANCE_ENABLED,
+  false,
+);
+export const FFT_NANO_TRASH_RETENTION_DAYS = envInt(
+  process.env.FFT_NANO_TRASH_RETENTION_DAYS,
+  30,
+  1,
+  3650,
+);
+export const FFT_NANO_TEST_GROUP_RETENTION_DAYS = envInt(
+  process.env.FFT_NANO_TEST_GROUP_RETENTION_DAYS,
+  90,
+  1,
+  3650,
+);
+
 export { PARITY_CONFIG, PARITY_CONFIG_PATH };
 
 // Canonical deployment branch: main (not dev). See CLAUDE.md "Development

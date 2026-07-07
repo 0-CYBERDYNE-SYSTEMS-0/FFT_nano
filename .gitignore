@@ -96,3 +96,14 @@ docs/superpowers/
 # Stray shell redirect artifacts (e.g. `cmd > nul` from Windows-style
 # redirection accidentally run on macOS/Linux).
 /nul
+
+# SPEC-09: Transient worktree artifacts. The runtime worktree at ~/fft_nano
+# is a release checkout — keeping these out of `git status` keeps the
+# reconciliation path clean and prevents force-flush operations from
+# trampling throwaway data.
+reports/
+temp/
+*.tmp
+package-lock.json.orig
+*.swp
+*.swo
