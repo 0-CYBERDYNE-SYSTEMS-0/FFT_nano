@@ -13,7 +13,7 @@ at all." After 3+ consecutive failures, this opacity becomes a safety gap.
 
 ## Evidence
 
-- `/Users/scrimwiggins/fft_nano/logs/fft_nano.log`: "Heartbeat run failed" logged 84 times
+- `~/fft_nano/logs/fft_nano.log`: "Heartbeat run failed" logged 84 times
   (2026-06-24 → 2026-07-07), all tagged with Telegram "Connection error" or agent exception.
 - Same log window: `HEARTBEAT_OK` ×35, `HEARTBEAT_ALERT` ×0.
 - Heartbeat cadence: `config/runtime.parity.json:11` `"every": "4h"` (enabled).
