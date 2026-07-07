@@ -446,4 +446,15 @@ export const FFT_NANO_LEARNING_PAUSE_ALERT_DAYS = envInt(
   3650,
 );
 
+// SPEC-06: consecutive_errors count at which the cron error-streak witness
+// fires an outbox-deduped alert to the main chat. 0 disables the witness
+// entirely (the default schedule + reconciliation are unaffected).
+// Cadence: at threshold, then at every Nth multiple (3, 6, 9, …).
+export const FFT_NANO_TASK_ERROR_ALERT_THRESHOLD = envInt(
+  process.env.FFT_NANO_TASK_ERROR_ALERT_THRESHOLD,
+  3,
+  0,
+  365,
+);
+
 export { PARITY_CONFIG, PARITY_CONFIG_PATH };

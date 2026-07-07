@@ -401,6 +401,138 @@ export interface TelegramCommandDeps {
   }>;
 }
 
+// ---------------------------------------------------------------------------
+// Top-level prompt builders
+//
+// SPEC-06 requires `src/scheduled-maintenance.ts` to be able to compose the
+// same prompts the manual `/librarian` and `/reflect` commands hand to the
+// agent. The original builders live as closures inside
+// `createTelegramCommandHandlers` so they can depend on per-handler state
+// (`emitRunProgress`, `state`, etc.). That coupling is one-directional: the
+// prompt bodies do not read any closure state. So we lift the bodies to
+// top-level, then keep the inner functions as thin pass-throughs for
+// in-handler callers (`startMaintenanceAgentRun`, the command handlers).
+//
+// If a future patch needs to depend on handler state, add a parameter here
+// rather than re-introducing a closure-only builder.
+// ---------------------------------------------------------------------------
+
+export function buildLibrarianAgentPromptTopLevel(
+  action: 'run' | 'dry-run',
+  input: string,
+): string {
+  const dryRun = action === 'dry-run';
+  return [
+    dryRun
+      ? 'Manual knowledge librarian dry-run. Inspect the wiki and the new raw captures, and explain exactly what you would change, but do not write any files.'
+      : 'Manual knowledge librarian run. Integrate the new raw captures into the wiki now.',
+    '',
+    'This is a knowledge-base curator. It is NOT a memory task. The wiki is',
+    'for what the agent has *read* (operator-curated sources in',
+    '`knowledge/raw/`). The agent\'s own working memory lives in `canonical/`,',
+    '`MEMORY.md`, and `memory/YYYY-MM-DD.md`. Do not write any of those here.',
+    '',
+    'Scope:',
+    '1. Read `knowledge/schema/qualia-schema.md` and `knowledge/wiki/index.md`.',
+    '2. List the contents of `knowledge/raw/`. For each capture not yet',
+    '   integrated, decide what entity, concept, comparison, or procedure it',
+    '   informs.',
+    '3. For each new entity or topic:',
+    '   - Create or update a page under `knowledge/wiki/` following the schema',
+    '     (frontmatter + Summary, Facts with source citations,',
+    '     Cross-references, Contradictions, Open questions, Sources).',
+    '   - Cite the raw capture inline as `[raw/<capture-filename>]` next to',
+    '     every non-obvious claim.',
+    '   - Add a relative link from the new/updated page to related pages,',
+    '     and add a one-line entry to `knowledge/wiki/index.md`.',
+    '4. When a newer source contradicts an older one, surface it inline in',
+    '   the page\'s `## Contradictions` section. Do not silently overwrite.',
+    '5. Update `knowledge/wiki/progress.md` with one new row: today\'s date,',
+    '   one-sentence summary of what was integrated, one next-action item.',
+    '   Append one entry to `knowledge/wiki/log.md` of the form:',
+    '   `- <ISO timestamp> [integrate] sources=<n> pages_touched=<list>`.',
+    dryRun
+      ? '6. Do not write a report file in dry-run mode; return the proposed report in chat.'
+      : '6. Write a manual run report at knowledge/reports/librarian-<timestamp>.md describing what was integrated and which raw captures were touched.',
+    '',
+    'Hard rules:',
+    '- Never modify anything in `knowledge/raw/`. Raw captures are',
+    '  immutable. The operator owns them.',
+    '- Never write the agent\'s own working notes, decisions, or',
+    '  self-reflection into `knowledge/wiki/`. That is what `canonical/` and',
+    '  `memory/` are for.',
+    '- Every non-obvious claim needs a `[raw/...]` source citation. If you',
+    '  cannot cite a raw capture for a claim, drop the claim.',
+    '- If there is nothing new to integrate, log a NOOP and exit cleanly.',
+    '- Keep pages concise. Prefer revising an existing page over creating a',
+    '  near-duplicate. Cross-link aggressively.',
+    '',
+    'Run discipline:',
+    '- Do not answer with usage text.',
+    '- Send concise run_progress IPC updates after major phases or after',
+    '  roughly 30 seconds of work:',
+    '  {"type":"run_progress","chatJid":"<current chat jid>","requestId":"<current request_id>","text":"Librarian status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
+    '- Progress phases to report: schema/index loaded; raw captures',
+    '  reviewed; wiki updates planned/applied; report/progress/log prepared.',
+    '- Final answer must include files inspected, files changed, and report',
+    '  path when a report is written.',
+    input ? ['', 'Operator focus:', input] : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Public alias matching the prior in-handler name. SPEC-06 scheduled-maintenance
+ * imports this so a `/librarian run` (manual) and a `task-main-weekly-librarian`
+ * scheduled run produce identical agent prompts.
+ */
+export const buildLibrarianAgentPrompt = buildLibrarianAgentPromptTopLevel;
+
+export function buildReflectionAgentPromptTopLevel(
+  action: 'run' | 'dry-run',
+  input: string,
+): string {
+  const dryRun = action === 'dry-run';
+  return [
+    dryRun
+      ? 'Operator-triggered self-reflection (dry-run). Review the recent conversation in this chat and report what — if anything — you would save as durable learning, but do not write memory or mutate any skill.'
+      : 'Operator-triggered self-reflection. Review the recent conversation in this chat and save only genuinely durable, reusable learning.',
+    '',
+    'Being asked to reflect is permission to look — it is NOT evidence that there is anything to save. Be exactly as selective as an automatic post-turn review. If there is no durable, reusable lesson, say so plainly and change nothing; a clean no-op is the correct and expected outcome.',
+    '',
+    'How to classify what you find:',
+    '- Durable facts, preferences, environment details, project/farm state → write to memory (MEMORY.md / memory files).',
+    '- Reusable procedures, pitfalls with a reusable recovery, command sequences, troubleshooting recipes, or task-class behavior → create or patch an agent-owned runtime skill via skill_action.',
+    '- Prefer patching an existing relevant agent-created skill over creating a near-duplicate. Create broad class-level skills, not narrow one-offs.',
+    '- A user correction that changes how future work should be done is durable — capture it as procedural guidance.',
+    '',
+    'Do NOT save:',
+    '- One-off task narratives, raw transcripts, or "remember that this happened" notes.',
+    '- Transient or environment outages without a reusable recovery path.',
+    '- Speculation or anything you are not confident is reusable.',
+    '',
+    'Safety:',
+    '- All skill writes go through skill_action. Never edit skill files directly.',
+    '- Never mutate source-owned project skills or personal override skills; report those gaps in your summary instead.',
+    dryRun
+      ? '- Dry-run: do not call mutating skill actions (skill_patch/skill_archive/skill_restore/skill_pin/skill_unpin) and do not write memory; describe what you would save and why.'
+      : '- Live: use memory writes and skill_action for anything genuinely durable, and summarize each write with its rationale.',
+    '',
+    'Final answer: a concise summary of what you saved and why, or an explicit "nothing durable to save" with a one-line reason.',
+    input ? ['', 'Operator focus:', input] : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Public alias matching the prior in-handler name. SPEC-06 scheduled-maintenance
+ * imports this so `/reflect run` (manual) and `task-main-weekly-reflect` produce
+ * identical agent prompts.
+ */
+export const buildReflectionAgentPrompt = buildReflectionAgentPromptTopLevel;
+
 export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
   handleTelegramCallbackQuery: (
     q: TelegramCommandCallbackQuery,
@@ -495,65 +627,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     action: 'run' | 'dry-run',
     input: string,
   ): string {
-    const dryRun = action === 'dry-run';
-    return [
-      dryRun
-        ? 'Manual knowledge librarian dry-run. Inspect the wiki and the new raw captures, and explain exactly what you would change, but do not write any files.'
-        : 'Manual knowledge librarian run. Integrate the new raw captures into the wiki now.',
-      '',
-      'This is a knowledge-base curator. It is NOT a memory task. The wiki is',
-      'for what the agent has *read* (operator-curated sources in',
-      '`knowledge/raw/`). The agent\'s own working memory lives in `canonical/`,',
-      '`MEMORY.md`, and `memory/YYYY-MM-DD.md`. Do not write any of those here.',
-      '',
-      'Scope:',
-      '1. Read `knowledge/schema/qualia-schema.md` and `knowledge/wiki/index.md`.',
-      '2. List the contents of `knowledge/raw/`. For each capture not yet',
-      '   integrated, decide what entity, concept, comparison, or procedure it',
-      '   informs.',
-      '3. For each new entity or topic:',
-      '   - Create or update a page under `knowledge/wiki/` following the schema',
-      '     (frontmatter + Summary, Facts with source citations,',
-      '     Cross-references, Contradictions, Open questions, Sources).',
-      '   - Cite the raw capture inline as `[raw/<capture-filename>]` next to',
-      '     every non-obvious claim.',
-      '   - Add a relative link from the new/updated page to related pages,',
-      '     and add a one-line entry to `knowledge/wiki/index.md`.',
-      '4. When a newer source contradicts an older one, surface it inline in',
-      '   the page\'s `## Contradictions` section. Do not silently overwrite.',
-      '5. Update `knowledge/wiki/progress.md` with one new row: today\'s date,',
-      '   one-sentence summary of what was integrated, one next-action item.',
-      '   Append one entry to `knowledge/wiki/log.md` of the form:',
-      '   `- <ISO timestamp> [integrate] sources=<n> pages_touched=<list>`.',
-      dryRun
-        ? '6. Do not write a report file in dry-run mode; return the proposed report in chat.'
-        : '6. Write a manual run report at knowledge/reports/librarian-<timestamp>.md describing what was integrated and which raw captures were touched.',
-      '',
-      'Hard rules:',
-      '- Never modify anything in `knowledge/raw/`. Raw captures are',
-      '  immutable. The operator owns them.',
-      '- Never write the agent\'s own working notes, decisions, or',
-      '  self-reflection into `knowledge/wiki/`. That is what `canonical/` and',
-      '  `memory/` are for.',
-      '- Every non-obvious claim needs a `[raw/...]` source citation. If you',
-      '  cannot cite a raw capture for a claim, drop the claim.',
-      '- If there is nothing new to integrate, log a NOOP and exit cleanly.',
-      '- Keep pages concise. Prefer revising an existing page over creating a',
-      '  near-duplicate. Cross-link aggressively.',
-      '',
-      'Run discipline:',
-      '- Do not answer with usage text.',
-      '- Send concise run_progress IPC updates after major phases or after',
-      '  roughly 30 seconds of work:',
-      '  {"type":"run_progress","chatJid":"<current chat jid>","requestId":"<current request_id>","text":"Librarian status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
-      '- Progress phases to report: schema/index loaded; raw captures',
-      '  reviewed; wiki updates planned/applied; report/progress/log prepared.',
-      '- Final answer must include files inspected, files changed, and report',
-      '  path when a report is written.',
-      input ? ['', 'Operator focus:', input] : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
+    return buildLibrarianAgentPromptTopLevel(action, input);
   }
 
   function buildSkillManagerAgentPrompt(
@@ -593,37 +667,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     action: 'run' | 'dry-run',
     input: string,
   ): string {
-    const dryRun = action === 'dry-run';
-    return [
-      dryRun
-        ? 'Operator-triggered self-reflection (dry-run). Review the recent conversation in this chat and report what — if anything — you would save as durable learning, but do not write memory or mutate any skill.'
-        : 'Operator-triggered self-reflection. Review the recent conversation in this chat and save only genuinely durable, reusable learning.',
-      '',
-      'Being asked to reflect is permission to look — it is NOT evidence that there is anything to save. Be exactly as selective as an automatic post-turn review. If there is no durable, reusable lesson, say so plainly and change nothing; a clean no-op is the correct and expected outcome.',
-      '',
-      'How to classify what you find:',
-      '- Durable facts, preferences, environment details, project/farm state → write to memory (MEMORY.md / memory files).',
-      '- Reusable procedures, pitfalls with a reusable recovery, command sequences, troubleshooting recipes, or task-class behavior → create or patch an agent-owned runtime skill via skill_action.',
-      '- Prefer patching an existing relevant agent-created skill over creating a near-duplicate. Create broad class-level skills, not narrow one-offs.',
-      '- A user correction that changes how future work should be done is durable — capture it as procedural guidance.',
-      '',
-      'Do NOT save:',
-      '- One-off task narratives, raw transcripts, or "remember that this happened" notes.',
-      '- Transient or environment outages without a reusable recovery path.',
-      '- Speculation or anything you are not confident is reusable.',
-      '',
-      'Safety:',
-      '- All skill writes go through skill_action. Never edit skill files directly.',
-      '- Never mutate source-owned project skills or personal override skills; report those gaps in your summary instead.',
-      dryRun
-        ? '- Dry-run: do not call mutating skill actions (skill_patch/skill_archive/skill_restore/skill_pin/skill_unpin) and do not write memory; describe what you would save and why.'
-        : '- Live: use memory writes and skill_action for anything genuinely durable, and summarize each write with its rationale.',
-      '',
-      'Final answer: a concise summary of what you saved and why, or an explicit "nothing durable to save" with a one-line reason.',
-      input ? ['', 'Operator focus:', input] : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
+    return buildReflectionAgentPromptTopLevel(action, input);
   }
 
   async function startMaintenanceAgentRun(params: {
