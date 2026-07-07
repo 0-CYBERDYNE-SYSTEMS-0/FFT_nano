@@ -177,7 +177,7 @@ export function resolveCanonicalDir(groupFolder: string): string {
   return path.join(resolveGroupWorkspaceDir(groupFolder), CANONICAL_DIR_NAME);
 }
 
-function buildDailyJournalBody(localDateKey: string): string {
+export function buildDailyJournalBody(localDateKey: string): string {
   return [
     `# ${localDateKey}`,
     '',
@@ -302,6 +302,78 @@ export function isBootstrapScaffoldContent(
   const defaultBody = DEFAULT_BOOTSTRAP_BODIES[fileName];
   if (!defaultBody) return false;
   return content.trim() === defaultBody.trim();
+}
+
+export function isJournalScaffoldContent(
+  localDateKey: string,
+  content: string,
+): boolean {
+  if (!localDateKey || typeof localDateKey !== 'string') return false;
+  const defaultBody = buildDailyJournalBody(localDateKey);
+  return content.trim() === defaultBody.trim();
+}
+
+export interface JournalPristineState {
+  consecutivePristineDays: number;
+  lastSeenDateKey: string | null;
+}
+
+const JOURNAL_PRISTINE_STATE_FILENAME = 'journal_pristine_state.json';
+
+function journalPristineStatePath(workspaceDir: string): string {
+  return path.join(workspaceDir, 'heartbeat', JOURNAL_PRISTINE_STATE_FILENAME);
+}
+
+export function loadJournalPristineState(
+  workspaceDir: string,
+): JournalPristineState {
+  const statePath = journalPristineStatePath(workspaceDir);
+  if (!fs.existsSync(statePath)) {
+    return { consecutivePristineDays: 0, lastSeenDateKey: null };
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const days =
+      typeof raw?.consecutivePristineDays === 'number' &&
+      Number.isFinite(raw.consecutivePristineDays) &&
+      raw.consecutivePristineDays >= 0
+        ? raw.consecutivePristineDays
+        : 0;
+    const last =
+      typeof raw?.lastSeenDateKey === 'string' && raw.lastSeenDateKey
+        ? raw.lastSeenDateKey
+        : null;
+    return { consecutivePristineDays: days, lastSeenDateKey: last };
+  } catch {
+    return { consecutivePristineDays: 0, lastSeenDateKey: null };
+  }
+}
+
+export function recordJournalPristineObservation(
+  workspaceDir: string,
+  dateKey: string,
+  written: boolean,
+): JournalPristineState {
+  const current = loadJournalPristineState(workspaceDir);
+  if (current.lastSeenDateKey === dateKey) {
+    return current;
+  }
+  const previousCount = current.consecutivePristineDays || 0;
+  const next: JournalPristineState = {
+    consecutivePristineDays: written
+      ? 0
+      : previousCount + 1,
+    lastSeenDateKey: dateKey,
+  };
+  fs.mkdirSync(path.dirname(journalPristineStatePath(workspaceDir)), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    journalPristineStatePath(workspaceDir),
+    `${JSON.stringify(next, null, 2)}\n`,
+    'utf-8',
+  );
+  return next;
 }
 
 export function resolveAllowedMemoryFilePath(
