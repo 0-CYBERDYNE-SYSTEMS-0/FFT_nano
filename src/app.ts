@@ -8,6 +8,9 @@ import {
   PARITY_CONFIG,
   PARITY_CONFIG_PATH,
 } from './parity-config.js';
+import { GIT_INFO } from './state-persistence.js';
+import { findMainChatJid as findMainChatJidImpl } from './telegram-group-mgmt.js';
+import { runDriftWitnessBootWithDb } from './drift-witness-service.js';
 
 // ---------------------------------------------------------------------------
 // SPEC-02 witness #1: a pause that survives a restart must announce itself at
@@ -178,6 +181,14 @@ export interface AppRuntimeDeps {
   }>;
   runCuratorTick?: () => void;
   runLearningPauseBootWitness?: () => Promise<void>;
+  /**
+   * SPEC-08 — drift witness at boot. Default wiring resolves the GIT_INFO
+   * captured at module load and writes the notice directly to the existing
+   * delivery_outbox table, which is then flushed by `deps.flushDeliveryOutbox`
+   * (called above) in the same boot cycle. The default can be overridden by
+   * tests / wiring when richer injection is available.
+   */
+  runDriftWitnessBoot?: () => Promise<void>;
 }
 
 export function createAppRuntime(deps: AppRuntimeDeps): {
@@ -620,6 +631,15 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.initDatabase?.();
     deps.logger.info?.('Database initialized');
     deps.loadState?.();
+    // SPEC-02 witness #1: announce a pause that survived a restart, before
+    // anything else runs. Best-effort — a witness failure must not block boot.
+    if (deps.runLearningPauseBootWitness) {
+      try {
+        await deps.runLearningPauseBootWitness();
+      } catch (err) {
+        deps.logger.warn?.({ err }, 'Learning-pause boot witness failed');
+      }
+    }
     deps.migrateLegacyClaudeMemoryFiles?.();
     deps.migrateCompactionSummariesFromSoul?.();
     deps.maybePromoteConfiguredTelegramMain?.();
@@ -733,7 +753,53 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
         deps.logger.warn?.({ err }, 'Long-run resume consumer failed');
       }
     }
+    // SPEC-08: drift witness — compares captured GIT_INFO against the remote
+    // tip of the canonical branch (default `main`). On detection, emits a
+    // WARN and enqueues a dedupe-keyed outbox row; the second flush below
+    // delivers it in this same boot cycle.
+    if (deps.runDriftWitnessBoot) {
+      try {
+        await deps.runDriftWitnessBoot();
+      } catch (err) {
+        deps.logger.warn?.({ err }, 'Drift witness boot failed');
+      }
+    } else {
+      try {
+        await runDriftWitnessBootWithDb({
+          gitInfo: GIT_INFO,
+          findMainChatJid: resolveMainChatJid,
+          logger: deps.logger,
+        });
+      } catch (err) {
+        deps.logger.warn?.({ err }, 'Drift witness boot failed');
+      }
+    }
+    // Second flush so a drift-witness row written above is delivered in the
+    // same boot cycle, even if the periodic outbox flush lags.
+    if (deps.flushDeliveryOutbox) {
+      try {
+        const second = await deps.flushDeliveryOutbox();
+        if (second.delivered > 0 || second.stillPending > 0) {
+          deps.logger.info?.(second, 'Flushed drift-witness outbox row(s)');
+        }
+      } catch (err) {
+        deps.logger.warn?.({ err }, 'Drift-witness outbox flush failed');
+      }
+    }
     deps.maybeRunBootMdOnce?.();
+  }
+
+  // Best-effort resolver for the main Telegram chat. Falls back to null when
+  // telegram-group-mgmt isn't initialized (e.g. during early boot or under
+  // tests); the witness still logs a WARN and exits early without inserting
+  // an outbox row.
+  function resolveMainChatJid(): string | null {
+    if (typeof findMainChatJidImpl !== 'function') return null;
+    try {
+      return findMainChatJidImpl();
+    } catch {
+      return null;
+    }
   }
 
   return {

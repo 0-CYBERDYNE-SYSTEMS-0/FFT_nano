@@ -479,3 +479,19 @@ export const FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS = envInt(
 );
 
 export { PARITY_CONFIG, PARITY_CONFIG_PATH };
+
+// Canonical deployment branch: main (not dev). See CLAUDE.md "Development
+// Workflow (Authoritative)." Drives the drift-witness in src/drift-witness-service.ts.
+export const FFT_NANO_CANONICAL_BRANCH =
+  (process.env.FFT_NANO_CANONICAL_BRANCH || 'main').trim() || 'main';
+
+// SPEC-08: drift witness will only alert when the runtime is at least this
+// many commits behind the canonical branch tip AND the tip is at least 2 days
+// old (see decideDriftWitnessAlert in drift-witness-service.ts). 0 disables
+// drift detection entirely so a misconfigured env cannot flood the operator.
+export const FFT_NANO_DRIFT_THRESHOLD = envInt(
+  process.env.FFT_NANO_DRIFT_THRESHOLD,
+  4,
+  0,
+  1024,
+);
