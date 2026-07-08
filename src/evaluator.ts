@@ -127,9 +127,20 @@ export function shouldEvaluate(ctx: EvaluatorContext): {
     return { evaluate: true, reason: 'forced evaluation' };
   }
 
-  // Only coding and subagent runs are eligible for evaluation
-  // chat, cron, scheduled, and heartbeat always skip unless forceEvaluate
-  if (ctx.runType !== 'coding' && ctx.runType !== 'subagent') {
+  // Eligible run types include coding, subagent, cron, and scheduled.
+  // SPEC-03 fix #1: cron/scheduled were previously blanket-rejected before
+  // the duration/tool/output heuristics could even see the run. Now they
+  // pass through the same graduated gates as coding runs (see MIN_DURATION_MS,
+  // EVAL_DURATION_MS, EVAL_TOOL_COUNT, EVAL_OUTPUT_CHARS below). chat and
+  // heartbeat stay blanket-rejected because neither has a runEvaluatorPass
+  // caller in the codebase yet (per spec's "Out of scope" — adding
+  // eligibility without a caller would be speculative).
+  if (
+    ctx.runType !== 'coding' &&
+    ctx.runType !== 'subagent' &&
+    ctx.runType !== 'cron' &&
+    ctx.runType !== 'scheduled'
+  ) {
     return {
       evaluate: false,
       reason: `${ctx.runType} run type not eligible for evaluation`,

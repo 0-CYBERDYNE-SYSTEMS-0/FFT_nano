@@ -89,18 +89,23 @@ describe('shouldEvaluate', () => {
     assert.match(result.reason, /not eligible/);
   });
 
-  it('skips short scheduled runs below thresholds', () => {
+  // SPEC-03 fix #1: scheduled/cron now share the same graduated heuristic.
+  // Trivially short runs (duration < 15s AND < 2 tools AND < 500 chars output)
+  // still get the 'trivially short run' gate, NOT blanket rejection.
+  it('skips short scheduled runs via trivially-short-run gate', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'scheduled', durationMs: 100, toolsInvoked: 0 }),
     );
     assert.equal(result.evaluate, false);
+    assert.match(result.reason, /trivially short run/);
   });
 
-  it('skips short cron runs below thresholds', () => {
+  it('skips short cron runs via trivially-short-run gate', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'cron', durationMs: 100, toolsInvoked: 0 }),
     );
     assert.equal(result.evaluate, false);
+    assert.match(result.reason, /trivially short run/);
   });
 
   // VAL-EVAL-001: Chat runs always skip evaluator regardless of thresholds or forceEvaluate
@@ -137,21 +142,23 @@ describe('shouldEvaluate', () => {
     assert.match(result.reason, /forced/);
   });
 
-  // VAL-EVAL-002: Scheduled runs always skip evaluator regardless of thresholds
-  it('skips scheduled runs regardless of duration threshold', () => {
+  // SPEC-03 fix #1: Scheduled runs now use the same graduated heuristic as
+  // coding runs (duration, tool count, output length). Previously they were
+  // blanket-rejected before any threshold could be evaluated.
+  it('evaluates scheduled runs once duration threshold met', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'scheduled', durationMs: 120_000, toolsInvoked: 0, agentOutput: 'short' }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /duration 120000ms >= 45000ms/);
   });
 
-  it('skips scheduled runs regardless of tool count threshold', () => {
+  it('evaluates scheduled runs once tool count threshold met', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'scheduled', durationMs: 5_000, toolsInvoked: 10, agentOutput: 'short' }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /10 tools >= threshold 3/);
   });
 
   // VAL-WS2-015: forceEvaluate short-circuits the runType gate
@@ -163,21 +170,23 @@ describe('shouldEvaluate', () => {
     assert.match(result.reason, /forced/);
   });
 
-  // VAL-EVAL-003: Cron runs always skip evaluator regardless of thresholds
-  it('skips cron runs regardless of duration threshold', () => {
+  // SPEC-03 fix #1: Cron runs now use the same graduated heuristic as coding
+  // runs (duration, tool count, output length). Previously they were
+  // blanket-rejected before any threshold could be evaluated.
+  it('evaluates cron runs once duration threshold met', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'cron', durationMs: 120_000, toolsInvoked: 0, agentOutput: 'short' }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /duration 120000ms >= 45000ms/);
   });
 
-  it('skips cron runs regardless of tool count threshold', () => {
+  it('evaluates cron runs once tool count threshold met', () => {
     const result = shouldEvaluate(
       ctx({ runType: 'cron', durationMs: 5_000, toolsInvoked: 10, agentOutput: 'short' }),
     );
-    assert.equal(result.evaluate, false);
-    assert.match(result.reason, /not eligible/);
+    assert.equal(result.evaluate, true);
+    assert.match(result.reason, /10 tools >= threshold 3/);
   });
 
   // VAL-WS2-015: forceEvaluate short-circuits the runType gate
