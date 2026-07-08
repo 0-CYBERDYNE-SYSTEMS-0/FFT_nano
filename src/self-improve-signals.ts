@@ -170,10 +170,69 @@ function selfImproveEventLogPath(groupFolder: string): string {
   );
 }
 
-export function recordSelfImproveEvent(
+// ---------------------------------------------------------------------------
+// SPEC-02 witness #3: a run of learning-paused no-ops is silent by default —
+// nobody notices signals were dropped until someone reads the JSONL. This
+// counts consecutive learning-paused events per group and, every 10, sends
+// one outbox-deduped notice through the injected witness deps.
+// ---------------------------------------------------------------------------
+
+export interface SelfImproveWitnessDeps {
+  outbox: {
+    deliver: (input: {
+      dedupeKey: string;
+      destination: string;
+      body: string;
+    }) => Promise<boolean>;
+  };
+  findMainChatJid: () => string | null;
+}
+
+let witnessDeps: SelfImproveWitnessDeps | null = null;
+
+export function initSelfImproveWitness(
+  deps: SelfImproveWitnessDeps | null,
+): void {
+  witnessDeps = deps;
+}
+
+const consecutivePausedNoops = new Map<string, number>();
+
+// Test-only reset so counters do not leak between cases in the same process.
+export function resetConsecutivePausedNoops(groupFolder?: string): void {
+  if (groupFolder) {
+    consecutivePausedNoops.delete(groupFolder);
+  } else {
+    consecutivePausedNoops.clear();
+  }
+}
+
+async function notifyPausedDrops(
+  groupFolder: string,
+  count: number,
+  latestKind: string,
+): Promise<void> {
+  if (!witnessDeps) return;
+  const destination = witnessDeps.findMainChatJid();
+  if (!destination) return;
+  const dedupeKey = `learning-paused-drops:${groupFolder}:${count}`;
+  const body = `${count} learning signals dropped while paused (latest: ${latestKind}).`;
+  try {
+    await witnessDeps.outbox.deliver({ dedupeKey, destination, body });
+  } catch (err) {
+    logger.warn(
+      { err, groupFolder, count },
+      'Failed to deliver learning-paused drop notice',
+    );
+  }
+}
+
+// Returns a promise so callers that care about outbox delivery timing (e.g.
+// tests) can await it; existing fire-and-forget call sites are unaffected.
+export async function recordSelfImproveEvent(
   groupFolder: string,
   event: Omit<SelfImproveEvent, 'group_id'>,
-): void {
+): Promise<void> {
   try {
     const filePath = selfImproveEventLogPath(groupFolder);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -188,5 +247,16 @@ export function recordSelfImproveEvent(
       { err, groupFolder, runId: event.run_id },
       'Failed to record self-improve event',
     );
+  }
+
+  if (event.noop_reason === 'learning-paused') {
+    const count = (consecutivePausedNoops.get(groupFolder) || 0) + 1;
+    consecutivePausedNoops.set(groupFolder, count);
+    if (count % 10 === 0) {
+      const latestKind = event.signals_detected[0] || event.trigger_reason;
+      await notifyPausedDrops(groupFolder, count, latestKind);
+    }
+  } else {
+    consecutivePausedNoops.set(groupFolder, 0);
   }
 }

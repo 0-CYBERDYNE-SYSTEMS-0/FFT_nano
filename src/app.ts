@@ -4,6 +4,61 @@ import path from 'path';
 import { pruneStaleState } from './app-state.js';
 import { getPlatformAdapter } from './platform/index.js';
 
+// ---------------------------------------------------------------------------
+// SPEC-02 witness #1: a pause that survives a restart must announce itself at
+// boot, not just when someone remembers to run /learning. Outbox-deduped per
+// calendar day so a crash-loop cannot spam the main chat.
+// ---------------------------------------------------------------------------
+
+export interface LearningPauseBootWitnessDeps {
+  state: {
+    learningPaused: boolean;
+    learningPausedAt: string | null;
+  };
+  outbox: {
+    deliver: (input: {
+      dedupeKey: string;
+      destination: string;
+      body: string;
+    }) => Promise<boolean>;
+  };
+  findMainChatJid: () => string | null;
+  logger?: {
+    warn?: (payload: unknown, message?: string) => void;
+  };
+  now?: Date;
+}
+
+export function computeLearningPauseAgeDays(
+  pausedAt: string | null,
+  now: Date = new Date(),
+): number | null {
+  if (!pausedAt) return null;
+  const pausedMs = new Date(pausedAt).getTime();
+  if (Number.isNaN(pausedMs)) return null;
+  return Math.floor((now.getTime() - pausedMs) / (24 * 60 * 60 * 1000));
+}
+
+export async function runLearningPauseBootWitness(
+  deps: LearningPauseBootWitnessDeps,
+): Promise<void> {
+  if (!deps.state.learningPaused) return;
+  const now = deps.now ?? new Date();
+  const ageDays = computeLearningPauseAgeDays(deps.state.learningPausedAt, now);
+  deps.logger?.warn?.(
+    { pausedAt: deps.state.learningPausedAt, ageDays },
+    'Learning is paused at boot',
+  );
+  const destination = deps.findMainChatJid();
+  if (!destination) return;
+  const dateStr = now.toISOString().slice(0, 10);
+  const dedupeKey = `learning-paused-boot:${dateStr}`;
+  const sinceLabel = deps.state.learningPausedAt || 'unknown';
+  const ageLabel = ageDays === null ? 'unknown' : String(ageDays);
+  const body = `Learning is paused (since ${sinceLabel}, ${ageLabel} days). Send /learning resume to re-enable.`;
+  await deps.outbox.deliver({ dedupeKey, destination, body });
+}
+
 export interface AppRuntimeDeps {
   state: {
     telegramBot?: any | null;
@@ -117,6 +172,7 @@ export interface AppRuntimeDeps {
     stillPending: number;
   }>;
   runCuratorTick?: () => void;
+  runLearningPauseBootWitness?: () => Promise<void>;
 }
 
 export function createAppRuntime(deps: AppRuntimeDeps): {

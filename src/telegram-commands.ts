@@ -78,6 +78,7 @@ export interface TelegramCommandDeps {
     registeredGroups: Record<string, any>;
     chatUsageStats: Record<string, unknown>;
     learningPaused: boolean;
+    learningPausedAt?: string | null;
   };
   constants: {
     assistantName: string;
@@ -2689,6 +2690,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           return true;
         }
         deps.state.learningPaused = newState;
+        deps.state.learningPausedAt = newState ? new Date().toISOString() : null;
         deps.saveState?.();
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, sub);
         await deps.sendMessage(
