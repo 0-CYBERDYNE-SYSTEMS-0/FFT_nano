@@ -9,6 +9,7 @@ import {
   GROUPS_DIR,
   TELEGRAM_MEDIA_MAX_MB,
 } from './config.js';
+import { FFT_NANO_TASK_ERROR_ALERT_THRESHOLD } from './app-config.js';
 import { logger } from './logger.js';
 import {
   isTelegramJid,
@@ -73,6 +74,10 @@ import {
   ensureKnowledgeNightlyTask,
   KNOWLEDGE_NIGHTLY_TASK_ID,
 } from './knowledge-wiki-task.js';
+import {
+  buildMaintenanceDigestSection,
+  DEFAULT_MAINTENANCE_TASK_DEFINITIONS,
+} from './scheduled-maintenance.js';
 import { ensureKnowledgeRuntimeSetup } from './telegram-group-mgmt.js';
 import { findMainTelegramChatJid } from './telegram-group-mgmt.js';
 import { resolveTelegramStreamCompletionState } from './telegram-streaming.js';
@@ -1269,7 +1274,20 @@ export function formatLearningDigest(): string {
     }
   }
 
-  // Section 6: Pause status (VAL-INV-I6-002)
+  // Section 6: Scheduled maintenance (SPEC-06) — operator's only single-glance
+  // surface for "is anything broken in the cron stack right now?" Reuses the
+  // existing digest rather than inventing a new command.
+  lines.push(
+    ...buildMaintenanceDigestSection({
+      tasks: getAllTasks(),
+      threshold: FFT_NANO_TASK_ERROR_ALERT_THRESHOLD,
+      expectedDefaultTaskIds: DEFAULT_MAINTENANCE_TASK_DEFINITIONS.map(
+        (def) => def.id,
+      ),
+    }),
+  );
+
+  // Section 7: Pause status (VAL-INV-I6-002)
   if (state.learningPaused) {
     const pausedAt = state.learningPausedAt;
     if (pausedAt) {

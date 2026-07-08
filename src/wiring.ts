@@ -256,6 +256,7 @@ import {
   ensureKnowledgeNightlyTask,
   KNOWLEDGE_NIGHTLY_TASK_ID,
 } from './knowledge-wiki-task.js';
+import { ensureDefaultMaintenanceTasks } from './scheduled-maintenance.js';
 import {
   extractOnboardingCompletion,
   MAIN_ONBOARDING_COMPLETION_TOKEN,
@@ -770,6 +771,29 @@ async function maybeRunBootMdOnce(): Promise<void> {
         nextRun: knowledgeSetup.nightlyTask.nextRun,
       },
       'Created nightly knowledge task at startup',
+    );
+  }
+  // SPEC-06: reconcile the default maintenance task list (nightly-lint +
+  // weekly-librarian + weekly-reflect) at boot, in addition to the
+  // knowledge-wiki-task idempotent constructor. Idempotent: a no-op when
+  // every default task already exists, never overwrites consecutive_errors
+  // / status on existing rows.
+  const maintenanceSeed = ensureDefaultMaintenanceTasks({
+    mainChatJid,
+  });
+  if (maintenanceSeed.created > 0) {
+    logger.info(
+      {
+        created: maintenanceSeed.created,
+        existing: maintenanceSeed.existing,
+        taskIds: maintenanceSeed.taskIds,
+      },
+      'Seeded default maintenance tasks at boot',
+    );
+  } else if (maintenanceSeed.skippedReason) {
+    logger.debug(
+      { reason: maintenanceSeed.skippedReason },
+      'Default maintenance reconciliation skipped at boot',
     );
   }
   if (!PARITY_CONFIG.workspace.enableBootMd) return;
@@ -1971,6 +1995,9 @@ const appRuntime = createAppRuntime({
       if (!mainChatJid) return;
       const group = state.registeredGroups[mainChatJid];
       if (!group) return;
+      // SPEC-06: hourly reconciliation — a default task that an operator
+      // cancelled via /tasks cancel will reappear within one curator tick.
+      ensureDefaultMaintenanceTasks({ mainChatJid });
       maybeRunSkillManager({
         group,
         chatJid: mainChatJid,
