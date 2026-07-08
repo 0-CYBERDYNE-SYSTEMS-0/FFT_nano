@@ -4,6 +4,14 @@ import path from 'path';
 import { isHeartbeatFileEffectivelyEmpty } from './heartbeat-policy.js';
 import { extractHeartbeatAlert } from './heartbeat-policy.js';
 import { verifySkillCleanupMemoryClaim } from './memory-claim-verifier.js';
+import {
+  getLocalDateKey,
+  getEffectiveTimezone,
+} from './time-context.js';
+import {
+  isJournalScaffoldContent,
+  recordJournalPristineObservation,
+} from './memory-paths.js';
 
 export interface HeartbeatChecklistInput {
   workspaceDir: string;
@@ -14,6 +22,7 @@ export interface HeartbeatChecklistInput {
   currentTasksPath: string;
   runtimeLogPath: string;
   now?: Date;
+  timezone?: string;
 }
 
 export interface HeartbeatChecklistResult {
@@ -39,6 +48,9 @@ export interface HeartbeatChecklistResult {
     memoryToday: {
       path: string;
       exists: boolean;
+      writtenToday: boolean;
+      consecutivePristineDays: number;
+      dateKey: string;
     };
     memoryClaims: ReturnType<typeof verifySkillCleanupMemoryClaim>;
   };
@@ -59,13 +71,30 @@ export function buildHeartbeatChecklist(
   input: HeartbeatChecklistInput,
 ): HeartbeatChecklistResult {
   const now = input.now ?? new Date();
+  const timezone = input.timezone ?? getEffectiveTimezone();
+  const localDateKey = getLocalDateKey(now, timezone);
   const heartbeatPath = path.join(input.workspaceDir, 'HEARTBEAT.md');
   const memoryTodayPath = path.join(
     input.workspaceDir,
     'memory',
-    `${now.toISOString().slice(0, 10)}.md`,
+    `${localDateKey}.md`,
   );
   const skillsDir = path.join(input.workspaceDir, 'skills');
+  const memoryExists = fs.existsSync(memoryTodayPath);
+  let writtenToday = false;
+  if (memoryExists) {
+    try {
+      const journalContent = fs.readFileSync(memoryTodayPath, 'utf-8');
+      writtenToday = !isJournalScaffoldContent(localDateKey, journalContent);
+    } catch {
+      writtenToday = false;
+    }
+  }
+  const pristine = recordJournalPristineObservation(
+    input.workspaceDir,
+    localDateKey,
+    writtenToday,
+  );
   return {
     schema: 'fft_nano.heartbeat_check_result.v1',
     requestId: input.requestId,
@@ -88,7 +117,10 @@ export function buildHeartbeatChecklist(
       },
       memoryToday: {
         path: memoryTodayPath,
-        exists: fs.existsSync(memoryTodayPath),
+        exists: memoryExists,
+        writtenToday,
+        consecutivePristineDays: pristine.consecutivePristineDays,
+        dateKey: localDateKey,
       },
       memoryClaims: verifySkillCleanupMemoryClaim({
         memoryPath: memoryTodayPath,

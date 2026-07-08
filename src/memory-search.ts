@@ -9,6 +9,10 @@ import {
   isSemanticMemoryEnabled,
 } from './memory-embeddings.js';
 import {
+  getEffectiveTimezone,
+  getLocalDateKey,
+} from './time-context.js';
+import {
   isAllowedMemoryRelativePath,
   isCanonicalScaffoldContent,
   resolveAllowedMemoryFilePath,
@@ -201,6 +205,40 @@ function lexicalScore(
   return coverage * 2 + density + phraseBonus;
 }
 
+const DAILY_JOURNAL_RE = /^memory\/(\d{4}-\d{2}-\d{2})(?:[-/].*)?\.md$/;
+
+function daysBetweenDateKeys(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map((n) => Number.parseInt(n, 10));
+  const [by, bm, bd] = b.split('-').map((n) => Number.parseInt(n, 10));
+  if (
+    !Number.isFinite(ay) ||
+    !Number.isFinite(am) ||
+    !Number.isFinite(ad) ||
+    !Number.isFinite(by) ||
+    !Number.isFinite(bm) ||
+    !Number.isFinite(bd)
+  ) {
+    return Number.NaN;
+  }
+  const aUtc = Date.UTC(ay, am - 1, ad);
+  const bUtc = Date.UTC(by, bm - 1, bd);
+  return Math.round((bUtc - aUtc) / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Multiplicative decay for daily-journal chunks. A 30-day-old journal entry
+ * scores half as much as an equally keyword-dense fresh one; 60 days ≈ a third.
+ * Non-journal files (canonical/*, MEMORY.md, …) return 1.0 (no decay).
+ */
+function journalRecencyDecay(relPath: string, todayKey: string): number {
+  const match = DAILY_JOURNAL_RE.exec(relPath);
+  if (!match) return 1;
+  const fileKey = match[1];
+  const ageDays = daysBetweenDateKeys(fileKey, todayKey);
+  if (!Number.isFinite(ageDays) || ageDays <= 0) return 1;
+  return 1 / (1 + ageDays / 30);
+}
+
 function listMarkdownFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   const out: string[] = [];
@@ -297,6 +335,8 @@ export function searchDocumentMemory(input: {
   query: string;
   topK?: number;
   includeGlobal?: boolean;
+  now?: Date;
+  timezone?: string;
 }): MemorySearchHit[] {
   const topK = Math.min(64, Math.max(1, input.topK ?? 8));
   const groupFolders = [input.groupFolder];
@@ -306,6 +346,10 @@ export function searchDocumentMemory(input: {
   const queryText = input.query.trim();
   if (!queryText) return [];
   const queryTokens = tokenize(queryText);
+  const todayKey = getLocalDateKey(
+    input.now ?? new Date(),
+    input.timezone ?? getEffectiveTimezone(),
+  );
 
   const scored: Array<{ chunk: DocumentChunk; score: number }> = [];
   for (const folder of groupFolders) {
@@ -326,7 +370,8 @@ export function searchDocumentMemory(input: {
                   : chunk.relPath.startsWith('memory/')
                     ? 0.08
                     : 0;
-      scored.push({ chunk, score: score + pathBonus });
+      const recency = journalRecencyDecay(chunk.relPath, todayKey);
+      scored.push({ chunk, score: (score + pathBonus) * recency });
     }
   }
 
@@ -410,9 +455,52 @@ export function mergeAndRankMemoryHits(
   hits: MemorySearchHit[],
   topK = 8,
 ): MemorySearchHit[] {
-  return [...hits]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, Math.min(64, Math.max(1, topK)));
+  const effectiveTopK = Math.min(64, Math.max(1, topK));
+  const sorted = [...hits].sort((a, b) => b.score - a.score);
+  // Per-relPath contribution cap so a single long-lived dominant file cannot
+  // structurally occupy the entire top-K when other relevant content exists.
+  // Spec-05: max(1, ceil(topK/2)) hits per path during the primary selection,
+  // backfill from the remainder if any paths still have headroom.
+  const cap = Math.max(1, Math.ceil(effectiveTopK / 2));
+  const included = new Set<MemorySearchHit>();
+  const counts = new Map<string, number>();
+  const result: MemorySearchHit[] = [];
+
+  const tryAdd = (hit: MemorySearchHit): boolean => {
+    if (included.has(hit)) return false;
+    const key = hit.path || '__nopath__';
+    const current = counts.get(key) || 0;
+    if (current >= cap) return false;
+    included.add(hit);
+    counts.set(key, current + 1);
+    result.push(hit);
+    return true;
+  };
+
+  for (const hit of sorted) {
+    if (result.length >= effectiveTopK) break;
+    tryAdd(hit);
+  }
+
+  // Backfill: re-scan remaining sorted hits BUT still respect the per-path
+  // cap. If the input pool cannot satisfy topK without violating the cap,
+  // return whatever the cap allows — the spec explicitly favors diversity
+  // over filling the slice.
+  if (result.length < effectiveTopK) {
+    for (const hit of sorted) {
+      if (result.length >= effectiveTopK) break;
+      if (included.has(hit)) continue;
+      const key = hit.path || '__nopath__';
+      const current = counts.get(key) || 0;
+      if (current < cap) {
+        included.add(hit);
+        counts.set(key, current + 1);
+        result.push(hit);
+      }
+    }
+  }
+
+  return result;
 }
 
 export function getMemoryDocument(input: {
