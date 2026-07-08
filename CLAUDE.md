@@ -73,6 +73,15 @@ a dedupe-keyed Telegram notice (`drift-witness:<local>:<remote>`). Threshold
 of `0` disables drift detection entirely. Set `FFT_NANO_CANONICAL_BRANCH` to
 override `main` for forks / branched deployments.
 
+- Runtime worktree (`~/fft_nano`) must stay clean. Before pushing changes, verify:
+  `git status` → working tree clean (no untracked files, no modifications).
+  - Use `git stash push -u` to shelve untracked files.
+  - Do not commit lock files or `reports/`; these are excluded by `.gitignore`.
+  - Test artifacts should be isolated to `~/fft_nano-dev`, not `~/fft_nano`.
+  - The companion runbook at `docs/ops/WORKSPACE-CLEANUP.md` documents the
+    one-time sweep for the historical debris — the actual cleanup remains
+    operator-confirmed; do not auto-purge without using that runbook.
+
 ## Build & Test
 
 ```bash
