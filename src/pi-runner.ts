@@ -1111,7 +1111,7 @@ export async function runContainerAgent(
   }
 
   let payload = input;
-  if (shouldBuildRetrievedMemoryContext(input)) {
+  if (shouldBuildRetrievedMemoryContext(input) && !input.isEvaluatorRun) {
     try {
       const memory = getMemoryBackend().buildContext({
         groupFolder: group.folder,
@@ -1174,6 +1174,29 @@ export async function runContainerAgent(
     mountedSkillsDir,
     skillCatalog.map((entry) => entry.name),
   );
+
+  // SPEC-04: Stamp one kind='skill' row per catalog entry at the injection
+  // point so getSkillEfficacy can join learning_injections to
+  // evaluator_verdicts. Skipped for evaluator meta-runs (isEvaluatorRun=true)
+  // since those never produce a real evaluator_verdicts row to join against.
+  if (!input.isEvaluatorRun) {
+    const reqId = input.requestId ?? `run-${Date.now()}`;
+    for (const entry of skillCatalog) {
+      try {
+        recordLearningInjection({
+          requestId: reqId,
+          groupFolder: group.folder,
+          kind: 'skill',
+          item: entry.name,
+        });
+      } catch (err) {
+        logger.warn(
+          { err, requestId: reqId, groupFolder: group.folder },
+          'Failed to record skill injection stamp',
+        );
+      }
+    }
+  }
 
   const baseInput = {
     groupFolder: input.groupFolder,
