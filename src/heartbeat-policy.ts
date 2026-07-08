@@ -160,6 +160,210 @@ export function extractHeartbeatAlert(raw?: string): HeartbeatAlert {
   return { isAlert: true, text };
 }
 
+// ---------------------------------------------------------------------------
+// SPEC-07: heartbeat health semantics (consecutive failure counter, alert
+// escalation, transient retry with backoff, prompt context injection).
+// Kept pure so the counter, escalation, and retry rules are unit-testable
+// without spinning up the full heartbeat run path.
+// ---------------------------------------------------------------------------
+
+export interface HeartbeatFailureReason {
+  tag: 'telegram_transient' | 'agent_permanent' | 'unknown';
+  detail?: string;
+}
+
+export interface HeartbeatHealthState {
+  consecutiveFailures: number;
+  lastReason: HeartbeatFailureReason | null;
+  lastFailureAt: number | null;
+}
+
+export interface HeartbeatHealthUpdate {
+  state: HeartbeatHealthState;
+  // Transitioned from below failureThreshold to >= failureThreshold on this
+  // outcome. False on every subsequent failure while already in alert tier.
+  becameAlert: boolean;
+  // Transitioned from a failing state to consecutiveFailures=0 on this
+  // outcome. False on every subsequent success while already healthy.
+  resolved: boolean;
+}
+
+export const HEARTBEAT_HEALTHY: HeartbeatHealthState = {
+  consecutiveFailures: 0,
+  lastReason: null,
+  lastFailureAt: null,
+};
+
+// Record one heartbeat outcome and produce the next state. Pure; the caller
+// owns persistence and side effects (logging, alert delivery).
+export function recordHeartbeatOutcome(
+  prev: HeartbeatHealthState,
+  outcome: { ok: true } | { ok: false; reason: HeartbeatFailureReason },
+  options: { failureThreshold: number; now: number },
+): HeartbeatHealthUpdate {
+  if (outcome.ok) {
+    const wasFailing = prev.consecutiveFailures > 0;
+    return {
+      state: HEARTBEAT_HEALTHY,
+      becameAlert: false,
+      resolved: wasFailing,
+    };
+  }
+  const nextCount = prev.consecutiveFailures + 1;
+  const wasBelowThreshold = prev.consecutiveFailures < options.failureThreshold;
+  const becameAlert =
+    options.failureThreshold > 0 &&
+    nextCount >= options.failureThreshold &&
+    wasBelowThreshold;
+  return {
+    state: {
+      consecutiveFailures: nextCount,
+      lastReason: outcome.reason,
+      lastFailureAt: options.now,
+    },
+    becameAlert,
+    resolved: false,
+  };
+}
+
+// Build the alert-tier text emitted when consecutiveFailures has crossed the
+// configured threshold. Independent of the agent's own reply text; this is
+// about the host's inability to take a clean heartbeat, not the agent's
+// observations.
+export function buildHeartbeatHealthAlert(params: {
+  consecutiveFailures: number;
+  lastReason: HeartbeatFailureReason | null;
+  failureThreshold: number;
+}): { isAlert: boolean; text: string } {
+  if (params.failureThreshold <= 0) return { isAlert: false, text: '' };
+  if (params.consecutiveFailures < params.failureThreshold) {
+    return { isAlert: false, text: '' };
+  }
+  const reasonTag = params.lastReason?.tag || 'unknown';
+  return {
+    isAlert: true,
+    text: `HEARTBEAT_ALERT:${params.consecutiveFailures}_consecutive (reason: ${reasonTag}). Re-verify critical services.`,
+  };
+}
+
+// Build the prompt-context diagnostic injected into the heartbeat prompt when
+// consecutiveFailures > 0. alert=true once the threshold is crossed so the
+// caller can wrap the line in a top-level alert marker.
+export function buildHeartbeatHealthPromptContext(params: {
+  consecutiveFailures: number;
+  lastReason: HeartbeatFailureReason | null;
+  failureThreshold: number;
+}): { contextLine: string | null; alert: boolean } {
+  if (params.consecutiveFailures <= 0) {
+    return { contextLine: null, alert: false };
+  }
+  const reasonTag = params.lastReason?.tag || 'unknown';
+  const contextLine = `HEALTH: Last check failed ${params.consecutiveFailures} times (reason: ${reasonTag}). Re-verify critical services and report.`;
+  const alert =
+    params.failureThreshold > 0 &&
+    params.consecutiveFailures >= params.failureThreshold;
+  return { contextLine, alert };
+}
+
+// Compose the full heartbeat prompt, optionally injecting a HEALTH diagnostic
+// block. Pure so the prompt shape is testable without touching the agent.
+export function buildHeartbeatPrompt(params: {
+  basePrompt: string;
+  contextLine: string | null;
+  alert: boolean;
+  systemNote?: string;
+}): string {
+  const sections: string[] = [params.basePrompt];
+  if (params.contextLine) {
+    const tag = params.alert ? 'HEALTH ALERT' : 'HEALTH';
+    sections.push(`[${tag}]\n${params.contextLine}`);
+  }
+  sections.push(params.systemNote ?? '[SYSTEM NOTE]\nHeartbeat run.');
+  return sections.join('\n\n');
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-07: transient retry helper. Distinguishes retriable Telegram / network
+// faults from permanent failures so the heartbeat path doesn't spam logs and
+// doesn't bury a recoverable outage under a hard fail.
+// ---------------------------------------------------------------------------
+
+export interface RunWithTransientRetryOptions<T> {
+  fn: (attempt: number) => Promise<T>;
+  attempts: number;
+  isTransient: (err: unknown) => boolean;
+  sleepMs: (attempt: number) => number;
+  onRetry?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    err: unknown;
+  }) => void;
+}
+
+export interface RunWithTransientRetryResult<T> {
+  value: T;
+  attempts: number;
+  recovered: boolean;
+}
+
+// Returns the first successful value. Throws the final error if every attempt
+// failed or the failure was non-transient. recovered=true when success came
+// after at least one transient retry.
+export async function runWithTransientRetry<T>(
+  opts: RunWithTransientRetryOptions<T>,
+): Promise<RunWithTransientRetryResult<T>> {
+  const maxAttempts = Math.max(1, Math.floor(opts.attempts));
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const value = await opts.fn(attempt);
+      return { value, attempts: attempt, recovered: attempt > 1 };
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts) break;
+      if (!opts.isTransient(err)) break;
+      const nextAttempt = attempt + 1;
+      opts.onRetry?.({ attempt: nextAttempt, maxAttempts, err });
+      const sleep = opts.sleepMs(attempt);
+      if (sleep > 0) {
+        await new Promise((resolve) => setTimeout(resolve, sleep));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+export function isTelegramTransientError(err: unknown): boolean {
+  if (err == null) return false;
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : (() => {
+            try {
+              return String(err);
+            } catch {
+              return '';
+            }
+          })();
+  if (!message) return false;
+  return /connection error|etimedout|econnreset|enotfound|eai_again|telegram/i.test(
+    message,
+  );
+}
+
+export function exponentialBackoffMs(
+  attempt: number,
+  baseMs = 200,
+  capMs = 5000,
+): number {
+  const safeAttempt = Math.max(1, Math.floor(attempt));
+  const delay = baseMs * 2 ** (safeAttempt - 1);
+  if (!Number.isFinite(delay)) return capMs;
+  return Math.min(capMs, Math.max(0, Math.floor(delay)));
+}
+
 function parseTimeToMinute(text: string): number | null {
   const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(text.trim());
   if (!match) return null;

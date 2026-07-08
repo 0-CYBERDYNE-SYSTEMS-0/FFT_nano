@@ -23,7 +23,21 @@ import {
   stripHeartbeatToken,
   extractHeartbeatAlert,
   isHeartbeatFileEffectivelyEmpty,
+  buildHeartbeatHealthPromptContext,
+  buildHeartbeatHealthAlert,
+  buildHeartbeatPrompt,
+  recordHeartbeatOutcome,
+  runWithTransientRetry,
+  isTelegramTransientError,
+  exponentialBackoffMs,
+  HEARTBEAT_HEALTHY,
+  type HeartbeatFailureReason,
+  type HeartbeatHealthState,
 } from './heartbeat-policy.js';
+import {
+  FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD,
+  FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS,
+} from './app-config.js';
 import { writeHeartbeatChecklist } from './heartbeat-checklist.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { isTelegramJid } from './telegram.js';
@@ -238,6 +252,68 @@ function shouldBypassEmptyHeartbeatSkip(reason: string): boolean {
   );
 }
 
+// ---------------------------------------------------------------------------
+// SPEC-07: heartbeat health (consecutive failure counter + last reason).
+// Module-local so the counter survives across heartbeat turns but resets on
+// host restart, matching the operator's mental model: a restart is itself a
+// signal that the host could not check.
+// ---------------------------------------------------------------------------
+
+let heartbeatHealth: HeartbeatHealthState = { ...HEARTBEAT_HEALTHY };
+
+export function getHeartbeatHealth(): HeartbeatHealthState {
+  return heartbeatHealth;
+}
+
+export function resetHeartbeatHealth(): void {
+  heartbeatHealth = { ...HEARTBEAT_HEALTHY };
+}
+
+function applyHealthUpdate(
+  update: ReturnType<typeof recordHeartbeatOutcome>,
+  chatJid: string,
+  reason: string,
+): void {
+  heartbeatHealth = update.state;
+  if (update.becameAlert) {
+    const alert = buildHeartbeatHealthAlert({
+      consecutiveFailures: update.state.consecutiveFailures,
+      lastReason: update.state.lastReason,
+      failureThreshold: FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD,
+    });
+    logger.error(
+      {
+        chatJid,
+        reason,
+        consecutiveFailures: update.state.consecutiveFailures,
+        lastReason: update.state.lastReason,
+        alert: alert.text,
+      },
+      `HEARTBEAT_ALERT:${update.state.consecutiveFailures}_consecutive heartbeat entered alert tier`,
+    );
+  }
+  if (update.resolved) {
+    logger.info(
+      {
+        chatJid,
+        reason,
+        previousConsecutiveFailures: heartbeatHealth.consecutiveFailures,
+      },
+      'Heartbeat recovered after previous failures',
+    );
+  }
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  try {
+    return String(err);
+  } catch {
+    return 'unknown error';
+  }
+}
+
 let serviceDeps: HeartbeatServiceDeps | null = null;
 
 export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
@@ -293,17 +369,56 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
   activeChatRuns.set(mainChatJid, activeRun);
   activeChatRunsById.set(requestId, activeRun);
   await deps.setTyping(mainChatJid, true);
+  const healthContext = buildHeartbeatHealthPromptContext({
+    consecutiveFailures: heartbeatHealth.consecutiveFailures,
+    lastReason: heartbeatHealth.lastReason,
+    failureThreshold: FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD,
+  });
+  const prompt = buildHeartbeatPrompt({
+    basePrompt: HEARTBEAT_PROMPT,
+    contextLine: healthContext.contextLine,
+    alert: healthContext.alert,
+  });
   try {
-    const run = await deps.runAgent(
-      group,
-      `${HEARTBEAT_PROMPT}\n\n[SYSTEM NOTE]\nHeartbeat run.`,
-      mainChatJid,
-      'auto',
-      requestId,
-      state.chatRunPreferences[mainChatJid] || {},
-      { suppressErrorReply: true, isHeartbeatTask: true },
-      abortController.signal,
-    );
+    const ret = await runWithTransientRetry({
+      fn: () =>
+        deps.runAgent(
+          group,
+          prompt,
+          mainChatJid,
+          'auto',
+          requestId,
+          state.chatRunPreferences[mainChatJid] || {},
+          { suppressErrorReply: true, isHeartbeatTask: true },
+          abortController.signal,
+        ),
+      attempts: FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS,
+      isTransient: isTelegramTransientError,
+      sleepMs: exponentialBackoffMs,
+      onRetry: ({ attempt, maxAttempts, err }) => {
+        logger.warn(
+          {
+            chatJid: mainChatJid,
+            reason,
+            attempt,
+            maxAttempts,
+            err: errorMessage(err),
+          },
+          `Heartbeat transient retry attempt ${attempt}/${maxAttempts}`,
+        );
+      },
+    });
+    const run = ret.value;
+    if (ret.recovered) {
+      logger.info(
+        {
+          chatJid: mainChatJid,
+          reason,
+          attempts: ret.attempts,
+        },
+        `Heartbeat recovered on attempt ${ret.attempts}/${FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS}`,
+      );
+    }
     try {
       const checklistPath = writeHeartbeatChecklist({
         workspaceDir: MAIN_WORKSPACE_DIR,
@@ -328,9 +443,45 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       );
     }
     if (!run.ok) {
-      logger.warn({ chatJid: mainChatJid, reason }, 'Heartbeat run failed');
+      const failureReason: HeartbeatFailureReason = {
+        tag: 'agent_permanent',
+        detail: run.result ? run.result.slice(0, 200) : 'agent returned ok=false',
+      };
+      applyHealthUpdate(
+        recordHeartbeatOutcome(
+          heartbeatHealth,
+          { ok: false, reason: failureReason },
+          {
+            failureThreshold: FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD,
+            now: Date.now(),
+          },
+        ),
+        mainChatJid,
+        reason,
+      );
+      logger.warn(
+        {
+          chatJid: mainChatJid,
+          reason,
+          consecutiveFailures: heartbeatHealth.consecutiveFailures,
+        },
+        'Heartbeat run failed',
+      );
       return;
     }
+    // Successful run → reset the consecutive failure counter.
+    applyHealthUpdate(
+      recordHeartbeatOutcome(
+        heartbeatHealth,
+        { ok: true },
+        {
+          failureThreshold: FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD,
+          now: Date.now(),
+        },
+      ),
+      mainChatJid,
+      reason,
+    );
     deps.updateChatUsage(mainChatJid, run.usage);
     if (run.streamed || !run.result) return;
 
@@ -428,8 +579,33 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
       sentAt: nowMs,
     });
   } catch (err) {
+    // Distinguish transient retry exhaustion (tagged telegram_transient) from
+    // permanent / unexpected errors (tagged unknown). Both are recorded into
+    // the consecutive-failure counter; the alert-tier escalation log fires
+    // automatically when the threshold is crossed.
+    const failureReason: HeartbeatFailureReason = isTelegramTransientError(err)
+      ? { tag: 'telegram_transient', detail: errorMessage(err) }
+      : { tag: 'unknown', detail: errorMessage(err) };
+    applyHealthUpdate(
+      recordHeartbeatOutcome(
+        heartbeatHealth,
+        { ok: false, reason: failureReason },
+        {
+          failureThreshold: FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD,
+          now: Date.now(),
+        },
+      ),
+      mainChatJid,
+      reason,
+    );
     logger.error(
-      { err, chatJid: mainChatJid, reason },
+      {
+        err,
+        chatJid: mainChatJid,
+        reason,
+        failureTag: failureReason.tag,
+        consecutiveFailures: heartbeatHealth.consecutiveFailures,
+      },
       'Heartbeat run failed; agent threw an exception',
     );
   } finally {

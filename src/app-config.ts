@@ -457,4 +457,25 @@ export const FFT_NANO_TASK_ERROR_ALERT_THRESHOLD = envInt(
   365,
 );
 
+// SPEC-07: consecutive heartbeat failures required before the host escalates
+// from HEARTBEAT_OK to HEARTBEAT_ALERT (distinct ERROR-level log entry with
+// the `HEARTBEAT_ALERT:<N>_consecutive` tag). 0 disables escalation; the
+// failure counter still increments and is reported in the heartbeat prompt.
+export const FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD = envInt(
+  process.env.FFT_NANO_HEARTBEAT_FAILURE_THRESHOLD,
+  3,
+  0,
+  100,
+);
+
+// SPEC-07: max retry attempts per heartbeat cycle when a transient Telegram
+// or network error is observed. Pure retry exhaustion is then counted as a
+// single heartbeat failure (tag: telegram_transient).
+export const FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS = envInt(
+  process.env.FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS,
+  3,
+  1,
+  10,
+);
+
 export { PARITY_CONFIG, PARITY_CONFIG_PATH };
