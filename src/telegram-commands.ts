@@ -1962,6 +1962,41 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     const rest = colonArg ? [colonArg, ...restTokens] : restTokens;
     const isMainGroup = deps.isMainChat(m.chatJid);
 
+    if (cmd === '/start') {
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      const name = deps.constants.assistantName;
+      const registered = !!deps.state.registeredGroups[m.chatJid];
+      const mainExists = deps.hasMainGroup();
+      const lines = [
+        `Hi! I'm ${name}, your AI farm coworker.`,
+        '',
+        'How to talk to me:',
+        `- In the main/owner chat, just type your message and I'll reply.`,
+        `- In any other chat, start your message with @${name} so I know you mean me.`,
+        '',
+        'Handy commands:',
+        '- /help - see everything I can do',
+        '- /id - show this chat id',
+      ];
+      if (!isMainGroup && !registered) {
+        lines.push('');
+        lines.push(
+          mainExists
+            ? `This chat isn't switched on yet. I've let the owner know you're here — once they say yes, just message me and I'll help.`
+            : `This chat isn't switched on yet, and setup isn't finished. The owner needs to send /main from their own chat to get me started.`,
+        );
+      }
+      const responseText = lines.join('\n');
+      deps.emitTuiChatEvent({
+        runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
+        sessionKey: deps.getSessionKeyForChat(m.chatJid),
+        state: 'final',
+        message: { role: 'assistant', content: responseText },
+      });
+      await deps.sendMessage(m.chatJid, responseText);
+      return true;
+    }
+
     if (cmd === '/id') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       const chatId = deps.parseTelegramChatId(m.chatJid);

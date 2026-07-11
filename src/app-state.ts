@@ -77,6 +77,9 @@ export interface ChatRunPreferences {
   freeChat?: boolean;
   nextRunNoContinue?: boolean;
   showReasoning?: boolean;
+  // Set once we've told a non-main chat how to address the bot, so the
+  // one-time trigger hint never nags on repeat.
+  triggerHintSent?: boolean;
 }
 
 export interface ChatUsageStats {

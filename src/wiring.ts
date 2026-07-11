@@ -1838,6 +1838,12 @@ const messageDispatcher = createMessageDispatcher({
   tuiMessageQueue,
   sendMessage,
   setTyping,
+  markTriggerHintSent: (chatJid: string) => {
+    updateChatRunPreferences(chatJid, (prefs) => {
+      prefs.triggerHintSent = true;
+      return prefs;
+    });
+  },
   getMessagesSince,
   getRecentConversation: getPromptTranscriptMessages,
   getSessionKeyForChat,

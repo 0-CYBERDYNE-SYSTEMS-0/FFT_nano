@@ -243,6 +243,7 @@ export function compactChatRunPreferences(
     next.queueDrop = prefs.queueDrop;
   if (prefs.freeChat === true) next.freeChat = true;
   if (prefs.nextRunNoContinue) next.nextRunNoContinue = true;
+  if (prefs.triggerHintSent === true) next.triggerHintSent = true;
   return Object.keys(next).length > 0 ? next : null;
 }
 

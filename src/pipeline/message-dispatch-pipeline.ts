@@ -233,6 +233,8 @@ export interface MessageDispatcherDeps {
   >;
   sendMessage: (chatJid: string, text: string) => Promise<boolean>;
   setTyping: (chatJid: string, typing: boolean) => Promise<void>;
+  // Persist the "trigger hint already sent" flag for a non-main chat.
+  markTriggerHintSent?: (chatJid: string) => void;
   getMessagesSince: (
     chatJid: string,
     sinceTimestamp: string,
@@ -1589,6 +1591,17 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       !freeChatEnabled &&
       !deps.constants.triggerPattern.test(content)
     ) {
+      // Plain text in an approved non-main chat is dropped by the trigger gate.
+      // Send a one-time hint so the chat isn't met with silence, then remember
+      // we've said it so we never nag again.
+      if (queuePrefs.triggerHintSent !== true && deps.markTriggerHintSent) {
+        const name = deps.constants.assistantName;
+        await deps.sendMessage(
+          msg.chat_jid,
+          `${name}: I only jump in here when someone mentions me — start your message with @${name}. (The owner can turn on free chat for this chat from the main chat with /freechat add.)`,
+        );
+        deps.markTriggerHintSent(msg.chat_jid);
+      }
       return null;
     }
 
