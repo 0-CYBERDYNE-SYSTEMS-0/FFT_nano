@@ -194,8 +194,22 @@ export function normalizeTelegramCommandToken(
   return KNOWN_TELEGRAM_COMMANDS.has(command) ? command : null;
 }
 
-export function formatHelpText(isMainGroup: boolean): string {
-  const common = [
+export function formatHelpText(
+  isMainGroup: boolean,
+  helpType: 'default' | 'all' | 'admin' = 'default',
+): string {
+  const defaultCommands = [
+    '/help - show this help',
+    '/status - check if the bot is working',
+    '/settings - configure the bot (model, delivery, etc.)',
+    '/title [text|reset] - set a name for this chat',
+    '/new - start a fresh conversation',
+    '/stop - stop the current task',
+    '/model [name|reset] - choose which model to use',
+    "/usage - see how many tokens you've used",
+  ];
+
+  const allCommonCommands = [
     '/help - show this help',
     '/settings - open runtime controls and admin actions',
     '/status - runtime and queue status',
@@ -214,18 +228,8 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/queue [mode/debounce/cap/drop] - queue policy for this chat',
     '/compact [instructions] - summarize + roll session',
   ];
-  if (!isMainGroup) {
-    return [
-      'Telegram commands:',
-      ...common,
-      '',
-      'Admin commands are only available in the main chat for safety.',
-    ].join('\n');
-  }
 
-  return [
-    'Telegram commands (main/admin):',
-    ...common,
+  const adminCommands = [
     '/main <secret> - claim chat as main/admin',
     '/gateway status|restart|doctor - host service + diagnostics',
     '/restart - alias for /gateway restart',
@@ -250,5 +254,53 @@ export function formatHelpText(isMainGroup: boolean): string {
     '/skill_manager status|dry-run|run|pause|resume|pin|unpin|archive|restore|backup - manage skill lifecycle',
     '/reflect [dry-run] [focus] - reflect on recent work and save only durable learning (memory/skill); no-ops when nothing is reusable',
     '/learning - show learning digest (skills, memory, pass-rate, skips, pending approvals); /learning pause|resume to toggle',
-  ].join('\n');
+  ];
+
+  if (helpType === 'default') {
+    const output = ['📚 Quick Start', ...defaultCommands, ''];
+    if (!isMainGroup) {
+      output.push('For the full command list: /help all');
+      output.push('Admin commands are only available in the main chat.');
+    } else {
+      output.push('For the full command list: /help all');
+      output.push('For admin-only commands: /help admin');
+    }
+    return output.join('\n');
+  }
+
+  if (helpType === 'admin') {
+    if (!isMainGroup) {
+      return 'Admin commands are only available in the main chat for safety.';
+    }
+    return [
+      '⚙️ Admin Commands',
+      ...adminCommands,
+      '',
+      'For basic commands: /help',
+      'For the full command list: /help all',
+    ].join('\n');
+  }
+
+  if (helpType === 'all') {
+    if (!isMainGroup) {
+      return [
+        '📖 All Commands',
+        ...allCommonCommands,
+        '',
+        'Admin commands are only available in the main chat for safety.',
+      ].join('\n');
+    }
+
+    return [
+      '📖 All Commands',
+      ...allCommonCommands,
+      '',
+      '⚙️ Admin Commands',
+      ...adminCommands,
+      '',
+      'For quick start (basic commands only): /help',
+    ].join('\n');
+  }
+
+  return 'Invalid help type';
 }
