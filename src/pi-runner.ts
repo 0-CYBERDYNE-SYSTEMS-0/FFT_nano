@@ -64,6 +64,11 @@ import {
   extractToolDeltaFromPiEvent,
 } from './pi-stream-parser.js';
 import { getPiApiKeyOverride } from './provider-auth.js';
+import {
+  getRuntimeProviderDefinitionByPiApi,
+  hasMeaningfulSecret,
+  RUNTIME_PROVIDER_DEFINITIONS,
+} from './runtime-config.js';
 import { ensureOpenCodeGoModels } from './opencode-go-models.js';
 import { ensureLocalProviderModels } from './local-provider-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
@@ -916,18 +921,22 @@ function sleep(ms: number): Promise<void> {
 
 export function getProviderFallbackCandidates(params: {
   primaryProvider: string;
-  configuredOrder: string[];
-  attemptedProviders?: string[];
+  configuredOrder: readonly string[];
+  credentialedProviders?: readonly string[];
+  attemptedProviders?: readonly string[];
 }): string[] {
   const attempted = new Set(
     [...(params.attemptedProviders ?? []), params.primaryProvider]
-      .map((provider) => provider.trim())
+      .map((provider) => provider.trim().toLowerCase())
       .filter(Boolean),
   );
   const seen = new Set<string>();
   const candidates: string[] = [];
-  for (const provider of params.configuredOrder) {
-    const normalized = provider.trim();
+  for (const provider of [
+    ...params.configuredOrder,
+    ...(params.credentialedProviders ?? []),
+  ]) {
+    const normalized = provider.trim().toLowerCase();
     if (!normalized || attempted.has(normalized) || seen.has(normalized)) {
       continue;
     }
@@ -937,7 +946,30 @@ export function getProviderFallbackCandidates(params: {
   return candidates;
 }
 
-type RunErrorClass = 'rate_limit' | 'timeout' | 'unknown' | 'non_retryable';
+function getCredentialBackedProviders(
+  secrets: Readonly<Record<string, string>>,
+): string[] {
+  const providers: string[] = [];
+  const seen = new Set<string>();
+  for (const definition of RUNTIME_PROVIDER_DEFINITIONS) {
+    if (definition.apiKeyRequired === false) continue;
+    const hasCredential =
+      hasMeaningfulSecret(secrets[definition.apiKeyEnv]) ||
+      (definition.piApi === 'opencode-go' &&
+        hasMeaningfulSecret(secrets.OPENCODE_API_KEY));
+    if (!hasCredential || seen.has(definition.piApi)) continue;
+    seen.add(definition.piApi);
+    providers.push(definition.piApi);
+  }
+  return providers;
+}
+
+type RunErrorClass =
+  | 'rate_limit'
+  | 'timeout'
+  | 'unknown'
+  | 'provider_auth'
+  | 'non_retryable';
 
 function classifyRunError(stderr: string, code: number | null): RunErrorClass {
   // Stale timer already retries via code 75 — treat as retryable 'unknown'
@@ -961,7 +993,7 @@ function classifyRunError(stderr: string, code: number | null): RunErrorClass {
   if (/context\s*(length|size)\s*exceeded|overflow|token\s*limit/i.test(stderr))
     return 'non_retryable';
   if (/401|403|invalid.*api.*key|auth|unauthorized/i.test(stderr))
-    return 'non_retryable';
+    return 'provider_auth';
   if (/SIGKILL|killed/i.test(stderr)) return 'non_retryable';
 
   // Empty or unclassifiable — retry once
@@ -2228,24 +2260,46 @@ export async function runContainerAgent(
         let attempt = 0;
         let delay = FFT_NANO_RETRY_BASE_DELAY_MS;
         let lastRes: Awaited<ReturnType<typeof runPi>> | null = null;
+        let parsedLastRun: ReturnType<typeof parsePiJsonOutput> | null = null;
+        let lastRunError = '';
         let exhausted = false;
         let finalError = '';
         let didFreshRetry = false;
+
+        const readLastRunError = (): string => {
+          parsedLastRun = null;
+          if (!lastRes) return 'Pi did not produce a run result';
+          if (lastRes.code !== 0) {
+            return (
+              lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`
+            );
+          }
+          try {
+            parsedLastRun = parsePiJsonOutput({
+              stdout: lastRes.stdout,
+              provider: input.provider,
+              model: input.model,
+            });
+            return '';
+          } catch (err) {
+            return err instanceof Error ? err.message : String(err);
+          }
+        };
 
         while (attempt < FFT_NANO_MAX_RETRIES) {
           if (settled) return;
           const useContinue = attempt === 0 && !effectiveInputNoContinue;
           lastRes = await runPi(useContinue);
           if (settled) return;
+          lastRunError = readLastRunError();
 
-          if (lastRes.code === 0) break; // success
+          if (lastRes.code === 0 && !lastRunError) break;
 
-          const errClass = classifyRunError(lastRes.stderr, lastRes.code);
+          const errClass = classifyRunError(lastRunError, lastRes.code);
 
-          // Hard fail — do not retry
-          if (errClass === 'non_retryable') {
-            finalError =
-              lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
+          if (errClass === 'non_retryable' || errClass === 'provider_auth') {
+            exhausted = errClass === 'provider_auth';
+            finalError = lastRunError;
             break;
           }
 
@@ -2266,25 +2320,25 @@ export async function runContainerAgent(
             // consumed most of the original ceiling and would starve this retry.
             armHardTimeout();
             lastRes = await runPi(false);
-            if (lastRes.code === 0) break;
-            finalError =
-              lastRes.stderr.trim() || `pi exited with code ${lastRes.code}`;
+            lastRunError = readLastRunError();
+            if (lastRes.code === 0 && !lastRunError) break;
+            exhausted =
+              classifyRunError(lastRunError, lastRes.code) === 'provider_auth';
+            finalError = lastRunError;
             break;
           }
 
           // If we already did a fresh retry, no more retries — exit
           if (didFreshRetry) {
             exhausted = true;
-            finalError =
-              lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
+            finalError = lastRunError;
             break;
           }
 
           attempt++;
           if (attempt >= FFT_NANO_MAX_RETRIES) {
             exhausted = true;
-            finalError =
-              lastRes!.stderr.trim() || `pi exited with code ${lastRes!.code}`;
+            finalError = lastRunError;
             break;
           }
 
@@ -2305,61 +2359,62 @@ export async function runContainerAgent(
           if (settled) return;
         }
 
-        // If all retries exhausted, try provider fallback chain
-        if (
-          exhausted &&
-          FFT_NANO_PROVIDER_FALLBACK_ENABLED &&
-          FFT_NANO_PROVIDER_FALLBACK_ORDER.length > 0
-        ) {
-          // Stop the parent timer — each recursive fallback call gets its own
-          // fresh timeout, preventing the parent clock from killing the fallback child.
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
-
+        if (exhausted && FFT_NANO_PROVIDER_FALLBACK_ENABLED) {
           const primaryProvider =
             input.provider || secrets.PI_API || process.env.PI_API || '';
           const fallbackProviders = getProviderFallbackCandidates({
             primaryProvider,
             configuredOrder: FFT_NANO_PROVIDER_FALLBACK_ORDER,
+            credentialedProviders: getCredentialBackedProviders(secrets),
             attemptedProviders: input.attemptedProviders,
           });
 
-          for (const fallbackProvider of fallbackProviders) {
-            onProgressEvent?.({
-              kind: 'retry_provider_switch',
-              at: Date.now(),
-              fromProvider: primaryProvider,
-              toProvider: fallbackProvider,
-            });
+          if (fallbackProviders.length > 0) {
+            // Stop the parent timer — each recursive fallback call gets its own
+            // fresh timeout, preventing the parent clock from killing the fallback child.
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
 
-            // Recursive call with fallback provider — runs full retry loop
-            const fallbackResult = await runContainerAgent(
-              group,
-              {
-                ...input,
-                provider: fallbackProvider,
-                noContinue: true, // fresh session on fallback
-                attemptedProviders: [
-                  ...(input.attemptedProviders ?? []),
-                  primaryProvider,
-                ].filter(Boolean),
-              },
-              abortSignal,
-              onRuntimeEvent,
-              onExtensionUIRequest,
-              onProgressEvent,
-            );
+            for (const fallbackProvider of fallbackProviders) {
+              onProgressEvent?.({
+                kind: 'retry_provider_switch',
+                at: Date.now(),
+                fromProvider: primaryProvider,
+                toProvider: fallbackProvider,
+              });
 
-            if (fallbackResult.status === 'success') {
-              if (timeoutHandle) clearTimeout(timeoutHandle);
-              if (abortSignal)
-                abortSignal.removeEventListener('abort', onAbort);
-              if (settled) return;
-              finish(fallbackResult);
-              return;
+              // Recursive call with fallback provider — runs full retry loop
+              const fallbackDefinition =
+                getRuntimeProviderDefinitionByPiApi(fallbackProvider);
+              const fallbackResult = await runContainerAgent(
+                group,
+                {
+                  ...input,
+                  provider: fallbackProvider,
+                  model: fallbackDefinition?.defaultModel ?? input.model,
+                  noContinue: true, // fresh session on fallback
+                  attemptedProviders: [
+                    ...(input.attemptedProviders ?? []),
+                    primaryProvider,
+                  ].filter(Boolean),
+                },
+                abortSignal,
+                onRuntimeEvent,
+                onExtensionUIRequest,
+                onProgressEvent,
+              );
+
+              if (fallbackResult.status === 'success') {
+                if (timeoutHandle) clearTimeout(timeoutHandle);
+                if (abortSignal)
+                  abortSignal.removeEventListener('abort', onAbort);
+                if (settled) return;
+                finish(fallbackResult);
+                return;
+              }
+              // Try next fallback
+              finalError = fallbackResult.error || 'fallback provider failed';
             }
-            // Try next fallback
-            finalError = fallbackResult.error || 'fallback provider failed';
           }
         }
 
@@ -2369,7 +2424,7 @@ export async function runContainerAgent(
 
         const duration = Date.now() - startTime;
 
-        if (lastRes && lastRes.code !== 0) {
+        if (lastRes && (lastRes.code !== 0 || lastRunError)) {
           writeRawRunCapture({
             groupDir: wp.groupDir,
             requestId: input.requestId,
@@ -2384,7 +2439,7 @@ export async function runContainerAgent(
           const failedState: PromptRuntimeState = {
             ...readPromptRuntimeState(promptStatePath),
             lastPreflightDecision: preflightDecision,
-            ...(isOverflowStyleError(lastRes.stderr)
+            ...(isOverflowStyleError(lastRunError)
               ? { lastOverflowAt: new Date().toISOString() }
               : {}),
           };
@@ -2404,7 +2459,7 @@ export async function runContainerAgent(
               group: group.name,
               code: lastRes.code,
               duration,
-              stderr: lastRes.stderr.slice(-500),
+              error: lastRunError.slice(-500),
             },
             'Pi exited with error',
           );
@@ -2413,7 +2468,7 @@ export async function runContainerAgent(
             result: null,
             error:
               finalError ||
-              lastRes.stderr.trim() ||
+              lastRunError ||
               `pi exited with code ${lastRes.code}`,
           });
           return;
@@ -2422,11 +2477,15 @@ export async function runContainerAgent(
         // Success path (lastRes.code === 0)
         let parsed: ReturnType<typeof parsePiJsonOutput>;
         try {
-          parsed = parsePiJsonOutput({
-            stdout: lastRes!.stdout,
-            provider: input.provider,
-            model: input.model,
-          });
+          if (parsedLastRun) {
+            parsed = parsedLastRun;
+          } else {
+            parsed = parsePiJsonOutput({
+              stdout: lastRes!.stdout,
+              provider: input.provider,
+              model: input.model,
+            });
+          }
         } catch (err) {
           writeRawRunCapture({
             groupDir: wp.groupDir,
