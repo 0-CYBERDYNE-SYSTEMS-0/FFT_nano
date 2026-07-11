@@ -1,4 +1,4 @@
-export const EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE =
+const EMPTY_FINAL_OUTPUT_LOG_MESSAGE =
   'LLM produced no user-visible final response. Please retry or switch model if this repeats.';
 
 export interface AgentRunResult {
@@ -7,6 +7,9 @@ export interface AgentRunResult {
   ok: boolean;
   suppressUserDelivery?: boolean;
   controlPlaneStatus?: 'verification_failed';
+  errorKind?: 'runner_timeout';
+  errorRef?: string;
+  emptyOutputFallback?: boolean;
   hadToolSideEffects?: boolean;
   usage?: {
     inputTokens?: number;
@@ -57,8 +60,8 @@ export function formatEmptyFinalOutputDiagnostic(params: {
     details.push(`total_tokens=${params.totalTokens}`);
   }
 
-  if (details.length === 0) return EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE;
-  return `${EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE}\n\nDiagnostics: ${details.join(', ')}`;
+  if (details.length === 0) return EMPTY_FINAL_OUTPUT_LOG_MESSAGE;
+  return `${EMPTY_FINAL_OUTPUT_LOG_MESSAGE}\n\nDiagnostics: ${details.join(', ')}`;
 }
 
 export async function applyNonHeartbeatEmptyOutputPolicy(params: {
@@ -85,9 +88,9 @@ export async function applyNonHeartbeatEmptyOutputPolicy(params: {
     return {
       finalRun: {
         ...secondRun,
-        result: EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE,
         streamed: false,
         ok: true,
+        emptyOutputFallback: true,
       },
       retried: true,
     };

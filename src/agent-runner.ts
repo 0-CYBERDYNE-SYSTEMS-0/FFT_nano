@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import {
   ASSISTANT_NAME,
   FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS,
@@ -18,7 +19,11 @@ import {
 } from './coding-orchestrator.js';
 import { appendCompactionSummaryToMemory } from './memory-maintenance.js';
 import { resolveCompactionMemoryRelativePath } from './memory-maintenance.js';
-import { applyNonHeartbeatEmptyOutputPolicy } from './agent-empty-output.js';
+import {
+  applyNonHeartbeatEmptyOutputPolicy,
+  formatEmptyFinalOutputDiagnostic,
+} from './agent-empty-output.js';
+import { toUserVisibleErrorText } from './user-visible-errors.js';
 import { getAllTasks } from './db.js';
 import { writeTasksSnapshot, writeGroupsSnapshot } from './pi-runner.js';
 import { getAvailableGroups } from './state-persistence.js';
@@ -119,6 +124,17 @@ function getDeps(): AgentRunnerDeps {
 
 export function makeRunId(prefix = 'run'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createUserVisibleErrorRef(): string {
+  return randomBytes(3).toString('hex');
+}
+
+function isPiRunnerTimeoutError(error: string | undefined): boolean {
+  return (
+    typeof error === 'string' &&
+    /^Pi runner timed out after \d+ms\b/.test(error.trim())
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -545,6 +561,7 @@ export async function runAgent(
   suppressUserDelivery?: boolean;
   controlPlaneStatus?: 'verification_failed';
   errorKind?: 'runner_timeout';
+  errorRef?: string;
 }> {
   const deps = getDeps();
   const isMain = group.folder === MAIN_GROUP_FOLDER;
@@ -819,36 +836,43 @@ export async function runAgent(
       if (isUserAbortedErrorMessage(output.error)) {
         return { result: null, streamed: false, ok: true };
       }
-      if (
-        typeof output.error === 'string' &&
-        /^Pi runner timed out after \d+ms\b/.test(output.error.trim())
-      ) {
+      if (isPiRunnerTimeoutError(output.error)) {
+        const errorRef = createUserVisibleErrorRef();
         logger.warn(
-          { group: group.name, error: output.error },
+          { group: group.name, error: output.error, ref: errorRef },
           'Container agent timed out',
         );
         return {
-          result: output.error,
+          result: toUserVisibleErrorText({
+            kind: 'timeout',
+            detail: output.error,
+            ref: errorRef,
+          }),
           streamed: !!output.streamed,
           ok: false,
           usage: output.usage,
           errorKind: 'runner_timeout',
+          errorRef,
         };
       }
       if (options.suppressErrorReply) {
+        const errorRef = createUserVisibleErrorRef();
         logger.warn(
-          { group: group.name, error: output.error },
+          { group: group.name, error: output.error, ref: errorRef },
           'Container agent error (suppressed user reply)',
         );
-        return { result: null, streamed: false, ok: false };
+        return { result: null, streamed: false, ok: false, errorRef };
       }
+      const errorRef = createUserVisibleErrorRef();
       logger.error(
-        { group: group.name, error: output.error },
+        { group: group.name, error: output.error, ref: errorRef },
         'Container agent error',
       );
-      const msg = output.error
-        ? `LLM error: ${output.error}`
-        : 'LLM error: agent runner failed (no details).';
+      const msg = toUserVisibleErrorText({
+        kind: 'runner-error',
+        detail: output.error,
+        ref: errorRef,
+      });
       return { result: msg, streamed: false, ok: true };
     }
 
@@ -888,14 +912,36 @@ export async function runAgent(
           if (isUserAbortedErrorMessage(retryOutput.error)) {
             return { result: null, streamed: false, ok: true };
           }
+          const errorRef = createUserVisibleErrorRef();
+          if (isPiRunnerTimeoutError(retryOutput.error)) {
+            logger.warn(
+              { group: group.name, error: retryOutput.error, ref: errorRef },
+              'Container agent retry timed out after empty output',
+            );
+            return {
+              result: toUserVisibleErrorText({
+                kind: 'timeout',
+                detail: retryOutput.error,
+                ref: errorRef,
+              }),
+              streamed: false,
+              ok: false,
+              usage: retryOutput.usage,
+              hadToolSideEffects: retryOutput.hadToolSideEffects,
+              errorKind: 'runner_timeout',
+              errorRef,
+            };
+          }
           logger.error(
-            { group: group.name, error: retryOutput.error },
+            { group: group.name, error: retryOutput.error, ref: errorRef },
             'Container agent retry error after empty output',
           );
           return {
-            result: retryOutput.error
-              ? `LLM error: ${retryOutput.error}`
-              : 'LLM error: agent runner failed (no details).',
+            result: toUserVisibleErrorText({
+              kind: 'runner-error',
+              detail: retryOutput.error,
+              ref: errorRef,
+            }),
             streamed: false,
             ok: true,
             hadToolSideEffects: retryOutput.hadToolSideEffects,
@@ -913,10 +959,35 @@ export async function runAgent(
     });
 
     const finalResult = emptyOutputPolicy.finalRun;
+    let deliveredFinalResult = finalResult;
+    if (finalResult.emptyOutputFallback) {
+      const errorRef = createUserVisibleErrorRef();
+      const diagnostic = formatEmptyFinalOutputDiagnostic({
+        runId: requestId,
+        streamed: finalResult.streamed,
+        provider: finalResult.usage?.provider,
+        model: finalResult.usage?.model,
+        inputTokens: finalResult.usage?.inputTokens,
+        outputTokens: finalResult.usage?.outputTokens,
+        totalTokens: finalResult.usage?.totalTokens,
+      });
+      logger.error(
+        { group: group.name, ref: errorRef, diagnostic },
+        'Agent retry completed without user-visible final response',
+      );
+      deliveredFinalResult = {
+        ...finalResult,
+        result: toUserVisibleErrorText({
+          kind: 'empty-output',
+          ref: errorRef,
+        }),
+        emptyOutputFallback: undefined,
+      };
+    }
 
     if (
-      finalResult.ok &&
-      finalResult.result &&
+      deliveredFinalResult.ok &&
+      deliveredFinalResult.result &&
       !options.isHeartbeatTask &&
       !options.skipSkillMaintenance &&
       abortSignal?.aborted !== true
@@ -925,7 +996,7 @@ export async function runAgent(
         group,
         chatJid,
         originalTask: prompt,
-        agentOutput: finalResult.result,
+        agentOutput: deliveredFinalResult.result,
         toolsInvoked: runToolsInvoked,
         toolExecutions: runToolExecutions,
         runtimePrefs,
@@ -941,15 +1012,18 @@ export async function runAgent(
     }
 
     return {
-      result: finalResult.result,
-      streamed: finalResult.streamed,
-      ok: finalResult.ok,
-      usage: finalResult.usage,
-      suppressUserDelivery: finalResult.suppressUserDelivery,
-      controlPlaneStatus: finalResult.controlPlaneStatus,
+      result: deliveredFinalResult.result,
+      streamed: deliveredFinalResult.streamed,
+      ok: deliveredFinalResult.ok,
+      usage: deliveredFinalResult.usage,
+      suppressUserDelivery: deliveredFinalResult.suppressUserDelivery,
+      controlPlaneStatus: deliveredFinalResult.controlPlaneStatus,
+      errorKind: deliveredFinalResult.errorKind,
+      errorRef: deliveredFinalResult.errorRef,
     };
   } catch (err) {
-    logger.error({ group: group.name, err }, 'Agent error');
+    const errorRef = createUserVisibleErrorRef();
+    logger.error({ group: group.name, err, ref: errorRef }, 'Agent error');
     if (requestId) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (!isUserAbortedErrorMessage(errorMessage)) {
@@ -960,6 +1034,6 @@ export async function runAgent(
         });
       }
     }
-    return { result: null, streamed: false, ok: false };
+    return { result: null, streamed: false, ok: false, errorRef };
   }
 }

@@ -1,6 +1,9 @@
+import { randomBytes } from 'crypto';
 import { PARITY_CONFIG } from '../config.js';
 import { logger } from '../logger.js';
+import { formatEmptyFinalOutputDiagnostic } from '../agent-empty-output.js';
 import { sanitizeUserFacingVerdictLeak } from '../runtime/boundary-ipc.js';
+import { toUserVisibleErrorText } from '../user-visible-errors.js';
 import type { TelegramMessagePreviewState } from '../telegram-streaming.js';
 import type { NewMessage } from '../types.js';
 import type { CodingWorkerResult } from '../coding-orchestrator.js';
@@ -157,6 +160,7 @@ interface RunCompletion {
   suppressUserDelivery?: boolean;
   controlPlaneStatus?: 'verification_failed';
   errorKind?: 'runner_timeout';
+  errorRef?: string;
 }
 
 export interface PromptInputLogEntry {
@@ -267,6 +271,8 @@ export interface MessageDispatcherDeps {
     usage?: RunUsage;
     suppressUserDelivery?: boolean;
     controlPlaneStatus?: 'verification_failed';
+    errorKind?: 'runner_timeout';
+    errorRef?: string;
   }>;
   handleLongRunCommand?: (chatJid: string, content: string) => Promise<boolean>;
   startLongRun?: (
@@ -878,16 +884,24 @@ export async function finalizeCompletedRun(
       });
       return;
     }
-    const parts = [
-      'LLM produced no user-visible final response',
-      `run=${params.runId}`,
-    ];
-    if (params.usage?.provider) parts.push(`provider=${params.usage.provider}`);
-    if (params.usage?.model) parts.push(`model=${params.usage.model}`);
-    if (params.externallyCompleted) parts.push('external_delivery=yes');
-    const diagnostic = parts.join(' | ');
-    params.persistAssistantHistory(params.chatJid, diagnostic, params.runId);
-    await params.sendAgentResultMessage(params.chatJid, diagnostic);
+    const ref = randomBytes(3).toString('hex');
+    const diagnostic = formatEmptyFinalOutputDiagnostic({
+      runId: params.runId,
+      streamed: params.streamed,
+      externallyCompleted: params.externallyCompleted,
+      provider: params.usage?.provider,
+      model: params.usage?.model,
+      inputTokens: params.usage?.inputTokens,
+      outputTokens: params.usage?.outputTokens,
+      totalTokens: params.usage?.totalTokens,
+    });
+    logger.error(
+      { chatJid: params.chatJid, runId: params.runId, ref, diagnostic },
+      'Agent completed without user-visible final response',
+    );
+    const userText = toUserVisibleErrorText({ kind: 'empty-output', ref });
+    params.persistAssistantHistory(params.chatJid, userText, params.runId);
+    await params.sendAgentResultMessage(params.chatJid, userText);
     params.emitTuiAgentEvent({
       runId: params.runId,
       sessionKey: params.sessionKey,
@@ -1243,6 +1257,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     let suppressUserDelivery = false;
     let controlPlaneStatus: 'verification_failed' | undefined;
     let errorKind: RunCompletion['errorKind'] | undefined;
+    let errorRef: string | undefined;
     const abortController = new AbortController();
     const activeRun = {
       chatJid: params.chatJid,
@@ -1346,6 +1361,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         suppressUserDelivery = run.suppressUserDelivery === true;
         controlPlaneStatus = run.controlPlaneStatus;
         errorKind = run.errorKind;
+        errorRef = run.errorRef;
 
         // Capture worker result for reflection (async MEMORY write after completion path)
         // Only for coding execute routes (exclude plan mode for coder-plan).
@@ -1496,15 +1512,19 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
         params.route === 'agent' &&
         deps.startLongRun &&
         controlPlaneStatus === undefined &&
-        (isRunnerTimeoutText(result) ||
-          (result === null && errorKind === 'runner_timeout')) &&
+        (errorKind === 'runner_timeout' || isRunnerTimeoutText(result)) &&
         !timeoutContinuationRequestIds.has(params.requestId)
       ) {
         timeoutContinuationRequestIds.add(params.requestId);
+        const ref = errorRef || randomBytes(3).toString('hex');
         const longRun = await startDurableLongRun({
           chatJid: params.chatJid,
           prompt: params.finalPrompt,
-          notice: 'Run timed out; continuing as long run <id>.',
+          notice: `${toUserVisibleErrorText({
+            kind: 'timeout',
+            detail: result || undefined,
+            ref,
+          })}\n\nContinuing as long run <id>.`,
           continuationPreamble: `Previous run ${params.requestId} timed out. Inspect existing artifacts, logs, and workspace state. Continue from the current state without restarting completed work.`,
           sourceRequestId: params.requestId,
           source: 'timeout-continuation',
@@ -1541,8 +1561,29 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
           params.requestId,
         );
 
+        const ref = errorRef || randomBytes(3).toString('hex');
+        logger.error(
+          {
+            chatJid: params.chatJid,
+            runId: params.requestId,
+            ref,
+            error: result,
+            errorKind,
+          },
+          'Agent failure shown to user',
+        );
         const errorMsg =
-          result || 'Sorry, there was an error processing your message.';
+          errorKind === 'runner_timeout' || isRunnerTimeoutText(result)
+            ? toUserVisibleErrorText({
+                kind: 'timeout',
+                detail: result || undefined,
+                ref,
+              })
+            : toUserVisibleErrorText({
+                kind: 'runner-error',
+                detail: result || undefined,
+                ref,
+              });
         const sent = await deps.sendAgentResultMessage(
           params.chatJid,
           errorMsg,
