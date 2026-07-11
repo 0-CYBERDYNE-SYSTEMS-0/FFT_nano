@@ -287,6 +287,69 @@ test('runOnboarding docker runtime clears lingering host opt-in env flag', async
   assert.doesNotMatch(envBody, /^FFT_NANO_ALLOW_HOST_RUNTIME=1$/m);
 });
 
+test('runOnboarding generates TELEGRAM_ADMIN_SECRET when absent and surfaces claim instructions', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    skipChannels: false,
+    telegramToken: 'bot-token-123',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  const match = envBody.match(/^TELEGRAM_ADMIN_SECRET=(.+)$/m);
+  assert.ok(match, 'TELEGRAM_ADMIN_SECRET should be written to .env');
+  const secret = match![1];
+  assert.ok(secret.length >= 16);
+  assert.equal(result.telegramConfigured, true);
+  assert.equal(result.telegramAdminSecret, secret);
+});
+
+test('runOnboarding still generates TELEGRAM_ADMIN_SECRET when only --telegram-main-chat-id is pre-set', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+    skipChannels: false,
+    telegramMainChatId: '123456789',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.match(envBody, /^TELEGRAM_ADMIN_SECRET=.+$/m);
+  assert.ok(result.telegramAdminSecret);
+});
+
+test('runOnboarding does not overwrite an existing TELEGRAM_ADMIN_SECRET', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  fs.writeFileSync(envPath, 'TELEGRAM_ADMIN_SECRET=already-set-secret\n', 'utf-8');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+  });
+  const envBody = fs.readFileSync(envPath, 'utf-8');
+  assert.match(envBody, /^TELEGRAM_ADMIN_SECRET=already-set-secret$/m);
+  assert.equal(result.telegramAdminSecret, undefined);
+});
+
+test('runOnboarding reports telegramConfigured=false when no bot token is set', async () => {
+  const workspace = makeTmpWorkspace();
+  const envPath = path.join(workspace, '.env');
+  const result = await runOnboarding({
+    ...nonInteractiveBase(workspace),
+    envPath,
+    operator: 'Alex',
+    assistantName: 'OpenClaw',
+  });
+  assert.equal(result.telegramConfigured, false);
+});
+
 test('parseOnboardArgs parses and validates --runtime', () => {
   const parsed = parseOnboardArgs([
     '--workspace',
