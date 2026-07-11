@@ -288,6 +288,16 @@ export const MEMORY_CONTEXT_CHAR_BUDGET = envInt(
   50000,
 );
 
+// Cap how many chunks a single source file may contribute to one retrieved
+// context. Prevents a single long note from crowding out more diverse (and
+// often more relevant) matches from other files. Diversity improves recall.
+export const MEMORY_MAX_CHUNKS_PER_PATH = envInt(
+  process.env.MEMORY_MAX_CHUNKS_PER_PATH,
+  2,
+  1,
+  32,
+);
+
 // Semantic memory: opt-in re-ranking of lexical candidates by embedding
 // similarity from a LOCAL Ollama embedding model. Default off so the live
 // service is unchanged; when on but the embedder is unavailable, retrieval

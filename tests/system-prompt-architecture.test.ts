@@ -8,6 +8,7 @@ import {
   type SystemPromptInput,
   type WorkspacePaths,
 } from '../src/system-prompt.js';
+import { buildDailyJournalBody } from '../src/memory-paths.js';
 
 const DEFAULT_PATHS: WorkspacePaths = {
   groupDir: '/workspace/group',
@@ -109,6 +110,50 @@ test('buildSystemPrompt injects trusted metadata, overlay, durable canon, and re
   assert.ok(
     report.contextEntries.some(
       (entry) => entry.path === '/workspace/group/TODOS.md' && !entry.missing,
+    ),
+  );
+});
+
+test('buildSystemPrompt skips untouched daily-journal scaffolds but keeps written entries', () => {
+  const files = new Map<string, string>([
+    // Today's journal is still the pristine scaffold — no signal, skip it.
+    [
+      '/workspace/group/memory/2026-02-17.md',
+      buildDailyJournalBody('2026-02-17'),
+    ],
+    // Yesterday's has a real note — must be injected.
+    [
+      '/workspace/group/memory/2026-02-16.md',
+      '- talked to the north field crew about irrigation timing',
+    ],
+  ]);
+
+  // noContinue forces a fresh session so the bootstrap layer (which carries
+  // daily memory) is rendered into the combined text.
+  const { text, report } = buildSystemPrompt(
+    makeInput({ noContinue: true }),
+    DEFAULT_PATHS,
+    {
+      now: () => new Date('2026-02-17T12:00:00.000Z'),
+      readFileIfExists: (filePath) => files.get(filePath) ?? null,
+    },
+  );
+
+  // Pristine scaffold contributes no context entry and no scaffold text.
+  assert.ok(
+    !report.contextEntries.some(
+      (entry) => entry.path === '/workspace/group/memory/2026-02-17.md',
+    ),
+  );
+  assert.doesNotMatch(text, /Daily journal\. Append-only/);
+
+  // A written journal is still injected.
+  assert.match(text, /north field crew about irrigation timing/);
+  assert.ok(
+    report.contextEntries.some(
+      (entry) =>
+        entry.path === '/workspace/group/memory/2026-02-16.md' &&
+        !entry.missing,
     ),
   );
 });
@@ -493,10 +538,7 @@ test('buildSystemPrompt blocks suspicious injected markdown and records layer me
   assert.equal(report.layers[0]?.id, 'stable');
   assert.equal(report.layers.at(-1)?.id, 'ephemeral');
   assert.equal(typeof report.basePromptHash, 'string');
-  assert.match(
-    text,
-    /\[REDACTED: override_previous_instructions\]/,
-  );
+  assert.match(text, /\[REDACTED: override_previous_instructions\]/);
   assert.equal(
     report.contextEntries.some(
       (entry) =>
@@ -835,9 +877,7 @@ test('buildSystemPrompt cache misses when renderer version changes (A0)', () => 
 
   // Simulate a cached layer whose key was computed under an older renderer
   // version (missing rendererVersion field entirely).
-  const oldKey = JSON.parse(
-    JSON.stringify({ ...stableLayer.key }),
-  ) as string;
+  const oldKey = JSON.parse(JSON.stringify({ ...stableLayer.key })) as string;
   const { text, report } = buildSystemPrompt(makeInput(), DEFAULT_PATHS, {
     readFileIfExists: (p) => files.get(p) ?? null,
     cachedStableLayer: {
@@ -1004,7 +1044,9 @@ test('buildSystemPrompt skips scaffold USER.md, IDENTITY.md, and TOOLS.md (A3)',
     false,
   );
   assert.equal(
-    report.contextEntries.some((e) => e.path === '/workspace/group/IDENTITY.md'),
+    report.contextEntries.some(
+      (e) => e.path === '/workspace/group/IDENTITY.md',
+    ),
     false,
   );
   assert.equal(
@@ -1023,7 +1065,9 @@ test('buildSystemPrompt skips scaffold USER.md, IDENTITY.md, and TOOLS.md (A3)',
   );
   assert.match(filled.text, /## \/workspace\/group\/USER\.md/);
   assert.ok(
-    filled.report.contextEntries.some((e) => e.path === '/workspace/group/USER.md'),
+    filled.report.contextEntries.some(
+      (e) => e.path === '/workspace/group/USER.md',
+    ),
   );
 });
 

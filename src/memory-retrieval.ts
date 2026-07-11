@@ -7,6 +7,7 @@ import {
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
   MEMORY_CONTEXT_CHAR_BUDGET,
+  MEMORY_MAX_CHUNKS_PER_PATH,
   MEMORY_RETRIEVAL_GATE_ENABLED,
   MEMORY_TOP_K,
 } from './config.js';
@@ -436,10 +437,20 @@ export function buildMemoryContext(
   const selected: string[] = [];
   /** Tracks which chunks made it into `selected` so we can stamp them (WS5.1). */
   const selectedItems: Array<{ source: string; path: string }> = [];
+  /** How many chunks each source path has already contributed (diversity cap). */
+  const perPathCount = new Map<string, number>();
   let usedChars = 0;
 
   for (let i = 0; i < rankedChunks.length; i += 1) {
     if (selected.length >= MEMORY_TOP_K) break;
+
+    // Diversity cap: don't let one file dominate the context. A later,
+    // lower-scored chunk from an unrepresented file is usually worth more to
+    // recall than a 3rd+ chunk of a file already quoted.
+    const chunkPath = rankedChunks[i].chunk.path;
+    if ((perPathCount.get(chunkPath) ?? 0) >= MEMORY_MAX_CHUNKS_PER_PATH) {
+      continue;
+    }
 
     const nextRank = selected.length + 1;
     const formatted = formatSnippet(nextRank, rankedChunks[i].chunk);
@@ -453,6 +464,7 @@ export function buildMemoryContext(
         source: rankedChunks[i].chunk.source,
         path: rankedChunks[i].chunk.path,
       });
+      perPathCount.set(chunkPath, (perPathCount.get(chunkPath) ?? 0) + 1);
       usedChars += formatted.length;
       continue;
     }

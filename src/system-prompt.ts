@@ -6,6 +6,7 @@ import {
   DEFAULT_CANONICAL_FILE_NAMES,
   isBootstrapScaffoldContent,
   isCanonicalScaffoldContent,
+  isJournalScaffoldContent,
 } from './memory-paths.js';
 import {
   formatLocalDate,
@@ -490,11 +491,24 @@ function buildMainContextEntries(params: {
     params.timezone,
   )) {
     if (remaining <= 0) break;
+    const dailyPath = `${params.groupDir}/${relativePath}`;
+    const dailyContent = params.readFileIfExists(dailyPath);
+    if (dailyContent === null) continue;
+    // Skip untouched daily-journal scaffolds (header-only templates carry no
+    // signal but cost prompt budget every session). Mirrors the bootstrap and
+    // canonical scaffold skips above.
+    const dateKeyMatch = /(\d{4}-\d{2}-\d{2})\.md$/.exec(relativePath);
+    if (
+      dateKeyMatch &&
+      isJournalScaffoldContent(dateKeyMatch[1], dailyContent)
+    ) {
+      continue;
+    }
     remaining = addContextEntry({
       entries,
       readFileIfExists: params.readFileIfExists,
       label: relativePath,
-      path: `${params.groupDir}/${relativePath}`,
+      path: dailyPath,
       fileMaxChars: params.fileMaxChars,
       remainingTotalChars: remaining,
       includeMissing: false,
@@ -889,7 +903,7 @@ function renderBasePrompt(params: {
     '- MEMORY.md is operator-curated durable memory. Do NOT write web search results, news headlines, transient research, or fetched page content there.',
   );
   lines.push(
-    '- Daily journal entries go in memory/YYYY-MM-DD.md (append-only; create today\'s if missing).',
+    "- Daily journal entries go in memory/YYYY-MM-DD.md (append-only; create today's if missing).",
   );
   lines.push(
     '- Research / scratch / fetched material that the user has NOT explicitly asked you to remember is EPHEMERAL — do not persist it to any memory file.',
@@ -904,9 +918,7 @@ function renderBasePrompt(params: {
 
   lines.push('## Context Map');
   lines.push('Injected EVERY turn (trust these over conversation history):');
-  lines.push(
-    '1. SOUL.md (identity/values — the constitutional file).',
-  );
+  lines.push('1. SOUL.md (identity/values — the constitutional file).');
   lines.push(
     '2. TODOS.md (active mission state — current goals and blockers).',
   );
@@ -916,18 +928,18 @@ function renderBasePrompt(params: {
   lines.push(
     'Injected ONCE at session start (already in your history — do NOT re-read unless you suspect they changed on disk):',
   );
-  lines.push(
-    '- NANO.md (operating contract — what to do, not who you are).',
-  );
+  lines.push('- NANO.md (operating contract — what to do, not who you are).');
   lines.push(
     '- MEMORY.md (operator-curated durable facts — see Memory Hygiene above; do NOT add to it casually).',
   );
   lines.push('- USER.md, IDENTITY.md, TOOLS.md, BOOTSTRAP.md.');
   lines.push('- Skill catalog (skill bodies load on demand via skill_view).');
-  lines.push('- Daily memory files (memory/YYYY-MM-DD.md) for today and recent past.');
+  lines.push(
+    '- Daily memory files (memory/YYYY-MM-DD.md) for today and recent past.',
+  );
   lines.push('On disk only — fetch on demand:');
   lines.push(
-    '- knowledge/ → knowledge base for external sources the operator has given the agent (NOT agent memory). The operator owns knowledge/raw/; the agent curates knowledge/wiki/ from it. See knowledge/schema/qualia-schema.md for the page format. The agent\'s own working memory lives in canonical/, MEMORY.md, and memory/ — do not write any of those into knowledge/wiki/.',
+    "- knowledge/ → knowledge base for external sources the operator has given the agent (NOT agent memory). The operator owns knowledge/raw/; the agent curates knowledge/wiki/ from it. See knowledge/schema/qualia-schema.md for the page format. The agent's own working memory lives in canonical/, MEMORY.md, and memory/ — do not write any of those into knowledge/wiki/.",
   );
   lines.push(
     '- canonical/*.md → durable structured memory (operator-curated; safe to read, ask before writing).',
@@ -1195,21 +1207,12 @@ function renderEphemeralPrompt(params: {
     lines.push('');
   }
 
+  // Runtime Hints carries only prompt_mode; every other run field
+  // (coding_hint, continue_session, provider/model/think/reasoning overrides,
+  // request_id) is already in the Inbound Context JSON above. Duplicating them
+  // as bullets added weight without adding information.
   lines.push('## Runtime Hints');
   lines.push(`- prompt_mode: ${params.promptMode}`);
-  lines.push(`- coding_hint: ${params.input.codingHint}`);
-  lines.push(
-    `- continue_session: ${params.input.noContinue ? 'false' : 'true'}`,
-  );
-  if (params.input.provider)
-    lines.push(`- provider_override: ${params.input.provider}`);
-  if (params.input.model) lines.push(`- model_override: ${params.input.model}`);
-  if (params.input.thinkLevel)
-    lines.push(`- think_level: ${params.input.thinkLevel}`);
-  if (params.input.reasoningLevel)
-    lines.push(`- reasoning_level: ${params.input.reasoningLevel}`);
-  if (params.input.requestId)
-    lines.push(`- request_id: ${params.input.requestId}`);
   lines.push('');
 
   if (

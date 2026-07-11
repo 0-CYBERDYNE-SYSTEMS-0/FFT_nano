@@ -28,6 +28,43 @@ test('memory retrieval does not duplicate MEMORY.md via memory.md alias', () => 
   }
 });
 
+test('memory retrieval caps chunks per source file to preserve diversity', () => {
+  const folder = `test-memory-retrieval-pathcap-${Date.now()}`;
+  const groupRoot = path.join(process.cwd(), 'groups', folder);
+  try {
+    fs.mkdirSync(path.join(groupRoot, 'canonical'), { recursive: true });
+    // ~494-char paragraph: below the 800 chunk cap so each becomes its own
+    // chunk instead of merging with its neighbour.
+    const para = 'zorptangle '.repeat(45).trim();
+    // One file with four separately-chunked, equally-matching paragraphs.
+    fs.writeFileSync(
+      path.join(groupRoot, 'canonical', 'big.md'),
+      `# big\n\n${para}\n\n${para}\n\n${para}\n\n${para}\n`,
+    );
+    // A second file with a single matching chunk.
+    fs.writeFileSync(
+      path.join(groupRoot, 'canonical', 'other.md'),
+      `# other\n\n${para}\n`,
+    );
+
+    const result = buildMemoryContext({
+      groupFolder: folder,
+      prompt: 'zorptangle diversity',
+    });
+
+    const bigCount = (result.context.match(/canonical\/big\.md/g) || []).length;
+    assert.equal(
+      bigCount,
+      2,
+      'big.md must contribute at most MEMORY_MAX_CHUNKS_PER_PATH (2) chunks',
+    );
+    // A less-represented file still earns a slot instead of being crowded out.
+    assert.match(result.context, /canonical\/other\.md/);
+  } finally {
+    fs.rmSync(groupRoot, { recursive: true, force: true });
+  }
+});
+
 test('memory retrieval prefers canonical hot memory over legacy memory root', () => {
   const folder = `test-memory-retrieval-canon-${Date.now()}`;
   const groupRoot = path.join(process.cwd(), 'groups', folder);
