@@ -68,6 +68,8 @@ export interface FormatStatusReportParams {
   whatsappConnected: boolean;
   registeredGroupCount: number;
   mainGroupName?: string;
+  /** Pre-formatted "Why is the agent awake?" section (optional). */
+  awakeActivitySection?: string;
   tasks: {
     active: number;
     paused: number;
@@ -356,6 +358,10 @@ export function formatStatusReport(params: FormatStatusReportParams): string {
     lines.push(
       `- warnings: stuck_runs=${stuckRuns} (no progress >${params.stuckWarningSeconds}s)`,
     );
+  }
+
+  if (params.awakeActivitySection?.trim()) {
+    lines.push(params.awakeActivitySection.trimEnd());
   }
 
   lines.push('', 'Active coder/subagent runs:');
