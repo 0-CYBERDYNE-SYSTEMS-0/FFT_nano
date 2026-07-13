@@ -112,10 +112,19 @@ GitHub Actions:
 - `.github/workflows/release-readiness.yml`: typecheck, tests, secret-scan, validate:skills, release-check
 - `.github/workflows/skills-only.yml`: validate:skills for skills-only changes
 
+## Kernel surface (frozen)
+
+Host kernel primitives are frozen in `src/kernel-surface.ts` / `docs/KERNEL_SURFACE.md`:
+prompt layers, run origins, IPC kinds, workspace contract files.
+
+**Growth rule:** new agent capability belongs in **skills** or **scheduled tasks**,
+not new host subsystems, prompt layers, run origins, or IPC envelope kinds.
+
 ## Key Files
 
 | File | Role |
 |---|---|
+| `src/kernel-surface.ts` | Frozen kernel ABI: prompt layers, origins, IPC, workspace files |
 | `src/index.ts` | Orchestrator wiring (~2,100 lines): constructs services (`longRunService`, `outboxDeliverer`, scheduler, `appRuntime`) and `*Deps` objects |
 | `src/app.ts` | `main()`, startup/shutdown, `connectWhatsApp`; boot-time outbox flush + long-run resume |
 | `src/app-state.ts` | All global mutable state, type definitions, `hostEventBus` singleton |

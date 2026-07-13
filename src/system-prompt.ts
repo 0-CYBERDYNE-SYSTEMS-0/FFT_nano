@@ -3,6 +3,10 @@ import fs from 'fs';
 
 import { DESTRUCTIVE_COMMAND_NAMES } from './bash-guard.js';
 import {
+  KERNEL_PER_TURN_CONTEXT_FILES,
+  KERNEL_STABLE_CONTEXT_FILES,
+} from './kernel-surface.js';
+import {
   DEFAULT_CANONICAL_FILE_NAMES,
   isBootstrapScaffoldContent,
   isCanonicalScaffoldContent,
@@ -1240,12 +1244,14 @@ function renderEphemeralPrompt(params: {
 }
 
 function isStableContextEntry(entry: ContextEntry): boolean {
-  return entry.path.endsWith('/SOUL.md');
+  return KERNEL_STABLE_CONTEXT_FILES.some((name) =>
+    entry.path.endsWith(`/${name}`),
+  );
 }
 
 function isPerTurnContextEntry(entry: ContextEntry): boolean {
-  return (
-    entry.path.endsWith('/TODOS.md') || entry.path.endsWith('/HEARTBEAT.md')
+  return KERNEL_PER_TURN_CONTEXT_FILES.some((name) =>
+    entry.path.endsWith(`/${name}`),
   );
 }
 

@@ -3,28 +3,21 @@ import path from 'path';
 import { createHash } from 'crypto';
 
 import { MAIN_GROUP_FOLDER, PARITY_CONFIG } from './config.js';
+import {
+  KERNEL_REQUIRED_WORKSPACE_FILES,
+  KERNEL_WORKSPACE_FILES,
+} from './kernel-surface.js';
 import { ensureKnowledgeWikiScaffold } from './knowledge-wiki.js';
 import { ensureDailyMemoryJournal } from './memory-paths.js';
 
-export const WORKSPACE_TEMPLATE_FILENAMES = [
-  'NANO.md',
-  'SOUL.md',
-  'TODOS.md',
-  'HEARTBEAT.md',
-  'BOOT.md',
-  'BOOTSTRAP.md',
-  'MEMORY.md',
-] as const;
+/** @see KERNEL_WORKSPACE_FILES — workspace contract is frozen in kernel-surface. */
+export const WORKSPACE_TEMPLATE_FILENAMES = KERNEL_WORKSPACE_FILES;
 
 export type WorkspaceTemplateFileName =
   (typeof WORKSPACE_TEMPLATE_FILENAMES)[number];
 
 const REQUIRED_BASE_FILES: WorkspaceTemplateFileName[] = [
-  'NANO.md',
-  'SOUL.md',
-  'TODOS.md',
-  'HEARTBEAT.md',
-  'MEMORY.md',
+  ...KERNEL_REQUIRED_WORKSPACE_FILES,
 ];
 
 const WORKSPACE_STATE_DIRNAME = '.fft_nano';
