@@ -183,7 +183,7 @@ const DEFAULT_FILE_MAX_CHARS = 24_000;
 const DEFAULT_TOTAL_MAX_CHARS = 96_000;
 const DEFAULT_MEMORY_CONTEXT_MAX_CHARS = 20_000;
 const DEFAULT_SKILL_CATALOG_MAX_CHARS = 20_000;
-const STABLE_PROMPT_RENDERER_VERSION = 2;
+const STABLE_PROMPT_RENDERER_VERSION = 3;
 
 const MAIN_CONTEXT_FILES = [
   'NANO.md',
@@ -991,121 +991,18 @@ function renderBasePrompt(params: {
   }
 
   if (!params.isEvaluatorRun) {
-    lines.push('## Messaging IPC');
+    // Full JSON schemas live in skills/runtime/fft-host-ipc — keep the stable
+    // prompt as a short pointer so every turn does not pay the IPC tax.
+    lines.push('## Host IPC');
     lines.push(
-      `To proactively message current chat, write JSON into ${params.paths.ipcDir}/messages/*.json:`,
-    );
-    lines.push('{"type":"message","chatJid":"<jid>","text":"<text>"}');
-    lines.push(
-      'For run progress without adding a separate chat message, write: {"type":"run_progress","chatJid":"<jid>","requestId":"<current request_id>","text":"Run status: ...","phase":"thinking|tool_running|stale","detail":"..."}',
-    );
-    lines.push('Write atomically (temp file then rename).');
-    lines.push('');
-    lines.push('## Scheduler IPC');
-    lines.push(
-      `Read the task snapshot from ${params.paths.ipcDir}/current_tasks.json when needed.`,
-    );
-    lines.push('Task management is handled internally by the host scheduler.');
-    lines.push('- {"type":"pause_task","taskId":"..."}');
-    lines.push('- {"type":"resume_task","taskId":"..."}');
-    lines.push('- {"type":"cancel_task","taskId":"..."}');
-    lines.push('- Main-only: {"type":"refresh_groups"}');
-    lines.push(
-      `- Main-only: {"type":"register_group","jid":"...","name":"...","folder":"...","trigger":"@${params.assistantName}"}`,
-    );
-    lines.push('');
-    lines.push('## Memory Action IPC');
-    lines.push(
-      `Write memory action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
+      `${params.paths.ipcDir} is the host bridge (messages/, tasks/, actions/, action_results/, deliver_files/).`,
     );
     lines.push(
-      '- In non-main/shared runs, group/global MEMORY.md falls back into the prompt when present. Use memory_search or memory_get for broader recall.',
+      'Write JSON requests atomically (temp file then rename). Wait for action_results/<requestId>.json status=success before reporting completion.',
     );
     lines.push(
-      '- Search: {"type":"memory_action","action":"memory_search","requestId":"<id>","params":{"query":"...","topK":8,"sources":"all"}}',
+      'Payload schemas and examples: skill `fft-host-ipc` (skill_view fft-host-ipc). Covers message, run_progress, scheduler control, memory_action, skill_action, subagent_action, and deliver_file.',
     );
-    lines.push(
-      '- Get: {"type":"memory_action","action":"memory_get","requestId":"<id>","params":{"path":"MEMORY.md"}}',
-    );
-    lines.push(
-      '- Write: {"type":"memory_action","action":"memory_write","requestId":"<id>","params":{"intent":"todo_upsert_task","payload":{"entryId":"T1","text":"...","status":"PENDING"}}}',
-    );
-    lines.push(
-      'For writes, wait for status=success before reporting completion to the user.',
-    );
-    lines.push('');
-    lines.push('## Skill Action IPC');
-    lines.push(
-      `Write skill action requests into ${params.paths.ipcDir}/actions/*.json and read results from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
-    );
-    lines.push(
-      '- Skills should stay organized without operator effort. Use skill_list/skill_view to inspect available procedural knowledge before repeating a workflow.',
-    );
-    lines.push(
-      '- Create or patch a skill only when a reusable workflow, pitfall, or farm operation pattern should be remembered procedurally.',
-    );
-    lines.push(
-      '- Mutations are host-gated to agent-created runtime skills; repo and personal source skills may be read and reported but not destructively curated.',
-    );
-    lines.push(
-      '- List: {"type":"skill_action","action":"skill_list","requestId":"<id>","params":{"includeArchived":false}}',
-    );
-    lines.push(
-      '- View: {"type":"skill_action","action":"skill_view","requestId":"<id>","params":{"name":"skill-name"}}',
-    );
-    lines.push(
-      '- Create: {"type":"skill_action","action":"skill_create","requestId":"<id>","params":{"name":"short-skill-name","description":"When to use...","content":"---\\nname: short-skill-name\\ndescription: ...\\n---\\n\\n# ..."}}',
-    );
-    lines.push(
-      '- Patch: {"type":"skill_action","action":"skill_patch","requestId":"<id>","params":{"name":"skill-name","content":"complete replacement SKILL.md"}}',
-    );
-    lines.push(
-      '- Support file: {"type":"skill_action","action":"skill_write_file","requestId":"<id>","params":{"name":"skill-name","filePath":"references/example.md","fileContent":"..."}}',
-    );
-    lines.push(
-      '- Rollback (undo a bad patch; restores the previous SKILL.md version): {"type":"skill_action","action":"skill_rollback","requestId":"<id>","params":{"name":"skill-name"}}',
-    );
-    lines.push('Wait for status=success before relying on a skill mutation.');
-    lines.push('');
-    lines.push('## Subagent IPC');
-    lines.push(
-      `Spawn a focused subagent to do isolated engineering work in its own ephemeral worktree. Write the request into ${params.paths.ipcDir}/actions/*.json and read the result from ${params.paths.ipcDir}/action_results/<requestId>.json.`,
-    );
-    lines.push(
-      '- Use this to delegate a self-contained task (a code change, an investigation, a build/test pass) so it runs without blocking your turn.',
-    );
-    lines.push(
-      '- Spawn: {"type":"subagent_action","action":"spawn_subagent","requestId":"<id>","params":{"task":"clear, complete instructions for the subagent","mode":"execute"}}',
-    );
-    lines.push(
-      '- mode: "execute" (default, full tools, can edit) or "plan" (read-only analysis).',
-    );
-    lines.push(
-      '- The subagent runs asynchronously; poll action_results/<requestId>.json and wait for status=success (its output is in result) before relying on its work. Subagents cannot themselves spawn subagents.',
-    );
-    lines.push('');
-    lines.push('## File Delivery IPC');
-    lines.push(
-      `To send files/images back to the Telegram chat, write delivery requests into ${params.paths.ipcDir}/deliver_files/*.json:`,
-    );
-    lines.push('```json');
-    lines.push('{');
-    lines.push('  "type":"farm_action",');
-    lines.push('  "action":"deliver_file",');
-    lines.push('  "requestId":"<unique-id>",');
-    lines.push('  "params":{');
-    lines.push('    "filePath":"path/to/file.jpg",');
-    lines.push('    "caption":"Optional caption text",');
-    lines.push('    "kind":"photo"');
-    lines.push('  }');
-    lines.push('}');
-    lines.push('```');
-    lines.push('- filePath: absolute path or path relative to group workspace');
-    lines.push(
-      '- kind: "photo"|"document"|"video"|"audio" (auto-detected from extension if omitted)',
-    );
-    lines.push("- chatJid: optional, defaults to the group's registered chat");
-    lines.push('- Write atomically (temp file then rename).');
     lines.push('');
   }
   lines.push('## Completion Gate');
@@ -1225,7 +1122,7 @@ function renderEphemeralPrompt(params: {
     );
     if (params.input.reasoningLevel === 'stream') {
       lines.push(
-        `For long tasks, proactively send concise run_progress updates via ${params.paths.ipcDir}/messages.`,
+        `For long tasks, proactively send concise run_progress updates via ${params.paths.ipcDir}/messages (schema: skill fft-host-ipc).`,
       );
     }
     lines.push('');

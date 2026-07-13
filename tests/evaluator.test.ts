@@ -476,8 +476,10 @@ describe('artifact verification', () => {
 
     assert.equal(input.isEvaluatorRun, true);
     assert.doesNotMatch(systemPrompt, /## Messaging IPC/);
+    assert.doesNotMatch(systemPrompt, /## Host IPC/);
     assert.doesNotMatch(systemPrompt, /messages\/\*\.json/);
     assert.doesNotMatch(systemPrompt, /"type":"message"/);
+    assert.doesNotMatch(systemPrompt, /fft-host-ipc/);
   });
 });
 
