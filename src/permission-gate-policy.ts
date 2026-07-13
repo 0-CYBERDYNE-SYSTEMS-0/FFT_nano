@@ -1,14 +1,13 @@
+import {
+  decideAuthorityAction,
+  type AuthorityActionCategory,
+} from './authority-policy.js';
 import { isDestructiveCommand } from './bash-guard.js';
 import type { RunAuthority } from './types.js';
 
 const PROTECTED_PATHS = ['.env', '.env.', '.git/', 'node_modules/'];
 
-export type ActionCategory =
-  | 'read'
-  | 'local-mutate'
-  | 'outbound'
-  | 'schedule'
-  | 'destroy';
+export type ActionCategory = AuthorityActionCategory;
 
 export interface ClassifyResult {
   category: ActionCategory;
@@ -93,13 +92,8 @@ export function isProtectedPath(filePath: string): boolean {
 /**
  * Evaluate the permission gate using RunAuthority (host-derived, agent-proof).
  *
- * Policy table:
- *   read / local-mutate → always allow (any origin)
- *   destroy → block on headless/subagent/evaluator/maintenance; confirm on interactive-main
- *   outbound → held on headless/subagent without grant; block maintenance; allow otherwise
- *   schedule → held on headless/subagent without grant; block maintenance; allow otherwise
- *   maintenance → all mutations denied; read only allowed through permission gate (but
- *                  maintenance runs should use minimal/empty tool sets at launch)
+ * Core (origin × grant × category) decisions come from authority-policy.ts.
+ * This function layers tool-specific detail (protected paths, bash match text).
  *
  * I1 invariant: this function reads only RunAuthority fields and tool input.
  * It never reads prompt content or IPC payload fields authored by the agent.
@@ -111,116 +105,85 @@ export function evaluatePermissionGate(params: {
 }): PermissionGateDecision {
   const { toolName, input, runAuthority } = params;
   const { origin } = runAuthority;
+  const classification = classifyActionCategory(toolName, input);
 
-  // LISO.6: Maintenance origin has no mutation authority regardless of tool.
-  // Defense in depth: even if the maintenance run launched with tools (which it
-  // shouldn't), the permission gate blocks all mutations.
+  // Maintenance: table blocks all categories; keep distinct messages for read.
   if (origin === 'maintenance') {
-    const classification = classifyActionCategory(toolName, input);
-    // Maintenance can only do read operations; everything else is blocked
     if (classification.category === 'read') {
-      // Even read is denied by default for maintenance per VAL-LISO-014 unless
-      // it's bounded supplied context (which the host controls at launch time,
-      // not here). Block all reads from maintenance at the gate level.
       return {
         action: 'block',
-        reason: 'Maintenance run cannot read files. All filesystem access is denied.',
+        reason:
+          'Maintenance run cannot read files. All filesystem access is denied.',
       };
     }
-    // All mutations, scheduling, outbound, and destroy are blocked for maintenance
     return {
       action: 'block',
       reason: `Maintenance run cannot perform '${toolName}' operations. Maintenance runs may only return structured learning proposals.`,
     };
   }
 
-  const classification = classifyActionCategory(toolName, input);
-
-  // VAL-WS1-007: read and local-mutate always allow regardless of origin
-  // BUT: protected paths for write/edit require confirm on interactive-main,
-  // block on headless/subagent/evaluator.
+  // Protected paths: special-case on top of local-mutate allow.
   if (
-    classification.category === 'read' ||
-    classification.category === 'local-mutate'
+    classification.category === 'local-mutate' &&
+    (toolName === 'edit' || toolName === 'write') &&
+    typeof input.path === 'string' &&
+    isProtectedPath(input.path)
   ) {
-    // Protected path check for edit/write tools
-    if (
-      (toolName === 'edit' || toolName === 'write') &&
-      typeof input.path === 'string' &&
-      isProtectedPath(input.path)
-    ) {
-      if (
-        origin === 'interactive-main' &&
-        runAuthority.operatorGrant
-      ) {
-        return {
-          action: 'confirm',
-          title: 'Protected Path',
-          message: `The agent wants to ${toolName}:\n\n  ${input.path}\n\nThis is a protected path. Allow?`,
-        };
-      }
+    if (origin === 'interactive-main' && runAuthority.operatorGrant) {
       return {
-        action: 'block',
-        reason: `Write to protected path blocked: ${input.path}. ${
-          origin === 'subagent'
-            ? 'Subagents cannot modify protected files.'
-            : 'Headless/evaluator runs cannot modify protected paths.'
-        }`,
+        action: 'confirm',
+        title: 'Protected Path',
+        message: `The agent wants to ${toolName}:\n\n  ${input.path}\n\nThis is a protected path. Allow?`,
       };
     }
-    return { action: 'allow' };
-  }
-
-  // VAL-WS1-008: destroy blocks headless/subagent/evaluator, confirms interactive-main
-  if (classification.category === 'destroy') {
-    const command = typeof input.command === 'string' ? input.command : '';
-    const result = isDestructiveCommand(command);
-
-    if (
-      origin === 'headless' ||
-      origin === 'subagent' ||
-      origin === 'evaluator'
-    ) {
-      return {
-        action: 'block',
-        reason: `Destructive command blocked (${result.matched}). ${
-          origin === 'subagent'
-            ? 'Subagents cannot execute destructive commands.'
-            : 'Headless/evaluator runs cannot execute destructive commands without operator confirmation.'
-        }`,
-      };
-    }
-
-    // interactive-main: confirm
     return {
-      action: 'confirm',
-      title: 'Destructive Command',
-      message: `The agent wants to run:\n\n  ${command}\n\nMatched: ${result.matched}\n\nAllow this command?`,
+      action: 'block',
+      reason: `Write to protected path blocked: ${input.path}. ${
+        origin === 'subagent'
+          ? 'Subagents cannot modify protected files.'
+          : 'Headless/evaluator runs cannot modify protected paths.'
+      }`,
     };
   }
 
-  // VAL-WS1-009 + VAL-WS1-010: outbound held on headless/subagent without grant;
-  // VAL-WS1-009 calls subagent a "headless run", so we include it in the held condition.
-  if (classification.category === 'outbound') {
-    if (
-      (origin === 'headless' || origin === 'subagent') &&
-      !runAuthority.operatorGrant
-    ) {
-      // The caller (IPC handler) is responsible for enqueueing the held row.
-      // evaluatePermissionGate is pure — it signals the hold decision here.
-      return { action: 'held' };
+  const table = decideAuthorityAction({
+    origin,
+    operatorGrant: runAuthority.operatorGrant,
+    category: classification.category,
+  });
+
+  if (classification.category === 'destroy') {
+    const command = typeof input.command === 'string' ? input.command : '';
+    const result = isDestructiveCommand(command);
+    if (table.action === 'block') {
+      return {
+        action: 'block',
+        reason: `Destructive command blocked (${result.matched}). ${
+          table.detail ||
+          'Headless/evaluator runs cannot execute destructive commands without operator confirmation.'
+        }`,
+      };
     }
-    // interactive-main with operatorGrant → normal pending → delivered flow
-    // evaluator runs always allow (operatorGrant=true by default)
-    return { action: 'allow' };
+    if (table.action === 'confirm') {
+      return {
+        action: 'confirm',
+        title: 'Destructive Command',
+        message: `The agent wants to run:\n\n  ${command}\n\nMatched: ${result.matched}\n\nAllow this command?`,
+      };
+    }
   }
 
-  // VAL-WS1-012: schedule always allows at the tool level.
-  // WS2 enforces pending_approval status at the IPC handler, not here.
-  if (classification.category === 'schedule') {
-    return { action: 'allow' };
+  if (table.action === 'held') return { action: 'held' };
+  if (table.action === 'allow') return { action: 'allow' };
+  if (table.action === 'confirm') {
+    return {
+      action: 'confirm',
+      title: 'Permission required',
+      message: table.detail || `Allow ${toolName}?`,
+    };
   }
-
-  // Fallback: conservative deny for unknown categories
-  return { action: 'allow' };
+  return {
+    action: 'block',
+    reason: table.detail || `Blocked by authority policy (${table.reasonCode})`,
+  };
 }

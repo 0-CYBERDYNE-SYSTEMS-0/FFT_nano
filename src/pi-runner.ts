@@ -130,6 +130,11 @@ export interface ContainerInput {
   runAuthority?: RunAuthority;
   // LISO.6: Marks this as a maintenance run — triggers maintenance origin in mintRunAuthority.
   isMaintenanceRun?: boolean;
+  /**
+   * Host-only operator grant for this spawn (e.g. operator-created cron).
+   * Mapped from host DB fields before spawn — never from agent IPC strings.
+   */
+  hostOperatorGrant?: boolean;
   // /reflect dry-run: stamped onto the RunAuthority so the skill/memory gateways
   // hard-reject mutations for this run.
   dryRun?: boolean;
@@ -1057,6 +1062,7 @@ export async function runContainerAgent(
     isScheduledTask: input.isScheduledTask,
     isHeartbeat: (input.requestId || '').startsWith('heartbeat-'),
     isEvaluatorRun: input.isEvaluatorRun,
+    isMaintenanceRun: input.isMaintenanceRun,
     effectiveToolSet: deriveEffectiveToolSet({
       toolMode: input.toolMode,
       codingHint,
@@ -1064,6 +1070,7 @@ export async function runContainerAgent(
     senderRole: input.senderRole ?? 'unknown', // threaded from DispatchRequest through runAgent
     startedDuringPause: false, // resolved from PARITY_CONFIG.learning_paused at startup
     dryRun: input.dryRun === true,
+    hostOperatorGrant: input.hostOperatorGrant,
   });
   // Register so IPC watcher can attribute async actions to this run.
   runAuthorityRegistry.set(group.folder, runAuthority);

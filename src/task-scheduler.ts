@@ -144,6 +144,8 @@ async function runLegacyTask(
       isScheduledTask: true,
       assistantName: ASSISTANT_NAME,
       noContinue: resolveNoContinueForTask(task),
+      // Host maps DB created_by → boolean; never pass agent strings into mint.
+      hostOperatorGrant: task.created_by === 'operator',
     });
 
     if (output.status === 'error') {

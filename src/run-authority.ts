@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { resolveOperatorGrant } from './authority-policy.js';
 import type { RunAuthority, RunOrigin } from './types.js';
 
 interface ToolSetInput {
@@ -104,6 +105,12 @@ export interface MintRunAuthorityInput {
   senderRole?: RunAuthority['senderRole'];
   startedDuringPause?: boolean;
   dryRun?: boolean;
+  /**
+   * Host-only operator grant stamp. Use for operator-created scheduled runs
+   * (map task.created_by === 'operator' at the host boundary). Never pass
+   * agent-authored strings — only a host-computed boolean.
+   */
+  hostOperatorGrant?: boolean;
 }
 
 export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
@@ -120,6 +127,7 @@ export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
     senderRole = 'unknown',
     startedDuringPause = false,
     dryRun = false,
+    hostOperatorGrant,
   } = input;
 
   const origin = deriveRunOrigin({
@@ -132,13 +140,11 @@ export function mintRunAuthority(input: MintRunAuthorityInput): RunAuthority {
     requestId,
   });
 
-  // operatorGrant: true for interactive-main (operator present) and evaluator
-  // runs; false for subagent, headless (including scheduled tasks) until
-  // explicitly approved via a separate approval workflow.
-  // Note: operator-created cron tasks get operatorGrant=true from the scheduler
-  // when it sets created_by='operator'. The mint here handles the default for
-  // the run authority; the outbox hold path uses operatorGrant to decide.
-  const operatorGrant = origin === 'interactive-main' || origin === 'evaluator';
+  // Single grant resolver (authority-policy). Comments are not the policy.
+  const operatorGrant = resolveOperatorGrant({
+    origin,
+    hostOperatorGrant,
+  });
 
   const toolSet =
     explicitToolSet ??

@@ -445,6 +445,8 @@ export async function runScheduledTaskV2(
           isScheduledTask: true,
           noContinue: resolveNoContinueForTask(task),
           effectiveTimezone,
+          // Host maps DB created_by → boolean; never pass agent strings into mint.
+          hostOperatorGrant: task.created_by === 'operator',
         },
         abortController.signal,
       );
