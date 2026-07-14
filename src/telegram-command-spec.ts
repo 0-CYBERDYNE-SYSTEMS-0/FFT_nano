@@ -1,4 +1,5 @@
 export const TELEGRAM_COMMON_COMMANDS = [
+  { command: 'start', description: 'Welcome + how to talk to me' },
   { command: 'help', description: 'Show command help' },
   { command: 'settings', description: 'Open chat runtime controls' },
   { command: 'status', description: 'Show runtime status' },
@@ -69,6 +70,7 @@ export const TELEGRAM_ADMIN_COMMANDS = [
 ] as const;
 
 export type TelegramCommandName =
+  | '/start'
   | '/help'
   | '/settings'
   | '/status'
@@ -126,6 +128,7 @@ export type TelegramCommandName =
   | '/freechat';
 
 const KNOWN_TELEGRAM_COMMANDS: Set<TelegramCommandName> = new Set([
+  '/start',
   '/help',
   '/settings',
   '/status',

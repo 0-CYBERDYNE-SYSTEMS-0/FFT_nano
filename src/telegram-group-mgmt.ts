@@ -79,6 +79,13 @@ export function isTelegramGroupChatJid(chatJid: string): boolean {
   return Number(chatId) < 0;
 }
 
+// A Telegram chat that can go through the owner-approval flow: either a group
+// chat or a private DM. The main/admin chat is registered separately and never
+// routed here.
+export function isTelegramApprovableChatJid(chatJid: string): boolean {
+  return isTelegramGroupChatJid(chatJid) || isTelegramPrivateChatJid(chatJid);
+}
+
 export function buildTelegramGroupFolder(chatJid: string): string | null {
   const chatId = parseTelegramChatId(chatJid);
   if (!chatId) return null;
@@ -170,23 +177,31 @@ export async function handleTelegramUnknownGroup(
     };
   },
 ): Promise<void> {
-  if (!isTelegramGroupChatJid(event.chatJid)) return;
+  if (!isTelegramApprovableChatJid(event.chatJid)) return;
   if (state.registeredGroups[event.chatJid]) return;
+
+  const isPrivate = isTelegramPrivateChatJid(event.chatJid);
 
   const content = (event.content || '').trim();
   if (!content) return;
-  TRIGGER_PATTERN.lastIndex = 0;
-  const addressedToBot =
-    TRIGGER_PATTERN.test(content) ||
-    /^\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)/.test(content);
-  if (!addressedToBot) return;
+  // In a group the bot only reacts when explicitly addressed (mention or
+  // command). A DM is inherently addressed to the bot, so any message counts.
+  if (!isPrivate) {
+    TRIGGER_PATTERN.lastIndex = 0;
+    const addressedToBot =
+      TRIGGER_PATTERN.test(content) ||
+      /^\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)/.test(content);
+    if (!addressedToBot) return;
+  }
 
   const approvals = loadTelegramGroupApprovals();
   const ignored = approvals.ignored[event.chatJid];
   if (ignored) {
     await deps.sendMessage(
       event.chatJid,
-      `${ASSISTANT_NAME}: this group is not active. Ask the owner to open /groups in the main chat and approve it.`,
+      isPrivate
+        ? `${ASSISTANT_NAME}: the owner has not turned on this chat. Please reach out to them directly.`
+        : `${ASSISTANT_NAME}: this group is not active. Ask the owner to open /groups in the main chat and approve it.`,
     );
     return;
   }
@@ -212,11 +227,15 @@ export async function handleTelegramUnknownGroup(
   saveTelegramGroupApprovals(approvals);
 
   const mainChatJid = deps.findMainTelegramChatJid();
+  const noMainReply = isPrivate
+    ? `${ASSISTANT_NAME}: I'm not fully set up yet. The owner needs to send /main from their own chat to finish setup before I can help here.`
+    : `${ASSISTANT_NAME}: I see this group, but no Telegram main/admin chat is configured yet. DM me and run /main <secret> first.`;
+  const hasMainReply = isPrivate
+    ? `${ASSISTANT_NAME}: thanks for reaching out! I've sent an approval request to my owner. Hang tight — once they say yes, you can just message me here.`
+    : `${ASSISTANT_NAME}: I see this group, but the owner has not approved me here yet. I sent an approval panel to the main chat.`;
   await deps.sendMessage(
     event.chatJid,
-    mainChatJid
-      ? `${ASSISTANT_NAME}: I see this group, but the owner has not approved me here yet. I sent an approval panel to the main chat.`
-      : `${ASSISTANT_NAME}: I see this group, but no Telegram main/admin chat is configured yet. DM me and run /main <secret> first.`,
+    mainChatJid ? hasMainReply : noMainReply,
   );
 
   if (!mainChatJid || !shouldNotifyMain || !state.telegramBot) return;
@@ -240,11 +259,11 @@ export async function approveTelegramGroup(
     refreshTelegramCommandMenus: () => Promise<void>;
   },
 ): Promise<{ ok: boolean; text: string }> {
-  if (!isTelegramGroupChatJid(chatJid)) {
-    return { ok: false, text: `Cannot approve non-group chat: ${chatJid}` };
+  if (!isTelegramApprovableChatJid(chatJid)) {
+    return { ok: false, text: `Cannot approve this chat: ${chatJid}` };
   }
   if (state.registeredGroups[chatJid]) {
-    return { ok: true, text: 'Group is already active.' };
+    return { ok: true, text: 'Chat is already active.' };
   }
   const folder = buildTelegramGroupFolder(chatJid);
   if (!folder) {
@@ -267,7 +286,9 @@ export async function approveTelegramGroup(
   await deps.refreshTelegramCommandMenus();
   await deps.sendMessage(
     chatJid,
-    `${ASSISTANT_NAME}: this group is active now. Mention @${ASSISTANT_NAME} when you want me to help here.`,
+    isTelegramPrivateChatJid(chatJid)
+      ? `${ASSISTANT_NAME}: you're approved. Just message me here whenever you need help.`
+      : `${ASSISTANT_NAME}: this group is active now. Mention @${ASSISTANT_NAME} when you want me to help here.`,
   );
   return { ok: true, text: `Approved ${name}.` };
 }
@@ -275,8 +296,8 @@ export async function approveTelegramGroup(
 export async function ignoreTelegramGroup(
   chatJid: string,
 ): Promise<{ ok: boolean; text: string }> {
-  if (!isTelegramGroupChatJid(chatJid)) {
-    return { ok: false, text: `Cannot ignore non-group chat: ${chatJid}` };
+  if (!isTelegramApprovableChatJid(chatJid)) {
+    return { ok: false, text: `Cannot ignore this chat: ${chatJid}` };
   }
   const approvals = loadTelegramGroupApprovals();
   const pending = approvals.pending[chatJid];
@@ -322,10 +343,6 @@ export function maybeRegisterTelegramChat(
     hasMainGroup: () => boolean;
   },
 ): boolean {
-  const TELEGRAM_AUTO_REGISTER = !['0', 'false', 'no'].includes(
-    (process.env.TELEGRAM_AUTO_REGISTER || '1').toLowerCase(),
-  );
-  if (!TELEGRAM_AUTO_REGISTER) return false;
   if (state.registeredGroups[chatJid]) return false;
 
   const chatId = parseTelegramChatId(chatJid);
@@ -333,7 +350,21 @@ export function maybeRegisterTelegramChat(
 
   const TELEGRAM_MAIN_CHAT_ID = process.env.TELEGRAM_MAIN_CHAT_ID;
   const isMain = TELEGRAM_MAIN_CHAT_ID && chatId === TELEGRAM_MAIN_CHAT_ID;
+
+  // Auto-register is OFF by default: unknown DMs now go through the owner
+  // approval flow (like groups). Set TELEGRAM_AUTO_REGISTER=1 to restore the
+  // old behavior where any DM is silently registered. The configured main
+  // chat is always registered regardless of this flag.
+  const autoRegister = ['1', 'true', 'yes', 'on'].includes(
+    (process.env.TELEGRAM_AUTO_REGISTER || '').toLowerCase(),
+  );
+
+  // Group chats are never auto-registered (they use the approval flow); only
+  // the configured main chat is registered here.
   if (isTelegramGroupChatJid(chatJid) && !isMain) return false;
+  // DMs require explicit opt-in unless this is the configured main chat.
+  if (!isMain && !autoRegister) return false;
+
   const folder = isMain ? MAIN_GROUP_FOLDER : `telegram-${chatId}`;
 
   deps.registerGroup(chatJid, {

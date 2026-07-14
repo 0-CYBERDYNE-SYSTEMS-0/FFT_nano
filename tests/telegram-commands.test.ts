@@ -264,6 +264,49 @@ test('handleTelegramCommand /run delegates to long-run command handler and ackno
   });
 });
 
+test('handleTelegramCommand /start welcomes and explains addressing in an approved chat', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => true;
+  deps.hasMainGroup = () => true;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Chat',
+    content: '/start',
+  });
+
+  assert.equal(handled, true);
+  const text = deps.sent[0]?.text || '';
+  assert.match(text, /I'm FarmFriend, your AI farm coworker/);
+  assert.match(text, /@FarmFriend/);
+  assert.match(text, /\/help/);
+  assert.match(text, /\/id/);
+  // An approved/main chat is not told it needs approval.
+  assert.doesNotMatch(text, /isn't switched on/);
+});
+
+test('handleTelegramCommand /start tells an unapproved chat the owner was notified', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.isMainChat = () => false;
+  deps.hasMainGroup = () => true;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  await handlers.handleTelegramCommand({
+    chatJid: 'telegram:9',
+    chatName: 'Stranger',
+    content: '/start',
+  });
+
+  const text = deps.sent[0]?.text || '';
+  assert.match(text, /isn't switched on yet/);
+  assert.match(text, /let the owner know/);
+});
+
 test('handleTelegramCommand /main succeeds with the correct setup code and uses plain-language confirmation', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
