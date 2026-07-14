@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { TelegramMessagePreviewState } from '../src/telegram-streaming.js';
-import { EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE } from '../src/agent-empty-output.js';
 import {
   createMessageDispatcher,
   finalizeCompletedRun,
@@ -160,7 +159,7 @@ test('finalizeCompletedRun skips duplicate send when Telegram delivery already c
   assert.equal(emitter.events.at(-1)?.kind, 'agent');
 });
 
-test('finalizeCompletedRun sends diagnostic for empty final output', async () => {
+test('finalizeCompletedRun sends plain language for empty final output', async () => {
   const emitter = createEmitter();
   const persisted: string[] = [];
   const sent: string[] = [];
@@ -191,9 +190,9 @@ test('finalizeCompletedRun sends diagnostic for empty final output', async () =>
 
   assert.equal(sent.length, 1);
   assert.equal(persisted.length, 1);
-  assert.match(sent[0], /LLM produced no user-visible final response/);
-  assert.match(sent[0], /run=run-empty/);
-  assert.match(sent[0], /provider=zai/);
+  assert.match(sent[0], /hit a snag/i);
+  assert.match(sent[0], /\(ref: [a-f0-9]{6}\)$/);
+  assert.doesNotMatch(sent[0], /LLM|provider=|tokens/i);
   assert.doesNotMatch(sent[0], /Task completed/);
   assert.equal(sent[0], persisted[0]);
 });
@@ -264,8 +263,8 @@ test('finalizeCompletedRun does not trust external completion for empty final ou
   });
 
   assert.equal(sent.length, 1);
-  assert.match(sent[0], /LLM produced no user-visible final response/);
-  assert.match(sent[0], /external_delivery=yes/);
+  assert.match(sent[0], /hit a snag/i);
+  assert.doesNotMatch(sent[0], /LLM|external_delivery/i);
 });
 
 test('finalizeCompletedRun preserves streamed Telegram preview when final output is empty', async () => {
@@ -329,7 +328,7 @@ test('finalizeCompletedRun preserves streamed Telegram preview without persistin
     chatJid: 'telegram:1',
     runId: 'run-timeout-preview',
     sessionKey: 'telegram:1',
-    result: 'LLM error: Pi runner timed out after 600000ms',
+    result: 'Pi runner timed out after 600000ms',
     streamed: true,
     usage: undefined,
     abortSignal: new AbortController().signal,
@@ -430,7 +429,8 @@ test('processMessage continues runner timeout as exactly one durable long run', 
       },
       runAgent: async () => ({
         ok: false,
-        result: 'Pi runner timed out after 600000ms',
+        result:
+          "That took longer than I'm allowed to spend, so I stopped. Try again, or break the request into smaller steps. (ref: a1b2c3)",
         streamed: false,
         errorKind: 'runner_timeout',
       }),
@@ -460,10 +460,12 @@ test('processMessage continues runner timeout as exactly one durable long run', 
     longRuns[0]?.options?.continuationPreamble || '',
     /Previous run chat-timeout-1 timed out/,
   );
-  assert.deepEqual(sent, [
-    'Run timed out; continuing as long run run-cont-1.',
-    'Pi runner timed out after 600000ms',
-  ]);
+  assert.match(sent[0] || '', /took longer/i);
+  assert.match(sent[0] || '', /Continuing as long run run-cont-1\./i);
+  assert.match(sent[0] || '', /\(ref: [a-f0-9]{6}\)/);
+  assert.doesNotMatch(sent[0] || '', /Pi runner|\bms\b/i);
+  assert.match(sent[1] || '', /took longer/i);
+  assert.doesNotMatch(sent[1] || '', /Pi runner|\bms\b/i);
 });
 
 test('finalizeCompletedRun sends durable fallback after streamed empty retry output', async () => {
@@ -475,7 +477,8 @@ test('finalizeCompletedRun sends durable fallback after streamed empty retry out
     chatJid: 'telegram:1',
     runId: 'run-empty-streamed-retry',
     sessionKey: 'telegram:1',
-    result: EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE,
+    result:
+      'I hit a snag putting my reply together. Please send that again. (ref: a1b2c3)',
     streamed: false,
     usage: undefined,
     abortSignal: new AbortController().signal,
@@ -495,8 +498,12 @@ test('finalizeCompletedRun sends durable fallback after streamed empty retry out
     emitTuiAgentEvent: emitter.emitTuiAgentEvent,
   });
 
-  assert.deepEqual(sent, [EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE]);
-  assert.deepEqual(persisted, [EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE]);
+  assert.deepEqual(sent, [
+    'I hit a snag putting my reply together. Please send that again. (ref: a1b2c3)',
+  ]);
+  assert.deepEqual(persisted, [
+    'I hit a snag putting my reply together. Please send that again. (ref: a1b2c3)',
+  ]);
 });
 
 test('finalizeCompletedRun sanitizes evaluator verdict-shaped final output at delivery boundary', async () => {

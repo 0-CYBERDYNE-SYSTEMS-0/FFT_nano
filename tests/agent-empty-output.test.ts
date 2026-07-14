@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE,
-  applyNonHeartbeatEmptyOutputPolicy,
-} from '../src/agent-empty-output.js';
+import { applyNonHeartbeatEmptyOutputPolicy } from '../src/agent-empty-output.js';
 
 test('non-heartbeat empty first run retries and returns second non-empty run', async () => {
   let retries = 0;
@@ -22,7 +19,7 @@ test('non-heartbeat empty first run retries and returns second non-empty run', a
   assert.equal(outcome.finalRun.result, 'Recovered response');
 });
 
-test('non-heartbeat empty first + second runs return explicit fallback message', async () => {
+test('non-heartbeat empty first + second runs preserve empty output for delivery handling', async () => {
   const outcome = await applyNonHeartbeatEmptyOutputPolicy({
     isHeartbeatRun: false,
     firstRun: { result: '', streamed: false, ok: true },
@@ -30,11 +27,12 @@ test('non-heartbeat empty first + second runs return explicit fallback message',
   });
 
   assert.equal(outcome.retried, true);
-  assert.equal(outcome.finalRun.result, EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE);
+  assert.equal(outcome.finalRun.result, '   ');
   assert.equal(outcome.finalRun.ok, true);
+  assert.equal(outcome.finalRun.emptyOutputFallback, true);
 });
 
-test('non-heartbeat empty first + streamed empty second run returns explicit fallback message', async () => {
+test('non-heartbeat empty first + streamed empty second run preserves empty output for delivery handling', async () => {
   const outcome = await applyNonHeartbeatEmptyOutputPolicy({
     isHeartbeatRun: false,
     firstRun: { result: '', streamed: true, ok: true },
@@ -42,9 +40,10 @@ test('non-heartbeat empty first + streamed empty second run returns explicit fal
   });
 
   assert.equal(outcome.retried, true);
-  assert.equal(outcome.finalRun.result, EMPTY_NON_HEARTBEAT_OUTPUT_MESSAGE);
+  assert.equal(outcome.finalRun.result, '');
   assert.equal(outcome.finalRun.streamed, false);
   assert.equal(outcome.finalRun.ok, true);
+  assert.equal(outcome.finalRun.emptyOutputFallback, true);
 });
 
 test('heartbeat runs stay silent and do not trigger empty-output retry policy', async () => {
