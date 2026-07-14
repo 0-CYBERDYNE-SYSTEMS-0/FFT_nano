@@ -3,6 +3,7 @@
   "required": [
     "fft-coder-ops",
     "fft-debug",
+    "fft-host-ipc",
     "fft-setup",
     "fft-telegram-ops",
     "web-search"
@@ -17,6 +18,7 @@
     "fft-farm-bootstrap",
     "fft-farm-onboarding",
     "fft-farm-ops",
+    "fft-host-ipc",
     "fft-setup",
     "fft-telegram-ops",
     "loops",
