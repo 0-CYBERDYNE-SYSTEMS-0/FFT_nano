@@ -44,6 +44,10 @@ export interface ContainerConfig {
  *   I1: nothing in RunAuthority is writable by the agent subprocess.
  *   I4: operatorGrant is set exclusively by the host; the agent cannot influence it.
  */
+/**
+ * Host-derived run origin. Canonical list: KERNEL_RUN_ORIGINS in kernel-surface.ts.
+ * Adding a value is a deliberate kernel change.
+ */
 export type RunOrigin =
   | 'interactive-main'
   | 'subagent'

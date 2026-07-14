@@ -1,3 +1,4 @@
+import type { KernelIpcEnvelopeKind } from '../kernel-surface.js';
 import type {
   FarmActionRequest,
   MemoryActionRequest,
@@ -8,7 +9,8 @@ import type { HostEvent } from './host-events.js';
 
 export interface BoundaryEnvelope<TPayload = unknown> {
   id: string;
-  kind: 'message' | 'task' | 'action' | 'action_result';
+  /** @see KERNEL_IPC_ENVELOPE_KINDS — frozen host↔agent ABI. */
+  kind: KernelIpcEnvelopeKind;
   createdAt: string;
   sourceGroup: string;
   requestId?: string;
