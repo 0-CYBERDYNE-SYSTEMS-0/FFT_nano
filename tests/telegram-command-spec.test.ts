@@ -59,8 +59,8 @@ test('Telegram command normalization accepts aliases and bot-suffixed forms', ()
 });
 
 test('main chat help includes admin restart alias and non-main help does not', () => {
-  const mainHelp = formatHelpText(true);
-  const nonMainHelp = formatHelpText(false);
+  const mainHelp = formatHelpText(true, 'all');
+  const nonMainHelp = formatHelpText(false, 'all');
 
   assert.match(mainHelp, /\/delivery \[stream\|append\|off\|draft\]/);
   assert.match(nonMainHelp, /\/delivery \[stream\|append\|off\|draft\]/);
@@ -90,8 +90,8 @@ test('/reflect is a registered, normalizable, main-only command', () => {
   assert.equal(normalizeTelegramCommandToken('/reflect'), '/reflect');
   assert.equal(normalizeTelegramCommandToken('/reflect@TestBot'), '/reflect');
 
-  const mainHelp = formatHelpText(true);
-  const nonMainHelp = formatHelpText(false);
+  const mainHelp = formatHelpText(true, 'all');
+  const nonMainHelp = formatHelpText(false, 'all');
   assert.match(mainHelp, /\/reflect \[dry-run\] \[focus\]/);
   assert.doesNotMatch(nonMainHelp, /\/reflect \[dry-run\]/);
 });
@@ -125,7 +125,7 @@ test('VAL-WS6-007: /learning is registered in TELEGRAM_ADMIN_COMMANDS and normal
   );
 
   // Check /help text includes /learning
-  const mainHelp = formatHelpText(true);
+  const mainHelp = formatHelpText(true, 'all');
   assert.match(
     mainHelp,
     /\/learning/,

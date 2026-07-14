@@ -153,7 +153,10 @@ export interface TelegramCommandDeps {
   formatGroupsText: () => string;
   formatStatusText: (chatJid?: string) => string;
   formatLearningDigest: () => string;
-  formatHelpText: (isMainChat: boolean) => string;
+  formatHelpText: (
+    isMainChat: boolean,
+    helpType?: 'default' | 'all' | 'admin',
+  ) => string;
   formatUsageText: (chatJid: string, scope?: 'chat' | 'all') => string;
   formatActiveSubagentsText: () => string;
   summarizeTask: (taskId: string) => string;
@@ -2015,7 +2018,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/help') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      const responseText = deps.formatHelpText(isMainGroup);
+      const helpArg = rest[0]?.toLowerCase() || 'default';
+      const helpType =
+        helpArg === 'all' || helpArg === 'admin' ? helpArg : 'default';
+      const responseText = deps.formatHelpText(isMainGroup, helpType);
       deps.emitTuiChatEvent({
         runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
         sessionKey: deps.getSessionKeyForChat(m.chatJid),
@@ -2667,11 +2673,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           m.chatJid,
           cmd,
           false,
-          'main already configured',
+          'main already configured; recovery: edit or delete data/registered_groups.json to re-bootstrap',
         );
         await deps.sendMessage(
           m.chatJid,
-          'Main chat is already set. If you want to change it, edit data/registered_groups.json (or delete it to re-bootstrap).',
+          "This assistant already has an owner chat, so I can't switch from here. The owner can transfer control from the machine where I'm installed.",
         );
         return true;
       }
@@ -2694,8 +2700,8 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         await deps.sendMessage(
           m.chatJid,
           [
-            'This chat is now the main/admin channel.',
-            'Note: TELEGRAM_ADMIN_SECRET is not set yet; set it in .env and restart to lock future re-claim actions.',
+            "You're set — this chat is now the owner chat. I'll take instructions from you here.",
+            "Heads up: no setup code was configured yet, so this claim wasn't locked. The operator can set TELEGRAM_ADMIN_SECRET in .env and restart to prevent future re-claims.",
           ].join('\n'),
         );
         return true;
@@ -2709,7 +2715,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         await deps.sendMessage(
           m.chatJid,
-          'TELEGRAM_ADMIN_SECRET is not set on the host. Set it, restart, then run: /main <secret>',
+          "This needs the setup code from installation: /main <code>. You'll find it in the setup summary or the .env file on the machine running me.",
         );
         return true;
       }
@@ -2723,7 +2729,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         await deps.sendMessage(
           m.chatJid,
-          'Secret mismatch. Usage: /main <admin-secret>  (check TELEGRAM_ADMIN_SECRET in .env)',
+          "This needs the setup code from installation: /main <code>. You'll find it in the setup summary or the .env file on the machine running me.",
         );
         return true;
       }
@@ -2735,7 +2741,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
       await deps.sendMessage(
         m.chatJid,
-        'This chat is now the main/admin channel.',
+        "You're set — this chat is now the owner chat. I'll take instructions from you here.",
       );
       return true;
     }

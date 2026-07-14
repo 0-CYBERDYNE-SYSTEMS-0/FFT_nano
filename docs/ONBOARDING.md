@@ -127,7 +127,7 @@ Runtime gate env toggles:
 9. Records bootstrap seeding in `.fft_nano/workspace-state.json`.
 10. Records wizard run metadata in `.fft_nano/wizard-state.json`.
 11. Updates the selected env file (`--env-path`) for provider/channel/remote URL settings.
-12. Telegram `/main` first-claim shortcut: if no main chat exists yet and `TELEGRAM_ADMIN_SECRET` is unset, a direct Telegram DM can claim main with `/main`; set `TELEGRAM_ADMIN_SECRET` afterward and restart.
+12. Telegram owner-chat claim: the wizard auto-generates `TELEGRAM_ADMIN_SECRET` when it's absent and writes it to the env file, printing a one-time `/main <secret>` instruction so the operator can claim the owner chat after the service starts. If `TELEGRAM_ADMIN_SECRET` is somehow still unset when the bot starts, the first direct Telegram DM to claim main with `/main` succeeds unlocked; set `TELEGRAM_ADMIN_SECRET` afterward and restart to lock future re-claim attempts.
 
 ## Privileges
 

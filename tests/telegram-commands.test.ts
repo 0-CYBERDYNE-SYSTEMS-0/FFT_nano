@@ -307,6 +307,116 @@ test('handleTelegramCommand /start tells an unapproved chat the owner was notifi
   assert.match(text, /let the owner know/);
 });
 
+test('handleTelegramCommand /main succeeds with the correct setup code and uses plain-language confirmation', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.hasMainGroup = () => false;
+  let promoted: string | undefined;
+  deps.promoteChatToMain = (chatJid) => {
+    promoted = chatJid;
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Owner DM',
+    content: '/main secret',
+  });
+
+  assert.equal(handled, true);
+  assert.equal(promoted, 'telegram:1');
+  assert.match(
+    deps.sent[0]?.text || '',
+    /this chat is now the owner chat/i,
+  );
+  assert.deepEqual(deps.audits.at(-1), {
+    chatJid: 'telegram:1',
+    command: '/main',
+    allowed: true,
+    reason: 'ok',
+  });
+});
+
+test('handleTelegramCommand /main without the setup code explains plainly and does not leak the secret', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.hasMainGroup = () => false;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Owner DM',
+    content: '/main',
+  });
+
+  assert.equal(handled, true);
+  const text = deps.sent[0]?.text || '';
+  assert.match(text, /setup code from installation/i);
+  assert.doesNotMatch(text, /secret/);
+});
+
+test('handleTelegramCommand /main when already claimed refuses without exposing file paths and logs recovery guidance', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+    audits: Array<{
+      chatJid: string;
+      command: string;
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  deps.hasMainGroup = () => true;
+  deps.state.registeredGroups['telegram:main'] = {
+    jid: 'telegram:main',
+    name: 'Main',
+    folder: 'main',
+  };
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:2',
+    chatName: 'Latecomer',
+    content: '/main secret',
+  });
+
+  assert.equal(handled, true);
+  const text = deps.sent[0]?.text || '';
+  assert.doesNotMatch(text, /\.json/);
+  assert.doesNotMatch(text, /data\//);
+  assert.match(text, /already has an owner chat/i);
+  const audit = deps.audits.at(-1);
+  assert.equal(audit?.allowed, false);
+  assert.match(audit?.reason || '', /registered_groups\.json/);
+});
+
+test('handleTelegramCommand /main first-claim bootstrap without a configured secret reads plainly', async () => {
+  const deps = createBaseDeps() as TelegramCommandDeps & {
+    sent: Array<{ chatJid: string; text: string }>;
+  };
+  deps.constants.telegramAdminSecret = undefined;
+  deps.hasMainGroup = () => false;
+
+  const handlers = createTelegramCommandHandlers(deps);
+  const handled = await handlers.handleTelegramCommand({
+    chatJid: 'telegram:1',
+    chatName: 'Owner DM',
+    content: '/main',
+  });
+
+  assert.equal(handled, true);
+  const text = deps.sent[0]?.text || '';
+  assert.match(text, /this chat is now the owner chat/i);
+  assert.match(text, /no setup code was configured/i);
+});
+
 test('handleTelegramCallbackQuery routes admin panel actions for main chat', async () => {
   const deps = createBaseDeps() as TelegramCommandDeps & {
     sent: Array<{ chatJid: string; text: string }>;
