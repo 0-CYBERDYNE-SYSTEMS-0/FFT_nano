@@ -74,6 +74,9 @@ export interface OnboardSummary {
   installDaemon: boolean;
   remoteUrl?: string;
   gatewayPort?: number;
+  telegramConfigured: boolean;
+  /** Freshly-generated TELEGRAM_ADMIN_SECRET; unset if one already existed. */
+  telegramAdminSecret?: string;
 }
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<
@@ -106,10 +109,12 @@ function hasMeaningfulEnvValue(raw: string | undefined): boolean {
 function ensureAdminSecret(
   updates: Record<string, string | undefined>,
   envMap: Record<string, string>,
-): void {
+): string | undefined {
   const existing = envMap.TELEGRAM_ADMIN_SECRET;
-  if (hasMeaningfulEnvValue(existing)) return;
-  updates.TELEGRAM_ADMIN_SECRET = randomBytes(24).toString('hex');
+  if (hasMeaningfulEnvValue(existing)) return undefined;
+  const secret = randomBytes(24).toString('hex');
+  updates.TELEGRAM_ADMIN_SECRET = secret;
+  return secret;
 }
 
 function getSeedRuntime(
@@ -865,6 +870,8 @@ export async function runOnboarding(
     throw new Error('Assistant name cannot be empty');
 
   const wizard = await resolveWizardSelections(opts, envMap);
+  let generatedAdminSecret: string | undefined;
+  let telegramConfigured = false;
 
   if (wizard.mode === 'local') {
     const updates: Record<string, string | undefined> = {
@@ -876,7 +883,7 @@ export async function runOnboarding(
       CONTAINER_RUNTIME: wizard.runtime,
       FFT_NANO_ALLOW_HOST_RUNTIME: undefined,
     };
-    ensureAdminSecret(updates, envMap);
+    generatedAdminSecret = ensureAdminSecret(updates, envMap);
 
     if (wizard.authChoice !== 'skip') {
       const provider = wizard.authChoice;
@@ -914,6 +921,9 @@ export async function runOnboarding(
         updates.WHATSAPP_ENABLED = wizard.whatsappEnabled ? '1' : '0';
       }
     }
+    telegramConfigured = hasMeaningfulEnvValue(
+      wizard.telegramToken ?? envMap.TELEGRAM_BOT_TOKEN,
+    );
 
     upsertDotEnv(envPath, updates);
   } else {
@@ -955,6 +965,8 @@ export async function runOnboarding(
     installDaemon: wizard.installDaemon,
     remoteUrl: wizard.remoteUrl,
     gatewayPort: wizard.gatewayPort,
+    telegramConfigured,
+    telegramAdminSecret: generatedAdminSecret,
   };
   writeWizardMetadata(workspace, summary);
   if (wizard.installDaemon) {
@@ -1012,21 +1024,28 @@ async function main(): Promise<void> {
         : result.hatch === 'tui'
           ? 'Next hatch: run `fft tui` (or `./scripts/start.sh tui`) to attach terminal UI.'
           : 'Next hatch: run either `fft tui` or `fft web` when you are ready.';
-    console.log(
-      [
-        'Onboarding complete.',
-        `Workspace: ${result.workspace}`,
-        `Operator: ${result.operator}`,
-        `Assistant: ${result.assistantName}`,
-        `Flow: ${result.flow}`,
-        `Mode: ${result.mode}`,
-        `Runtime: ${result.runtime}`,
-        `Auth: ${result.authChoice}`,
-        `Hatch: ${result.hatch}`,
-        `Install daemon: ${result.installDaemon ? 'yes' : 'no'}`,
-        hatchHint,
-      ].join('\n'),
-    );
+    const lines = [
+      'Onboarding complete.',
+      `Workspace: ${result.workspace}`,
+      `Operator: ${result.operator}`,
+      `Assistant: ${result.assistantName}`,
+      `Flow: ${result.flow}`,
+      `Mode: ${result.mode}`,
+      `Runtime: ${result.runtime}`,
+      `Auth: ${result.authChoice}`,
+      `Hatch: ${result.hatch}`,
+      `Install daemon: ${result.installDaemon ? 'yes' : 'no'}`,
+      hatchHint,
+    ];
+    if (result.telegramConfigured && result.telegramAdminSecret) {
+      lines.push(
+        '',
+        'Telegram is configured. Once the service is running, claim your owner chat:',
+        `  DM the bot: /main ${result.telegramAdminSecret}`,
+        '(This code is also saved as TELEGRAM_ADMIN_SECRET in your .env file.)',
+      );
+    }
+    console.log(lines.join('\n'));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`onboard error: ${msg}`);
