@@ -52,20 +52,51 @@ class TelegramApiError extends Error {
   method: string;
   statusCode?: number;
   retryAfterSeconds?: number;
+  // True when we never got an HTTP response at all (fetch threw: timeout,
+  // connection reset, etc). In that state we have no signal whether Telegram
+  // actually received and processed the request — retrying a message-creating
+  // call here risks delivering a genuine duplicate. False/undefined means
+  // Telegram itself answered (even with an error), which is safe to retry.
+  networkLevel?: boolean;
 
   constructor(opts: {
     method: string;
     message: string;
     statusCode?: number;
     retryAfterSeconds?: number;
+    networkLevel?: boolean;
   }) {
     super(opts.message);
     this.name = 'TelegramApiError';
     this.method = opts.method;
     this.statusCode = opts.statusCode;
     this.retryAfterSeconds = opts.retryAfterSeconds;
+    this.networkLevel = opts.networkLevel;
   }
 }
+
+// Methods that create a new user-visible message. Telegram's Bot API has no
+// idempotency key for these, so retrying one after a response-uncertain
+// failure can deliver the same content twice. Edit/delete/no-op calls are
+// safe to retry (re-editing to the same text, or deleting twice, is harmless).
+const TELEGRAM_MESSAGE_CREATING_METHODS = new Set([
+  'sendMessage',
+  'sendRichMessage',
+  'sendMessageDraft',
+  'sendRichMessageDraft',
+  'sendPhoto',
+  'sendDocument',
+  'sendVideo',
+  'sendAudio',
+  'sendVoice',
+  'sendAnimation',
+  'sendSticker',
+  'sendMediaGroup',
+  'sendPoll',
+  'sendLocation',
+  'sendContact',
+  'sendDice',
+]);
 
 export function isTelegramJid(jid: string): boolean {
   return jid.startsWith(TELEGRAM_JID_PREFIX);
@@ -764,6 +795,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       throw new TelegramApiError({
         method,
         message: `Telegram API request failed (${method}): ${msg}`,
+        networkLevel: true,
       });
     }
 
@@ -787,6 +819,11 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
         message: description,
         statusCode: body?.error_code || res.status || undefined,
         retryAfterSeconds: retryAfter,
+        // Telegram's HTTP layer accepted the request (2xx) but we could not
+        // parse a definitive ok:false out of the body — we don't actually
+        // know whether the send was processed, same ambiguity as a network
+        // failure.
+        networkLevel: res.ok && body === null,
       });
     }
     return body.result;
@@ -832,7 +869,17 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     return false;
   }
 
-  function isRetryableTelegramError(err: unknown): boolean {
+  function isRetryableTelegramError(err: unknown, method: string): boolean {
+    // A network-level failure means we never got a definitive answer from
+    // Telegram — the request may have already been processed. Retrying a
+    // message-creating call in that state risks delivering a genuine
+    // duplicate (Telegram's send/edit endpoints have no idempotency key), so
+    // decide purely by method rather than trying to pattern-match the error
+    // text. Non-creating calls (edit/delete/etc) are safe to retry either way
+    // — re-applying the same edit or deleting twice is a no-op.
+    if (err instanceof TelegramApiError && err.networkLevel === true) {
+      return !TELEGRAM_MESSAGE_CREATING_METHODS.has(method);
+    }
     if (err instanceof TelegramApiError) {
       const statusCode = err.statusCode;
       if (statusCode === 429) return true;
@@ -876,7 +923,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       } catch (err) {
         lastErr = err;
         if (
-          !isRetryableTelegramError(err) ||
+          !isRetryableTelegramError(err, method) ||
           attempt >= TELEGRAM_RETRY_ATTEMPTS
         ) {
           throw err;
