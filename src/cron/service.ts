@@ -444,6 +444,11 @@ export async function runScheduledTaskV2(
           isMain,
           isScheduledTask: true,
           noContinue: resolveNoContinueForTask(task),
+          // Isolated tasks must not displace the group's most-recent pi
+          // session (interactive `-c` would resume the task conversation).
+          ...(resolveNoContinueForTask(task)
+            ? { sessionPersistence: 'ephemeral' as const }
+            : {}),
           effectiveTimezone,
           // Host maps DB created_by → boolean; never pass agent strings into mint.
           hostOperatorGrant: task.created_by === 'operator',
