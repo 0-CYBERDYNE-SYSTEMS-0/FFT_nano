@@ -62,6 +62,10 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { APP_VERSION, SERVICE_STARTED_AT } from './app-state.js';
 import { GIT_INFO } from './state-persistence.js';
 import { getContainerRuntime } from './container-runtime.js';
+import {
+  collectAwakeActivitySnapshot,
+  formatAwakeActivitySection,
+} from './awake-activity.js';
 import { formatStatusReport } from './status-report.js';
 import { readMutationAuditEventsLast7Days } from './mutation-audit.js';
 import {
@@ -877,6 +881,7 @@ export function formatStatusText(
       durableActiveRuns.length > 0 ||
       activeCoderRuns.size > 0;
   const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  const awakeSnapshot = collectAwakeActivitySnapshot();
   return formatStatusReport({
     assistantName: ASSISTANT_NAME,
     version,
@@ -890,6 +895,7 @@ export function formatStatusText(
     whatsappConnected: Boolean(state.sock?.user),
     registeredGroupCount: Object.keys(state.registeredGroups).length,
     mainGroupName: mainGroup?.name,
+    awakeActivitySection: formatAwakeActivitySection(awakeSnapshot),
     tasks: {
       active,
       paused,
