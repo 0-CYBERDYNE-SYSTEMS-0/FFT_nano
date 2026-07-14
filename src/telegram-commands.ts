@@ -153,7 +153,10 @@ export interface TelegramCommandDeps {
   formatGroupsText: () => string;
   formatStatusText: (chatJid?: string) => string;
   formatLearningDigest: () => string;
-  formatHelpText: (isMainChat: boolean) => string;
+  formatHelpText: (
+    isMainChat: boolean,
+    helpType?: 'default' | 'all' | 'admin',
+  ) => string;
   formatUsageText: (chatJid: string, scope?: 'chat' | 'all') => string;
   formatActiveSubagentsText: () => string;
   summarizeTask: (taskId: string) => string;
@@ -1980,7 +1983,10 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/help') {
       deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
-      const responseText = deps.formatHelpText(isMainGroup);
+      const helpArg = rest[0]?.toLowerCase() || 'default';
+      const helpType =
+        helpArg === 'all' || helpArg === 'admin' ? helpArg : 'default';
+      const responseText = deps.formatHelpText(isMainGroup, helpType);
       deps.emitTuiChatEvent({
         runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
         sessionKey: deps.getSessionKeyForChat(m.chatJid),
