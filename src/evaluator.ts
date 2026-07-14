@@ -602,6 +602,10 @@ export function buildEvaluatorContainerInput(
     isMain: ctx.isMain === true,
     isEvaluatorRun: true,
     noContinue: true,
+    // The QA pass must not become the group's most-recent pi session, or a
+    // later interactive `-c` run resumes the reviewer conversation instead
+    // of the user's chat.
+    sessionPersistence: 'ephemeral',
     toolMode: 'read_only',
     codingHint: 'none',
     workspaceDirOverride: ctx.workspaceDirOverride,

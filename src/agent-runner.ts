@@ -104,6 +104,8 @@ export interface AgentRunnerDeps {
   ) => void;
   setTyping: (chatJid: string, isTyping: boolean) => Promise<void>;
   sendMessage: (chatJid: string, text: string) => Promise<boolean>;
+  // Test seam: overrides the container spawn for runAgent input assertions.
+  runContainerAgentImpl?: typeof runContainerAgent;
 }
 
 let _deps: AgentRunnerDeps | null = null;
@@ -644,13 +646,21 @@ export async function runAgent(
       codingHint,
       requestId,
       isHeartbeatTask: options.isHeartbeatTask === true,
+      // Heartbeat polls must never own or become the group's most-recent pi
+      // session — a later interactive `-c` run would resume the heartbeat
+      // conversation and answer HEARTBEAT_OK to real user messages.
+      ...(options.isHeartbeatTask === true
+        ? { sessionPersistence: 'ephemeral' as const }
+        : {}),
       extraSystemPrompt,
       provider: runtimePrefs.provider,
       model: runtimePrefs.model,
       thinkLevel: runtimePrefs.thinkLevel,
       reasoningLevel: runtimePrefs.reasoningLevel,
       verboseMode: runtimePrefs.verboseMode,
-      noContinue: runtimePrefs.nextRunNoContinue === true,
+      noContinue:
+        options.isHeartbeatTask === true ||
+        runtimePrefs.nextRunNoContinue === true,
       suppressPreviewStreaming:
         options.suppressPreviewStreaming === true ||
         runtimePrefs.telegramDeliveryMode === 'off',
@@ -716,14 +726,14 @@ export async function runAgent(
       }
       let output;
       try {
-        output = await runContainerAgent(
+        output = await (getDeps().runContainerAgentImpl ?? runContainerAgent)(
           group,
           {
             ...input,
             prompt: promptOverride || input.prompt,
             requestId: attemptRequestId,
             verboseMode: runPrefs.verboseMode,
-            noContinue: runPrefs.nextRunNoContinue === true,
+            noContinue: input.noContinue || runPrefs.nextRunNoContinue === true,
             suppressPreviewStreaming:
               suppressPreviewStreaming || input.suppressPreviewStreaming,
             senderRole: options.senderRole,
