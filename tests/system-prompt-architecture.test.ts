@@ -89,7 +89,9 @@ test('buildSystemPrompt injects trusted metadata, overlay, durable canon, and re
   assert.equal(report.mode, 'full');
   assert.match(text, /## Inbound Context \(trusted metadata\)/);
   assert.match(text, /## Host Context Overlay/);
-  assert.match(text, /## Memory Action IPC/);
+  assert.match(text, /## Host IPC/);
+  assert.match(text, /skill `fft-host-ipc`/);
+  assert.doesNotMatch(text, /## Memory Action IPC/);
   assert.match(text, /## Completion Gate/);
   assert.match(
     text,
@@ -678,17 +680,19 @@ test('buildSystemPrompt injects compact skills catalog only for interactive runs
   assert.doesNotMatch(scheduled.text, /## Skills Catalog/);
 });
 
-test('buildSystemPrompt documents run_progress messaging IPC shape', () => {
+test('buildSystemPrompt points at fft-host-ipc skill instead of inlining IPC schemas', () => {
   const { text } = buildSystemPrompt(
     makeInput({ requestId: 'run-123', reasoningLevel: 'stream' }),
     DEFAULT_PATHS,
     { readFileIfExists: () => null },
   );
 
-  assert.match(text, /"type":"run_progress"/);
-  assert.match(text, /"requestId":"<current request_id>"/);
-  assert.match(text, /"phase":"thinking\|tool_running\|stale"/);
+  assert.match(text, /## Host IPC/);
+  assert.match(text, /fft-host-ipc/);
+  assert.doesNotMatch(text, /## Messaging IPC/);
+  assert.doesNotMatch(text, /"type":"run_progress"/);
   assert.match(text, /concise run_progress updates/);
+  assert.match(text, /schema: skill fft-host-ipc/);
 });
 
 test('buildSystemPrompt splits stable/ephemeral layers and tracks mtimes for cache invalidation', () => {
