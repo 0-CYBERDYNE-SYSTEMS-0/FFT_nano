@@ -9,7 +9,7 @@ import {
 
 test('allows short normal summaries', () => {
   const text =
-    'Done. Wrote the prototype to /Users/me/nano/projects/foo/index.html and opened preview.';
+    'Done. Wrote the prototype to /Users/user/nano/projects/foo/index.html and opened preview.';
   const result = guardOutboundAgentText(text);
   assert.equal(result.allow, true);
   assert.equal(result.text, text);
