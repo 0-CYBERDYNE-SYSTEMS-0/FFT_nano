@@ -1562,7 +1562,12 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       return;
     }
 
-    if (typingLoops.has(chatId)) return;
+    // Already looping for this chat: force an immediate pulse so a re-entrant
+    // setTyping(true) still renews the client indicator.
+    if (typingLoops.has(chatId)) {
+      pulseTypingIfActive(chatId);
+      return;
+    }
 
     const sendTypingAction = async (): Promise<void> => {
       await apiPostWithRetry('sendChatAction', {
@@ -1582,7 +1587,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
         current.inFlight = true;
         void sendTypingAction()
           .catch((err) => {
-            logger.debug(
+            logger.warn(
               {
                 chatJid,
                 err: err instanceof Error ? err.message : String(err),
@@ -1603,26 +1608,29 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       inFlight: false,
       needsRefresh: false,
     };
+    // Keep the process timer alive for the whole agent run (do not unref).
     typingLoops.set(chatId, state);
 
-    if (!state.inFlight) {
-      state.inFlight = true;
-      void sendTypingAction()
-        .catch((err) => {
-          logger.warn(
-            { chatJid, err: err instanceof Error ? err.message : String(err) },
-            'Failed to start Telegram typing indicator',
-          );
-        })
-        .finally(() => {
-          const latest = typingLoops.get(chatId);
-          if (!latest) return;
-          latest.inFlight = false;
-          if (latest.needsRefresh) {
-            latest.needsRefresh = false;
-            pulseTypingIfActive(chatId);
-          }
-        });
+    // Await the first pulse so typing is on the wire before the agent starts.
+    // Refresh ticks stay fire-and-forget so they cannot stall the run loop.
+    state.inFlight = true;
+    try {
+      await sendTypingAction();
+      logger.debug({ chatJid }, 'Telegram typing indicator started');
+    } catch (err) {
+      logger.warn(
+        { chatJid, err: err instanceof Error ? err.message : String(err) },
+        'Failed to start Telegram typing indicator',
+      );
+    } finally {
+      const latest = typingLoops.get(chatId);
+      if (latest) {
+        latest.inFlight = false;
+        if (latest.needsRefresh) {
+          latest.needsRefresh = false;
+          pulseTypingIfActive(chatId);
+        }
+      }
     }
   }
 
