@@ -405,9 +405,43 @@ test('processMessage auto-routes likely long media work to durable long run', as
   assert.equal(normalRuns, 0);
   assert.equal(longRuns.length, 1);
   assert.match(longRuns[0]?.prompt || '', /Render a video with TTS/);
-  assert.deepEqual(sent, [
-    "Started long run run-long-1. I'll post the result here.",
-  ]);
+  // Start notice is owned by long-run-service (send + persist), not dispatch.
+  assert.deepEqual(sent, []);
+});
+
+test('processMessage does not auto-route plain research into a durable long run', async () => {
+  const longRuns: Array<{ chatJid: string; prompt: string }> = [];
+  let normalRuns = 0;
+  const dispatcher = createMessageDispatcher(
+    createDispatcherDeps({
+      startLongRun: async (chatJid, prompt) => {
+        longRuns.push({ chatJid, prompt });
+        return { id: 'run-should-not-start' };
+      },
+      runAgent: async () => {
+        normalRuns += 1;
+        return {
+          ok: true,
+          result: 'interactive research answer',
+          streamed: false,
+        };
+      },
+    }),
+  );
+
+  await dispatcher.processMessage({
+    id: 'm-research',
+    chat_jid: 'telegram:1',
+    sender: 'telegram:1',
+    sender_name: 'User',
+    content:
+      'search web and research agent harnesses, then write a deep dive report for farmers',
+    timestamp: '2026-05-25T00:00:00.000Z',
+    is_from_me: 0,
+  });
+
+  assert.equal(longRuns.length, 0);
+  assert.equal(normalRuns, 1);
 });
 
 test('processMessage continues runner timeout as exactly one durable long run', async () => {
@@ -460,12 +494,19 @@ test('processMessage continues runner timeout as exactly one durable long run', 
     longRuns[0]?.options?.continuationPreamble || '',
     /Previous run chat-timeout-1 timed out/,
   );
+  assert.match(longRuns[0]?.options?.startNotice || '', /took longer/i);
+  assert.match(
+    longRuns[0]?.options?.startNotice || '',
+    /Continuing as long run <id>/i,
+  );
+  assert.match(longRuns[0]?.options?.startNotice || '', /\(ref: [a-f0-9]{6}\)/);
+  assert.doesNotMatch(longRuns[0]?.options?.startNotice || '', /Pi runner|\bms\b/i);
+  // First timeout continues via startNotice (service-owned). Second attempt is a
+  // plain timeout failure without starting another long run.
+  assert.equal(sent.length, 1);
   assert.match(sent[0] || '', /took longer/i);
-  assert.match(sent[0] || '', /Continuing as long run run-cont-1\./i);
-  assert.match(sent[0] || '', /\(ref: [a-f0-9]{6}\)/);
+  assert.doesNotMatch(sent[0] || '', /Continuing as long run/i);
   assert.doesNotMatch(sent[0] || '', /Pi runner|\bms\b/i);
-  assert.match(sent[1] || '', /took longer/i);
-  assert.doesNotMatch(sent[1] || '', /Pi runner|\bms\b/i);
 });
 
 test('finalizeCompletedRun sends durable fallback after streamed empty retry output', async () => {
