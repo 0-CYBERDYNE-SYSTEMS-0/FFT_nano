@@ -38,6 +38,8 @@ test('normalizeThinkLevel maps aliases', () => {
 
 test('normalizeTelegramDeliveryMode maps supported values', () => {
   assert.equal(normalizeTelegramDeliveryMode('off'), 'off');
+  assert.equal(normalizeTelegramDeliveryMode('status'), 'status');
+  assert.equal(normalizeTelegramDeliveryMode('milestones'), 'status');
   assert.equal(normalizeTelegramDeliveryMode('stream'), 'stream');
   assert.equal(normalizeTelegramDeliveryMode('partial'), 'stream');
   assert.equal(normalizeTelegramDeliveryMode('block'), 'append');

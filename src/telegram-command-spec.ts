@@ -222,7 +222,7 @@ export function formatHelpText(
     '/model [provider/model|reset] - show/set chat model',
     '/think [off|minimal|low|medium|high|xhigh] - set thinking level',
     '/reasoning [off|on|stream] - set reasoning visibility mode',
-    '/delivery [stream|append|off|draft] - set Telegram text delivery mode',
+    '/delivery [status|stream|append|off|draft] - set Telegram text delivery mode',
     '/verbose [/v] [off|new|all|verbose] - cycle or set tool progress mode',
     '/new - start fresh session on next run',
     '/reset - alias for /new',

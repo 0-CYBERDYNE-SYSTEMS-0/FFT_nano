@@ -9,6 +9,7 @@ import {
   formatToolProgressMessage,
   type ToolProgressEvent,
 } from './format-tools.js';
+import { guardOutboundAgentText } from '../outbound-text-guard.js';
 
 const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
 const MAX_FAILURES_BEFORE_DISABLE = 4;
@@ -20,6 +21,18 @@ const MAX_TOOL_PROGRESS_LINES = 12;
 // Below this run age, status text never spawns its own bubble — quick turns stay
 // a single content bubble with no progress ceremony. See updateActivity().
 const DEFAULT_ACTIVITY_SPAWN_THRESHOLD_MS = 2_500;
+// Under /delivery status: milestone-only status lines, debounced.
+const STATUS_MILESTONE_MIN_INTERVAL_MS = 6_000;
+const STATUS_MILESTONE_PHASES = new Set([
+  'spawn',
+  'tool_running',
+  'waiting_permission',
+  'retry_fresh',
+  'retry_delay',
+  'retry_provider_switch',
+  'stale',
+  'external_progress',
+]);
 
 function deriveStreamDraftId(seed: string): number {
   const input = seed.trim() || `draft-${Date.now()}`;
@@ -118,7 +131,10 @@ export class StreamConsumer {
   private draftId: number | null = null;
   private draftMode = false;
   private appendMode = false;
+  private statusMode = false;
   private appendSourceText = '';
+  private lastMilestoneAt = 0;
+  private lastMilestoneKey = '';
 
   private readonly label: string;
   private readonly heartbeatMs: number;
@@ -154,11 +170,13 @@ export class StreamConsumer {
       }
     }
     this.appendMode = config.deliveryMode === 'append';
+    this.statusMode = config.deliveryMode === 'status';
     this.draftMode =
       config.deliveryMode === 'draft' &&
       this.parseTelegramChatId() > 0 &&
       typeof config.adapter.sendDraft === 'function' &&
       config.adapter.supportsDraftStreaming?.(config.chatId) !== false;
+    // off: no activity. status/stream/append/draft: activity block allowed.
     this.twoBlock = config.deliveryMode !== 'off';
     this.draftId = this.draftMode
       ? config.draftId ||
@@ -168,8 +186,19 @@ export class StreamConsumer {
 
   async onDelta(text: string): Promise<void> {
     if (this.completed) return;
-    if (this.config.deliveryMode === 'off') return;
-    const nextText = this.appendToolTrailFooter(text);
+    // off + status: no assistant monologue streaming
+    if (
+      this.config.deliveryMode === 'off' ||
+      this.config.deliveryMode === 'status'
+    ) {
+      return;
+    }
+    const guarded = guardOutboundAgentText(text);
+    if (!guarded.allow) {
+      // Never stream tool dumps / full-file bodies into the preview bubble.
+      return;
+    }
+    const nextText = this.appendToolTrailFooter(guarded.text);
 
     if (this.appendMode) {
       this.answerChain = this.answerChain
@@ -340,14 +369,15 @@ export class StreamConsumer {
     }
 
     if (finalText && this.messageId) {
+      const guarded = guardOutboundAgentText(finalText);
       const result = await this.config.adapter.editMessage(
         this.config.chatId,
         this.messageId,
-        finalText,
+        guarded.text,
         true,
       );
       if (result.success) {
-        this.lastText = finalText;
+        this.lastText = guarded.text;
       }
     }
 
@@ -470,6 +500,43 @@ export class StreamConsumer {
     } catch {
       this.recordFailure();
     }
+  }
+
+  /**
+   * Under /delivery status: only milestone phases, debounced, so Telegram is
+   * not flooded with thinking ticks. Escape-hatch modes keep full status flow.
+   */
+  private allowStatusEmit(phase: string, detail?: string): boolean {
+    if (!this.statusMode) return true;
+    if (phase === 'thinking') return false;
+    if (phase.startsWith('still_') || phase === 'heartbeat') {
+      // Heartbeat “still running” is useful; allow with normal interval only.
+      const now = Date.now();
+      if (now - this.lastMilestoneAt < STATUS_MILESTONE_MIN_INTERVAL_MS) {
+        return false;
+      }
+      this.lastMilestoneAt = now;
+      this.lastMilestoneKey = phase;
+      return true;
+    }
+    if (!STATUS_MILESTONE_PHASES.has(phase)) return false;
+    const key = `${phase}:${detail || ''}`;
+    const now = Date.now();
+    const always =
+      phase === 'spawn' ||
+      phase === 'waiting_permission' ||
+      phase === 'retry_fresh' ||
+      phase === 'stale' ||
+      phase === 'retry_exhausted';
+    if (!always) {
+      if (key === this.lastMilestoneKey) return false;
+      if (now - this.lastMilestoneAt < STATUS_MILESTONE_MIN_INTERVAL_MS) {
+        return false;
+      }
+    }
+    this.lastMilestoneAt = now;
+    this.lastMilestoneKey = key;
+    return true;
   }
 
   /**
@@ -729,6 +796,7 @@ export class StreamConsumer {
     });
 
     if (this.config.deliveryMode === 'off') return;
+    if (!this.allowStatusEmit(phase, detail)) return;
 
     // Two-block mode: status/progress churn goes to its own Activity bubble so
     // it never overwrites the content bubble. Other modes keep the legacy path.
@@ -761,7 +829,9 @@ export class StreamConsumer {
       } else {
         text = `${this.label} status: Still reasoning about the task (${elapsed}s).`;
       }
-      this.emitStatusText(phase, text, this.heartbeatDetail);
+      // Distinct phase so /delivery status can allow heartbeats but suppress
+      // one-shot "thinking" chatter.
+      this.emitStatusText('heartbeat', text, this.heartbeatDetail);
     }, this.heartbeatMs);
   }
 

@@ -209,7 +209,7 @@ interface SessionPrefs {
   thinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
   verboseMode?: VerboseMode;
-  telegramDeliveryMode?: 'stream' | 'append' | 'off' | 'draft';
+  telegramDeliveryMode?: 'status' | 'stream' | 'append' | 'off' | 'draft';
 }
 
 type SendMessageStatus = 'sent' | 'queued' | 'busy';
@@ -360,7 +360,7 @@ function helpText(): string {
     '/think <off|minimal|low|medium|high|xhigh>',
     '/reasoning <off|on|stream>',
     '/verbose [off|new|all|verbose]',
-    '/delivery <stream|append|off|draft>',
+    '/delivery <status|stream|append|off|draft>',
     '/mirror <on|off>',
     '/usage [all]',
     '/queue [mode/debounce/cap/drop]',
@@ -864,13 +864,17 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
       case 'delivery': {
         if (!args) {
           chatLog.addSystem(
-            `Telegram delivery: ${sessionPrefs.telegramDeliveryMode || 'stream'}`,
+            `Telegram delivery: ${sessionPrefs.telegramDeliveryMode || 'status'}`,
           );
           break;
         }
         const value = args.trim().toLowerCase();
-        if (!['stream', 'append', 'off', 'draft'].includes(value)) {
-          chatLog.addSystem('usage: /delivery <stream|append|off|draft>');
+        if (
+          !['status', 'stream', 'append', 'off', 'draft'].includes(value)
+        ) {
+          chatLog.addSystem(
+            'usage: /delivery <status|stream|append|off|draft>',
+          );
           break;
         }
         await client.request('sessions.patch', {
@@ -878,6 +882,7 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
           telegramDeliveryMode: value,
         });
         sessionPrefs.telegramDeliveryMode = value as
+          | 'status'
           | 'stream'
           | 'append'
           | 'off'

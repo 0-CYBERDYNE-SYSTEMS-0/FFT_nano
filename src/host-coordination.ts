@@ -317,7 +317,10 @@ export function pruneTelegramHostStreamedRuns(): void {
 }
 
 export function getTelegramDeliveryMode(chatJid: string): TelegramDeliveryMode {
-  return state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'stream';
+  const raw = state.chatRunPreferences[chatJid]?.telegramDeliveryMode;
+  if (!raw || raw === 'status') return 'status';
+  if (raw === 'partial') return 'stream';
+  return raw;
 }
 
 function canUseTelegramNativeDraft(_chatJid: string): boolean {
@@ -525,6 +528,8 @@ export async function processHostEvent(
 
       const deliveryMode = getTelegramDeliveryMode(event.chatJid);
       if (deliveryMode === 'off') return;
+      // status: milestones only via StreamConsumer when active; no orphan spam.
+      if (deliveryMode === 'status') return;
       if (deliveryMode === 'append') {
         await state.telegramBot.sendMessage(event.chatJid, event.text);
         logger.debug(

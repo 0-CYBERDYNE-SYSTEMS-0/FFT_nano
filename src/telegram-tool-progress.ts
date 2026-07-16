@@ -142,8 +142,10 @@ export function shouldUseTelegramPreviewToolTrail(params: {
   deliveryMode: TelegramDeliveryMode;
   verboseMode: VerboseMode;
 }): boolean {
+  // status mode has no content preview bubble to attach a trail to.
   return (
     params.deliveryMode !== 'off' &&
+    params.deliveryMode !== 'status' &&
     (params.verboseMode === 'new' ||
       params.verboseMode === 'all' ||
       params.verboseMode === 'verbose')
@@ -154,8 +156,10 @@ export function shouldUseStandaloneTelegramToolProgress(params: {
   deliveryMode: TelegramDeliveryMode;
   verboseMode: VerboseMode;
 }): boolean {
+  // status mode uses StreamConsumer milestones only (not per-tool spam).
   return (
     params.deliveryMode !== 'off' &&
+    params.deliveryMode !== 'status' &&
     (params.verboseMode === 'all' || params.verboseMode === 'verbose')
   );
 }

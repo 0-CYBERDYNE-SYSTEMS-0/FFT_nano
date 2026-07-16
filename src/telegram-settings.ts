@@ -629,7 +629,7 @@ export function formatTelegramSettingsPanelSummary(
     `Model: ${deps.getEffectiveModelLabel(chatJid)}`,
     `Think: ${prefs.thinkLevel || 'off'}`,
     `Reasoning: ${prefs.reasoningLevel || 'off'}`,
-    `Delivery: ${prefs.telegramDeliveryMode || 'stream'}`,
+    `Delivery: ${prefs.telegramDeliveryMode || 'status'}`,
     `Tool progress: ${getEffectiveVerboseMode(prefs.verboseMode)}`,
     `Next fresh run: ${prefs.nextRunNoContinue ? 'yes' : 'no'}`,
   ];
@@ -1467,14 +1467,21 @@ export function buildDeliveryPanel(chatJid: string): {
   keyboard: TelegramInlineKeyboard;
 } {
   const current =
-    state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'stream';
-  const modes: TelegramDeliveryMode[] = ['stream', 'append', 'off', 'draft'];
+    state.chatRunPreferences[chatJid]?.telegramDeliveryMode || 'status';
+  const modes: TelegramDeliveryMode[] = [
+    'status',
+    'stream',
+    'append',
+    'off',
+    'draft',
+  ];
   return {
     text: [
       'Select Telegram text delivery mode:',
       `Current: ${current}`,
       '',
-      'stream: durable streaming message (default)',
+      'status: milestone status + final summary (default)',
+      'stream: durable streaming monologue message',
       'append: durable update blocks that remain in chat',
       'off: no preview — final answer only',
       'draft: native Telegram draft preview (ephemeral)',

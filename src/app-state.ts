@@ -46,7 +46,8 @@ export type TelegramDeliveryMode =
   | 'stream'
   | 'draft'
   | 'partial'
-  | 'append';
+  | 'append'
+  | 'status';
 export type QueueMode =
   | 'collect'
   | 'interrupt'

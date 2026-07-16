@@ -59,6 +59,17 @@ export function normalizeTelegramDeliveryMode(
   if (['off', 'final', 'final-only', 'quiet'].includes(key)) return 'off';
   if (
     [
+      'status',
+      'milestones',
+      'milestone',
+      'status-only',
+      'status_only',
+    ].includes(key)
+  ) {
+    return 'status';
+  }
+  if (
+    [
       'stream',
       'streaming',
       'message',
@@ -94,6 +105,15 @@ export function normalizeTelegramDeliveryMode(
     return 'draft';
   }
   return undefined;
+}
+
+/** Resolve stored pref to a public delivery mode. Missing pref → status. */
+export function resolveTelegramDeliveryMode(
+  mode: TelegramDeliveryMode | undefined,
+): Exclude<TelegramDeliveryMode, 'partial'> {
+  if (!mode || mode === 'status') return 'status';
+  if (mode === 'partial') return 'stream';
+  return mode;
 }
 
 export function normalizeQueueMode(raw: string): QueueMode | undefined {
@@ -210,10 +230,12 @@ export function compactChatRunPreferences(
   if (prefs.reasoningLevel && prefs.reasoningLevel !== 'off') {
     next.reasoningLevel = prefs.reasoningLevel;
   }
+  // Default delivery is `status` (not stored). Persist escape-hatch modes only.
   if (
     prefs.telegramDeliveryMode === 'off' ||
     prefs.telegramDeliveryMode === 'draft' ||
-    prefs.telegramDeliveryMode === 'append'
+    prefs.telegramDeliveryMode === 'append' ||
+    prefs.telegramDeliveryMode === 'stream'
   ) {
     next.telegramDeliveryMode = prefs.telegramDeliveryMode;
   }
@@ -275,10 +297,9 @@ export function getTuiSessionPrefs(
     thinkLevel: prefs.thinkLevel,
     reasoningLevel: prefs.reasoningLevel,
     verboseMode: prefs.verboseMode,
-    telegramDeliveryMode:
-      prefs.telegramDeliveryMode === 'partial'
-        ? 'stream'
-        : prefs.telegramDeliveryMode,
+    telegramDeliveryMode: resolveTelegramDeliveryMode(
+      prefs.telegramDeliveryMode,
+    ),
     noContinueNext: prefs.nextRunNoContinue === true,
   };
 }
@@ -320,10 +341,11 @@ export function patchTuiSessionPrefs(
     if (Object.prototype.hasOwnProperty.call(patch, 'telegramDeliveryMode')) {
       if (
         patch.telegramDeliveryMode &&
-        patch.telegramDeliveryMode !== 'stream'
+        patch.telegramDeliveryMode !== 'status'
       ) {
         prefs.telegramDeliveryMode = patch.telegramDeliveryMode;
       } else {
+        // status (default) → clear stored pref
         delete prefs.telegramDeliveryMode;
       }
     }
@@ -339,10 +361,9 @@ export function patchTuiSessionPrefs(
     thinkLevel: next.thinkLevel,
     reasoningLevel: next.reasoningLevel,
     verboseMode: next.verboseMode,
-    telegramDeliveryMode:
-      next.telegramDeliveryMode === 'partial'
-        ? 'stream'
-        : next.telegramDeliveryMode,
+    telegramDeliveryMode: resolveTelegramDeliveryMode(
+      next.telegramDeliveryMode,
+    ),
     noContinueNext: next.nextRunNoContinue === true,
   };
 }

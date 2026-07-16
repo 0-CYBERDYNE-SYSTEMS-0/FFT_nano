@@ -43,9 +43,9 @@ const TELEGRAM_RETRY_MAX_DELAY_MS = Math.max(
 const TELEGRAM_TYPING_REFRESH_MS = Math.max(
   1000,
   Number.parseInt(
-    process.env.FFT_NANO_TELEGRAM_TYPING_REFRESH_MS || '4000',
+    process.env.FFT_NANO_TELEGRAM_TYPING_REFRESH_MS || '2500',
     10,
-  ) || 4000,
+  ) || 2500,
 );
 
 class TelegramApiError extends Error {
@@ -741,8 +741,41 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   interface TypingLoopState {
     interval: ReturnType<typeof setInterval>;
     inFlight: boolean;
+    needsRefresh: boolean;
   }
   const typingLoops = new Map<string, TypingLoopState>();
+
+  function pulseTypingIfActive(chatId: string): void {
+    const loop = typingLoops.get(chatId);
+    if (!loop) return;
+    if (loop.inFlight) {
+      loop.needsRefresh = true;
+      return;
+    }
+    loop.inFlight = true;
+    void apiPostWithRetry('sendChatAction', {
+      chat_id: chatId,
+      action: 'typing',
+    })
+      .catch((err) => {
+        logger.debug(
+          {
+            chatId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          'Failed to re-pulse Telegram typing indicator',
+        );
+      })
+      .finally(() => {
+        const latest = typingLoops.get(chatId);
+        if (!latest) return;
+        latest.inFlight = false;
+        if (latest.needsRefresh) {
+          latest.needsRefresh = false;
+          pulseTypingIfActive(chatId);
+        }
+      });
+  }
 
   interface PendingMediaGroup {
     messages: TelegramMessage[];
@@ -1294,13 +1327,17 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
     // Prefer a single native rich message (raw markdown, tables intact). Only
     // chunk + HTML-convert when rich is unavailable or rejects the content.
-    if (await trySendRich(chatId, text)) return;
+    if (await trySendRich(chatId, text)) {
+      pulseTypingIfActive(chatId);
+      return;
+    }
 
     for (const chunk of splitTelegramText(text, TELEGRAM_SAFE_MESSAGE_LEN)) {
       if (chunk && chunk.length <= TELEGRAM_MAX_MESSAGE_LEN) {
         await sendMessageChunk(chatId, chunk);
       }
     }
+    pulseTypingIfActive(chatId);
   }
 
   async function deleteMessage(
@@ -1349,6 +1386,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
           rich_message: { markdown: normalized },
           ...thread,
         });
+        pulseTypingIfActive(chatId);
         return;
       } catch (err) {
         if (isRichCapabilityError(err)) {
@@ -1365,6 +1403,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       text: normalized,
       ...thread,
     });
+    pulseTypingIfActive(chatId);
   }
 
   async function sendStreamMessage(
@@ -1392,6 +1431,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (!Number.isInteger(messageId) || messageId <= 0) {
       throw new Error('Telegram stream send did not return a valid message_id');
     }
+    pulseTypingIfActive(chatId);
     return messageId;
   }
 
@@ -1534,7 +1574,11 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const state: TypingLoopState = {
       interval: setInterval(() => {
         const current = typingLoops.get(chatId);
-        if (!current || current.inFlight) return;
+        if (!current) return;
+        if (current.inFlight) {
+          current.needsRefresh = true;
+          return;
+        }
         current.inFlight = true;
         void sendTypingAction()
           .catch((err) => {
@@ -1548,10 +1592,16 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
           })
           .finally(() => {
             const latest = typingLoops.get(chatId);
-            if (latest) latest.inFlight = false;
+            if (!latest) return;
+            latest.inFlight = false;
+            if (latest.needsRefresh) {
+              latest.needsRefresh = false;
+              pulseTypingIfActive(chatId);
+            }
           });
       }, TELEGRAM_TYPING_REFRESH_MS),
       inFlight: false,
+      needsRefresh: false,
     };
     typingLoops.set(chatId, state);
 
@@ -1566,7 +1616,12 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
         })
         .finally(() => {
           const latest = typingLoops.get(chatId);
-          if (latest) latest.inFlight = false;
+          if (!latest) return;
+          latest.inFlight = false;
+          if (latest.needsRefresh) {
+            latest.needsRefresh = false;
+            pulseTypingIfActive(chatId);
+          }
         });
     }
   }
