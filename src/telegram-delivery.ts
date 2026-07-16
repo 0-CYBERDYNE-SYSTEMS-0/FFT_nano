@@ -103,8 +103,20 @@ import {
 } from './ask-user-ui.js';
 import type { ExtensionUIRequest, ExtensionUIResponse } from './pi-runner.js';
 import type { TelegramInboundCallbackQuery } from './telegram.js';
+import { guardOutboundAgentText } from './outbound-text-guard.js';
 
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
+
+function applyOutboundAgentTextGuard(text: string): string {
+  const guarded = guardOutboundAgentText(text);
+  if (!guarded.allow) {
+    logger.warn(
+      { reason: guarded.reason, originalLength: text.length },
+      'Suppressed outbound agent text dump',
+    );
+  }
+  return guarded.text;
+}
 
 // --- sendMessage ---
 
@@ -154,6 +166,7 @@ export async function sendTelegramAgentReply(
   chatJid: string,
   text: string,
 ): Promise<boolean> {
+  text = applyOutboundAgentTextGuard(text);
   if (!state.telegramBot) {
     return await sendMessage(chatJid, text);
   }
@@ -239,7 +252,11 @@ export async function sendAgentResultMessage(
   text: string,
   opts: { prefixWhatsApp?: boolean } = {},
 ): Promise<boolean> {
+  // Guard once here; sendTelegramAgentReply also guards for direct callers.
+  text = applyOutboundAgentTextGuard(text);
   if (isTelegramJid(chatJid)) {
+    // Skip second log by calling send path after guard already applied:
+    // sendTelegramAgentReply is idempotent for short fallbacks.
     return await sendTelegramAgentReply(chatJid, text);
   }
 
@@ -391,6 +408,7 @@ export async function finalizeTelegramPreviewMessage(
 ): Promise<boolean> {
   if (!state.telegramBot) return false;
 
+  text = applyOutboundAgentTextGuard(text);
   const ids = messageIds && messageIds.length ? messageIds : [messageId];
 
   const extracted = extractTelegramAttachmentHintsFromReply(text);

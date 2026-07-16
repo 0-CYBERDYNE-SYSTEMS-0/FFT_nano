@@ -67,7 +67,13 @@ function createAdapter(): PlatformAdapter & {
 }
 
 test('Telegram /delivery modes propagate through dispatch, StreamConsumer, and final delivery', async () => {
-  for (const mode of ['stream', 'append', 'draft', 'off'] as const) {
+  for (const mode of [
+    'status',
+    'stream',
+    'append',
+    'draft',
+    'off',
+  ] as const) {
     const state = {
       registeredGroups: {
         'telegram:1': {
@@ -216,7 +222,7 @@ test('Telegram /delivery modes propagate through dispatch, StreamConsumer, and f
         runtimePrefs,
       ) => {
         runtimePrefsSeen.push(runtimePrefs);
-        const deliveryMode = runtimePrefs.telegramDeliveryMode || 'stream';
+        const deliveryMode = runtimePrefs.telegramDeliveryMode || 'status';
         if (deliveryMode !== 'off') {
           const consumer = new StreamConsumer({
             chatId: chatJid,

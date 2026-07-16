@@ -95,7 +95,7 @@ Primary source of truth:
 - `FFT_NANO_TELEGRAM_RETRY_ATTEMPTS` (default `4`, bounded `1..10`)
 - `FFT_NANO_TELEGRAM_RETRY_MIN_MS` (default `300`)
 - `FFT_NANO_TELEGRAM_RETRY_MAX_MS` (default `2500`)
-- `FFT_NANO_TELEGRAM_TYPING_REFRESH_MS` (default `4000`)
+- `FFT_NANO_TELEGRAM_TYPING_REFRESH_MS` (default `2500`)
 
 ## Container Env Allowlist (Host -> Runtime)
 

@@ -2372,7 +2372,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const argText = rest.join(' ').trim();
       const current =
         deps.state.chatRunPreferences[m.chatJid]?.telegramDeliveryMode ||
-        'stream';
+        'status';
       if (!argText) {
         deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
         if (deps.state.telegramBot) {
@@ -2384,7 +2384,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             m.chatJid,
             [
               `Current Telegram delivery mode: ${current}`,
-              'Valid modes: stream, append, off, draft',
+              'Valid modes: status, stream, append, off, draft',
             ].join('\n'),
           );
         }
@@ -2401,7 +2401,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         );
         await deps.sendMessage(
           m.chatJid,
-          'Unrecognized delivery mode. Valid: stream, append, off, draft',
+          'Unrecognized delivery mode. Valid: status, stream, append, off, draft',
         );
         return true;
       }

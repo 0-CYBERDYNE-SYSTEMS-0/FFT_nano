@@ -26,7 +26,12 @@ import {
 type ThinkLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type ReasoningLevel = 'off' | 'on' | 'stream';
 type VerboseMode = 'off' | 'new' | 'all' | 'verbose';
-type TelegramDeliveryMode = 'stream' | 'append' | 'off' | 'draft';
+type TelegramDeliveryMode =
+  | 'status'
+  | 'stream'
+  | 'append'
+  | 'off'
+  | 'draft';
 
 export interface SessionPrefs {
   provider?: string;
@@ -150,6 +155,7 @@ function normalizeTelegramDeliveryMode(
     .trim()
     .toLowerCase();
   if (
+    key === 'status' ||
     key === 'stream' ||
     key === 'append' ||
     key === 'off' ||

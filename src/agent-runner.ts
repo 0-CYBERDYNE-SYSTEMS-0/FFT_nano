@@ -627,7 +627,7 @@ export async function runAgent(
           },
           run: {
             telegram_delivery_mode:
-              runtimePrefs.telegramDeliveryMode || 'stream',
+              runtimePrefs.telegramDeliveryMode || 'status',
             verbose_mode: runtimePrefs.verboseMode || null,
             container_runtime: runtime,
           },
@@ -702,7 +702,7 @@ export async function runAgent(
         state.telegramBot &&
         isTelegramJid(chatJid) &&
         !suppressPreviewStreaming &&
-        (runPrefs.telegramDeliveryMode || 'stream') !== 'off'
+        (runPrefs.telegramDeliveryMode || 'status') !== 'off'
       ) {
         const consumerRunId =
           attemptRequestId || requestId || `run-${Date.now()}`;
@@ -716,7 +716,10 @@ export async function runAgent(
           draftMinIntervalMs: chatJid.startsWith('telegram:-')
             ? FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS
             : undefined,
-          deliveryMode: runPrefs.telegramDeliveryMode || 'stream',
+          deliveryMode:
+            runPrefs.telegramDeliveryMode === 'partial'
+              ? 'stream'
+              : runPrefs.telegramDeliveryMode || 'status',
           verboseMode: runPrefs.verboseMode || 'off',
         });
         registerActiveStreamConsumer(chatJid, consumerRunId, streamConsumer);
