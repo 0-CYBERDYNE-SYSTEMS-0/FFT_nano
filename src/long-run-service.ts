@@ -8,6 +8,16 @@ import {
 } from './db.js';
 import type { ContainerProgressEvent } from './pi-runner.js';
 import { createRunProgressReporter } from './run-progress.js';
+import {
+  diffWorkspaceFiles,
+  formatFileChangeLine,
+  formatLongRunCompletionPacket,
+  formatLongRunMilestone,
+  formatLongRunStartNotice,
+  snapshotWorkspaceFiles,
+  type WorkspaceFileChange,
+  type WorkspaceFileSnapshot,
+} from './long-run-visibility.js';
 import type { RegisteredGroup } from './types.js';
 
 type RunUsage = {
@@ -98,6 +108,8 @@ export interface LongRunService {
       sourceRequestId?: string;
       source?: string;
       resumeAttempts?: number;
+      startNotice?: string;
+      silentStart?: boolean;
       onCreated?: (run: AgentRunRecord) => Promise<void>;
     },
   ) => Promise<AgentRunRecord>;
@@ -148,6 +160,24 @@ function isAbortError(err: unknown): boolean {
   return /abort|aborted|stopped|cancel/i.test(msg);
 }
 
+function resolveStartNotice(
+  runId: string,
+  prompt: string,
+  template?: string,
+): string {
+  if (!template || /^Started long run <id>\.?\s*$/i.test(template.trim())) {
+    return formatLongRunStartNotice(runId, prompt);
+  }
+  return template.split('<id>').join(runId);
+}
+
+function isWriteLikeTool(toolName: string | null | undefined): boolean {
+  if (!toolName) return false;
+  return /write|edit|create|save|patch|apply_patch|file|bash|shell|terminal/i.test(
+    toolName,
+  );
+}
+
 export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
   const active = new Map<string, AbortController>();
 
@@ -181,6 +211,26 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
     };
   }
 
+  async function publishUserVisible(
+    chatJid: string,
+    text: string,
+    historyKey: string,
+  ): Promise<void> {
+    try {
+      await deps.sendMessage(chatJid, text);
+    } catch (err) {
+      deps.logger?.warn?.({ err, chatJid, historyKey }, 'Long-run notice send failed');
+    }
+    try {
+      deps.persistAssistantHistory(chatJid, text, historyKey);
+    } catch (err) {
+      deps.logger?.warn?.(
+        { err, chatJid, historyKey },
+        'Long-run notice persist failed',
+      );
+    }
+  }
+
   async function runLongAgentRun(runId: string): Promise<void> {
     const run = getAgentRunById(runId);
     if (!run) return;
@@ -201,8 +251,10 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
 
     const abortController = new AbortController();
     active.set(runId, abortController);
-    const sessionKey = deps.getSessionKeyForChat(run.chat_jid);
+    const chatJid = run.chat_jid;
+    const sessionKey = deps.getSessionKeyForChat(chatJid);
     const startedAt = new Date().toISOString();
+    const workspacePath = deps.resolveWorkspacePath(group);
     // Record the durable workspace this run operates in so restart triage can
     // classify it recoverable: a long run executes in its group's persistent
     // workspace directory, which survives a host restart.
@@ -212,7 +264,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       last_progress_at: startedAt,
       current_phase: 'spawn',
       current_detail: 'starting',
-      worktree_path: deps.resolveWorkspacePath(group),
+      worktree_path: workspacePath,
     });
     deps.emitTuiChatEvent({
       runId,
@@ -227,19 +279,61 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       detail: 'long run',
     });
     deps.emitRunProgress({
-      chatJid: run.chat_jid,
+      chatJid,
       requestId: runId,
       phase: 'spawn',
       text: `Agent status: Starting long run ${runId}.`,
       detail: 'starting',
     });
-    await deps.setTyping(run.chat_jid, true);
+    await deps.setTyping(chatJid, true);
+
+    let baselineSnapshot: WorkspaceFileSnapshot = snapshotWorkspaceFiles(
+      workspacePath,
+    );
+    let latestSnapshot = baselineSnapshot;
+    const announcedFiles = new Set<string>();
+    let milestoneSeq = 0;
+    let lastTimeMilestoneAt = Date.now();
+    let currentPhase: string | null = 'spawn';
+    let currentDetail: string | null = 'starting';
+
+    const milestoneIntervalMs = parseRuntimeMs(
+      process.env.FFT_NANO_LONG_RUN_MILESTONE_MS,
+      2 * 60 * 1000,
+      15_000,
+    );
+
+    async function publishMilestone(text: string, kind: string): Promise<void> {
+      milestoneSeq += 1;
+      await publishUserVisible(
+        chatJid,
+        text,
+        `${runId}:milestone-${milestoneSeq}-${kind}`,
+      );
+    }
+
+    async function announceNewFiles(
+      reason: 'tool' | 'heartbeat' | 'final',
+    ): Promise<WorkspaceFileChange[]> {
+      latestSnapshot = snapshotWorkspaceFiles(workspacePath);
+      const changes = diffWorkspaceFiles(baselineSnapshot, latestSnapshot);
+      const fresh = changes.filter(
+        (change) => !announcedFiles.has(change.relativePath),
+      );
+      for (const change of fresh) {
+        announcedFiles.add(change.relativePath);
+        if (reason !== 'final') {
+          await publishMilestone(formatFileChangeLine(change), 'file');
+        }
+      }
+      return changes;
+    }
 
     const reporter = createRunProgressReporter({
       source: 'long-run-service',
       runId,
       sessionKey,
-      chatJid: run.chat_jid,
+      chatJid: chatJid,
       heartbeatMs: parseRuntimeMs(
         process.env.FFT_NANO_LONG_RUN_PROGRESS_HEARTBEAT_MS,
         15_000,
@@ -248,7 +342,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       label: 'Agent',
       emit: (event) => {
         deps.emitRunProgress({
-          chatJid: run.chat_jid,
+          chatJid: chatJid,
           requestId: runId,
           phase: event.phase,
           text: event.text,
@@ -264,6 +358,18 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       if (event.kind === 'tool') {
         phase = event.status === 'start' ? 'tool_running' : 'thinking';
         detail = event.toolName;
+        if (
+          event.status !== 'start' &&
+          isWriteLikeTool(event.toolName) &&
+          !abortController.signal.aborted
+        ) {
+          void announceNewFiles('tool').catch((err) => {
+            deps.logger?.warn?.(
+              { err, runId },
+              'Long-run file milestone failed',
+            );
+          });
+        }
       } else if (event.kind === 'thinking') {
         phase = 'thinking';
       } else if (event.kind === 'assistant' || event.kind === 'stdout') {
@@ -296,6 +402,8 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         detail = event.resumed ? 'resumed' : 'fresh';
       }
       if (phase) {
+        currentPhase = phase;
+        currentDetail = detail;
         updateAgentRun(runId, {
           last_progress_at: now,
           current_phase: phase,
@@ -305,14 +413,43 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       reporter.handle(event);
     };
 
+    const timeMilestoneTimer = setInterval(() => {
+      if (abortController.signal.aborted) return;
+      const now = Date.now();
+      if (now - lastTimeMilestoneAt < milestoneIntervalMs) return;
+      lastTimeMilestoneAt = now;
+      void (async () => {
+        try {
+          await announceNewFiles('heartbeat');
+          await publishMilestone(
+            formatLongRunMilestone({
+              runId,
+              elapsedText: elapsedText(startedAt),
+              phase: currentPhase,
+              detail: currentDetail,
+            }),
+            'time',
+          );
+        } catch (err) {
+          deps.logger?.warn?.(
+            { err, runId },
+            'Long-run time milestone failed',
+          );
+        }
+      })();
+    }, Math.min(30_000, milestoneIntervalMs));
+    if (typeof timeMilestoneTimer.unref === 'function') {
+      timeMilestoneTimer.unref();
+    }
+
     try {
       const result = await deps.runAgent(
         group,
         run.prompt,
-        run.chat_jid,
+        chatJid,
         'none',
         runId,
-        deps.getRuntimePrefs(run.chat_jid),
+        deps.getRuntimePrefs(chatJid),
         {
           suppressErrorReply: true,
           skipSkillMaintenance: true,
@@ -321,7 +458,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         },
         abortController.signal,
       );
-      deps.updateChatUsage(run.chat_jid, result.usage);
+      deps.updateChatUsage(chatJid, result.usage);
       updateAgentRun(runId, {
         provider: result.usage?.provider ?? null,
         model: result.usage?.model ?? null,
@@ -335,17 +472,15 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
           error: 'cancelled',
         });
         deps.emitRunProgress({
-          chatJid: run.chat_jid,
+          chatJid: chatJid,
           requestId: runId,
           phase: 'aborted',
           text: `Agent status: Run ${runId} aborted.`,
         });
-        await deps.sendAgentResultMessage(
-          run.chat_jid,
-          `Run ${runId} aborted.`,
-        );
+        const abortText = `Run ${runId} aborted.`;
+        await publishUserVisible(chatJid, abortText, `${runId}:aborted`);
         deps.noteRunSettled?.({
-          chatJid: run.chat_jid,
+          chatJid: chatJid,
           requestId: runId,
           ok: false,
           result: 'cancelled',
@@ -361,7 +496,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
           error: reason,
         });
         deps.emitRunProgress({
-          chatJid: run.chat_jid,
+          chatJid: chatJid,
           requestId: runId,
           phase: 'failed',
           text: `Agent status: Run ${runId} failed.`,
@@ -379,12 +514,10 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
           phase: 'error',
           detail: reason,
         });
-        await deps.sendAgentResultMessage(
-          run.chat_jid,
-          `Run ${runId} failed: ${reason}`,
-        );
+        const failText = `Run ${runId} failed: ${reason}`;
+        await publishUserVisible(chatJid, failText, `${runId}:failed`);
         deps.noteRunSettled?.({
-          chatJid: run.chat_jid,
+          chatJid: chatJid,
           requestId: runId,
           ok: false,
           result: reason,
@@ -392,16 +525,23 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         return;
       }
       const output = result.result || 'Completed with no final text.';
+      const changes = await announceNewFiles('final');
+      const packet = formatLongRunCompletionPacket({
+        runId,
+        elapsedText: elapsedText(startedAt, finishedAt),
+        output,
+        changes,
+        workspaceRoot: workspacePath,
+      });
       updateAgentRun(runId, {
         status: 'completed',
         finished_at: finishedAt,
         current_phase: 'completed',
         current_detail: null,
-        result: output,
+        result: packet,
       });
-      deps.persistAssistantHistory(run.chat_jid, output, runId);
       deps.emitRunProgress({
-        chatJid: run.chat_jid,
+        chatJid: chatJid,
         requestId: runId,
         phase: 'completed',
         text: `Agent status: Run ${runId} complete.`,
@@ -410,7 +550,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         runId,
         sessionKey,
         state: 'final',
-        message: { role: 'assistant', content: output },
+        message: { role: 'assistant', content: packet },
         usage: result.usage,
       });
       deps.emitTuiAgentEvent({
@@ -419,15 +559,15 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         phase: 'end',
         detail: 'complete',
       });
-      await deps.sendAgentResultMessage(
-        run.chat_jid,
-        `Run ${runId} complete.\n\n${output}`,
-      );
+      // sendAgentResultMessage for channel formatting; also persist under a
+      // stable completion key so chat history keeps the full packet.
+      await deps.sendAgentResultMessage(chatJid, packet);
+      deps.persistAssistantHistory(chatJid, packet, `${runId}:complete`);
       deps.noteRunSettled?.({
-        chatJid: run.chat_jid,
+        chatJid: chatJid,
         requestId: runId,
         ok: true,
-        result: output,
+        result: packet,
       });
     } catch (err) {
       const finishedAt = new Date().toISOString();
@@ -444,7 +584,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         error: reason,
       });
       deps.emitRunProgress({
-        chatJid: run.chat_jid,
+        chatJid: chatJid,
         requestId: runId,
         phase: status,
         text:
@@ -454,22 +594,22 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         detail: reason,
       });
       deps.logger?.error?.({ err, runId }, 'Long agent run failed');
-      await deps.sendAgentResultMessage(
-        run.chat_jid,
+      const errText =
         status === 'aborted'
           ? `Run ${runId} aborted.`
-          : `Run ${runId} failed: ${reason}`,
-      );
+          : `Run ${runId} failed: ${reason}`;
+      await publishUserVisible(chatJid, errText, `${runId}:${status}`);
       deps.noteRunSettled?.({
-        chatJid: run.chat_jid,
+        chatJid: chatJid,
         requestId: runId,
         ok: false,
         result: reason,
       });
     } finally {
+      clearInterval(timeMilestoneTimer);
       reporter.stop();
       active.delete(runId);
-      await deps.setTyping(run.chat_jid, false);
+      await deps.setTyping(chatJid, false);
     }
   }
 
@@ -482,6 +622,8 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       sourceRequestId?: string;
       source?: string;
       resumeAttempts?: number;
+      startNotice?: string;
+      silentStart?: boolean;
       onCreated?: (run: AgentRunRecord) => Promise<void>;
     } = {},
   ): Promise<AgentRunRecord> {
@@ -502,6 +644,14 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
       resumeAttempts: options.resumeAttempts ?? 0,
     });
     await options.onCreated?.(run);
+    if (!options.silentStart) {
+      const notice = resolveStartNotice(
+        run.id,
+        finalPrompt,
+        options.startNotice,
+      );
+      await publishUserVisible(chatJid, notice, `${run.id}:start`);
+    }
     void runLongAgentRun(run.id).catch((err) => {
       deps.logger?.error?.({ err, runId: run.id }, 'Long agent run crashed');
     });
@@ -580,14 +730,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         await deps.sendMessage(chatJid, 'Usage: /run <task>');
         return true;
       }
-      await startRun(chatJid, task, {
-        onCreated: async (run) => {
-          await deps.sendMessage(
-            chatJid,
-            `Started long run ${run.id}. I'll post the result here.`,
-          );
-        },
-      });
+      await startRun(chatJid, task);
       return true;
     }
     if (cmd === '/runs') {
@@ -653,6 +796,7 @@ export function createLongRunService(deps: LongRunServiceDeps): LongRunService {
         await startRun(run.chat_jid, run.prompt, {
           source: 'resume',
           resumeAttempts: attempts,
+          startNotice: `Resuming interrupted long run as <id> (prior ${run.id}). I'll post milestones and the result here.\nStatus: /run_status <id> · list: /runs · cancel: /cancel_run <id>`,
           continuationPreamble: `You are resuming an interrupted long run (original id ${run.id}) after a host restart. Your prior work persists in this workspace — inspect it, determine what is already done, and continue the task to completion rather than starting over.`,
         });
         resumed += 1;

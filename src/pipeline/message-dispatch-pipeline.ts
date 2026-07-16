@@ -284,6 +284,8 @@ export interface MessageDispatcherDeps {
       continuationPreamble?: string;
       sourceRequestId?: string;
       source?: string;
+      startNotice?: string;
+      silentStart?: boolean;
     },
   ) => Promise<{ id: string }>;
   runCodingTask?: (params: {
@@ -777,11 +779,14 @@ function shouldAutoRouteLongRun(params: {
   if (params.deps.isSubstantialCodingTask?.(params.latestUserText) === true) {
     return true;
   }
+  // Intentionally do NOT auto-route plain research/investigate/deep-dive work.
+  // Those stay interactive so the user is not dropped into a black-box long run.
+  // Explicit long-horizon language, media production, and coding-worker routes
+  // still promote to durable long runs.
   return [
     /\b(video|render|rendering|tts|text[- ]to[- ]speech|voiceover|audio|media|animation|transcode)\b/,
     /\b(end[- ]to[- ]end|tonight|deliverable|production[- ]ready|full implementation|ship it)\b/,
     /\b(long[- ]running|long running|long[- ]horizon|take a while|keep working)\b/,
-    /\b(research|investigate|deep dive|compare sources|write a report)\b/,
     /\b(multi[- ]step|several steps|from start to finish)\b/,
   ].some((pattern) => pattern.test(text));
 }
@@ -1154,15 +1159,14 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
     source: string;
   }): Promise<{ id: string } | null> {
     if (!deps.startLongRun) return null;
+    // Long-run service owns the start notice (send + persist). Pass the
+    // caller template so timeout continuations keep their context prefix.
     const run = await deps.startLongRun(params.chatJid, params.prompt, {
       continuationPreamble: params.continuationPreamble,
       sourceRequestId: params.sourceRequestId,
       source: params.source,
+      startNotice: params.notice,
     });
-    await deps.sendMessage(
-      params.chatJid,
-      params.notice.replace('<id>', run.id),
-    );
     return run;
   }
 
@@ -1526,7 +1530,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
             kind: 'timeout',
             detail: result || undefined,
             ref,
-          })}\n\nContinuing as long run <id>.`,
+          })}\n\nContinuing as long run <id>. I'll post milestones and the result here.\nStatus: /run_status <id> · list: /runs · cancel: /cancel_run <id>`,
           continuationPreamble: `Previous run ${params.requestId} timed out. Inspect existing artifacts, logs, and workspace state. Continue from the current state without restarting completed work.`,
           sourceRequestId: params.requestId,
           source: 'timeout-continuation',
@@ -1942,7 +1946,8 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
       await startDurableLongRun({
         chatJid: msg.chat_jid,
         prompt: request.finalPrompt,
-        notice: "Started long run <id>. I'll post the result here.",
+        // Service expands <id> and persists the notice.
+        notice: 'Started long run <id>.',
         sourceRequestId: request.requestId,
         source: 'auto-route',
       });

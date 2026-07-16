@@ -54,10 +54,15 @@ function createDeps(
   typingEvents: Array<{ chatJid: string; typing: boolean }>,
   timeline: string[] = [],
   sentMessages: string[] = [],
+  persisted: string[] = [],
+  resultMessages: string[] = [],
+  workspacePath?: string,
 ): LongRunServiceDeps {
+  const workspace =
+    workspacePath || fs.mkdtempSync(path.join(os.tmpdir(), 'fft-long-run-ws-'));
   return {
     getGroupForChat: () => group,
-    resolveWorkspacePath: () => os.tmpdir(),
+    resolveWorkspacePath: () => workspace,
     isMainChat: () => true,
     getSessionKeyForChat: (chatJid) => chatJid,
     sendMessage: async (_chatJid, text) => {
@@ -65,11 +70,18 @@ function createDeps(
       sentMessages.push(text);
       return true;
     },
-    sendAgentResultMessage: async () => true,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      timeline.push('sendAgentResultMessage');
+      resultMessages.push(text);
+      return true;
+    },
     setTyping: async (chatJid, typing) => {
       typingEvents.push({ chatJid, typing });
     },
-    persistAssistantHistory: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      timeline.push('persist');
+      persisted.push(text);
+    },
     updateChatUsage: () => {},
     emitRunProgress: () => {
       timeline.push('runProgress');
@@ -172,9 +184,11 @@ test('exact /run query starts durable run and status can be polled while progres
     assert.equal(handled, true);
     assert.match(
       sentMessages[0] || '',
-      /^Started long run run-\d+-[a-z0-9]+\. I'll post the result here\.$/,
+      /^Started long run run-\d+-[a-z0-9]+\./,
     );
-    const runId = sentMessages[0]?.match(/Started long run ([^.]+)\./)?.[1];
+    assert.match(sentMessages[0] || '', /I'll post milestones/i);
+    assert.match(sentMessages[0] || '', /\/run_status/);
+    const runId = sentMessages[0]?.match(/Started long run ([^\s.]+)/)?.[1];
     assert.ok(runId);
 
     await waitFor(
@@ -190,7 +204,8 @@ test('exact /run query starts durable run and status can be polled while progres
     assert.match(runningStatus, /Last progress: 20\d\d-/);
     assert.match(service.listRunsText('telegram:1'), new RegExp(runId));
     assert.equal(typingEvents.at(-1)?.typing, true);
-    assert.deepEqual(timeline.slice(0, 2), ['sendMessage', 'runProgress']);
+    assert.deepEqual(timeline.slice(0, 2), ['sendMessage', 'persist']);
+    assert.ok(timeline.includes('runProgress'));
     assert.equal(
       progressEvents.some(
         (event) =>
@@ -475,6 +490,89 @@ test('long run /run command acknowledges before status preview progress', async 
       'run progress after ack',
     );
 
-    assert.deepEqual(timeline.slice(0, 2), ['sendMessage', 'runProgress']);
+    assert.equal(timeline[0], 'sendMessage');
+    assert.equal(timeline[1], 'persist');
+    assert.ok(timeline.includes('runProgress'));
+  });
+});
+
+test('long run completion packet includes workspace file inventory and weak-summary guard', async () => {
+  await withTempDb(async () => {
+    const typingEvents: Array<{ chatJid: string; typing: boolean }> = [];
+    const sentMessages: string[] = [];
+    const persisted: string[] = [];
+    const resultMessages: string[] = [];
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-long-ws-'));
+    try {
+      const service = createLongRunService(
+        createDeps(
+          async (
+            _group,
+            _prompt,
+            _chatJid,
+            _codingHint,
+            _requestId,
+            _prefs,
+            options,
+          ) => {
+            const onProgressEvent = (
+              options as {
+                onProgressEvent?: (event: ContainerProgressEvent) => void;
+              }
+            ).onProgressEvent;
+            fs.mkdirSync(path.join(workspace, 'projects', 'demo'), {
+              recursive: true,
+            });
+            fs.writeFileSync(
+              path.join(workspace, 'projects', 'demo', 'index.html'),
+              '<html>demo</html>',
+            );
+            onProgressEvent?.({
+              kind: 'tool',
+              at: Date.now(),
+              toolName: 'write',
+              status: 'ok',
+            });
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            return {
+              ok: true,
+              result:
+                'Now let me build the HTML prototype. I am going for a Digital Soil aesthetic.',
+              streamed: false,
+            };
+          },
+          typingEvents,
+          [],
+          sentMessages,
+          persisted,
+          resultMessages,
+          workspace,
+        ),
+      );
+
+      await service.startRun('telegram:1', 'build educational site', {
+        id: 'run-inventory',
+      });
+      await waitFor(
+        () => resultMessages.length > 0,
+        'completion packet to be sent',
+        2000,
+      );
+
+      const packet = resultMessages[0] || '';
+      assert.match(packet, /Run run-inventory complete/);
+      assert.match(packet, /Wrote `projects\/demo\/index\.html`/);
+      assert.match(packet, /weak summary/i);
+      assert.match(packet, /Digital Soil/);
+      assert.ok(
+        persisted.some((text) => text.includes('Started long run run-inventory')),
+      );
+      assert.ok(
+        persisted.some((text) => text.includes('projects/demo/index.html')),
+      );
+      assert.ok(sentMessages.some((text) => /Wrote `projects\/demo\/index\.html`/.test(text)));
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
   });
 });

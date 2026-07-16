@@ -107,6 +107,7 @@ export function createRunProgressReporter(params: {
         );
       }
     }, params.heartbeatMs);
+    if (typeof heartbeat.unref === 'function') heartbeat.unref();
   }
 
   function handle(event: ContainerProgressEvent): void {
