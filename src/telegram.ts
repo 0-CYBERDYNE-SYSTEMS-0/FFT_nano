@@ -1676,6 +1676,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     // Keep the process timer alive for the whole agent run (do not unref).
     typingLoops.set(chatId, state);
 
+    if (isTypingCoolingDown(chatId)) return;
+
     // Await the first pulse so typing is on the wire before the agent starts.
     // Refresh ticks stay fire-and-forget so they cannot stall the run loop.
     state.inFlight = true;

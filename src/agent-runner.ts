@@ -814,7 +814,7 @@ export async function runAgent(
               telegramPreviewRegistry.noteCompleted(streamKey);
             }
           } else {
-            const preview = streamConsumer.getPreviewState();
+            const { previewState: preview } = await streamConsumer.finish();
             if (preview) {
               telegramPreviewRegistry.setPreviewState(streamKey, {
                 messageId: Number(preview.messageId),

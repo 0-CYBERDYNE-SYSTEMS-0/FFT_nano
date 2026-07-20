@@ -346,7 +346,8 @@ Branch: `feat/telegram-hermes-streaming`.
 
 - **W1 cursor** — `STREAM_CURSOR` (`' ▉'`) appended at transmission time in
   `StreamConsumer.sendOrEdit`; `lastText` stays cursor-free; finalize paths
-  (seals, tail, host finalize, abort cleanup) always send clean text.
+  (seals, tail, host finalize, abort cleanup) always send clean text. Ordinary
+  completion drains the serialized preview chain before bridging its state.
 - **W2 cadence** — `FFT_NANO_TELEGRAM_DRAFT_MIN_MS` default 1000→800 (floor
   400 kept); ≥24-new-chars fast trigger in `publishDraftPreview` and
   `StreamConsumer`, so the consumer's normal cadence cannot delay the fast
@@ -361,16 +362,24 @@ Branch: `feat/telegram-hermes-streaming`.
   failures disable preview edits for the run and hide its stale preview state;
   completion therefore sends the full answer as a fresh message. Successful
   edits reset the strike count; generic failures retain the existing backoff.
+  Queued edits re-check the disabled state, so work already waiting behind the
+  third strike cannot spend more flood budget.
 - **W6 overflow** — `publishDraftPreview` no longer truncates at 4096; the
   consumer tracks `sealedSourceLen` and seals head chunks (newline-preferred
   cut, half-budget hard cut, `SEAL_SAFE_LIMIT = 4096 − cursor − 100`) as
   permanent formatted messages (message mode: finalize-edit the live bubble;
   draft mode: real `sendMessage`), then streams the remainder in a fresh
   bubble. `normalizeTelegramPreviewText` remains as last-resort guard in the
-  Telegram layer.
+  Telegram layer. Hard cuts preserve UTF-16 surrogate pairs. A failed seal or
+  a cumulative outbound-guard rejection retracts delivered preview fragments
+  and leaves the host's complete fresh-final fallback enabled.
 - **W7 segment breaks** — `onToolEvent(start)` seals the current segment via
-  the same machinery; pi's replace-style `message_end` deltas that shrink
+  the same machinery and sends one compact permanent tool-start line before
+  the next content bubble; pi's replace-style `message_end` deltas that shrink
   below the sealed boundary start a fresh segment (mirrors §9.3).
+- **Retry isolation** — fresh-session, delayed, and provider-switch retry
+  boundaries retract prior-attempt preview fragments and reset sealing state,
+  so only the successful attempt remains visible.
 - **Sealed-run completion (§9.2 equivalent)** — `hasSealedContent()` +
   `finalizeTail()`; the agent-runner bridge finalizes the tail, calls
   `noteCompleted` (→ `externallyCompleted`), and never bridges preview state
@@ -387,6 +396,10 @@ Branch: `feat/telegram-hermes-streaming`.
 - **Formatted seals** — `sendStreamMessage` gained a `rich` option (HTML
   render, plain resend only on 400 BadRequest); the adapter's finalize edits
   retry plain on formatted-edit failure.
+
+The W7 tool-start line is intentionally one-shot. Full W11 lifecycle progress
+(updating the same tool bubble through completion/error) remains optional and
+is not implemented.
 
 ### 10.3 Interaction with /delivery and /verbose
 

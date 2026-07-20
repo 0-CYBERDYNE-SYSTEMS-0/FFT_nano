@@ -23,8 +23,10 @@ FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS=3000
 FFT_NANO_TELEGRAM_HEARTBEAT_MS=30000
 
 # Source-side delta throttle before StreamConsumer coalescing.
-FFT_NANO_TELEGRAM_DRAFT_MIN_MS=1000
+FFT_NANO_TELEGRAM_DRAFT_MIN_MS=800
 ```
 
 `StreamConsumer` uses latest-wins coalescing. If Telegram is slow, intermediate
 frames are discarded and the next edit uses the newest available answer text.
+The normal source cadence is 800ms; 24 or more new characters can trigger an
+earlier flush after the 400ms safety floor.

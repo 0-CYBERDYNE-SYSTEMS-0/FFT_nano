@@ -2,7 +2,10 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { StreamConsumer } from '../../src/streaming/stream-consumer.js';
 import { STREAM_CURSOR } from '../../src/streaming/stream-filter.js';
-import type { PlatformAdapter } from '../../src/streaming/platform-adapter.js';
+import type {
+  PlatformAdapter,
+  SendResult,
+} from '../../src/streaming/platform-adapter.js';
 
 function createMockAdapter(
   overrides?: Partial<PlatformAdapter>,
@@ -361,6 +364,44 @@ describe('StreamConsumer', () => {
 
     const result = await consumer.finish();
     assert.equal(result.previewState, null);
+  });
+
+  test('finish waits for an in-flight preview send before exposing state', async () => {
+    let resolveSend: ((result: SendResult) => void) | undefined;
+    const payloads: string[] = [];
+    const adapter = createMockAdapter({
+      async send(_chatId, content) {
+        payloads.push(content);
+        return new Promise<SendResult>((resolve) => {
+          resolveSend = resolve;
+        });
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-in-flight-finish',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 0,
+    });
+
+    await consumer.onDelta('Preview content that is long enough to send.');
+    while (!resolveSend) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    let finished = false;
+    const completion = consumer.finish().then((result) => {
+      finished = true;
+      return result;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(finished, false);
+
+    resolveSend({ success: true, messageId: '77' });
+    const result = await completion;
+    assert.equal(result.previewState?.messageId, '77');
+    assert.equal(payloads.length, 1);
   });
 
   test('abort is non-destructive: never deletes the content bubble', async () => {
@@ -992,6 +1033,153 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.editFinalize.at(-1), true);
   });
 
+  test('W6 hard overflow cuts preserve Unicode surrogate pairs', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-unicode-overflow',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const bigText = '😀a'.repeat(4000);
+    assert.equal(bigText.length, 12_000);
+    await consumer.onDelta(bigText);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const chunks = adapter.sent.map((message) =>
+      message.content.endsWith(STREAM_CURSOR)
+        ? message.content.slice(0, -STREAM_CURSOR.length)
+        : message.content,
+    );
+    for (const chunk of chunks) {
+      const first = chunk.charCodeAt(0);
+      const last = chunk.charCodeAt(chunk.length - 1);
+      assert.equal(first >= 0xdc00 && first <= 0xdfff, false);
+      assert.equal(last >= 0xd800 && last <= 0xdbff, false);
+    }
+    assert.equal(chunks.join(''), bigText);
+    consumer.stop();
+  });
+
+  test('W6 failed queued seal keeps the host full-final fallback enabled', async () => {
+    let sendAttempts = 0;
+    let resolveFirstSeal: ((result: SendResult) => void) | undefined;
+    const adapter = createMockAdapter({
+      async send() {
+        sendAttempts++;
+        if (sendAttempts === 1) {
+          return new Promise<SendResult>((resolve) => {
+            resolveFirstSeal = resolve;
+          });
+        }
+        return { success: true, messageId: String(sendAttempts) };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-overflow-seal-failure',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const line = 'x'.repeat(79);
+    const bigText = `${Array.from({ length: 150 }, () => line).join('\n')}x`;
+    await consumer.onDelta(bigText);
+    assert.equal(consumer.hasSealedContent(), true);
+
+    const finalize = consumer.finalizeTail();
+    while (!resolveFirstSeal) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    resolveFirstSeal({
+      success: false,
+      messageId: '',
+      error: 'simulated seal failure',
+    });
+
+    assert.equal(await finalize, false);
+    assert.equal(consumer.hasSealedContent(), false);
+    assert.equal(sendAttempts, 1);
+  });
+
+  test('W6 retracts sealed content when the cumulative reply becomes a blocked dump', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-blocked-after-seal',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const allowedPrefix = Array.from(
+      { length: 70 },
+      (_, index) => `const value${index} = "${'x'.repeat(80)}";`,
+    ).join('\n');
+    const blockedFinal = `${allowedPrefix}\n${Array.from(
+      { length: 70 },
+      (_, index) => `const more${index} = ${index};`,
+    ).join('\n')}`;
+
+    await consumer.onDelta(allowedPrefix);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.ok(adapter.sent.length >= 2);
+
+    await consumer.onDelta(blockedFinal);
+    const completion = await consumer.finish();
+
+    assert.equal(completion.previewState, null);
+    assert.equal(consumer.hasSealedContent(), false);
+    assert.deepEqual(
+      adapter.deletes.map((entry) => entry.messageId).sort(),
+      adapter.sent.map((_, index) => String(index + 1)).sort(),
+    );
+  });
+
+  test('retry boundary retracts sealed attempt content before the new answer', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-retry-reset',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      heartbeatMs: 0,
+      activitySpawnThresholdMs: 60_000,
+      draftMinIntervalMs: 10,
+    });
+
+    try {
+      await consumer.onDelta('x'.repeat(6000));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const firstAttemptMessages = adapter.sent.length;
+      assert.ok(firstAttemptMessages >= 2);
+
+      consumer.handleProgress({
+        kind: 'retry_delay',
+        at: Date.now(),
+        delayMs: 1,
+        attempt: 1,
+        reason: 'transient',
+      });
+      const recovered = 'Fresh retry answer that is complete and distinct.';
+      await consumer.onDelta(recovered);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      assert.equal(adapter.deletes.length, firstAttemptMessages);
+      assert.equal(consumer.hasSealedContent(), false);
+      assert.equal(consumer.getPreviewState()?.lastText, recovered);
+    } finally {
+      consumer.stop();
+    }
+  });
+
   test('W7 two tool boundaries produce three ordered content bubbles', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
@@ -1017,24 +1205,27 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.edits[0].content, segmentA);
     assert.equal(adapter.editFinalize[0], true);
     assert.equal(consumer.hasSealedContent(), true);
+    assert.match(adapter.sent[1].content, /Bash/);
 
     const segmentB = 'Second segment answer text here also long.';
     await consumer.onDelta(`${segmentA}\n${segmentB}`);
     await new Promise((resolve) => setTimeout(resolve, 40));
 
-    assert.equal(adapter.sent.length, 2, 'new bubble opens below tool line');
-    assert.equal(adapter.sent[1].content, `${segmentB}${STREAM_CURSOR}`);
+    assert.equal(adapter.sent.length, 3, 'new bubble opens below tool line');
+    assert.equal(adapter.sent[2].content, `${segmentB}${STREAM_CURSOR}`);
 
     consumer.onToolEvent({ toolName: 'read', status: 'start' });
     await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.match(adapter.sent[3].content, /read/i);
 
     const segmentC = 'Third segment follows the second tool boundary.';
     await consumer.onDelta(`${segmentA}\n${segmentB}\n${segmentC}`);
     await new Promise((resolve) => setTimeout(resolve, 40));
 
     assert.equal(adapter.edits.at(-1)?.content, segmentB);
-    assert.equal(adapter.sent.length, 3);
-    assert.equal(adapter.sent[2].content, `${segmentC}${STREAM_CURSOR}`);
+    assert.equal(adapter.sent.length, 5);
+    assert.equal(adapter.sent[4].content, `${segmentC}${STREAM_CURSOR}`);
+    consumer.stop();
   });
 
   test('W5 three consecutive flood-control edit failures stop preview edits', async () => {
@@ -1080,6 +1271,110 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('W5 queued edits do not run after the third flood-control strike', async () => {
+    let editAttempts = 0;
+    const editResolutions: Array<() => void> = [];
+    const adapter = createMockAdapter({
+      async editMessage(_chatId, messageId) {
+        editAttempts++;
+        await new Promise<void>((resolve) => editResolutions.push(resolve));
+        return {
+          success: false,
+          messageId,
+          error: 'Too Many Requests: retry after 1',
+          floodControl: true,
+        };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-queued-flood-strikes',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 0,
+    });
+
+    const initial = 'Initial preview content long enough to display.';
+    await consumer.onDelta(initial);
+    let deadline = Date.now() + 100;
+    while (adapter.sent.length < 1 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(adapter.sent.length, 1);
+
+    for (let frame = 1; frame <= 4; frame++) {
+      await consumer.onDelta(`${initial}${'x'.repeat(frame)}`);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    deadline = Date.now() + 100;
+    while (editAttempts < 1 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    for (let strike = 1; strike <= 3; strike++) {
+      assert.equal(editAttempts, strike);
+      const resolveEdit = editResolutions.shift();
+      assert.ok(resolveEdit);
+      resolveEdit();
+      if (strike < 3) {
+        deadline = Date.now() + 100;
+        while (editAttempts < strike + 1 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(editAttempts, 3);
+    assert.equal(consumer.getPreviewState(), null);
+    consumer.stop();
+  });
+
+  test('W5 flood disable retracts sealed heads and the stale live tail', async () => {
+    let editAttempts = 0;
+    const adapter = createMockAdapter({
+      async editMessage(_chatId, messageId) {
+        editAttempts++;
+        return {
+          success: false,
+          messageId,
+          error: 'Too Many Requests: retry after 1',
+          floodControl: true,
+        };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-sealed-flood-strikes',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const initial = 'x'.repeat(6000);
+    await consumer.onDelta(initial);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(consumer.hasSealedContent(), true);
+    assert.equal(adapter.sent.length, 2);
+
+    for (let strike = 1; strike <= 3; strike++) {
+      await consumer.onDelta(`${initial}${'y'.repeat(strike)}`);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+
+    assert.equal(editAttempts, 3);
+    assert.equal(consumer.hasSealedContent(), false);
+    const completion = await consumer.finish();
+    assert.equal(completion.previewState, null);
+    assert.deepEqual(
+      adapter.deletes.map((entry) => entry.messageId).sort(),
+      adapter.sent.map((_, index) => String(index + 1)).sort(),
+    );
+  });
+
   test('replace-style shrink after a seal starts a fresh segment', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
@@ -1100,8 +1395,9 @@ describe('StreamConsumer', () => {
     await consumer.onDelta(replacement);
     await new Promise((resolve) => setTimeout(resolve, 40));
 
-    assert.equal(adapter.sent.length, 2);
-    assert.equal(adapter.sent[1].content, `${replacement}${STREAM_CURSOR}`);
+    assert.equal(adapter.sent.length, 3);
+    assert.match(adapter.sent[1].content, /read/i);
+    assert.equal(adapter.sent[2].content, `${replacement}${STREAM_CURSOR}`);
   });
 
   test('W4 partial and exact silence markers never reach the preview', async () => {
