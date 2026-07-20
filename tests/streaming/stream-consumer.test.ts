@@ -781,6 +781,30 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('W2 fast flush respects the configured group edit interval', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-group-fast-trigger',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 500,
+    });
+
+    const initial = 'Initial group preview content that is long enough.';
+    await consumer.onDelta(initial);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await consumer.onDelta(`${initial}${'x'.repeat(24)}`);
+    await new Promise((resolve) => setTimeout(resolve, 420));
+    assert.equal(adapter.edits.length, 0);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(adapter.edits.length, 1);
+    consumer.stop();
+  });
+
   test('assistant progress completion does not discard a pending answer frame', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({

@@ -892,9 +892,10 @@ export class StreamConsumer {
     if (this.flushSuppressed || this.completed || this.editFloodDisabled)
       return;
     const now = Date.now();
-    const interval = fast
-      ? Math.min(this.draftMinIntervalMs, FAST_FLUSH_INTERVAL_MS)
-      : this.draftMinIntervalMs;
+    const interval =
+      fast && this.parseTelegramChatId() > 0
+        ? Math.min(this.draftMinIntervalMs, FAST_FLUSH_INTERVAL_MS)
+        : this.draftMinIntervalMs;
     const cadenceDelay = Math.max(0, interval - (now - this.lastAnswerFlushAt));
     const backoffDelay = this.disabled
       ? Math.max(0, this.disabledUntil - now)
