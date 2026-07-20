@@ -762,7 +762,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   }
   const typingLoops = new Map<string, TypingLoopState>();
   // After a failed sendChatAction, skip typing pulses for the chat so a
-  // Telegram-side blip does not spam the API (telegram-spec §1.5).
+  // Telegram-side blip does not spam the API.
   const TYPING_FAILURE_COOLDOWN_MS = 30_000;
   const typingCooldownUntil = new Map<string, number>();
 

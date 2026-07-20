@@ -23,7 +23,7 @@ const MIN_PREVIEW_CHARS = 20;
 const FAST_FLUSH_CHARS = 24;
 const FAST_FLUSH_INTERVAL_MS = 400;
 // Segment budget for one live bubble: Telegram's 4096 minus the streaming
-// cursor and a safety margin (telegram-spec §3.2). Text beyond this is sealed
+// cursor and a safety margin (telegram-spec W6). Text beyond this is sealed
 // into a finalized message and streaming continues in a fresh bubble.
 const SEAL_SAFE_LIMIT = 4096 - STREAM_CURSOR.length - 100;
 const MAX_APPEND_BLOCK_CHARS = 3_900;
