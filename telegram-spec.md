@@ -372,7 +372,9 @@ Branch: `feat/telegram-hermes-streaming`.
   bubble. `normalizeTelegramPreviewText` remains as last-resort guard in the
   Telegram layer. Hard cuts preserve UTF-16 surrogate pairs. A failed seal or
   a cumulative outbound-guard rejection retracts delivered preview fragments
-  and leaves the host's complete fresh-final fallback enabled.
+  and leaves the host's complete fresh-final fallback enabled. Long fenced
+  code blocks are closed and reopened at chunk boundaries so every permanent
+  bubble renders independently.
 - **W7 segment breaks** — `onToolEvent(start)` seals the current segment via
   the same machinery and sends one compact permanent tool-start line before
   the next content bubble; pi's replace-style `message_end` deltas that shrink
@@ -388,6 +390,9 @@ Branch: `feat/telegram-hermes-streaming`.
 - **Seal failure policy** — a failed seal sets `sealBroken`: sealing stops,
   the run reports `hasSealedContent() === false`, and the host's full final
   delivery restores completeness.
+- **Empty/error attempt cleanup** — sealed fragments are retracted unless the
+  attempt produced a successful non-empty final result; an empty-output retry
+  therefore cannot inherit a false externally-completed marker.
 - **Sealing gate** — disabled when streamed reasoning is on
   (`showReasoning`/`reasoning stream`): that path mutates the preview prefix
   non-monotonically, which offset tracking cannot follow.

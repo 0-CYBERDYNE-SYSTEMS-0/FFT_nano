@@ -1064,6 +1064,36 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('W6 overflow keeps every long fenced-code chunk independently balanced', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-fenced-overflow',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+    const source = `\`\`\`ts\n${'x'.repeat(12_000)}\n\`\`\``;
+
+    await consumer.onDelta(source);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(await consumer.finalizeTail(), true);
+
+    const permanent = [
+      ...adapter.sent.slice(0, -1).map((entry) => entry.content),
+      adapter.edits.at(-1)?.content || '',
+    ];
+    assert.ok(permanent.length >= 3);
+    for (const chunk of permanent) {
+      assert.match(chunk, /^```ts\n/);
+      assert.match(chunk, /```$/);
+      assert.equal((chunk.match(/```/g) || []).length % 2, 0);
+      assert.ok(chunk.length <= 4096);
+    }
+    consumer.stop();
+  });
+
   test('W6 failed queued seal keeps the host full-final fallback enabled', async () => {
     let sendAttempts = 0;
     let resolveSecondSeal: ((result: SendResult) => void) | undefined;
@@ -1377,6 +1407,30 @@ describe('StreamConsumer', () => {
       ['Brief text', '🔥 Bash'],
     );
     consumer.stop();
+  });
+
+  test('empty-output retry cleanup retracts a sealed pre-tool segment', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-empty-after-tool',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Brief preamble');
+    consumer.onToolEvent({ toolName: 'Bash', status: 'start' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(consumer.hasSealedContent(), true);
+
+    await consumer.retract();
+    assert.deepEqual(
+      adapter.deletes.map((entry) => entry.messageId).sort(),
+      adapter.sent.map((_, index) => String(index + 1)).sort(),
+    );
+    assert.equal(consumer.getPreviewState(), null);
   });
 
   test('W5 three consecutive flood-control edit failures stop preview edits', async () => {

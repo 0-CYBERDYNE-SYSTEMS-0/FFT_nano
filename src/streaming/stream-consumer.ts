@@ -56,6 +56,15 @@ function deriveStreamDraftId(seed: string): number {
   return (raw % 2_000_000_000) + 1;
 }
 
+function findOpenCodeFence(text: string): string | null {
+  const fencePattern = /(?:^|\n)[ \t]{0,3}```([^\n`]*)/g;
+  let openInfo: string | null = null;
+  for (const match of text.matchAll(fencePattern)) {
+    openInfo = openInfo === null ? (match[1] || '').trim().slice(0, 80) : null;
+  }
+  return openInfo;
+}
+
 export interface StreamConsumerConfig {
   chatId: string;
   runId: string;
@@ -163,6 +172,7 @@ export class StreamConsumer {
   private sealedSourceLen = 0;
   private didSeal = false;
   private sealBroken = false;
+  private sealedSegmentPrefix = '';
   private outboundBlocked = false;
   private deliveredPreviewMessageIds = new Set<string>();
   private streamGeneration = 0;
@@ -256,6 +266,7 @@ export class StreamConsumer {
         // Replace-style delta shrank below the sealed boundary: the buffer now
         // holds a fresh assistant message, so start a new segment.
         this.sealedSourceLen = 0;
+        this.sealedSegmentPrefix = '';
       }
       segment = source.slice(this.sealedSourceLen);
       if (this.sealedSourceLen > 0) {
@@ -265,9 +276,13 @@ export class StreamConsumer {
       }
       // Overflow: seal head chunks as permanent formatted messages and keep
       // streaming the remainder in a fresh bubble (telegram-spec W6).
-      while (!this.sealBroken && segment.length > SEAL_SAFE_LIMIT) {
-        let cut = segment.lastIndexOf('\n', SEAL_SAFE_LIMIT);
-        if (cut < SEAL_SAFE_LIMIT / 2) cut = SEAL_SAFE_LIMIT;
+      while (
+        !this.sealBroken &&
+        this.sealedSegmentPrefix.length + segment.length > SEAL_SAFE_LIMIT
+      ) {
+        const rawLimit = SEAL_SAFE_LIMIT - this.sealedSegmentPrefix.length;
+        let cut = segment.lastIndexOf('\n', rawLimit);
+        if (cut < rawLimit / 2) cut = rawLimit;
         const priorCodeUnit = segment.charCodeAt(cut - 1);
         const nextCodeUnit = segment.charCodeAt(cut);
         const endsWithHighSurrogate =
@@ -275,8 +290,11 @@ export class StreamConsumer {
         const startsWithLowSurrogate =
           nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff;
         if (endsWithHighSurrogate && startsWithLowSurrogate) cut--;
-        const head = segment.slice(0, cut);
-        this.enqueueSeal(head);
+        const head = `${this.sealedSegmentPrefix}${segment.slice(0, cut)}`;
+        const openFence = findOpenCodeFence(head);
+        this.enqueueSeal(openFence === null ? head : `${head}\n\`\`\``);
+        this.sealedSegmentPrefix =
+          openFence === null ? '' : `\`\`\`${openFence}\n`;
         const rest = segment.slice(cut);
         const trimmed = rest.replace(/^\n+/, '');
         this.sealedSourceLen += cut + (rest.length - trimmed.length);
@@ -285,7 +303,9 @@ export class StreamConsumer {
     }
     this.lastSourceText = source;
 
-    const nextText = this.appendToolTrailFooter(segment);
+    const nextText = this.appendToolTrailFooter(
+      `${this.sealedSegmentPrefix}${segment}`,
+    );
 
     const hasExistingDraft = this.draftMode && this.lastText.length > 0;
     if (
@@ -547,6 +567,16 @@ export class StreamConsumer {
     }
   }
 
+  async retract(): Promise<void> {
+    this.completed = true;
+    this.clearHeartbeat();
+    this.clearActivityTimer();
+    this.clearFlushTimer();
+    await this.answerChain.catch(() => {});
+    await this.deleteDeliveredPreviewMessages();
+    await this.collapseActivity();
+  }
+
   getPreviewState(): PreviewState | null {
     if (this.appendMode) return null;
     if (this.outboundBlocked) return null;
@@ -573,7 +603,7 @@ export class StreamConsumer {
     this.pendingText = null;
     await this.answerChain.catch(() => {});
     if (this.sealBroken) return false;
-    const segment = this.lastSourceText.slice(this.sealedSourceLen).trim();
+    const segment = `${this.sealedSegmentPrefix}${this.lastSourceText.slice(this.sealedSourceLen)}`.trim();
     if (!segment) return true;
     const { adapter, chatId } = this.config;
     try {
@@ -618,7 +648,11 @@ export class StreamConsumer {
     if (!segment.trim()) return false;
     this.sealedSourceLen = this.lastSourceText.length;
     this.pendingText = null;
-    this.enqueueSeal(segment);
+    const head = `${this.sealedSegmentPrefix}${segment}`;
+    this.enqueueSeal(
+      findOpenCodeFence(head) === null ? head : `${head}\n\`\`\``,
+    );
+    this.sealedSegmentPrefix = '';
     return true;
   }
 
@@ -1184,6 +1218,7 @@ export class StreamConsumer {
     this.lastText = '';
     this.lastSourceText = '';
     this.sealedSourceLen = 0;
+    this.sealedSegmentPrefix = '';
     this.didSeal = false;
     this.sealBroken = false;
     this.outboundBlocked = false;

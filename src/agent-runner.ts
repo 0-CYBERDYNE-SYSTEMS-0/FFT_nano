@@ -22,6 +22,7 @@ import { resolveCompactionMemoryRelativePath } from './memory-maintenance.js';
 import {
   applyNonHeartbeatEmptyOutputPolicy,
   formatEmptyFinalOutputDiagnostic,
+  hasUserVisibleText,
 } from './agent-empty-output.js';
 import { toUserVisibleErrorText } from './user-visible-errors.js';
 import { getAllTasks } from './db.js';
@@ -802,18 +803,18 @@ export async function runAgent(
         if (attemptRequestId) {
           const streamKey = getTelegramPreviewRunKey(chatJid, attemptRequestId);
           if (streamConsumer.hasSealedContent()) {
-            // Sealed runs already delivered permanent chunks; finalize the
-            // live tail in place and mark the run externally completed so the
-            // host does not re-send the full result (it would duplicate the
-            // sealed heads). Never bridge preview state for sealed runs — a
-            // host finalize edit would overwrite the tail bubble. If tail
-            // finalization failed, the host's fresh full send restores
-            // completeness. See telegram-spec §9.2.
-            const finalized = await streamConsumer.finalizeTail();
-            if (finalized && output.status !== 'error') {
-              telegramPreviewRegistry.noteCompleted(streamKey);
-            } else if (!finalized) {
-              await streamConsumer.finish();
+            if (
+              output.status === 'success' &&
+              hasUserVisibleText(output.result)
+            ) {
+              const finalized = await streamConsumer.finalizeTail();
+              if (finalized) {
+                telegramPreviewRegistry.noteCompleted(streamKey);
+              } else {
+                await streamConsumer.finish();
+              }
+            } else {
+              await streamConsumer.retract();
             }
           } else {
             const { previewState: preview } = await streamConsumer.finish();
