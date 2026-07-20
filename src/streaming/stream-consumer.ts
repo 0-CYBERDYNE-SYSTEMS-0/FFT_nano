@@ -924,7 +924,27 @@ export class StreamConsumer {
       this.answerChain = this.answerChain
         .catch(() => {})
         .then(async () => {
-          this.lastAnswerFlushAt = Date.now();
+          if (
+            this.flushSuppressed ||
+            this.completed ||
+            this.editFloodDisabled ||
+            generation !== this.streamGeneration
+          )
+            return;
+          const startedAt = Date.now();
+          const cadenceDelay = Math.max(
+            0,
+            interval - (startedAt - this.lastAnswerFlushAt),
+          );
+          const backoffDelay = this.disabled
+            ? Math.max(0, this.disabledUntil - startedAt)
+            : 0;
+          if (cadenceDelay > 0 || backoffDelay > 0) {
+            if (this.pendingText === null) this.pendingText = text;
+            this.scheduleAnswerFlush(fast);
+            return;
+          }
+          this.lastAnswerFlushAt = startedAt;
           await this.sendOrEdit(text, generation);
           if (generation !== this.streamGeneration) return;
           if (

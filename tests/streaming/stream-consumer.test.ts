@@ -868,6 +868,49 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('W2 serializes multiple delayed group edits after a slow send', async () => {
+    let resolveFirstSend: ((result: SendResult) => void) | null = null;
+    const editStartedAt: number[] = [];
+    const adapter = createMockAdapter({
+      send: async () =>
+        new Promise<SendResult>((resolve) => {
+          resolveFirstSend = resolve;
+        }),
+      editMessage: async (_chatId, messageId) => {
+        editStartedAt.push(Date.now());
+        return { success: true, messageId };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-group-slow-multiple-edits',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 120,
+    });
+
+    const initial = 'Initial group preview content that is long enough.';
+    await consumer.onDelta(initial);
+    while (resolveFirstSend === null) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    await consumer.onDelta(`${initial} second`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await consumer.onDelta(`${initial} third`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    resolveFirstSend({ success: true, messageId: '1' });
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(editStartedAt.length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    assert.equal(editStartedAt.length, 2);
+    assert.ok(editStartedAt[1] - editStartedAt[0] >= 100);
+    consumer.stop();
+  });
+
   test('retract redacts a preview when deletion fails', async () => {
     const adapter = createMockAdapter();
     adapter.deleteMessage = async () => {
