@@ -57,18 +57,25 @@ function deriveStreamDraftId(seed: string): number {
 }
 
 type OpenCodeFence = {
-  marker: '```' | '~~~';
+  marker: string;
   info: string;
 };
 
 function findOpenCodeFence(text: string): OpenCodeFence | null {
-  const fencePattern = /(?:^|\n)[ \t]{0,3}(```|~~~)([^\n`~]*)/g;
+  const fencePattern = /(?:^|\n)[ \t]{0,3}(`{3,}|~{3,})([^\n]*)/g;
   let openFence: OpenCodeFence | null = null;
   for (const match of text.matchAll(fencePattern)) {
-    const marker = match[1] as OpenCodeFence['marker'];
+    const marker = match[1];
+    const suffix = match[2] || '';
     if (openFence === null) {
-      openFence = { marker, info: (match[2] || '').trim().slice(0, 80) };
-    } else if (openFence.marker === marker) {
+      if (!suffix.includes(marker[0])) {
+        openFence = { marker, info: suffix.trim().slice(0, 80) };
+      }
+    } else if (
+      openFence.marker[0] === marker[0] &&
+      marker.length >= openFence.marker.length &&
+      !suffix.trim()
+    ) {
       openFence = null;
     }
   }
@@ -137,6 +144,8 @@ export class StreamConsumer {
   private pendingActivityText = '';
   private activitySpawnTimer: NodeJS.Timeout | null = null;
   private activityCollapsed = false;
+  private activityFloodStrikes = 0;
+  private activityFloodDisabled = false;
   private readonly runStartedAt = Date.now();
   private readonly activitySpawnThresholdMs: number;
   // Status and answer content use separate delivery paths in every live mode.
@@ -183,6 +192,7 @@ export class StreamConsumer {
   private didSeal = false;
   private sealBroken = false;
   private sealedSegmentPrefix = '';
+  private consumeBoundaryNewline = false;
   private outboundBlocked = false;
   private deliveredPreviewMessageIds = new Set<string>();
   private streamGeneration = 0;
@@ -276,10 +286,12 @@ export class StreamConsumer {
         this.resetPreviewForRetry();
       }
       segment = source.slice(this.sealedSourceLen);
-      if (this.sealedSourceLen > 0) {
-        const trimmedLead = segment.replace(/^\n+/, '');
-        this.sealedSourceLen += segment.length - trimmedLead.length;
-        segment = trimmedLead;
+      if (this.consumeBoundaryNewline) {
+        if (segment.startsWith('\n')) {
+          this.sealedSourceLen++;
+          segment = segment.slice(1);
+        }
+        this.consumeBoundaryNewline = false;
       }
       // Overflow: seal head chunks as permanent formatted messages and keep
       // streaming the remainder in a fresh bubble (telegram-spec W6).
@@ -470,6 +482,7 @@ export class StreamConsumer {
     this.clearFlushTimer();
 
     await this.answerChain.catch(() => {});
+    await this.clearNativeDraft();
     if (this.sealBroken || this.outboundBlocked || this.editFloodDisabled) {
       this.pendingText = null;
       await this.deleteDeliveredPreviewMessages();
@@ -516,7 +529,11 @@ export class StreamConsumer {
     this.clearActivityTimer();
     this.pendingActivityText = '';
     await this.activityChain.catch(() => {});
-    if (!this.activityMessageId || this.activityCollapsed) {
+    if (
+      !this.activityMessageId ||
+      this.activityCollapsed ||
+      this.activityFloodDisabled
+    ) {
       this.activityCollapsed = true;
       return;
     }
@@ -583,19 +600,7 @@ export class StreamConsumer {
     this.clearFlushTimer();
     await this.answerChain.catch(() => {});
     await this.activityChain.catch(() => {});
-    if (
-      this.draftMode &&
-      this.draftId !== null &&
-      this.config.adapter.sendDraft
-    ) {
-      try {
-        await this.config.adapter.sendDraft(
-          this.config.chatId,
-          this.draftId,
-          '',
-        );
-      } catch {}
-    }
+    await this.clearNativeDraft();
     if (this.activityMessageId) {
       this.deliveredPreviewMessageIds.add(this.activityMessageId);
       this.activityMessageId = null;
@@ -629,6 +634,7 @@ export class StreamConsumer {
     this.clearFlushTimer();
     this.pendingText = null;
     await this.answerChain.catch(() => {});
+    await this.clearNativeDraft();
     if (this.sealBroken) return false;
     const source =
       finalText === undefined
@@ -685,10 +691,13 @@ export class StreamConsumer {
     this.sealedSourceLen = this.lastSourceText.length;
     this.pendingText = null;
     const head = `${this.sealedSegmentPrefix}${segment}`;
+    const openFence = findOpenCodeFence(head);
     this.enqueueSeal(
-      findOpenCodeFence(head) === null ? head : `${head}\n\`\`\``,
+      openFence === null ? head : `${head}\n${openFence.marker}`,
     );
-    this.sealedSegmentPrefix = '';
+    this.sealedSegmentPrefix =
+      openFence === null ? '' : `${openFence.marker}${openFence.info}\n`;
+    this.consumeBoundaryNewline = true;
     return true;
   }
 
@@ -878,7 +887,7 @@ export class StreamConsumer {
   }
 
   private async sendOrEditActivity(text: string): Promise<void> {
-    if (this.activityCollapsed) return;
+    if (this.activityCollapsed || this.activityFloodDisabled) return;
     if (this.completed && !this.activityMessageId) return;
     if (text === this.activityText) return;
     const { adapter, chatId } = this.config;
@@ -888,6 +897,8 @@ export class StreamConsumer {
         if (result.success) {
           this.activityMessageId = result.messageId;
           this.activityText = text;
+        } else if (result.floodControl) {
+          this.activityFloodDisabled = true;
         }
         return;
       }
@@ -898,6 +909,13 @@ export class StreamConsumer {
       );
       if (result.success) {
         this.activityText = text;
+        this.activityFloodStrikes = 0;
+      } else if (result.floodControl) {
+        this.activityFloodStrikes++;
+        if (this.activityFloodStrikes >= MAX_EDIT_FLOOD_STRIKES) {
+          this.activityFloodDisabled = true;
+          this.clearActivityTimer();
+        }
       }
     } catch {
       // Activity is best-effort and must never throttle answer delivery.
@@ -909,6 +927,19 @@ export class StreamConsumer {
       clearTimeout(this.activitySpawnTimer);
       this.activitySpawnTimer = null;
     }
+  }
+
+  private async clearNativeDraft(): Promise<void> {
+    if (
+      !this.draftMode ||
+      this.draftId === null ||
+      !this.config.adapter.sendDraft
+    ) {
+      return;
+    }
+    try {
+      await this.config.adapter.sendDraft(this.config.chatId, this.draftId, '');
+    } catch {}
   }
 
   private clearFlushTimer(): void {
@@ -1225,7 +1256,6 @@ export class StreamConsumer {
     this.editFloodDisabled = true;
     this.pendingText = null;
     this.pendingActivityText = '';
-    this.activityCollapsed = true;
     this.sealBroken = true;
     this.clearFlushTimer();
     this.clearActivityTimer();
@@ -1260,7 +1290,7 @@ export class StreamConsumer {
   }
 
   private resetPreviewForRetry(): void {
-    if (this.appendMode || this.statusMode) return;
+    if (this.statusMode) return;
     this.streamGeneration++;
     this.pendingText = null;
     this.clearFlushTimer();
@@ -1269,9 +1299,11 @@ export class StreamConsumer {
     }
     this.messageId = null;
     this.lastText = '';
+    this.appendSourceText = '';
     this.lastSourceText = '';
     this.sealedSourceLen = 0;
     this.sealedSegmentPrefix = '';
+    this.consumeBoundaryNewline = false;
     this.didSeal = false;
     this.sealBroken = false;
     this.outboundBlocked = false;

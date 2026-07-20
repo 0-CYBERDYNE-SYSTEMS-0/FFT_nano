@@ -494,6 +494,14 @@ export async function finalizeTelegramPreviewMessage(
     return true;
   }
 
+  if (chunks.length > ids.length) {
+    const sent = await sendMessage(chatJid, text);
+    if (sent) {
+      await deleteTelegramPreviewMessage(chatJid, ids[0], ids);
+    }
+    return sent;
+  }
+
   // Reconcile final chunks against the existing preview bubbles: edit each
   // bubble in place, send extra chunks as new messages, and delete any preview
   // bubbles left over when the final has fewer chunks than the live preview.

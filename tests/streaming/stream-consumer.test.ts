@@ -220,6 +220,39 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('retry removes append-mode output before the next attempt streams', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-append-retry',
+      adapter,
+      deliveryMode: 'append',
+      verboseMode: 'off',
+    });
+    const previous = 'Old attempt output that must be removed before retrying.';
+    const replacement =
+      'Fresh attempt output that must be the only remaining text.';
+
+    await consumer.onDelta(previous);
+    await flush();
+    consumer.handleProgress({
+      kind: 'retry_fresh',
+      at: Date.now(),
+      reason: 'stale_no_progress',
+    });
+    await consumer.onDelta(replacement);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.deepEqual(adapter.deletes, [
+      { chatId: 'telegram:1', messageId: '1' },
+    ]);
+    assert.deepEqual(
+      adapter.sent.map((message) => message.content),
+      [previous, replacement],
+    );
+    consumer.stop();
+  });
+
   test('delivery mode draft sends native drafts instead of durable preview messages', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
@@ -262,6 +295,11 @@ describe('StreamConsumer', () => {
       'This final answer is delivered separately',
     );
     assert.equal(result.previewState, null);
+    assert.deepEqual(adapter.drafts.at(-1), {
+      chatId: 'telegram:1',
+      draftId: 321,
+      content: '',
+    });
   });
 
   test('draft mode clears a native draft when a final silence marker retracts it', async () => {
@@ -595,6 +633,46 @@ describe('StreamConsumer', () => {
       adapter.edits[0].content,
       `This is the updated streamed answer content after activity failed${STREAM_CURSOR}`,
     );
+    consumer.stop();
+  });
+
+  test('W5 stops Activity edits after three flood-control failures', async () => {
+    let activityEdits = 0;
+    const adapter = createMockAdapter();
+    adapter.editMessage = async (chatId, messageId, content, finalize) => {
+      adapter.edits.push({ chatId, messageId, content });
+      adapter.editFinalize.push(finalize === true);
+      activityEdits++;
+      return {
+        success: false,
+        messageId,
+        error: 'Too Many Requests',
+        floodControl: true,
+      };
+    };
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-activity-flood',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      activitySpawnThresholdMs: 0,
+    });
+
+    consumer.handleExternalProgress('thinking', 'First Activity message');
+    await flush();
+    for (const text of [
+      'Second Activity message',
+      'Third Activity message',
+      'Fourth Activity message',
+      'Fifth Activity message',
+    ]) {
+      consumer.handleExternalProgress('thinking', text);
+      await flush();
+    }
+    await consumer.finish();
+
+    assert.equal(activityEdits, 3);
     consumer.stop();
   });
 
@@ -1719,6 +1797,62 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('W6/W7 preserves fenced code across a tool boundary', async () => {
+    for (const [marker, info] of [
+      ['~~~', 'ts'],
+      ['````', 'python'],
+    ]) {
+      const adapter = createMockAdapter();
+      const consumer = new StreamConsumer({
+        chatId: 'telegram:-1',
+        runId: `run-fence-boundary-${marker}`,
+        adapter,
+        deliveryMode: 'stream',
+        verboseMode: 'off',
+        draftMinIntervalMs: 10,
+      });
+      const beforeTool = `${marker}${info}\nconst value = 1;`;
+      const afterTool = `${beforeTool}\nconst value = 2;`;
+
+      await consumer.onDelta(beforeTool);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      consumer.onToolEvent({ toolName: 'Bash', status: 'start' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await consumer.onDelta(afterTool);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.equal(adapter.edits[0]?.content, `${beforeTool}\n${marker}`);
+      assert.equal(
+        adapter.sent.at(-1)?.content,
+        `${marker}${info}\nconst value = 2;${STREAM_CURSOR}`,
+      );
+      consumer.stop();
+    }
+  });
+
+  test('W6 preserves blank lines after a sealed overflow boundary', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-overflow-blank-lines',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+    const sealedHead = 'a'.repeat(3_995);
+    const final = `${sealedHead}\n\n\n${'tail '.repeat(8)}`;
+
+    await consumer.onDelta(sealedHead);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await consumer.onDelta(final);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(await consumer.finalizeTail(final), true);
+
+    assert.equal(adapter.edits.at(-1)?.content, final.slice(3_994));
+    consumer.stop();
+  });
+
   test('empty-output retry cleanup retracts a sealed pre-tool segment', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
@@ -1847,6 +1981,51 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('W5 flood completion collapses an existing Activity bubble', async () => {
+    const adapter = createMockAdapter();
+    adapter.editMessage = async (chatId, messageId, content, finalize) => {
+      adapter.edits.push({ chatId, messageId, content });
+      adapter.editFinalize.push(finalize === true);
+      if (messageId === '2') {
+        return {
+          success: false,
+          messageId,
+          error: 'Too Many Requests',
+          floodControl: true,
+        };
+      }
+      return { success: true, messageId };
+    };
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-flood-activity-completion',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      activitySpawnThresholdMs: 0,
+      draftMinIntervalMs: 10,
+    });
+    const initial =
+      'Preview content long enough to establish the content bubble.';
+
+    consumer.handleExternalProgress('thinking', 'Working');
+    await flush();
+    await consumer.onDelta(initial);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (let strike = 1; strike <= 3; strike++) {
+      await consumer.onDelta(`${initial}${'x'.repeat(strike)}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await consumer.finish();
+
+    assert.ok(
+      adapter.edits.some(
+        (edit) => edit.messageId === '1' && edit.content === '✓ Done',
+      ),
+    );
+    consumer.stop();
+  });
+
   test('W5 flood disable retracts sealed heads and the stale live tail', async () => {
     let editAttempts = 0;
     const adapter = createMockAdapter({
@@ -1964,6 +2143,11 @@ describe('StreamConsumer', () => {
     assert.equal(finalized, true);
     assert.equal(adapter.sent.length, 2, 'tail lands as a real final message');
     assert.equal(adapter.sentFinalize[1], true);
+    assert.deepEqual(adapter.drafts.at(-1), {
+      chatId: 'telegram:1',
+      draftId: 111,
+      content: '',
+    });
     const reconstructed = `${adapter.sent[0].content}\n${adapter.sent[1].content}`;
     assert.equal(reconstructed, bigText);
   });

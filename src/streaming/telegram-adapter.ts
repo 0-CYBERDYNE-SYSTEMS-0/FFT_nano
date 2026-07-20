@@ -9,6 +9,13 @@ import type { PlatformAdapter, SendResult } from './platform-adapter.js';
 export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
   return {
     async send(chatId, content, _replyTo?, finalize?) {
+      if (finalize && normalizeTelegramPreviewText(content) !== content) {
+        return {
+          success: false,
+          messageId: '',
+          error: 'Formatted Telegram stream message exceeds the safe limit',
+        };
+      }
       try {
         const messageId = await bot.sendStreamMessage(
           chatId,

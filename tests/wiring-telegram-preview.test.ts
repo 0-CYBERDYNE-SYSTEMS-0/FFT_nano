@@ -95,13 +95,34 @@ test('adapter does not retry a long formatted final as a truncating plain edit',
   assert.deepEqual(edits, [{ rich: true }]);
 });
 
-test('wiring removes stale previews after a non-rich final fallback', async () => {
+test('adapter rejects an overlength formatted final send before truncation', async () => {
+  let sends = 0;
+  const bot = {
+    sendStreamMessage: async () => {
+      sends++;
+      return 42;
+    },
+  } as TelegramBot;
+
+  const result = await createTelegramAdapter(bot).send(
+    'telegram:1',
+    'x'.repeat(5_000),
+    undefined,
+    true,
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(sends, 0);
+});
+
+test('wiring sends a long final before deleting stale previews', async () => {
   const originalTelegramBot = state.telegramBot;
   const deleted: number[] = [];
   const sent: string[] = [];
+  const edited: number[] = [];
   state.telegramBot = {
-    editStreamMessage: async () => {
-      throw new Error('temporary edit failure');
+    editStreamMessage: async (_chatJid, messageId) => {
+      edited.push(messageId);
     },
     sendMessage: async (_chatJid, text) => {
       sent.push(text);
@@ -125,4 +146,5 @@ test('wiring removes stale previews after a non-rich final fallback', async () =
 
   assert.deepEqual(deleted, [41, 42]);
   assert.deepEqual(sent, ['x'.repeat(40_000)]);
+  assert.deepEqual(edited, []);
 });
