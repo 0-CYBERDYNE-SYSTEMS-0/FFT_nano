@@ -253,6 +253,35 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('retry clears a native draft before the next attempt streams', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-draft-retry',
+      adapter,
+      draftId: 912,
+      deliveryMode: 'draft',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Old draft preview that must be cleared on retry.');
+    await waitForCoalesce();
+    consumer.handleProgress({
+      kind: 'retry_fresh',
+      at: Date.now(),
+      reason: 'stale_no_progress',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.deepEqual(adapter.drafts.at(-1), {
+      chatId: 'telegram:1',
+      draftId: 912,
+      content: '',
+    });
+    consumer.stop();
+  });
+
   test('delivery mode draft sends native drafts instead of durable preview messages', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
@@ -1305,7 +1334,7 @@ describe('StreamConsumer', () => {
     const reconstructed = [
       ...adapter.sent.slice(0, 3).map((message) => message.content),
       tail.slice(0, -STREAM_CURSOR.length),
-    ].join('\n');
+    ].join('');
     assert.equal(reconstructed, bigText, 'no content lost or duplicated');
     for (const s of adapter.sent.slice(0, 3)) {
       assert.ok(s.content.length <= 4096);
@@ -1850,6 +1879,29 @@ describe('StreamConsumer', () => {
     assert.equal(await consumer.finalizeTail(final), true);
 
     assert.equal(adapter.edits.at(-1)?.content, final.slice(3_994));
+    consumer.stop();
+  });
+
+  test('W6 preserves the newline chosen as an overflow boundary', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-overflow-boundary-newline',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+    const source = `${'a'.repeat(3_990)}\n${'b'.repeat(100)}`;
+
+    await consumer.onDelta(source);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const delivered = [
+      ...adapter.sent.slice(0, -1).map((message) => message.content),
+      adapter.sent.at(-1)?.content.slice(0, -STREAM_CURSOR.length) || '',
+    ].join('');
+
+    assert.equal(delivered, source);
     consumer.stop();
   });
 

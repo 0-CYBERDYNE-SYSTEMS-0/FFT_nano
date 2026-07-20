@@ -300,8 +300,8 @@ export class StreamConsumer {
         this.sealedSegmentPrefix.length + segment.length > SEAL_SAFE_LIMIT
       ) {
         const rawLimit = SEAL_SAFE_LIMIT - this.sealedSegmentPrefix.length;
-        let cut = segment.lastIndexOf('\n', rawLimit);
-        if (cut < rawLimit / 2) cut = rawLimit;
+        const newlineIndex = segment.lastIndexOf('\n', rawLimit - 1);
+        let cut = newlineIndex < rawLimit / 2 ? rawLimit : newlineIndex + 1;
         const priorCodeUnit = segment.charCodeAt(cut - 1);
         const nextCodeUnit = segment.charCodeAt(cut);
         const endsWithHighSurrogate =
@@ -316,10 +316,8 @@ export class StreamConsumer {
         );
         this.sealedSegmentPrefix =
           openFence === null ? '' : `${openFence.marker}${openFence.info}\n`;
-        const rest = segment.slice(cut);
-        const consumedBoundary = rest.startsWith('\n') ? 1 : 0;
-        this.sealedSourceLen += cut + consumedBoundary;
-        segment = rest.slice(consumedBoundary);
+        this.sealedSourceLen += cut;
+        segment = segment.slice(cut);
       }
     }
     this.lastSourceText = source;
@@ -1314,7 +1312,10 @@ export class StreamConsumer {
     this.clearFailures();
     this.answerChain = this.answerChain
       .catch(() => {})
-      .then(() => this.deleteDeliveredPreviewMessages());
+      .then(async () => {
+        await this.clearNativeDraft();
+        await this.deleteDeliveredPreviewMessages();
+      });
   }
 
   private invalidateOutboundPreview(): void {
