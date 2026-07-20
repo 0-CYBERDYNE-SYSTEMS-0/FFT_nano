@@ -2200,7 +2200,7 @@ describe('StreamConsumer', () => {
       draftId: 111,
       content: '',
     });
-    const reconstructed = `${adapter.sent[0].content}\n${adapter.sent[1].content}`;
+    const reconstructed = `${adapter.sent[0].content}${adapter.sent[1].content}`;
     assert.equal(reconstructed, bigText);
   });
 });
