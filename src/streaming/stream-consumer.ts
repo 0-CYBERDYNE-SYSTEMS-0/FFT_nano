@@ -9,12 +9,23 @@ import {
   formatToolProgressMessage,
   type ToolProgressEvent,
 } from './format-tools.js';
-import { guardOutboundAgentText } from '../outbound-text-guard.js';
+import {
+  OUTBOUND_DUMP_FALLBACK,
+  guardOutboundAgentText,
+} from '../outbound-text-guard.js';
+import { STREAM_CURSOR, holdbackSilenceMarker } from './stream-filter.js';
 
 const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
 const MAX_FAILURES_BEFORE_DISABLE = 4;
+const MAX_EDIT_FLOOD_STRIKES = 3;
 const DISABLE_TTL_MS = 120_000;
 const MIN_PREVIEW_CHARS = 20;
+const FAST_FLUSH_CHARS = 24;
+const FAST_FLUSH_INTERVAL_MS = 400;
+// Segment budget for one live bubble: Telegram's 4096 minus the streaming
+// cursor and a safety margin (telegram-spec W6). Text beyond this is sealed
+// into a finalized message and streaming continues in a fresh bubble.
+const SEAL_SAFE_LIMIT = 4096 - STREAM_CURSOR.length - 100;
 const MAX_APPEND_BLOCK_CHARS = 3_900;
 const MAX_TOOL_TRAIL_LENGTH = 8;
 const MAX_TOOL_PROGRESS_LINES = 12;
@@ -45,6 +56,32 @@ function deriveStreamDraftId(seed: string): number {
   return (raw % 2_000_000_000) + 1;
 }
 
+type OpenCodeFence = {
+  marker: string;
+  info: string;
+};
+
+function findOpenCodeFence(text: string): OpenCodeFence | null {
+  const fencePattern = /(?:^|\n)[ \t]{0,3}(`{3,}|~{3,})([^\n]*)/g;
+  let openFence: OpenCodeFence | null = null;
+  for (const match of text.matchAll(fencePattern)) {
+    const marker = match[1];
+    const suffix = match[2] || '';
+    if (openFence === null) {
+      if (!suffix.includes(marker[0])) {
+        openFence = { marker, info: suffix.trim().slice(0, 80) };
+      }
+    } else if (
+      openFence.marker[0] === marker[0] &&
+      marker.length >= openFence.marker.length &&
+      !suffix.trim()
+    ) {
+      openFence = null;
+    }
+  }
+  return openFence;
+}
+
 export interface StreamConsumerConfig {
   chatId: string;
   runId: string;
@@ -60,9 +97,12 @@ export interface StreamConsumerConfig {
   // single content bubble. Defaults to 2.5s.
   activitySpawnThresholdMs?: number;
   // Minimum interval (ms) between draft edits for coalescing. Defaults based on
-  // chatId sign: positive (private) = 1000ms, negative (group) = 3000ms.
+  // chatId sign: positive (private) = 800ms, negative (group) = 3000ms.
   // Exposed for testing; prefer FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS env var.
   draftMinIntervalMs?: number;
+  // Segment sealing (overflow continuation + tool-boundary bubbles). Disabled
+  // when the preview text is non-monotonic (e.g. streamed reasoning prefix).
+  sealingEnabled?: boolean;
 }
 
 export interface StreamTuiEvent {
@@ -93,6 +133,8 @@ export class StreamConsumer {
   private failureCount = 0;
   private disabled = false;
   private disabledUntil = 0;
+  private editFloodStrikes = 0;
+  private editFloodDisabled = false;
   private completed = false;
 
   // Activity block — ephemeral bubble carrying status/progress/reasoning churn,
@@ -102,6 +144,8 @@ export class StreamConsumer {
   private pendingActivityText = '';
   private activitySpawnTimer: NodeJS.Timeout | null = null;
   private activityCollapsed = false;
+  private activityFloodStrikes = 0;
+  private activityFloodDisabled = false;
   private readonly runStartedAt = Date.now();
   private readonly activitySpawnThresholdMs: number;
   // Status and answer content use separate delivery paths in every live mode.
@@ -124,6 +168,7 @@ export class StreamConsumer {
   // from postponing every edit while still dropping stale intermediate frames.
   private pendingText: string | null = null;
   private flushTimer: NodeJS.Timeout | null = null;
+  private flushDueAt = 0;
   private lastAnswerFlushAt = 0;
   private flushSuppressed = false;
   private readonly draftMinIntervalMs: number;
@@ -135,6 +180,22 @@ export class StreamConsumer {
   private appendSourceText = '';
   private lastMilestoneAt = 0;
   private lastMilestoneKey = '';
+
+  // Segment sealing state (telegram-spec W6/W7). `sealedSourceLen` marks how
+  // much of the guarded source text is already sealed into permanent messages;
+  // the live bubble only ever renders the remainder. `sealBroken` freezes
+  // sealing after a failed seal so the host-side full final delivery restores
+  // completeness (possible duplication, never loss).
+  private readonly sealingEnabled: boolean;
+  private lastSourceText = '';
+  private sealedSourceLen = 0;
+  private didSeal = false;
+  private sealBroken = false;
+  private sealedSegmentPrefix = '';
+  private consumeBoundaryNewline = false;
+  private outboundBlocked = false;
+  private deliveredPreviewMessageIds = new Set<string>();
+  private streamGeneration = 0;
 
   private readonly label: string;
   private readonly heartbeatMs: number;
@@ -148,8 +209,6 @@ export class StreamConsumer {
         : 0;
     this.activitySpawnThresholdMs =
       config.activitySpawnThresholdMs ?? DEFAULT_ACTIVITY_SPAWN_THRESHOLD_MS;
-    // Compute draftMinIntervalMs: positive chatId (private) = 1000ms,
-    // negative chatId (group) = 3000ms. Override via config or env.
     if (config.draftMinIntervalMs !== undefined) {
       this.draftMinIntervalMs = Math.max(0, config.draftMinIntervalMs);
     } else {
@@ -166,9 +225,10 @@ export class StreamConsumer {
             : 3000;
       } else {
         // Private chat (positive or non-numeric chatId)
-        this.draftMinIntervalMs = 1000;
+        this.draftMinIntervalMs = 800;
       }
     }
+    this.sealingEnabled = config.sealingEnabled !== false;
     this.appendMode = config.deliveryMode === 'append';
     this.statusMode = config.deliveryMode === 'status';
     this.draftMode =
@@ -186,6 +246,7 @@ export class StreamConsumer {
 
   async onDelta(text: string): Promise<void> {
     if (this.completed) return;
+    if (this.editFloodDisabled) return;
     // off + status: no assistant monologue streaming
     if (
       this.config.deliveryMode === 'off' ||
@@ -195,12 +256,17 @@ export class StreamConsumer {
     }
     const guarded = guardOutboundAgentText(text);
     if (!guarded.allow) {
-      // Never stream tool dumps / full-file bodies into the preview bubble.
+      this.invalidateOutboundPreview();
       return;
     }
-    const nextText = this.appendToolTrailFooter(guarded.text);
+
+    // Hold back partial silence markers so "NO" → "NO_REPLY" never flashes on
+    // screen; an exact marker is never previewed at all (telegram-spec W4).
+    const source = holdbackSilenceMarker(guarded.text);
+    if (!source) return;
 
     if (this.appendMode) {
+      const nextText = this.appendToolTrailFooter(source);
       this.answerChain = this.answerChain
         .catch(() => {})
         .then(() => {
@@ -210,6 +276,55 @@ export class StreamConsumer {
         });
       return;
     }
+
+    let segment = source;
+    if (this.sealingEnabled) {
+      if (
+        this.sealedSourceLen > 0 &&
+        !source.startsWith(this.lastSourceText.slice(0, this.sealedSourceLen))
+      ) {
+        this.resetPreviewForRetry();
+      }
+      segment = source.slice(this.sealedSourceLen);
+      if (this.consumeBoundaryNewline) {
+        if (segment.startsWith('\n')) {
+          this.sealedSourceLen++;
+          segment = segment.slice(1);
+        }
+        this.consumeBoundaryNewline = false;
+      }
+      // Overflow: seal head chunks as permanent formatted messages and keep
+      // streaming the remainder in a fresh bubble (telegram-spec W6).
+      while (
+        !this.sealBroken &&
+        this.sealedSegmentPrefix.length + segment.length > SEAL_SAFE_LIMIT
+      ) {
+        const rawLimit = SEAL_SAFE_LIMIT - this.sealedSegmentPrefix.length;
+        const newlineIndex = segment.lastIndexOf('\n', rawLimit - 1);
+        let cut = newlineIndex < rawLimit / 2 ? rawLimit : newlineIndex + 1;
+        const priorCodeUnit = segment.charCodeAt(cut - 1);
+        const nextCodeUnit = segment.charCodeAt(cut);
+        const endsWithHighSurrogate =
+          priorCodeUnit >= 0xd800 && priorCodeUnit <= 0xdbff;
+        const startsWithLowSurrogate =
+          nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff;
+        if (endsWithHighSurrogate && startsWithLowSurrogate) cut--;
+        const head = `${this.sealedSegmentPrefix}${segment.slice(0, cut)}`;
+        const openFence = findOpenCodeFence(head);
+        this.enqueueSeal(
+          openFence === null ? head : `${head}\n${openFence.marker}`,
+        );
+        this.sealedSegmentPrefix =
+          openFence === null ? '' : `${openFence.marker}${openFence.info}\n`;
+        this.sealedSourceLen += cut;
+        segment = segment.slice(cut);
+      }
+    }
+    this.lastSourceText = source;
+
+    const nextText = this.appendToolTrailFooter(
+      `${this.sealedSegmentPrefix}${segment}`,
+    );
 
     const hasExistingDraft = this.draftMode && this.lastText.length > 0;
     if (
@@ -224,8 +339,10 @@ export class StreamConsumer {
       return;
     }
 
+    const fastFlush =
+      nextText.length - this.lastText.length >= FAST_FLUSH_CHARS;
     this.pendingText = nextText;
-    this.scheduleAnswerFlush();
+    this.scheduleAnswerFlush(fastFlush);
   }
 
   handleProgress(event: ContainerProgressEvent): void {
@@ -274,6 +391,7 @@ export class StreamConsumer {
         return;
 
       case 'retry_fresh':
+        this.resetPreviewForRetry();
         this.emitStatusText(
           'retry_fresh',
           `${this.label} status: Retrying with a fresh session.`,
@@ -282,6 +400,7 @@ export class StreamConsumer {
         return;
 
       case 'retry_delay':
+        this.resetPreviewForRetry();
         this.emitStatusText(
           'retry_delay',
           `${this.label} status: Retrying after ${event.delayMs}ms.`,
@@ -291,6 +410,7 @@ export class StreamConsumer {
         return;
 
       case 'retry_provider_switch':
+        this.resetPreviewForRetry();
         this.emitStatusText(
           'retry_provider_switch',
           `${this.label} status: Switching provider from ${event.fromProvider} to ${event.toProvider}.`,
@@ -335,6 +455,9 @@ export class StreamConsumer {
 
   onToolEvent(event: ToolProgressEvent): void {
     if (this.completed) return;
+    if (event.status === 'start' && this.sealSegmentBoundary()) {
+      this.enqueueToolBoundary(event);
+    }
     this.handleToolTrail(event);
     this.handleStandaloneToolProgress(event);
 
@@ -357,6 +480,13 @@ export class StreamConsumer {
     this.clearFlushTimer();
 
     await this.answerChain.catch(() => {});
+    await this.clearNativeDraft();
+    if (this.sealBroken || this.outboundBlocked || this.editFloodDisabled) {
+      this.pendingText = null;
+      await this.deleteDeliveredPreviewMessages();
+      await this.collapseActivity();
+      return { previewState: null, completed: true };
+    }
     if (this.pendingText !== null) {
       const pending = this.pendingText;
       this.pendingText = null;
@@ -368,7 +498,7 @@ export class StreamConsumer {
       return { previewState: null, completed: true };
     }
 
-    if (finalText && this.messageId) {
+    if (finalText && this.messageId && !this.editFloodDisabled) {
       const guarded = guardOutboundAgentText(finalText);
       const result = await this.config.adapter.editMessage(
         this.config.chatId,
@@ -397,7 +527,11 @@ export class StreamConsumer {
     this.clearActivityTimer();
     this.pendingActivityText = '';
     await this.activityChain.catch(() => {});
-    if (!this.activityMessageId || this.activityCollapsed) {
+    if (
+      !this.activityMessageId ||
+      this.activityCollapsed ||
+      this.activityFloodDisabled
+    ) {
       this.activityCollapsed = true;
       return;
     }
@@ -424,6 +558,21 @@ export class StreamConsumer {
     this.clearFlushTimer();
     await this.answerChain.catch(() => {});
     await this.activityChain.catch(() => {});
+    await this.clearNativeDraft();
+
+    // Strip the streaming cursor from the content bubble so an interrupted run
+    // never leaves a frozen "still typing" marker. Best-effort.
+    if (this.messageId && this.lastText) {
+      try {
+        await this.config.adapter.editMessage(
+          this.config.chatId,
+          this.messageId,
+          this.lastText,
+        );
+      } catch {
+        // best-effort
+      }
+    }
 
     // Non-destructive: collapse the activity bubble to an interrupted notice and
     // LEAVE the content bubble in place. A recoverable stop must never yank away
@@ -443,10 +592,79 @@ export class StreamConsumer {
     }
   }
 
+  async retract(): Promise<void> {
+    this.completed = true;
+    this.clearHeartbeat();
+    this.clearActivityTimer();
+    this.clearFlushTimer();
+    await this.answerChain.catch(() => {});
+    await this.activityChain.catch(() => {});
+    await this.clearNativeDraft();
+    if (this.activityMessageId) {
+      this.deliveredPreviewMessageIds.add(this.activityMessageId);
+      this.activityMessageId = null;
+    }
+    await this.deleteDeliveredPreviewMessages();
+    this.activityCollapsed = true;
+  }
+
   getPreviewState(): PreviewState | null {
     if (this.appendMode) return null;
+    if (this.outboundBlocked) return null;
+    if (this.editFloodDisabled) return null;
     if (!this.messageId) return null;
     return { messageId: this.messageId, lastText: this.lastText };
+  }
+
+  /** True when segment sealing delivered permanent content for this run. */
+  hasSealedContent(): boolean {
+    return this.didSeal && !this.sealBroken;
+  }
+
+  /**
+   * Finalize the live tail after a sealed run: the remaining unsealed segment
+   * becomes the last permanent, formatted message. The host must then skip its
+   * own full-text final delivery (it would duplicate the sealed heads).
+   * Returns false when finalization failed so callers can fall back to the
+   * legacy full-delivery path.
+   */
+  async finalizeTail(finalText?: string): Promise<boolean> {
+    this.completed = true;
+    this.clearFlushTimer();
+    this.pendingText = null;
+    await this.answerChain.catch(() => {});
+    await this.clearNativeDraft();
+    if (this.sealBroken) return false;
+    const source =
+      finalText === undefined
+        ? this.lastSourceText
+        : guardOutboundAgentText(finalText).text;
+    const sealedPrefix = this.lastSourceText.slice(0, this.sealedSourceLen);
+    if (!source.startsWith(sealedPrefix)) {
+      await this.retract();
+      return false;
+    }
+    const segment = `${this.sealedSegmentPrefix}${source.slice(this.sealedSourceLen)}`;
+    if (!segment.trim()) return true;
+    const { adapter, chatId } = this.config;
+    try {
+      if (!this.draftMode && this.messageId) {
+        const result = await adapter.editMessage(
+          chatId,
+          this.messageId,
+          segment,
+          true,
+        );
+        if (!result.success) this.sealBroken = true;
+        return result.success;
+      }
+      const result = await adapter.send(chatId, segment, undefined, true);
+      if (!result.success) this.sealBroken = true;
+      return result.success;
+    } catch {
+      this.sealBroken = true;
+      return false;
+    }
   }
 
   stop(): void {
@@ -458,12 +676,88 @@ export class StreamConsumer {
 
   // ── Internal ──────────────────────────────────────────────────────
 
-  private async sendOrEdit(text: string): Promise<void> {
+  /**
+   * Seal the current segment at a tool boundary (telegram-spec W7): the text
+   * bubble becomes permanent formatted content and the next delta opens a
+   * fresh bubble below the tool activity. No-op when there is nothing to seal.
+   */
+  private sealSegmentBoundary(): boolean {
+    if (!this.sealingEnabled || this.sealBroken || this.completed) return false;
+    if (this.appendMode || this.statusMode) return false;
+    if (this.config.deliveryMode === 'off') return false;
+    const segment = this.lastSourceText.slice(this.sealedSourceLen);
+    if (!segment.trim()) return false;
+    this.sealedSourceLen = this.lastSourceText.length;
+    this.pendingText = null;
+    const head = `${this.sealedSegmentPrefix}${segment}`;
+    const openFence = findOpenCodeFence(head);
+    this.enqueueSeal(
+      openFence === null ? head : `${head}\n${openFence.marker}`,
+    );
+    this.sealedSegmentPrefix =
+      openFence === null ? '' : `${openFence.marker}${openFence.info}\n`;
+    this.consumeBoundaryNewline = true;
+    return true;
+  }
+
+  private enqueueSeal(head: string): void {
+    this.didSeal = true;
+    const generation = this.streamGeneration;
+    this.answerChain = this.answerChain
+      .catch(() => {})
+      .then(() => this.sealChunk(head, generation));
+  }
+
+  private async sealChunk(head: string, generation: number): Promise<void> {
+    if (generation !== this.streamGeneration || this.sealBroken) return;
     const { adapter, chatId } = this.config;
+    try {
+      if (!this.draftMode && this.messageId) {
+        const messageId = this.messageId;
+        const result = await adapter.editMessage(chatId, messageId, head, true);
+        if (result.success) {
+          this.deliveredPreviewMessageIds.add(messageId);
+          if (generation !== this.streamGeneration) return;
+          this.messageId = null;
+          this.lastText = '';
+          return;
+        }
+      } else {
+        const result = await adapter.send(chatId, head, undefined, true);
+        if (result.success) {
+          this.deliveredPreviewMessageIds.add(result.messageId);
+          if (generation !== this.streamGeneration) return;
+          if (this.draftMode) this.lastText = '';
+          return;
+        }
+      }
+      if (generation !== this.streamGeneration) return;
+      this.sealBroken = true;
+    } catch {
+      if (generation !== this.streamGeneration) return;
+      this.sealBroken = true;
+    }
+  }
+
+  private async sendOrEdit(
+    text: string,
+    generation = this.streamGeneration,
+  ): Promise<void> {
+    if (
+      generation !== this.streamGeneration ||
+      this.editFloodDisabled ||
+      this.outboundBlocked
+    )
+      return;
+    const { adapter, chatId } = this.config;
+    // Mid-stream frames carry the typing cursor; finalization paths send the
+    // clean text (telegram-spec W1). `lastText` always stores cursor-free text.
+    const frameText = this.completed ? text : `${text}${STREAM_CURSOR}`;
 
     try {
       if (this.draftMode && this.draftId !== null && adapter.sendDraft) {
-        const result = await adapter.sendDraft(chatId, this.draftId, text);
+        const result = await adapter.sendDraft(chatId, this.draftId, frameText);
+        if (generation !== this.streamGeneration) return;
         if (result.success) {
           this.lastText = text;
           this.clearFailures();
@@ -479,25 +773,43 @@ export class StreamConsumer {
       }
 
       if (!this.messageId) {
-        const result = await adapter.send(chatId, text);
+        const result = await adapter.send(chatId, frameText);
         if (result.success) {
+          this.deliveredPreviewMessageIds.add(result.messageId);
+          if (generation !== this.streamGeneration) return;
           this.messageId = result.messageId;
           this.lastText = text;
           this.clearFailures();
-        } else {
+        } else if (generation === this.streamGeneration) {
           this.recordFailure();
         }
         return;
       }
 
-      const result = await adapter.editMessage(chatId, this.messageId, text);
+      const result = await adapter.editMessage(
+        chatId,
+        this.messageId,
+        frameText,
+      );
+      if (generation !== this.streamGeneration) return;
       if (result.success) {
         this.lastText = text;
+        this.editFloodStrikes = 0;
         this.clearFailures();
       } else {
-        this.recordFailure();
+        if (result.floodControl) {
+          this.editFloodStrikes++;
+          if (this.editFloodStrikes >= MAX_EDIT_FLOOD_STRIKES) {
+            this.disableFloodedPreview();
+          }
+        } else {
+          this.editFloodStrikes = 0;
+          this.recordFailure();
+        }
       }
     } catch {
+      if (generation !== this.streamGeneration) return;
+      this.editFloodStrikes = 0;
       this.recordFailure();
     }
   }
@@ -574,7 +886,7 @@ export class StreamConsumer {
   }
 
   private async sendOrEditActivity(text: string): Promise<void> {
-    if (this.activityCollapsed) return;
+    if (this.activityCollapsed || this.activityFloodDisabled) return;
     if (this.completed && !this.activityMessageId) return;
     if (text === this.activityText) return;
     const { adapter, chatId } = this.config;
@@ -584,6 +896,8 @@ export class StreamConsumer {
         if (result.success) {
           this.activityMessageId = result.messageId;
           this.activityText = text;
+        } else if (result.floodControl) {
+          this.activityFloodDisabled = true;
         }
         return;
       }
@@ -594,6 +908,13 @@ export class StreamConsumer {
       );
       if (result.success) {
         this.activityText = text;
+        this.activityFloodStrikes = 0;
+      } else if (result.floodControl) {
+        this.activityFloodStrikes++;
+        if (this.activityFloodStrikes >= MAX_EDIT_FLOOD_STRIKES) {
+          this.activityFloodDisabled = true;
+          this.clearActivityTimer();
+        }
       }
     } catch {
       // Activity is best-effort and must never throttle answer delivery.
@@ -607,50 +928,97 @@ export class StreamConsumer {
     }
   }
 
+  private async clearNativeDraft(): Promise<void> {
+    if (
+      !this.draftMode ||
+      this.draftId === null ||
+      !this.config.adapter.sendDraft
+    ) {
+      return;
+    }
+    try {
+      await this.config.adapter.sendDraft(this.config.chatId, this.draftId, '');
+    } catch {}
+  }
+
   private clearFlushTimer(): void {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
+    this.flushDueAt = 0;
   }
 
-  private scheduleAnswerFlush(): void {
-    if (this.flushSuppressed || this.completed || this.flushTimer) return;
+  private scheduleAnswerFlush(fast = false): void {
+    if (this.flushSuppressed || this.completed || this.editFloodDisabled)
+      return;
     const now = Date.now();
-    const cadenceDelay = Math.max(
-      0,
-      this.draftMinIntervalMs - (now - this.lastAnswerFlushAt),
-    );
+    const interval =
+      fast && this.parseTelegramChatId() > 0
+        ? Math.min(this.draftMinIntervalMs, FAST_FLUSH_INTERVAL_MS)
+        : this.draftMinIntervalMs;
+    const cadenceDelay = Math.max(0, interval - (now - this.lastAnswerFlushAt));
     const backoffDelay = this.disabled
       ? Math.max(0, this.disabledUntil - now)
       : 0;
+    const delay = Math.max(cadenceDelay, backoffDelay);
+    const dueAt = now + delay;
+    if (this.flushTimer) {
+      if (dueAt >= this.flushDueAt) return;
+      this.clearFlushTimer();
+    }
+    this.flushDueAt = dueAt;
+    const generation = this.streamGeneration;
 
-    this.flushTimer = setTimeout(
-      () => {
-        this.flushTimer = null;
-        if (this.flushSuppressed || this.completed) {
-          this.pendingText = null;
-          return;
-        }
-        const text = this.pendingText;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushDueAt = 0;
+      if (this.flushSuppressed || this.completed) {
         this.pendingText = null;
-        if (text === null) return;
+        return;
+      }
+      const text = this.pendingText;
+      this.pendingText = null;
+      if (text === null) return;
 
-        this.answerChain = this.answerChain
-          .catch(() => {})
-          .then(async () => {
-            await this.sendOrEdit(text);
-            this.lastAnswerFlushAt = Date.now();
-            if (this.lastText !== text && this.pendingText === null) {
-              this.pendingText = text;
-            }
-          })
-          .finally(() => {
-            if (this.pendingText !== null) this.scheduleAnswerFlush();
-          });
-      },
-      Math.max(cadenceDelay, backoffDelay),
-    );
+      this.answerChain = this.answerChain
+        .catch(() => {})
+        .then(async () => {
+          if (
+            this.flushSuppressed ||
+            this.completed ||
+            this.editFloodDisabled ||
+            generation !== this.streamGeneration
+          )
+            return;
+          const startedAt = Date.now();
+          const cadenceDelay = Math.max(
+            0,
+            interval - (startedAt - this.lastAnswerFlushAt),
+          );
+          const backoffDelay = this.disabled
+            ? Math.max(0, this.disabledUntil - startedAt)
+            : 0;
+          if (cadenceDelay > 0 || backoffDelay > 0) {
+            if (this.pendingText === null) this.pendingText = text;
+            this.scheduleAnswerFlush(fast);
+            return;
+          }
+          this.lastAnswerFlushAt = startedAt;
+          await this.sendOrEdit(text, generation);
+          if (generation !== this.streamGeneration) return;
+          if (
+            !this.editFloodDisabled &&
+            this.lastText !== text &&
+            this.pendingText === null
+          ) {
+            this.pendingText = text;
+          }
+        })
+        .finally(() => {
+          if (this.pendingText !== null) this.scheduleAnswerFlush();
+        });
+    }, delay);
   }
 
   private handleToolTrail(event: ToolProgressEvent): void {
@@ -752,6 +1120,7 @@ export class StreamConsumer {
         this.recordFailure();
         break;
       }
+      this.deliveredPreviewMessageIds.add(result.messageId);
     }
 
     if (sentAll) {
@@ -880,5 +1249,110 @@ export class StreamConsumer {
     this.failureCount = 0;
     this.disabled = false;
     this.disabledUntil = 0;
+  }
+
+  private disableFloodedPreview(): void {
+    this.editFloodDisabled = true;
+    this.pendingText = null;
+    this.pendingActivityText = '';
+    this.sealBroken = true;
+    this.clearFlushTimer();
+    this.clearActivityTimer();
+  }
+
+  private enqueueToolBoundary(event: ToolProgressEvent): void {
+    const line = formatToolProgressLine(event, 'new');
+    if (!line) return;
+    const generation = this.streamGeneration;
+    this.answerChain = this.answerChain
+      .catch(() => {})
+      .then(async () => {
+        if (
+          generation !== this.streamGeneration ||
+          this.sealBroken ||
+          this.outboundBlocked
+        )
+          return;
+        const result = await this.config.adapter.send(
+          this.config.chatId,
+          line,
+          undefined,
+          true,
+        );
+        if (result.success) {
+          this.deliveredPreviewMessageIds.add(result.messageId);
+          if (generation !== this.streamGeneration) return;
+        } else if (generation === this.streamGeneration) {
+          this.sealBroken = true;
+        }
+      });
+  }
+
+  private resetPreviewForRetry(): void {
+    if (this.statusMode) return;
+    this.streamGeneration++;
+    this.pendingText = null;
+    this.clearFlushTimer();
+    if (this.messageId) {
+      this.deliveredPreviewMessageIds.add(this.messageId);
+    }
+    this.messageId = null;
+    this.lastText = '';
+    this.appendSourceText = '';
+    this.lastSourceText = '';
+    this.sealedSourceLen = 0;
+    this.sealedSegmentPrefix = '';
+    this.consumeBoundaryNewline = false;
+    this.didSeal = false;
+    this.sealBroken = false;
+    this.outboundBlocked = false;
+    this.editFloodStrikes = 0;
+    this.editFloodDisabled = false;
+    this.toolTrail = [];
+    this.lastToolName = undefined;
+    this.clearFailures();
+    this.answerChain = this.answerChain
+      .catch(() => {})
+      .then(async () => {
+        await this.clearNativeDraft();
+        await this.deleteDeliveredPreviewMessages();
+      });
+  }
+
+  private invalidateOutboundPreview(): void {
+    if (this.outboundBlocked) return;
+    this.outboundBlocked = true;
+    this.sealBroken = true;
+    this.pendingText = null;
+    this.clearFlushTimer();
+    this.answerChain = this.answerChain
+      .catch(() => {})
+      .then(() => this.deleteDeliveredPreviewMessages());
+  }
+
+  private async deleteDeliveredPreviewMessages(): Promise<void> {
+    if (this.messageId) {
+      this.deliveredPreviewMessageIds.add(this.messageId);
+    }
+    for (const messageId of this.deliveredPreviewMessageIds) {
+      let retracted = false;
+      try {
+        await this.config.adapter.deleteMessage(this.config.chatId, messageId);
+        retracted = true;
+      } catch {
+        try {
+          const result = await this.config.adapter.editMessage(
+            this.config.chatId,
+            messageId,
+            OUTBOUND_DUMP_FALLBACK,
+            true,
+          );
+          retracted = result.success;
+        } catch {}
+      }
+      if (retracted) this.deliveredPreviewMessageIds.delete(messageId);
+    }
+    this.messageId = null;
+    this.lastText = '';
   }
 }

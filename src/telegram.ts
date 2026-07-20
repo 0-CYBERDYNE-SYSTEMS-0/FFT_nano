@@ -75,6 +75,22 @@ class TelegramApiError extends Error {
   }
 }
 
+export function isTelegramFloodControlError(error: unknown): boolean {
+  if (error instanceof TelegramApiError) {
+    return error.statusCode === 429 || error.retryAfterSeconds !== undefined;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b429\b|too many requests|retry after/i.test(message);
+}
+
+export function isTelegramFormattingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    TELEGRAM_PARSE_ERROR_RE.test(message) ||
+    TELEGRAM_MESSAGE_TOO_LONG_RE.test(message)
+  );
+}
+
 // Methods that create a new user-visible message. Telegram's Bot API has no
 // idempotency key for these, so retrying one after a response-uncertain
 // failure can deliver the same content twice. Edit/delete/no-op calls are
@@ -587,6 +603,7 @@ export interface TelegramDraftOptions {
 export interface TelegramStreamMessageOptions {
   messageThreadId?: number;
   rich?: boolean;
+  maxAttempts?: number;
 }
 
 export interface TelegramBotOptions {
@@ -744,10 +761,23 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     needsRefresh: boolean;
   }
   const typingLoops = new Map<string, TypingLoopState>();
+  // After a failed sendChatAction, skip typing pulses for the chat so a
+  // Telegram-side blip does not spam the API.
+  const TYPING_FAILURE_COOLDOWN_MS = 30_000;
+  const typingCooldownUntil = new Map<string, number>();
+
+  function isTypingCoolingDown(chatId: string): boolean {
+    const until = typingCooldownUntil.get(chatId);
+    if (until === undefined) return false;
+    if (Date.now() < until) return true;
+    typingCooldownUntil.delete(chatId);
+    return false;
+  }
 
   function pulseTypingIfActive(chatId: string): void {
     const loop = typingLoops.get(chatId);
     if (!loop) return;
+    if (isTypingCoolingDown(chatId)) return;
     if (loop.inFlight) {
       loop.needsRefresh = true;
       return;
@@ -757,7 +787,14 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       chat_id: chatId,
       action: 'typing',
     })
+      .then(() => {
+        typingCooldownUntil.delete(chatId);
+      })
       .catch((err) => {
+        typingCooldownUntil.set(
+          chatId,
+          Date.now() + TYPING_FAILURE_COOLDOWN_MS,
+        );
         logger.debug(
           {
             chatId,
@@ -945,20 +982,18 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   async function apiPostWithRetry<T>(
     method: string,
     payload: object,
+    maxAttempts = TELEGRAM_RETRY_ATTEMPTS,
   ): Promise<T> {
     let attempt = 0;
     let lastErr: unknown;
 
-    while (attempt < TELEGRAM_RETRY_ATTEMPTS) {
+    while (attempt < maxAttempts) {
       attempt++;
       try {
         return await apiPost<T>(method, payload);
       } catch (err) {
         lastErr = err;
-        if (
-          !isRetryableTelegramError(err, method) ||
-          attempt >= TELEGRAM_RETRY_ATTEMPTS
-        ) {
+        if (!isRetryableTelegramError(err, method) || attempt >= maxAttempts) {
           throw err;
         }
         const delayMs = resolveRetryDelayMs(err, attempt);
@@ -1415,16 +1450,45 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (!chatId) {
       throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
     }
+    const thread =
+      typeof opts.messageThreadId === 'number' &&
+      Number.isFinite(opts.messageThreadId)
+        ? { message_thread_id: Math.trunc(opts.messageThreadId) }
+        : {};
+
+    // rich: formatted one-shot send for sealed/finalized stream content. A 400
+    // BadRequest (parse failure, over-limit render) was not delivered, so the
+    // plain path below is a safe resend; other errors propagate.
+    if (opts.rich) {
+      const normalized = text.replace(/\r\n/g, '\n');
+      try {
+        const richResult = await apiPostWithRetry<{ message_id?: number }>(
+          'sendMessage',
+          {
+            chat_id: chatId,
+            text: renderTelegramHtmlText(normalized, { textMode: 'markdown' }),
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            ...thread,
+          },
+        );
+        const richMessageId = Number(richResult?.message_id);
+        if (Number.isInteger(richMessageId) && richMessageId > 0) {
+          pulseTypingIfActive(chatId);
+          return richMessageId;
+        }
+      } catch (err) {
+        if (!isRichFallbackError(err)) throw err;
+      }
+    }
+
     const result = await apiPostWithRetry<{ message_id?: number }>(
       'sendMessage',
       {
         chat_id: chatId,
         text: normalizeTelegramPreviewText(text),
         disable_web_page_preview: true,
-        ...(typeof opts.messageThreadId === 'number' &&
-        Number.isFinite(opts.messageThreadId)
-          ? { message_thread_id: Math.trunc(opts.messageThreadId) }
-          : {}),
+        ...thread,
       },
     );
     const messageId = Number(result?.message_id);
@@ -1453,15 +1517,20 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const normalized = opts.rich
       ? text.replace(/\r\n/g, '\n')
       : normalizeTelegramPreviewText(text);
+    const maxAttempts = opts.maxAttempts ?? TELEGRAM_RETRY_ATTEMPTS;
 
     try {
       if (opts.rich && shouldAttemptRich(normalized)) {
         try {
-          await apiPostWithRetry('editMessageText', {
-            chat_id: chatId,
-            message_id: messageId,
-            rich_message: { markdown: normalized },
-          });
+          await apiPostWithRetry(
+            'editMessageText',
+            {
+              chat_id: chatId,
+              message_id: messageId,
+              rich_message: { markdown: normalized },
+            },
+            maxAttempts,
+          );
           return;
         } catch (err) {
           if (isRichCapabilityError(err)) {
@@ -1475,13 +1544,17 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       const htmlText = opts.rich
         ? renderTelegramHtmlText(normalized, { textMode: 'markdown' })
         : normalized;
-      await apiPostWithRetry('editMessageText', {
-        chat_id: chatId,
-        message_id: messageId,
-        text: htmlText,
-        ...(opts.rich ? { parse_mode: 'HTML' } : {}),
-        disable_web_page_preview: true,
-      });
+      await apiPostWithRetry(
+        'editMessageText',
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          text: htmlText,
+          ...(opts.rich ? { parse_mode: 'HTML' } : {}),
+          disable_web_page_preview: true,
+        },
+        maxAttempts,
+      );
     } catch (err) {
       if (
         err instanceof TelegramApiError &&
@@ -1580,13 +1653,21 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       interval: setInterval(() => {
         const current = typingLoops.get(chatId);
         if (!current) return;
+        if (isTypingCoolingDown(chatId)) return;
         if (current.inFlight) {
           current.needsRefresh = true;
           return;
         }
         current.inFlight = true;
         void sendTypingAction()
+          .then(() => {
+            typingCooldownUntil.delete(chatId);
+          })
           .catch((err) => {
+            typingCooldownUntil.set(
+              chatId,
+              Date.now() + TYPING_FAILURE_COOLDOWN_MS,
+            );
             logger.warn(
               {
                 chatJid,
@@ -1611,13 +1692,17 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     // Keep the process timer alive for the whole agent run (do not unref).
     typingLoops.set(chatId, state);
 
+    if (isTypingCoolingDown(chatId)) return;
+
     // Await the first pulse so typing is on the wire before the agent starts.
     // Refresh ticks stay fire-and-forget so they cannot stall the run loop.
     state.inFlight = true;
     try {
       await sendTypingAction();
+      typingCooldownUntil.delete(chatId);
       logger.debug({ chatJid }, 'Telegram typing indicator started');
     } catch (err) {
+      typingCooldownUntil.set(chatId, Date.now() + TYPING_FAILURE_COOLDOWN_MS);
       logger.warn(
         { chatJid, err: err instanceof Error ? err.message : String(err) },
         'Failed to start Telegram typing indicator',

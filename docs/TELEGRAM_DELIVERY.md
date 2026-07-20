@@ -4,7 +4,7 @@ Use `/delivery` or `/settings` to choose the mode for the current chat.
 
 | Mode     | Behavior                                                                                                                                                         |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stream` | Edits one answer message as text arrives. Status and tool activity use a separate temporary Activity message.                                                    |
+| `stream` | Edits the live answer as text arrives. Long replies continue in permanent bubbles; tool boundaries add a compact permanent start line. Other status activity uses a separate temporary Activity message. |
 | `append` | Sends durable answer blocks without editing previous blocks. Status uses a separate Activity message.                                                            |
 | `off`    | Sends no preview. Only the final answer is delivered.                                                                                                            |
 | `draft`  | Uses Telegram's ephemeral native draft API in private chats, then sends the final answer normally. Groups and unsupported Bot API servers fall back to `stream`. |
@@ -23,8 +23,10 @@ FFT_NANO_TELEGRAM_GROUP_EDIT_INTERVAL_MS=3000
 FFT_NANO_TELEGRAM_HEARTBEAT_MS=30000
 
 # Source-side delta throttle before StreamConsumer coalescing.
-FFT_NANO_TELEGRAM_DRAFT_MIN_MS=1000
+FFT_NANO_TELEGRAM_DRAFT_MIN_MS=800
 ```
 
 `StreamConsumer` uses latest-wins coalescing. If Telegram is slow, intermediate
 frames are discarded and the next edit uses the newest available answer text.
+The normal source cadence is 800ms; 24 or more new characters can trigger an
+earlier flush after the 400ms safety floor.

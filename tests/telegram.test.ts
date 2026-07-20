@@ -34,6 +34,34 @@ test('parseTelegramChatId rejects non-telegram jid', () => {
   assert.equal(isTelegramPrivateChatJid('telegram:-1001234'), false);
 });
 
+test('setTyping preserves a failed pulse cooldown across runs', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return {
+      ok: false,
+      status: 400,
+      json: async () => ({
+        ok: false,
+        error_code: 400,
+        description: 'Bad Request',
+      }),
+    } as Response;
+  }) as typeof fetch;
+
+  const bot = createTelegramBot({ token: 'token' });
+  try {
+    await bot.setTyping('telegram:42', true);
+    await bot.setTyping('telegram:42', false);
+    await bot.setTyping('telegram:42', true);
+    assert.equal(calls, 1);
+  } finally {
+    await bot.setTyping('telegram:42', false);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('splitTelegramText keeps short text unchanged', () => {
   const text = 'hello world';
   assert.deepEqual(splitTelegramText(text, 100), [text]);

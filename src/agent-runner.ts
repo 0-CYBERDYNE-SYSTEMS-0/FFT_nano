@@ -22,6 +22,7 @@ import { resolveCompactionMemoryRelativePath } from './memory-maintenance.js';
 import {
   applyNonHeartbeatEmptyOutputPolicy,
   formatEmptyFinalOutputDiagnostic,
+  hasUserVisibleText,
 } from './agent-empty-output.js';
 import { toUserVisibleErrorText } from './user-visible-errors.js';
 import { getAllTasks } from './db.js';
@@ -31,6 +32,7 @@ import { getContainerRuntime } from './container-runtime.js';
 import { isTelegramJid } from './telegram.js';
 import { StreamConsumer } from './streaming/stream-consumer.js';
 import { createTelegramAdapter } from './streaming/telegram-adapter.js';
+import { isSilenceMarker } from './streaming/stream-filter.js';
 import {
   registerActiveStreamConsumer,
   unregisterActiveStreamConsumer,
@@ -721,6 +723,12 @@ export async function runAgent(
               ? 'stream'
               : runPrefs.telegramDeliveryMode || 'status',
           verboseMode: runPrefs.verboseMode || 'off',
+          // Streamed reasoning mutates the preview prefix non-monotonically,
+          // which segment sealing cannot track.
+          sealingEnabled: !(
+            runPrefs.showReasoning === true ||
+            runPrefs.reasoningLevel === 'stream'
+          ),
         });
         registerActiveStreamConsumer(chatJid, consumerRunId, streamConsumer);
       } else {
@@ -772,7 +780,11 @@ export async function runAgent(
           },
         );
       } catch (err) {
-        streamConsumer?.stop();
+        // abort() (not stop()) so a thrown run still collapses the activity
+        // bubble and strips the streaming cursor from the content bubble.
+        if (streamConsumer) {
+          await streamConsumer.abort().catch(() => {});
+        }
         if (streamConsumer && streamConsumerRunId) {
           unregisterActiveStreamConsumer(
             chatJid,
@@ -790,19 +802,42 @@ export async function runAgent(
       // Bridge: write StreamConsumer preview state into the registry
       if (streamConsumer && isTelegramJid(chatJid)) {
         if (attemptRequestId) {
-          const preview = streamConsumer.getPreviewState();
-          if (preview) {
-            const streamKey = getTelegramPreviewRunKey(
-              chatJid,
-              attemptRequestId,
-            );
-            telegramPreviewRegistry.setPreviewState(streamKey, {
-              messageId: Number(preview.messageId),
-              messageIds: [Number(preview.messageId)],
-              bubbleTexts: [preview.lastText],
-              lastText: preview.lastText,
-              updatedAt: Date.now(),
-            });
+          const streamKey = getTelegramPreviewRunKey(chatJid, attemptRequestId);
+          const finalIsSilenceMarker =
+            output.status === 'success' &&
+            typeof output.result === 'string' &&
+            isSilenceMarker(output.result);
+          if (finalIsSilenceMarker) {
+            await streamConsumer.retract();
+          } else if (streamConsumer.hasSealedContent()) {
+            if (
+              output.status === 'success' &&
+              hasUserVisibleText(output.result) &&
+              typeof output.result === 'string' &&
+              !isSilenceMarker(output.result)
+            ) {
+              const finalized = await streamConsumer.finalizeTail(
+                output.result,
+              );
+              if (finalized) {
+                telegramPreviewRegistry.noteCompleted(streamKey);
+              } else {
+                await streamConsumer.finish();
+              }
+            } else {
+              await streamConsumer.retract();
+            }
+          } else {
+            const { previewState: preview } = await streamConsumer.finish();
+            if (preview) {
+              telegramPreviewRegistry.setPreviewState(streamKey, {
+                messageId: Number(preview.messageId),
+                messageIds: [Number(preview.messageId)],
+                bubbleTexts: [preview.lastText],
+                lastText: preview.lastText,
+                updatedAt: Date.now(),
+              });
+            }
           }
         }
         // Collapse the ephemeral Activity bubble to a one-line receipt so the

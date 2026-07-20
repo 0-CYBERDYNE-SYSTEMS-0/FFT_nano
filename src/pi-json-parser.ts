@@ -27,54 +27,96 @@ export interface ParsePiJsonOutputResult {
   toolExecutions?: PiToolExecution[];
 }
 
+// Reasoning tag names recognized by splitInlineReasoning, longest-match wins
+// (e.g. <thinking> before <think> is unnecessary because the full open tag
+// including '>' must match).
+const REASONING_TAG_NAMES = [
+  'think',
+  'thinking',
+  'reasoning',
+  'thought',
+  'reasoning_scratchpad',
+] as const;
+
+function findNextReasoningOpen(
+  lower: string,
+  from: number,
+): { index: number; name: string } | null {
+  let i = lower.indexOf('<', from);
+  while (i !== -1) {
+    for (const name of REASONING_TAG_NAMES) {
+      if (lower.startsWith(`<${name}>`, i)) return { index: i, name };
+    }
+    i = lower.indexOf('<', i + 1);
+  }
+  return null;
+}
+
+// Length of a trailing partial reasoning open tag (e.g. "…<thi") still
+// streaming in, so it can be held back until it resolves. A lone trailing '<'
+// counts. Returns 0 when the text does not end mid-tag.
+function trailingPartialReasoningOpenLen(lowerText: string): number {
+  for (const name of REASONING_TAG_NAMES) {
+    const open = `<${name}>`;
+    const maxLen = Math.min(open.length - 1, lowerText.length);
+    for (let len = maxLen; len >= 1; len--) {
+      if (lowerText.endsWith(open.slice(0, len))) return len;
+    }
+  }
+  return 0;
+}
+
 // Reasoning models (e.g. MiniMax-M) emit chain-of-thought inline in the text
 // channel as literal <think>...</think> spans instead of a structured thinking
 // channel. Split that reasoning out of the user-facing text. Works on a partial
 // buffer mid-stream: an unclosed <think> drops everything after the open tag
-// from `visible` until the closing tag arrives. Matches both <think> and
-// <thinking> tags, case-insensitively.
+// from `visible` until the closing tag arrives, and a trailing partial open
+// tag (e.g. "<thi") is held back until it resolves. Matches <think>,
+// <thinking>, <reasoning>, <thought> and <reasoning_scratchpad>,
+// case-insensitively.
 export function splitInlineReasoning(text: string): {
   visible: string;
   reasoning: string;
 } {
-  if (!text || text.toLowerCase().indexOf('<think') === -1) {
+  if (!text) return { visible: text, reasoning: '' };
+  const lower = text.toLowerCase();
+  if (
+    lower.indexOf('<think') === -1 &&
+    lower.indexOf('<reasoning') === -1 &&
+    lower.indexOf('<thought') === -1 &&
+    trailingPartialReasoningOpenLen(lower) === 0
+  ) {
     return { visible: text, reasoning: '' };
   }
-  const lower = text.toLowerCase();
   let visible = '';
   const reasoningParts: string[] = [];
   let i = 0;
   while (i < text.length) {
-    const open = lower.indexOf('<think', i);
-    if (open === -1) {
+    const open = findNextReasoningOpen(lower, i);
+    if (!open) {
       visible += text.slice(i);
       break;
     }
-    const openTagEnd = lower.indexOf('>', open);
-    const openTag =
-      openTagEnd === -1 ? lower.slice(open) : lower.slice(open, openTagEnd + 1);
-    if (openTag !== '<think>' && openTag !== '<thinking>') {
-      // Not a reasoning tag (e.g. "<thinker"); keep the '<' and continue.
-      visible += text.slice(i, open + 1);
-      i = open + 1;
-      continue;
-    }
-    visible += text.slice(i, open);
-    if (openTagEnd === -1) {
-      // Opening tag is still streaming in; drop the partial fragment.
-      break;
-    }
-    const contentStart = openTagEnd + 1;
-    const close = lower.indexOf('</think', contentStart);
+    visible += text.slice(i, open.index);
+    const contentStart = open.index + open.name.length + 2;
+    const close = lower.indexOf(`</${open.name}`, contentStart);
     if (close === -1) {
       // Unclosed block (still streaming): rest is reasoning-in-progress.
       reasoningParts.push(text.slice(contentStart));
+      i = text.length;
       break;
     }
     reasoningParts.push(text.slice(contentStart, close));
     const closeTagEnd = lower.indexOf('>', close);
-    if (closeTagEnd === -1) break;
+    if (closeTagEnd === -1) {
+      i = text.length;
+      break;
+    }
     i = closeTagEnd + 1;
+  }
+  const partialLen = trailingPartialReasoningOpenLen(visible.toLowerCase());
+  if (partialLen > 0) {
+    visible = visible.slice(0, visible.length - partialLen);
   }
   return {
     visible: visible.replace(/\n{3,}/g, '\n\n').trim(),

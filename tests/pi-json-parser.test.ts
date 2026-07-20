@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parsePiJsonOutput } from '../src/pi-json-parser.js';
+import {
+  parsePiJsonOutput,
+  splitInlineReasoning,
+} from '../src/pi-json-parser.js';
 
 test('message_end with thinking-only content returns empty text', () => {
   const stdout = JSON.stringify({
@@ -297,4 +300,68 @@ test('tool execution errors include error details', () => {
   assert.equal(parsed.toolExecutions?.length, 1);
   assert.equal(parsed.toolExecutions?.[0]?.status, 'error');
   assert.match(parsed.toolExecutions?.[0]?.error || '', /exit code 1/);
+});
+
+test('splitInlineReasoning strips <reasoning> blocks', () => {
+  const { visible, reasoning } = splitInlineReasoning(
+    'Hello <reasoning>internal chain of thought</reasoning>world',
+  );
+  assert.equal(visible, 'Hello world');
+  assert.equal(reasoning, 'internal chain of thought');
+});
+
+test('splitInlineReasoning strips <thought> blocks', () => {
+  const { visible, reasoning } = splitInlineReasoning(
+    'Start <thought>inner monologue</thought>end',
+  );
+  assert.equal(visible, 'Start end');
+  assert.equal(reasoning, 'inner monologue');
+});
+
+test('splitInlineReasoning strips <REASONING_SCRATCHPAD> (caps)', () => {
+  const { visible, reasoning } = splitInlineReasoning(
+    'Before <REASONING_SCRATCHPAD>caps reasoning</REASONING_SCRATCHPAD>after',
+  );
+  assert.equal(visible, 'Before after');
+  assert.equal(reasoning, 'caps reasoning');
+});
+
+test('splitInlineReasoning still strips mid-text <think> blocks', () => {
+  const { visible, reasoning } = splitInlineReasoning(
+    'Hi <think>hidden</think>there',
+  );
+  assert.equal(visible, 'Hi there');
+  assert.equal(reasoning, 'hidden');
+});
+
+test('splitInlineReasoning holds back trailing partial <thi', () => {
+  const { visible, reasoning } = splitInlineReasoning('Hello <thi');
+  assert.equal(visible, 'Hello');
+  assert.equal(reasoning, '');
+});
+
+test('splitInlineReasoning keeps mid-buffer lookalike a <thi b', () => {
+  const { visible, reasoning } = splitInlineReasoning('a <thi b');
+  assert.equal(visible, 'a <thi b');
+  assert.equal(reasoning, '');
+});
+
+test('splitInlineReasoning keeps <thinker> visible', () => {
+  const { visible, reasoning } = splitInlineReasoning('<thinker>x</thinker>');
+  assert.equal(visible, '<thinker>x</thinker>');
+  assert.equal(reasoning, '');
+});
+
+test('splitInlineReasoning drops unclosed streaming open tag', () => {
+  const { visible, reasoning } = splitInlineReasoning('Answer so far <thinking');
+  assert.equal(visible, 'Answer so far');
+  assert.equal(reasoning, '');
+});
+
+test('splitInlineReasoning routes unclosed block body to reasoning', () => {
+  const { visible, reasoning } = splitInlineReasoning(
+    'Done. <reasoning>still going',
+  );
+  assert.equal(visible, 'Done.');
+  assert.equal(reasoning, 'still going');
 });

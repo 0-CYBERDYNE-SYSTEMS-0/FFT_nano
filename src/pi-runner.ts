@@ -37,7 +37,6 @@ import {
   type SkillSyncResult,
 } from './pi-skills.js';
 import { noteSkillCatalogUse } from './skill-lifecycle.js';
-import { normalizeTelegramPreviewText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
@@ -1734,19 +1733,27 @@ export async function runContainerAgent(
       const draftMinIntervalMs = Math.max(
         400,
         Number.parseInt(
-          process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '1000',
+          process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '800',
           10,
-        ) || 1000,
+        ) || 800,
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
       const publishDraftPreview = (text: string, force = false) => {
         if (runFinalized || localSettled) return;
         if (!canStreamTelegramDraft) return;
-        const normalized = normalizeTelegramPreviewText(text);
-        if (!normalized) return;
+        // No 4096 truncation here: the StreamConsumer seals overflow into
+        // permanent chunks, and the Telegram send/edit layer keeps its own
+        // last-resort length guard.
+        const normalized = text.replace(/\r\n/g, '\n');
+        if (!normalized.trim()) return;
         const now = Date.now();
-        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        if (!force && now - lastDraftSentAt < draftMinIntervalMs) {
+          // Fast trigger: ≥24 new chars may flush early, but never faster
+          // than the 400ms floor (telegram-spec W2).
+          const newChars = normalized.length - lastDraftText.length;
+          if (newChars < 24 || now - lastDraftSentAt < 400) return;
+        }
         if (normalized === lastDraftText) return;
         onProgressEvent?.({ kind: 'delta', at: now, text: normalized });
         streamedDraft = true;
@@ -2083,11 +2090,6 @@ export async function runContainerAgent(
               toolName: toolDelta.toolName,
               status: toolDelta.status,
             });
-            // When a tool starts before any assistant text exists, emit a
-            // placeholder draft so the user sees activity immediately.
-            if (toolDelta.status === 'start' && !assistantSoFar) {
-              publishDraftPreview('Working on your reply...', false);
-            }
           }
           if (input.showReasoning) {
             const thinkingDelta = extractThinkingDeltaFromPiEvent(event);

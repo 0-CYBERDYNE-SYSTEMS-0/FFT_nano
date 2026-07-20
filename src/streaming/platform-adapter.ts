@@ -2,10 +2,16 @@ export interface SendResult {
   success: boolean;
   messageId: string;
   error?: string;
+  floodControl?: boolean;
 }
 
 export interface PlatformAdapter {
-  send(chatId: string, content: string, replyTo?: string): Promise<SendResult>;
+  send(
+    chatId: string,
+    content: string,
+    replyTo?: string,
+    finalize?: boolean,
+  ): Promise<SendResult>;
 
   editMessage(
     chatId: string,

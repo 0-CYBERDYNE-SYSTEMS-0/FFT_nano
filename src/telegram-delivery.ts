@@ -103,7 +103,10 @@ import {
 } from './ask-user-ui.js';
 import type { ExtensionUIRequest, ExtensionUIResponse } from './pi-runner.js';
 import type { TelegramInboundCallbackQuery } from './telegram.js';
-import { guardOutboundAgentText } from './outbound-text-guard.js';
+import {
+  OUTBOUND_DUMP_FALLBACK,
+  guardOutboundAgentText,
+} from './outbound-text-guard.js';
 
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
 
@@ -396,6 +399,23 @@ export async function deleteTelegramPreviewMessage(
         { chatJid, messageId: id, err },
         'Failed to delete Telegram streaming preview',
       );
+      try {
+        await state.telegramBot.editStreamMessage(
+          chatJid,
+          id,
+          OUTBOUND_DUMP_FALLBACK,
+          { maxAttempts: 1 },
+        );
+        logger.info(
+          { chatJid, messageId: id },
+          'Telegram streaming preview redacted after delete failure',
+        );
+      } catch (redactErr) {
+        logger.warn(
+          { chatJid, messageId: id, err: redactErr },
+          'Failed to redact Telegram streaming preview after delete failure',
+        );
+      }
     }
   }
 }
@@ -436,6 +456,7 @@ export async function finalizeTelegramPreviewMessage(
     try {
       await state.telegramBot.editStreamMessage(chatJid, ids[0], text, {
         rich: true,
+        maxAttempts: 1,
       });
       for (const staleId of ids.slice(1)) {
         await deleteTelegramPreviewMessage(chatJid, staleId);
@@ -473,6 +494,14 @@ export async function finalizeTelegramPreviewMessage(
     return true;
   }
 
+  if (chunks.length > ids.length) {
+    const sent = await sendMessage(chatJid, text);
+    if (sent) {
+      await deleteTelegramPreviewMessage(chatJid, ids[0], ids);
+    }
+    return sent;
+  }
+
   // Reconcile final chunks against the existing preview bubbles: edit each
   // bubble in place, send extra chunks as new messages, and delete any preview
   // bubbles left over when the final has fewer chunks than the live preview.
@@ -480,7 +509,9 @@ export async function finalizeTelegramPreviewMessage(
     const reconcileCount = Math.max(chunks.length, ids.length);
     for (let i = 0; i < reconcileCount; i++) {
       if (i < chunks.length && i < ids.length) {
-        await state.telegramBot.editStreamMessage(chatJid, ids[i], chunks[i]);
+        await state.telegramBot.editStreamMessage(chatJid, ids[i], chunks[i], {
+          maxAttempts: 1,
+        });
       } else if (i < chunks.length) {
         await state.telegramBot.sendMessage(chatJid, chunks[i]);
       } else {
@@ -492,7 +523,11 @@ export async function finalizeTelegramPreviewMessage(
       { chatJid, messageId, err },
       'Failed to finalize Telegram streaming preview in place',
     );
-    return await sendMessage(chatJid, text);
+    const sent = await sendMessage(chatJid, text);
+    if (sent) {
+      await deleteTelegramPreviewMessage(chatJid, ids[0], ids);
+    }
+    return sent;
   }
 
   logger.info(

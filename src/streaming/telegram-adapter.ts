@@ -1,30 +1,68 @@
-import type { TelegramBot } from '../telegram.js';
+import {
+  isTelegramFormattingError,
+  isTelegramFloodControlError,
+  normalizeTelegramPreviewText,
+  type TelegramBot,
+} from '../telegram.js';
 import type { PlatformAdapter, SendResult } from './platform-adapter.js';
 
 export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
   return {
-    async send(chatId, content, _replyTo?) {
+    async send(chatId, content, _replyTo?, finalize?) {
+      if (finalize && normalizeTelegramPreviewText(content) !== content) {
+        return {
+          success: false,
+          messageId: '',
+          error: 'Formatted Telegram stream message exceeds the safe limit',
+        };
+      }
       try {
-        const messageId = await bot.sendStreamMessage(chatId, content);
+        const messageId = await bot.sendStreamMessage(
+          chatId,
+          content,
+          finalize ? { rich: true } : {},
+        );
         return { success: true, messageId: String(messageId) };
       } catch (err) {
         return {
           success: false,
           messageId: '',
           error: err instanceof Error ? err.message : String(err),
+          floodControl: isTelegramFloodControlError(err),
         };
       }
     },
 
-    async editMessage(chatId, messageId, content, _finalize?) {
+    async editMessage(chatId, messageId, content, finalize?) {
       try {
-        await bot.editStreamMessage(chatId, Number(messageId), content);
+        await bot.editStreamMessage(
+          chatId,
+          Number(messageId),
+          content,
+          finalize ? { rich: true, maxAttempts: 1 } : { maxAttempts: 1 },
+        );
         return { success: true, messageId };
       } catch (err) {
+        let failure = err;
+        if (
+          finalize &&
+          isTelegramFormattingError(err) &&
+          normalizeTelegramPreviewText(content) === content
+        ) {
+          try {
+            await bot.editStreamMessage(chatId, Number(messageId), content, {
+              maxAttempts: 1,
+            });
+            return { success: true, messageId };
+          } catch (fallbackError) {
+            failure = fallbackError;
+          }
+        }
         return {
           success: false,
           messageId,
-          error: err instanceof Error ? err.message : String(err),
+          error: failure instanceof Error ? failure.message : String(failure),
+          floodControl: isTelegramFloodControlError(failure),
         };
       }
     },
@@ -46,6 +84,7 @@ export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
           success: false,
           messageId: '',
           error: err instanceof Error ? err.message : String(err),
+          floodControl: isTelegramFloodControlError(err),
         };
       }
     },
