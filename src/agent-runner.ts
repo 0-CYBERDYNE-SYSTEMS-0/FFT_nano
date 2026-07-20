@@ -803,7 +803,13 @@ export async function runAgent(
       if (streamConsumer && isTelegramJid(chatJid)) {
         if (attemptRequestId) {
           const streamKey = getTelegramPreviewRunKey(chatJid, attemptRequestId);
-          if (streamConsumer.hasSealedContent()) {
+          const finalIsSilenceMarker =
+            output.status === 'success' &&
+            typeof output.result === 'string' &&
+            isSilenceMarker(output.result);
+          if (finalIsSilenceMarker) {
+            await streamConsumer.retract();
+          } else if (streamConsumer.hasSealedContent()) {
             if (
               output.status === 'success' &&
               hasUserVisibleText(output.result) &&

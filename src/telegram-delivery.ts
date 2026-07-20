@@ -436,6 +436,7 @@ export async function finalizeTelegramPreviewMessage(
     try {
       await state.telegramBot.editStreamMessage(chatJid, ids[0], text, {
         rich: true,
+        maxAttempts: 1,
       });
       for (const staleId of ids.slice(1)) {
         await deleteTelegramPreviewMessage(chatJid, staleId);
@@ -480,7 +481,9 @@ export async function finalizeTelegramPreviewMessage(
     const reconcileCount = Math.max(chunks.length, ids.length);
     for (let i = 0; i < reconcileCount; i++) {
       if (i < chunks.length && i < ids.length) {
-        await state.telegramBot.editStreamMessage(chatJid, ids[i], chunks[i]);
+        await state.telegramBot.editStreamMessage(chatJid, ids[i], chunks[i], {
+          maxAttempts: 1,
+        });
       } else if (i < chunks.length) {
         await state.telegramBot.sendMessage(chatJid, chunks[i]);
       } else {

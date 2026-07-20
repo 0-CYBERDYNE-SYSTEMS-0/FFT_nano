@@ -2,6 +2,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { StreamConsumer } from '../../src/streaming/stream-consumer.js';
 import { STREAM_CURSOR } from '../../src/streaming/stream-filter.js';
+import { OUTBOUND_DUMP_FALLBACK } from '../../src/outbound-text-guard.js';
 import type {
   PlatformAdapter,
   SendResult,
@@ -171,6 +172,28 @@ describe('StreamConsumer', () => {
 
     const result = await consumer.finish('Final answer delivered separately');
     assert.equal(result.previewState, null);
+  });
+
+  test('append mode holds back and retracts a final silence marker', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-append-silence',
+      adapter,
+      deliveryMode: 'append',
+      verboseMode: 'off',
+    });
+
+    await consumer.onDelta('Partial output that is long enough to send.');
+    await flush();
+    await consumer.onDelta('NO_REPLY');
+    await flush();
+    await consumer.retract();
+
+    assert.equal(adapter.sent.length, 1);
+    assert.deepEqual(adapter.deletes, [
+      { chatId: 'telegram:1', messageId: '1' },
+    ]);
   });
 
   test('delivery mode append diffs rapid queued snapshots after prior sends finish', async () => {
@@ -803,6 +826,98 @@ describe('StreamConsumer', () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(adapter.edits.length, 1);
     consumer.stop();
+  });
+
+  test('W2 group cadence waits after an in-flight first send', async () => {
+    let resolveFirstSend: ((result: SendResult) => void) | null = null;
+    let editStartedAt = 0;
+    const adapter = createMockAdapter({
+      send: async () =>
+        new Promise<SendResult>((resolve) => {
+          resolveFirstSend = resolve;
+        }),
+      editMessage: async (_chatId, messageId) => {
+        editStartedAt = Date.now();
+        return { success: true, messageId };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-group-in-flight-cadence',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 300,
+    });
+
+    const initial = 'Initial group preview content that is long enough.';
+    await consumer.onDelta(initial);
+    while (resolveFirstSend === null) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    await consumer.onDelta(`${initial} updated`);
+    const releaseFirstSendAt = Date.now();
+    resolveFirstSend({ success: true, messageId: '1' });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(editStartedAt, 0);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.ok(editStartedAt - releaseFirstSendAt >= 250);
+    consumer.stop();
+  });
+
+  test('retract redacts a preview when deletion fails', async () => {
+    const adapter = createMockAdapter();
+    adapter.deleteMessage = async () => {
+      throw new Error('delete failed');
+    };
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-retract-redaction',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Preview content that must be redacted on silence.');
+    await waitForCoalesce();
+    await consumer.retract();
+
+    assert.deepEqual(adapter.edits, [
+      {
+        chatId: 'telegram:1',
+        messageId: '1',
+        content: OUTBOUND_DUMP_FALLBACK,
+      },
+    ]);
+    assert.deepEqual(adapter.editFinalize, [true]);
+  });
+
+  test('retract deletes the activity bubble instead of leaving a completion receipt', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-retract-activity',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+      activitySpawnThresholdMs: 0,
+    });
+
+    await consumer.onDelta('Preview content that must be removed on silence.');
+    consumer.handleExternalProgress('tool_running', 'Running a tool');
+    await waitForCoalesce();
+    await consumer.retract();
+
+    assert.deepEqual(adapter.deletes.map((entry) => entry.messageId).sort(), [
+      '1',
+      '2',
+    ]);
+    assert.equal(adapter.edits.length, 0);
   });
 
   test('assistant progress completion does not discard a pending answer frame', async () => {

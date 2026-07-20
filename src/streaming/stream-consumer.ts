@@ -240,8 +240,13 @@ export class StreamConsumer {
       return;
     }
 
+    // Hold back partial silence markers so "NO" → "NO_REPLY" never flashes on
+    // screen; an exact marker is never previewed at all (telegram-spec W4).
+    const source = holdbackSilenceMarker(guarded.text);
+    if (!source) return;
+
     if (this.appendMode) {
-      const nextText = this.appendToolTrailFooter(guarded.text);
+      const nextText = this.appendToolTrailFooter(source);
       this.answerChain = this.answerChain
         .catch(() => {})
         .then(() => {
@@ -251,11 +256,6 @@ export class StreamConsumer {
         });
       return;
     }
-
-    // Hold back partial silence markers so "NO" → "NO_REPLY" never flashes on
-    // screen; an exact marker is never previewed at all (telegram-spec W4).
-    const source = holdbackSilenceMarker(guarded.text);
-    if (!source) return;
 
     let segment = source;
     if (this.sealingEnabled) {
@@ -573,8 +573,13 @@ export class StreamConsumer {
     this.clearActivityTimer();
     this.clearFlushTimer();
     await this.answerChain.catch(() => {});
+    await this.activityChain.catch(() => {});
+    if (this.activityMessageId) {
+      this.deliveredPreviewMessageIds.add(this.activityMessageId);
+      this.activityMessageId = null;
+    }
     await this.deleteDeliveredPreviewMessages();
-    await this.collapseActivity();
+    this.activityCollapsed = true;
   }
 
   getPreviewState(): PreviewState | null {
@@ -603,7 +608,8 @@ export class StreamConsumer {
     this.pendingText = null;
     await this.answerChain.catch(() => {});
     if (this.sealBroken) return false;
-    const segment = `${this.sealedSegmentPrefix}${this.lastSourceText.slice(this.sealedSourceLen)}`.trim();
+    const segment =
+      `${this.sealedSegmentPrefix}${this.lastSourceText.slice(this.sealedSourceLen)}`.trim();
     if (!segment) return true;
     const { adapter, chatId } = this.config;
     try {
@@ -670,12 +676,7 @@ export class StreamConsumer {
     try {
       if (!this.draftMode && this.messageId) {
         const messageId = this.messageId;
-        const result = await adapter.editMessage(
-          chatId,
-          messageId,
-          head,
-          true,
-        );
+        const result = await adapter.editMessage(chatId, messageId, head, true);
         if (result.success) {
           this.deliveredPreviewMessageIds.add(messageId);
           if (generation !== this.streamGeneration) return;
@@ -923,9 +924,9 @@ export class StreamConsumer {
       this.answerChain = this.answerChain
         .catch(() => {})
         .then(async () => {
+          this.lastAnswerFlushAt = Date.now();
           await this.sendOrEdit(text, generation);
           if (generation !== this.streamGeneration) return;
-          this.lastAnswerFlushAt = Date.now();
           if (
             !this.editFloodDisabled &&
             this.lastText !== text &&
@@ -1039,6 +1040,7 @@ export class StreamConsumer {
         this.recordFailure();
         break;
       }
+      this.deliveredPreviewMessageIds.add(result.messageId);
     }
 
     if (sentAll) {

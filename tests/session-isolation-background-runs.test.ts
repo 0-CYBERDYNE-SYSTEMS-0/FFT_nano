@@ -226,3 +226,63 @@ test('runAgent retracts a sealed Telegram segment when the final result is NO_RE
     cleanup();
   }
 });
+
+test('runAgent retracts an unsealed queued Telegram preview for a final NO_REPLY', async () => {
+  const { cleanup } = setupTempDb();
+  const originalTelegramBot = state.telegramBot;
+  const bot = createTelegramBot({ token: 'test-token' });
+  let previewSends = 0;
+  bot.sendStreamMessage = async () => {
+    previewSends++;
+    return previewSends;
+  };
+  state.telegramBot = bot;
+
+  try {
+    initAgentRunner({
+      statusTelemetry: { noteRuntimeError: () => {} },
+      getSessionKeyForChat: () => 'session-key',
+      emitTuiToolEvent: () => {},
+      handlePermissionGateRequest: async () =>
+        ({
+          requestId: 'x',
+          ok: true,
+        }) as never,
+      updateChatRunPreferences: (_jid, updater) => updater({}),
+      updateChatUsage: () => {},
+      setTyping: async () => {},
+      sendMessage: async () => true,
+      runContainerAgentImpl: async (
+        _group,
+        _input,
+        _abortSignal,
+        _onRuntimeEvent,
+        _onExtensionUIRequest,
+        onProgressEvent,
+      ) => {
+        onProgressEvent?.({
+          kind: 'delta',
+          at: Date.now(),
+          text: 'Queued preview content that must never be delivered.',
+        });
+        return { status: 'success', result: 'NO_REPLY' };
+      },
+    });
+
+    const result = await runAgent(
+      makeGroup('main'),
+      'run silently',
+      'telegram:100',
+      'none',
+      'queued-silence-run',
+      { telegramDeliveryMode: 'stream' },
+      { suppressErrorReply: true },
+    );
+
+    assert.equal(result.result, 'NO_REPLY');
+    assert.equal(previewSends, 0);
+  } finally {
+    state.telegramBot = originalTelegramBot;
+    cleanup();
+  }
+});

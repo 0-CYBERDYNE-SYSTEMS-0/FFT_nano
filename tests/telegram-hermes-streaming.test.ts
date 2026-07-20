@@ -131,3 +131,59 @@ test('formatted final edit does not retry flood control as a plain edit', async 
     });
   }
 });
+
+test('completion finalization performs one raw edit before fresh-send fallback', async () => {
+  let edits = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      const method = (req.url || '').split('/').pop() || '';
+      if (method === 'editMessageText') {
+        edits++;
+        res.writeHead(429, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error_code: 429,
+            description: 'Too Many Requests',
+            parameters: { retry_after: 0 },
+          }),
+        );
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, result: { message_id: 78 } }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+
+  const [{ createTelegramBot }, { state }, { finalizeTelegramPreviewMessage }] =
+    await Promise.all([
+      import('../src/telegram.js'),
+      import('../src/app-state.js'),
+      import('../src/telegram-delivery.js'),
+    ]);
+  const originalTelegramBot = state.telegramBot;
+  state.telegramBot = createTelegramBot({
+    token: 'test-token',
+    apiBaseUrl: `http://127.0.0.1:${address.port}`,
+  });
+
+  try {
+    const finalized = await finalizeTelegramPreviewMessage(
+      'telegram:-1',
+      77,
+      'x'.repeat(5_000),
+    );
+
+    assert.equal(finalized, true);
+    assert.equal(edits, 1);
+  } finally {
+    state.telegramBot = originalTelegramBot;
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
