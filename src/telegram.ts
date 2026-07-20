@@ -744,10 +744,23 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     needsRefresh: boolean;
   }
   const typingLoops = new Map<string, TypingLoopState>();
+  // After a failed sendChatAction, skip typing pulses for the chat so a
+  // Telegram-side blip does not spam the API (telegram-spec §1.5).
+  const TYPING_FAILURE_COOLDOWN_MS = 30_000;
+  const typingCooldownUntil = new Map<string, number>();
+
+  function isTypingCoolingDown(chatId: string): boolean {
+    const until = typingCooldownUntil.get(chatId);
+    if (until === undefined) return false;
+    if (Date.now() < until) return true;
+    typingCooldownUntil.delete(chatId);
+    return false;
+  }
 
   function pulseTypingIfActive(chatId: string): void {
     const loop = typingLoops.get(chatId);
     if (!loop) return;
+    if (isTypingCoolingDown(chatId)) return;
     if (loop.inFlight) {
       loop.needsRefresh = true;
       return;
@@ -757,7 +770,14 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       chat_id: chatId,
       action: 'typing',
     })
+      .then(() => {
+        typingCooldownUntil.delete(chatId);
+      })
       .catch((err) => {
+        typingCooldownUntil.set(
+          chatId,
+          Date.now() + TYPING_FAILURE_COOLDOWN_MS,
+        );
         logger.debug(
           {
             chatId,
@@ -1580,13 +1600,21 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       interval: setInterval(() => {
         const current = typingLoops.get(chatId);
         if (!current) return;
+        if (isTypingCoolingDown(chatId)) return;
         if (current.inFlight) {
           current.needsRefresh = true;
           return;
         }
         current.inFlight = true;
         void sendTypingAction()
+          .then(() => {
+            typingCooldownUntil.delete(chatId);
+          })
           .catch((err) => {
+            typingCooldownUntil.set(
+              chatId,
+              Date.now() + TYPING_FAILURE_COOLDOWN_MS,
+            );
             logger.warn(
               {
                 chatJid,
@@ -1616,8 +1644,10 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     state.inFlight = true;
     try {
       await sendTypingAction();
+      typingCooldownUntil.delete(chatId);
       logger.debug({ chatJid }, 'Telegram typing indicator started');
     } catch (err) {
+      typingCooldownUntil.set(chatId, Date.now() + TYPING_FAILURE_COOLDOWN_MS);
       logger.warn(
         { chatJid, err: err instanceof Error ? err.message : String(err) },
         'Failed to start Telegram typing indicator',

@@ -1734,9 +1734,9 @@ export async function runContainerAgent(
       const draftMinIntervalMs = Math.max(
         400,
         Number.parseInt(
-          process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '1000',
+          process.env.FFT_NANO_TELEGRAM_DRAFT_MIN_MS || '800',
           10,
-        ) || 1000,
+        ) || 800,
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
@@ -1746,7 +1746,12 @@ export async function runContainerAgent(
         const normalized = normalizeTelegramPreviewText(text);
         if (!normalized) return;
         const now = Date.now();
-        if (!force && now - lastDraftSentAt < draftMinIntervalMs) return;
+        if (!force && now - lastDraftSentAt < draftMinIntervalMs) {
+          // Fast trigger: ≥24 new chars may flush early, but never faster
+          // than the 400ms floor (telegram-spec W2).
+          const newChars = normalized.length - lastDraftText.length;
+          if (newChars < 24 || now - lastDraftSentAt < 400) return;
+        }
         if (normalized === lastDraftText) return;
         onProgressEvent?.({ kind: 'delta', at: now, text: normalized });
         streamedDraft = true;
