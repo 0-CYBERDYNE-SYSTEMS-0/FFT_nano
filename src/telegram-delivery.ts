@@ -515,7 +515,11 @@ export async function finalizeTelegramPreviewMessage(
       { chatJid, messageId, err },
       'Failed to finalize Telegram streaming preview in place',
     );
-    return await sendMessage(chatJid, text);
+    const sent = await sendMessage(chatJid, text);
+    if (sent) {
+      await deleteTelegramPreviewMessage(chatJid, ids[0], ids);
+    }
+    return sent;
   }
 
   logger.info(

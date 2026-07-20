@@ -1289,6 +1289,33 @@ describe('StreamConsumer', () => {
     assert.equal((await consumer.finish()).previewState, null);
   });
 
+  test('W6 retracts permanent segments before a replacement stream starts', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-replacement-after-seal',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta(`${'a'.repeat(4_200)} stale stream`);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const staleMessageIds = adapter.sent.map((_, index) => String(index + 1));
+
+    await consumer.onDelta(
+      'Replacement stream content long enough to send anew.',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.deepEqual(
+      adapter.deletes.map((entry) => entry.messageId).sort(),
+      staleMessageIds.sort(),
+    );
+    assert.equal(consumer.hasSealedContent(), false);
+  });
+
   test('W6 hard overflow cuts preserve Unicode surrogate pairs', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({

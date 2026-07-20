@@ -273,10 +273,7 @@ export class StreamConsumer {
         this.sealedSourceLen > 0 &&
         !source.startsWith(this.lastSourceText.slice(0, this.sealedSourceLen))
       ) {
-        // Replace-style delta shrank below the sealed boundary: the buffer now
-        // holds a fresh assistant message, so start a new segment.
-        this.sealedSourceLen = 0;
-        this.sealedSegmentPrefix = '';
+        this.resetPreviewForRetry();
       }
       segment = source.slice(this.sealedSourceLen);
       if (this.sealedSourceLen > 0) {

@@ -1,6 +1,7 @@
 import {
   isTelegramFormattingError,
   isTelegramFloodControlError,
+  normalizeTelegramPreviewText,
   type TelegramBot,
 } from '../telegram.js';
 import type { PlatformAdapter, SendResult } from './platform-adapter.js';
@@ -36,9 +37,11 @@ export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
         return { success: true, messageId };
       } catch (err) {
         let failure = err;
-        if (finalize && isTelegramFormattingError(err)) {
-          // Formatted finalize failed (e.g. HTML render rejected); a plain
-          // edit keeps the content correct even without formatting.
+        if (
+          finalize &&
+          isTelegramFormattingError(err) &&
+          normalizeTelegramPreviewText(content) === content
+        ) {
           try {
             await bot.editStreamMessage(chatId, Number(messageId), content, {
               maxAttempts: 1,
