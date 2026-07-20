@@ -9,13 +9,13 @@
 
 ## 1. Background — how Hermes does it (the reference implementation)
 
-Hermes source on this machine: `~/hermes-agent`. Two files matter:
+The Hermes reference implementation informed this comparison. Three files matter:
 
 | Concern | File |
 |---|---|
-| Stream orchestration (flush cadence, overflow, transports, fallbacks) | `~/hermes-agent/gateway/stream_consumer.py` (1,966 lines) |
-| Telegram Bot API specifics (drafts, edits, chunking, ingress batching) | `~/hermes-agent/plugins/platforms/telegram/adapter.py` (9,416 lines) |
-| Defaults | `~/hermes-agent/gateway/config.py:668-670` |
+| Stream orchestration (flush cadence, overflow, transports, fallbacks) | `gateway/stream_consumer.py` |
+| Telegram Bot API specifics (drafts, edits, chunking, ingress batching) | `plugins/platforms/telegram/adapter.py` |
+| Defaults | `gateway/config.py:668-670` |
 
 ### 1.1 Pipeline
 
@@ -243,7 +243,7 @@ Draft frames pass through the same MarkdownV2 conversion as the final send. On `
 ## 7. Verification (pre-merge, per AGENTS.md)
 
 ```bash
-npm run typecheck && npm run lint && npm run format:check && npm test && npm run doctor
+npm run release-check
 ```
 
 ## 8. Reference map

@@ -3,10 +3,6 @@ import http from 'node:http';
 import test from 'node:test';
 
 test('Telegram flood control disables stale preview edits and permits a fresh final', async () => {
-  process.env.FFT_NANO_TELEGRAM_RETRY_ATTEMPTS = '1';
-  process.env.FFT_NANO_TELEGRAM_RETRY_MIN_MS = '100';
-  process.env.FFT_NANO_TELEGRAM_RETRY_MAX_MS = '100';
-
   const methods: string[] = [];
   const server = http.createServer((req, res) => {
     req.resume();

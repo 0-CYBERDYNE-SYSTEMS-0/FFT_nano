@@ -603,6 +603,7 @@ export interface TelegramDraftOptions {
 export interface TelegramStreamMessageOptions {
   messageThreadId?: number;
   rich?: boolean;
+  maxAttempts?: number;
 }
 
 export interface TelegramBotOptions {
@@ -981,20 +982,18 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   async function apiPostWithRetry<T>(
     method: string,
     payload: object,
+    maxAttempts = TELEGRAM_RETRY_ATTEMPTS,
   ): Promise<T> {
     let attempt = 0;
     let lastErr: unknown;
 
-    while (attempt < TELEGRAM_RETRY_ATTEMPTS) {
+    while (attempt < maxAttempts) {
       attempt++;
       try {
         return await apiPost<T>(method, payload);
       } catch (err) {
         lastErr = err;
-        if (
-          !isRetryableTelegramError(err, method) ||
-          attempt >= TELEGRAM_RETRY_ATTEMPTS
-        ) {
+        if (!isRetryableTelegramError(err, method) || attempt >= maxAttempts) {
           throw err;
         }
         const delayMs = resolveRetryDelayMs(err, attempt);
@@ -1518,15 +1517,20 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const normalized = opts.rich
       ? text.replace(/\r\n/g, '\n')
       : normalizeTelegramPreviewText(text);
+    const maxAttempts = opts.maxAttempts ?? TELEGRAM_RETRY_ATTEMPTS;
 
     try {
       if (opts.rich && shouldAttemptRich(normalized)) {
         try {
-          await apiPostWithRetry('editMessageText', {
-            chat_id: chatId,
-            message_id: messageId,
-            rich_message: { markdown: normalized },
-          });
+          await apiPostWithRetry(
+            'editMessageText',
+            {
+              chat_id: chatId,
+              message_id: messageId,
+              rich_message: { markdown: normalized },
+            },
+            maxAttempts,
+          );
           return;
         } catch (err) {
           if (isRichCapabilityError(err)) {
@@ -1540,13 +1544,17 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       const htmlText = opts.rich
         ? renderTelegramHtmlText(normalized, { textMode: 'markdown' })
         : normalized;
-      await apiPostWithRetry('editMessageText', {
-        chat_id: chatId,
-        message_id: messageId,
-        text: htmlText,
-        ...(opts.rich ? { parse_mode: 'HTML' } : {}),
-        disable_web_page_preview: true,
-      });
+      await apiPostWithRetry(
+        'editMessageText',
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          text: htmlText,
+          ...(opts.rich ? { parse_mode: 'HTML' } : {}),
+          disable_web_page_preview: true,
+        },
+        maxAttempts,
+      );
     } catch (err) {
       if (
         err instanceof TelegramApiError &&

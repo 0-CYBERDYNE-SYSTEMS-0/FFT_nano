@@ -31,7 +31,7 @@ export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
           chatId,
           Number(messageId),
           content,
-          finalize ? { rich: true } : {},
+          finalize ? { rich: true, maxAttempts: 1 } : { maxAttempts: 1 },
         );
         return { success: true, messageId };
       } catch (err) {
@@ -40,7 +40,9 @@ export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
           // Formatted finalize failed (e.g. HTML render rejected); a plain
           // edit keeps the content correct even without formatting.
           try {
-            await bot.editStreamMessage(chatId, Number(messageId), content);
+            await bot.editStreamMessage(chatId, Number(messageId), content, {
+              maxAttempts: 1,
+            });
             return { success: true, messageId };
           } catch (fallbackError) {
             failure = fallbackError;
@@ -49,8 +51,7 @@ export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
         return {
           success: false,
           messageId,
-          error:
-            failure instanceof Error ? failure.message : String(failure),
+          error: failure instanceof Error ? failure.message : String(failure),
           floodControl: isTelegramFloodControlError(failure),
         };
       }

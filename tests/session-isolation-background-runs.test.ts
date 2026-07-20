@@ -16,7 +16,9 @@ import { closeDatabase, createTask, initDatabaseAtPath } from '../src/db.js';
 import { processDueTasksOnce } from '../src/task-scheduler.js';
 import { buildEvaluatorContainerInput } from '../src/evaluator.js';
 import { initAgentRunner, runAgent } from '../src/agent-runner.js';
+import { state } from '../src/app-state.js';
 import type { ContainerInput } from '../src/pi-runner.js';
+import { createTelegramBot } from '../src/telegram.js';
 import type { RegisteredGroup } from '../src/types.js';
 
 function setupTempDb(): { cleanup: () => void } {
@@ -70,9 +72,7 @@ test('isolated scheduled task runs session-ephemeral; group task does not', asyn
     ) => {
       captured.push(input);
       return { status: 'success' as const, result: 'done' };
-    }) as unknown as Parameters<
-      typeof processDueTasksOnce
-    >[0]['runTaskAgent'];
+    }) as unknown as Parameters<typeof processDueTasksOnce>[0]['runTaskAgent'];
 
     for (const [id, contextMode] of [
       ['task-isolated', 'isolated'],
@@ -117,10 +117,11 @@ test('heartbeat runAgent maps to ephemeral non-continuing container input', asyn
       statusTelemetry: { noteRuntimeError: () => {} },
       getSessionKeyForChat: () => 'session-key',
       emitTuiToolEvent: () => {},
-      handlePermissionGateRequest: async () => ({
-        requestId: 'x',
-        ok: true,
-      }) as never,
+      handlePermissionGateRequest: async () =>
+        ({
+          requestId: 'x',
+          ok: true,
+        }) as never,
       updateChatRunPreferences: (_jid, updater) => updater({}),
       updateChatUsage: () => {},
       setTyping: async () => {},
@@ -152,6 +153,76 @@ test('heartbeat runAgent maps to ephemeral non-continuing container input', asyn
       assert.equal(input.isHeartbeatTask, true);
     }
   } finally {
+    cleanup();
+  }
+});
+
+test('runAgent retracts a sealed Telegram segment when the final result is NO_REPLY', async () => {
+  const { cleanup } = setupTempDb();
+  const originalTelegramBot = state.telegramBot;
+  const deletedMessageIds: number[] = [];
+  const bot = createTelegramBot({ token: 'test-token' });
+  let messageId = 0;
+  bot.sendStreamMessage = async () => ++messageId;
+  bot.editStreamMessage = async () => {};
+  bot.deleteMessage = async (_chatJid, id) => {
+    deletedMessageIds.push(id);
+  };
+  state.telegramBot = bot;
+
+  try {
+    initAgentRunner({
+      statusTelemetry: { noteRuntimeError: () => {} },
+      getSessionKeyForChat: () => 'session-key',
+      emitTuiToolEvent: () => {},
+      handlePermissionGateRequest: async () =>
+        ({
+          requestId: 'x',
+          ok: true,
+        }) as never,
+      updateChatRunPreferences: (_jid, updater) => updater({}),
+      updateChatUsage: () => {},
+      setTyping: async () => {},
+      sendMessage: async () => true,
+      runContainerAgentImpl: async (
+        _group,
+        _input,
+        _abortSignal,
+        onRuntimeEvent,
+        _onExtensionUIRequest,
+        onProgressEvent,
+      ) => {
+        onProgressEvent?.({
+          kind: 'delta',
+          at: Date.now(),
+          text: 'Sensitive partial response that is long enough to stream.',
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        onRuntimeEvent?.({
+          kind: 'tool',
+          index: 0,
+          toolName: 'Bash',
+          status: 'start',
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { status: 'success', result: 'NO_REPLY' };
+      },
+    });
+
+    const result = await runAgent(
+      makeGroup('main'),
+      'run silently',
+      'telegram:100',
+      'none',
+      'sealed-silence-run',
+      { telegramDeliveryMode: 'stream' },
+      { suppressErrorReply: true },
+    );
+
+    assert.equal(result.result, 'NO_REPLY');
+    assert.deepEqual(deletedMessageIds, [1, 2]);
+  } finally {
+    state.telegramBot = originalTelegramBot;
     cleanup();
   }
 });

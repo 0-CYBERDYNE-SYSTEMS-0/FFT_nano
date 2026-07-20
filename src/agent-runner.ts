@@ -32,6 +32,7 @@ import { getContainerRuntime } from './container-runtime.js';
 import { isTelegramJid } from './telegram.js';
 import { StreamConsumer } from './streaming/stream-consumer.js';
 import { createTelegramAdapter } from './streaming/telegram-adapter.js';
+import { isSilenceMarker } from './streaming/stream-filter.js';
 import {
   registerActiveStreamConsumer,
   unregisterActiveStreamConsumer,
@@ -805,7 +806,9 @@ export async function runAgent(
           if (streamConsumer.hasSealedContent()) {
             if (
               output.status === 'success' &&
-              hasUserVisibleText(output.result)
+              hasUserVisibleText(output.result) &&
+              typeof output.result === 'string' &&
+              !isSilenceMarker(output.result)
             ) {
               const finalized = await streamConsumer.finalizeTail();
               if (finalized) {
