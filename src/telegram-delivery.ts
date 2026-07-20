@@ -103,7 +103,10 @@ import {
 } from './ask-user-ui.js';
 import type { ExtensionUIRequest, ExtensionUIResponse } from './pi-runner.js';
 import type { TelegramInboundCallbackQuery } from './telegram.js';
-import { guardOutboundAgentText } from './outbound-text-guard.js';
+import {
+  OUTBOUND_DUMP_FALLBACK,
+  guardOutboundAgentText,
+} from './outbound-text-guard.js';
 
 const TELEGRAM_MEDIA_MAX_BYTES = TELEGRAM_MEDIA_MAX_MB * 1024 * 1024;
 
@@ -396,6 +399,23 @@ export async function deleteTelegramPreviewMessage(
         { chatJid, messageId: id, err },
         'Failed to delete Telegram streaming preview',
       );
+      try {
+        await state.telegramBot.editStreamMessage(
+          chatJid,
+          id,
+          OUTBOUND_DUMP_FALLBACK,
+          { maxAttempts: 1 },
+        );
+        logger.info(
+          { chatJid, messageId: id },
+          'Telegram streaming preview redacted after delete failure',
+        );
+      } catch (redactErr) {
+        logger.warn(
+          { chatJid, messageId: id, err: redactErr },
+          'Failed to redact Telegram streaming preview after delete failure',
+        );
+      }
     }
   }
 }

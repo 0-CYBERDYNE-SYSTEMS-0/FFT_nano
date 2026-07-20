@@ -56,13 +56,23 @@ function deriveStreamDraftId(seed: string): number {
   return (raw % 2_000_000_000) + 1;
 }
 
-function findOpenCodeFence(text: string): string | null {
-  const fencePattern = /(?:^|\n)[ \t]{0,3}```([^\n`]*)/g;
-  let openInfo: string | null = null;
+type OpenCodeFence = {
+  marker: '```' | '~~~';
+  info: string;
+};
+
+function findOpenCodeFence(text: string): OpenCodeFence | null {
+  const fencePattern = /(?:^|\n)[ \t]{0,3}(```|~~~)([^\n`~]*)/g;
+  let openFence: OpenCodeFence | null = null;
   for (const match of text.matchAll(fencePattern)) {
-    openInfo = openInfo === null ? (match[1] || '').trim().slice(0, 80) : null;
+    const marker = match[1] as OpenCodeFence['marker'];
+    if (openFence === null) {
+      openFence = { marker, info: (match[2] || '').trim().slice(0, 80) };
+    } else if (openFence.marker === marker) {
+      openFence = null;
+    }
   }
-  return openInfo;
+  return openFence;
 }
 
 export interface StreamConsumerConfig {
@@ -292,13 +302,15 @@ export class StreamConsumer {
         if (endsWithHighSurrogate && startsWithLowSurrogate) cut--;
         const head = `${this.sealedSegmentPrefix}${segment.slice(0, cut)}`;
         const openFence = findOpenCodeFence(head);
-        this.enqueueSeal(openFence === null ? head : `${head}\n\`\`\``);
+        this.enqueueSeal(
+          openFence === null ? head : `${head}\n${openFence.marker}`,
+        );
         this.sealedSegmentPrefix =
-          openFence === null ? '' : `\`\`\`${openFence}\n`;
+          openFence === null ? '' : `${openFence.marker}${openFence.info}\n`;
         const rest = segment.slice(cut);
-        const trimmed = rest.replace(/^\n+/, '');
-        this.sealedSourceLen += cut + (rest.length - trimmed.length);
-        segment = trimmed;
+        const consumedBoundary = rest.startsWith('\n') ? 1 : 0;
+        this.sealedSourceLen += cut + consumedBoundary;
+        segment = rest.slice(consumedBoundary);
       }
     }
     this.lastSourceText = source;
@@ -574,6 +586,19 @@ export class StreamConsumer {
     this.clearFlushTimer();
     await this.answerChain.catch(() => {});
     await this.activityChain.catch(() => {});
+    if (
+      this.draftMode &&
+      this.draftId !== null &&
+      this.config.adapter.sendDraft
+    ) {
+      try {
+        await this.config.adapter.sendDraft(
+          this.config.chatId,
+          this.draftId,
+          '',
+        );
+      } catch {}
+    }
     if (this.activityMessageId) {
       this.deliveredPreviewMessageIds.add(this.activityMessageId);
       this.activityMessageId = null;
@@ -602,15 +627,23 @@ export class StreamConsumer {
    * Returns false when finalization failed so callers can fall back to the
    * legacy full-delivery path.
    */
-  async finalizeTail(): Promise<boolean> {
+  async finalizeTail(finalText?: string): Promise<boolean> {
     this.completed = true;
     this.clearFlushTimer();
     this.pendingText = null;
     await this.answerChain.catch(() => {});
     if (this.sealBroken) return false;
-    const segment =
-      `${this.sealedSegmentPrefix}${this.lastSourceText.slice(this.sealedSourceLen)}`.trim();
-    if (!segment) return true;
+    const source =
+      finalText === undefined
+        ? this.lastSourceText
+        : guardOutboundAgentText(finalText).text;
+    const sealedPrefix = this.lastSourceText.slice(0, this.sealedSourceLen);
+    if (!source.startsWith(sealedPrefix)) {
+      await this.retract();
+      return false;
+    }
+    const segment = `${this.sealedSegmentPrefix}${source.slice(this.sealedSourceLen)}`;
+    if (!segment.trim()) return true;
     const { adapter, chatId } = this.config;
     try {
       if (!this.draftMode && this.messageId) {

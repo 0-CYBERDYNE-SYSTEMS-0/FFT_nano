@@ -264,6 +264,34 @@ describe('StreamConsumer', () => {
     assert.equal(result.previewState, null);
   });
 
+  test('draft mode clears a native draft when a final silence marker retracts it', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-draft-silence',
+      adapter,
+      draftId: 654,
+      deliveryMode: 'draft',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta(
+      'Draft content that must disappear on silent completion.',
+    );
+    await waitForCoalesce();
+    await consumer.retract();
+
+    assert.deepEqual(adapter.drafts, [
+      {
+        chatId: 'telegram:1',
+        draftId: 654,
+        content: `Draft content that must disappear on silent completion.${STREAM_CURSOR}`,
+      },
+      { chatId: 'telegram:1', draftId: 654, content: '' },
+    ]);
+  });
+
   test('delivery mode draft keeps verbose tool progress in a separate activity message', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
@@ -1215,6 +1243,52 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.editFinalize.at(-1), true);
   });
 
+  test('W6 finalizes a sealed tail from the authoritative final result', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-authoritative-tail',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+    const streamed = `${'a'.repeat(4_200)} stale streamed tail`;
+    const final = `${'a'.repeat(4_200)} authoritative message-end tail  `;
+
+    await consumer.onDelta(streamed);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(await consumer.finalizeTail(final), true);
+    assert.equal(
+      adapter.edits.at(-1)?.content,
+      final.slice(3_994),
+      'the sealed prefix stays intact while the final tail comes from message_end',
+    );
+  });
+
+  test('W6 retracts stale sealed content when the final result changes its prefix', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-divergent-final',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta(`${'a'.repeat(4_200)} stale streamed tail`);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(
+      await consumer.finalizeTail('A different final answer.'),
+      false,
+    );
+    assert.ok(adapter.deletes.length >= 1);
+    assert.equal((await consumer.finish()).previewState, null);
+  });
+
   test('W6 hard overflow cuts preserve Unicode surrogate pairs', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
@@ -1274,6 +1348,33 @@ describe('StreamConsumer', () => {
       assert.ok(chunk.length <= 4096);
     }
     consumer.stop();
+  });
+
+  test('W6 overflow keeps every long tilde-fenced chunk independently balanced', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-tilde-fenced-overflow',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+    const source = `~~~ts\n${'x'.repeat(12_000)}\n~~~`;
+
+    await consumer.onDelta(source);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(await consumer.finalizeTail(), true);
+
+    const permanent = [
+      ...adapter.sent.slice(0, -1).map((entry) => entry.content),
+      adapter.edits.at(-1)?.content || '',
+    ];
+    for (const chunk of permanent) {
+      assert.match(chunk, /^~~~ts\n/);
+      assert.match(chunk, /~~~$/);
+      assert.equal((chunk.match(/~~~/g) || []).length % 2, 0);
+    }
   });
 
   test('W6 failed queued seal keeps the host full-final fallback enabled', async () => {

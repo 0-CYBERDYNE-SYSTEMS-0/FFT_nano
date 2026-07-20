@@ -816,7 +816,9 @@ export async function runAgent(
               typeof output.result === 'string' &&
               !isSilenceMarker(output.result)
             ) {
-              const finalized = await streamConsumer.finalizeTail();
+              const finalized = await streamConsumer.finalizeTail(
+                output.result,
+              );
               if (finalized) {
                 telegramPreviewRegistry.noteCompleted(streamKey);
               } else {

@@ -227,6 +227,71 @@ test('runAgent retracts a sealed Telegram segment when the final result is NO_RE
   }
 });
 
+test('runAgent finalizes a sealed Telegram tail from message_end output', async () => {
+  const { cleanup } = setupTempDb();
+  const originalTelegramBot = state.telegramBot;
+  const finalEdits: string[] = [];
+  const bot = createTelegramBot({ token: 'test-token' });
+  let messageId = 0;
+  const streamed = `${'a'.repeat(4_200)} stale streamed tail`;
+  const final = `${'a'.repeat(4_200)} authoritative message-end tail`;
+  bot.sendStreamMessage = async () => ++messageId;
+  bot.editStreamMessage = async (_chatJid, _messageId, text) => {
+    finalEdits.push(text);
+  };
+  state.telegramBot = bot;
+
+  try {
+    initAgentRunner({
+      statusTelemetry: { noteRuntimeError: () => {} },
+      getSessionKeyForChat: () => 'session-key',
+      emitTuiToolEvent: () => {},
+      handlePermissionGateRequest: async () =>
+        ({
+          requestId: 'x',
+          ok: true,
+        }) as never,
+      updateChatRunPreferences: (_jid, updater) => updater({}),
+      updateChatUsage: () => {},
+      setTyping: async () => {},
+      sendMessage: async () => true,
+      runContainerAgentImpl: async (
+        _group,
+        _input,
+        _abortSignal,
+        _onRuntimeEvent,
+        _onExtensionUIRequest,
+        onProgressEvent,
+      ) => {
+        onProgressEvent?.({
+          kind: 'delta',
+          at: Date.now(),
+          text: streamed,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return { status: 'success', result: final };
+      },
+    });
+
+    const result = await runAgent(
+      makeGroup('main'),
+      'finish with the authoritative result',
+      'telegram:100',
+      'none',
+      'sealed-final-result-run',
+      { telegramDeliveryMode: 'stream' },
+      { suppressErrorReply: true },
+    );
+
+    assert.equal(result.result, final);
+    assert.ok(finalEdits.at(-1)?.endsWith('authoritative message-end tail'));
+    assert.equal(finalEdits.at(-1)?.includes('stale streamed tail'), false);
+  } finally {
+    state.telegramBot = originalTelegramBot;
+    cleanup();
+  }
+});
+
 test('runAgent retracts an unsealed queued Telegram preview for a final NO_REPLY', async () => {
   const { cleanup } = setupTempDb();
   const originalTelegramBot = state.telegramBot;
