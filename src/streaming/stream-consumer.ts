@@ -558,6 +558,7 @@ export class StreamConsumer {
     this.clearFlushTimer();
     await this.answerChain.catch(() => {});
     await this.activityChain.catch(() => {});
+    await this.clearNativeDraft();
 
     // Strip the streaming cursor from the content bubble so an interrupted run
     // never leaves a frozen "still typing" marker. Best-effort.

@@ -359,6 +359,29 @@ describe('StreamConsumer', () => {
     ]);
   });
 
+  test('draft mode clears a native draft when an interrupted run aborts', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-draft-abort',
+      adapter,
+      draftId: 987,
+      deliveryMode: 'draft',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Draft content that must disappear on abort.');
+    await waitForCoalesce();
+    await consumer.abort();
+
+    assert.deepEqual(adapter.drafts.at(-1), {
+      chatId: 'telegram:1',
+      draftId: 987,
+      content: '',
+    });
+  });
+
   test('delivery mode draft keeps verbose tool progress in a separate activity message', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({
