@@ -1066,13 +1066,16 @@ describe('StreamConsumer', () => {
 
   test('W6 failed queued seal keeps the host full-final fallback enabled', async () => {
     let sendAttempts = 0;
-    let resolveFirstSeal: ((result: SendResult) => void) | undefined;
+    let resolveSecondSeal: ((result: SendResult) => void) | undefined;
     const adapter = createMockAdapter({
       async send() {
         sendAttempts++;
         if (sendAttempts === 1) {
+          return { success: true, messageId: '1' };
+        }
+        if (sendAttempts === 2) {
           return new Promise<SendResult>((resolve) => {
-            resolveFirstSeal = resolve;
+            resolveSecondSeal = resolve;
           });
         }
         return { success: true, messageId: String(sendAttempts) };
@@ -1087,16 +1090,15 @@ describe('StreamConsumer', () => {
       draftMinIntervalMs: 10,
     });
 
-    const line = 'x'.repeat(79);
-    const bigText = `${Array.from({ length: 150 }, () => line).join('\n')}x`;
+    const bigText = 'x'.repeat(9000);
     await consumer.onDelta(bigText);
     assert.equal(consumer.hasSealedContent(), true);
 
     const finalize = consumer.finalizeTail();
-    while (!resolveFirstSeal) {
+    while (!resolveSecondSeal) {
       await new Promise((resolve) => setImmediate(resolve));
     }
-    resolveFirstSeal({
+    resolveSecondSeal({
       success: false,
       messageId: '',
       error: 'simulated seal failure',
@@ -1104,7 +1106,13 @@ describe('StreamConsumer', () => {
 
     assert.equal(await finalize, false);
     assert.equal(consumer.hasSealedContent(), false);
-    assert.equal(sendAttempts, 1);
+    assert.equal(sendAttempts, 2);
+
+    const completion = await consumer.finish();
+    assert.equal(completion.previewState, null);
+    assert.deepEqual(adapter.deletes, [
+      { chatId: 'telegram:-1', messageId: '1' },
+    ]);
   });
 
   test('W6 retracts sealed content when the cumulative reply becomes a blocked dump', async () => {
@@ -1139,6 +1147,40 @@ describe('StreamConsumer', () => {
     assert.deepEqual(
       adapter.deletes.map((entry) => entry.messageId).sort(),
       adapter.sent.map((_, index) => String(index + 1)).sort(),
+    );
+  });
+
+  test('W6 redacts sealed content when guard retraction deletion fails', async () => {
+    const adapter = createMockAdapter({
+      async deleteMessage() {
+        throw new Error('simulated delete failure');
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-blocked-delete-failure',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const allowedPrefix = 'x'.repeat(6000);
+    const blockedFinal = `${allowedPrefix}\n${Array.from(
+      { length: 120 },
+      (_, index) => `const blocked${index} = ${index};`,
+    ).join('\n')}`;
+    await consumer.onDelta(allowedPrefix);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await consumer.onDelta(blockedFinal);
+    const completion = await consumer.finish();
+
+    assert.equal(completion.previewState, null);
+    assert.equal(adapter.edits.length, adapter.sent.length);
+    assert.ok(
+      adapter.edits.every((entry) =>
+        entry.content.includes('was not posted in chat'),
+      ),
     );
   });
 
@@ -1178,6 +1220,93 @@ describe('StreamConsumer', () => {
     } finally {
       consumer.stop();
     }
+  });
+
+  test('retry boundary never requeues an in-flight old-generation frame', async () => {
+    let resolveOldSend: ((result: SendResult) => void) | undefined;
+    let sendCount = 0;
+    const payloads: string[] = [];
+    const deletes: string[] = [];
+    const adapter = createMockAdapter({
+      async send(_chatId, content) {
+        payloads.push(content);
+        sendCount++;
+        if (sendCount === 1) {
+          return new Promise<SendResult>((resolve) => {
+            resolveOldSend = resolve;
+          });
+        }
+        return { success: true, messageId: String(sendCount) };
+      },
+      async deleteMessage(_chatId, messageId) {
+        deletes.push(messageId);
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-retry-in-flight',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      heartbeatMs: 0,
+      activitySpawnThresholdMs: 60_000,
+      draftMinIntervalMs: 0,
+    });
+
+    const oldText = 'Old attempt content that must disappear.';
+    await consumer.onDelta(oldText);
+    while (!resolveOldSend) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    consumer.handleProgress({
+      kind: 'retry_fresh',
+      at: Date.now(),
+      reason: 'stale_no_progress',
+    });
+    const newText = 'Replacement attempt content that must remain.';
+    await consumer.onDelta(newText);
+    resolveOldSend({ success: true, messageId: '1' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.deepEqual(payloads, [
+      `${oldText}${STREAM_CURSOR}`,
+      `${newText}${STREAM_CURSOR}`,
+    ]);
+    assert.deepEqual(deletes, ['1']);
+    assert.equal(consumer.getPreviewState()?.lastText, newText);
+    consumer.stop();
+  });
+
+  test('W6 failed tail finalization retracts sealed fragments before fallback', async () => {
+    const adapter = createMockAdapter({
+      async editMessage(_chatId, messageId) {
+        return {
+          success: false,
+          messageId,
+          error: 'Too Many Requests',
+          floodControl: true,
+        };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-tail-finalize-failure',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('x'.repeat(6000));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(consumer.hasSealedContent(), true);
+    assert.equal(await consumer.finalizeTail(), false);
+
+    await consumer.finish();
+    assert.deepEqual(
+      adapter.deletes.map((entry) => entry.messageId).sort(),
+      adapter.sent.map((_, index) => String(index + 1)).sort(),
+    );
   });
 
   test('W7 two tool boundaries produce three ordered content bubbles', async () => {
@@ -1225,6 +1354,28 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.edits.at(-1)?.content, segmentB);
     assert.equal(adapter.sent.length, 5);
     assert.equal(adapter.sent[4].content, `${segmentC}${STREAM_CURSOR}`);
+    consumer.stop();
+  });
+
+  test('W7 tool boundary force-flushes a short segment before its tool line', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-short-tool-boundary',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Brief text');
+    consumer.onToolEvent({ toolName: 'Bash', status: 'start' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.deepEqual(
+      adapter.sent.map((entry) => entry.content),
+      ['Brief text', '🔥 Bash'],
+    );
     consumer.stop();
   });
 

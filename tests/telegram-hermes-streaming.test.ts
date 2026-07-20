@@ -87,3 +87,51 @@ test('Telegram flood control disables stale preview edits and permits a fresh fi
     });
   }
 });
+
+test('formatted final edit does not retry flood control as a plain edit', async () => {
+  let edits = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      if ((req.url || '').endsWith('/editMessageText')) edits++;
+      res.writeHead(429, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error_code: 429,
+          description: 'Too Many Requests',
+          parameters: { retry_after: 0 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+
+  try {
+    const [{ createTelegramBot }, { createTelegramAdapter }] =
+      await Promise.all([
+        import('../src/telegram.js'),
+        import('../src/streaming/telegram-adapter.js'),
+      ]);
+    const bot = createTelegramBot({
+      token: 'test-token',
+      apiBaseUrl: `http://127.0.0.1:${address.port}`,
+    });
+    const result = await createTelegramAdapter(bot).editMessage(
+      'telegram:-1',
+      '77',
+      'Final answer',
+      true,
+    );
+
+    assert.equal(result.success, false);
+    assert.equal(result.floodControl, true);
+    assert.equal(edits, 1);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});

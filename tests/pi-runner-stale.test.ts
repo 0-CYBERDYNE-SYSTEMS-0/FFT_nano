@@ -579,7 +579,7 @@ test(
 );
 
 test(
-  'runContainerAgent creates an early Telegram draft before assistant text exists',
+  'runContainerAgent does not create synthetic assistant text before a tool',
   { timeout: 5000, concurrency: false },
   async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-draft-'));
@@ -642,7 +642,7 @@ test(
       seenPreviewTexts.some((text) =>
         text.includes('Working on your reply...'),
       ),
-      true,
+      false,
     );
     assert.equal(
       seenPreviewTexts.some((text) => text.includes('final answer')),

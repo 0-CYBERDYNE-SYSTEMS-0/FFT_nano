@@ -83,6 +83,14 @@ export function isTelegramFloodControlError(error: unknown): boolean {
   return /\b429\b|too many requests|retry after/i.test(message);
 }
 
+export function isTelegramFormattingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    TELEGRAM_PARSE_ERROR_RE.test(message) ||
+    TELEGRAM_MESSAGE_TOO_LONG_RE.test(message)
+  );
+}
+
 // Methods that create a new user-visible message. Telegram's Bot API has no
 // idempotency key for these, so retrying one after a response-uncertain
 // failure can deliver the same content twice. Edit/delete/no-op calls are

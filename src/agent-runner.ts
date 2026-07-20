@@ -812,6 +812,8 @@ export async function runAgent(
             const finalized = await streamConsumer.finalizeTail();
             if (finalized && output.status !== 'error') {
               telegramPreviewRegistry.noteCompleted(streamKey);
+            } else if (!finalized) {
+              await streamConsumer.finish();
             }
           } else {
             const { previewState: preview } = await streamConsumer.finish();

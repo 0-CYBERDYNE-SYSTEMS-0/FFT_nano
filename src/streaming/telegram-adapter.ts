@@ -1,4 +1,8 @@
-import { isTelegramFloodControlError, type TelegramBot } from '../telegram.js';
+import {
+  isTelegramFormattingError,
+  isTelegramFloodControlError,
+  type TelegramBot,
+} from '../telegram.js';
 import type { PlatformAdapter, SendResult } from './platform-adapter.js';
 
 export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
@@ -31,21 +35,23 @@ export function createTelegramAdapter(bot: TelegramBot): PlatformAdapter {
         );
         return { success: true, messageId };
       } catch (err) {
-        if (finalize) {
+        let failure = err;
+        if (finalize && isTelegramFormattingError(err)) {
           // Formatted finalize failed (e.g. HTML render rejected); a plain
           // edit keeps the content correct even without formatting.
           try {
             await bot.editStreamMessage(chatId, Number(messageId), content);
             return { success: true, messageId };
-          } catch {
-            // fall through to the failure result below
+          } catch (fallbackError) {
+            failure = fallbackError;
           }
         }
         return {
           success: false,
           messageId,
-          error: err instanceof Error ? err.message : String(err),
-          floodControl: isTelegramFloodControlError(err),
+          error:
+            failure instanceof Error ? failure.message : String(failure),
+          floodControl: isTelegramFloodControlError(failure),
         };
       }
     },

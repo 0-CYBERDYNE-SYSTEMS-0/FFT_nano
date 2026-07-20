@@ -9,7 +9,10 @@ import {
   formatToolProgressMessage,
   type ToolProgressEvent,
 } from './format-tools.js';
-import { guardOutboundAgentText } from '../outbound-text-guard.js';
+import {
+  OUTBOUND_DUMP_FALLBACK,
+  guardOutboundAgentText,
+} from '../outbound-text-guard.js';
 import { STREAM_CURSOR, holdbackSilenceMarker } from './stream-filter.js';
 
 const BACKOFF_STEPS_MS = [1_000, 3_000, 10_000];
@@ -581,11 +584,14 @@ export class StreamConsumer {
           segment,
           true,
         );
+        if (!result.success) this.sealBroken = true;
         return result.success;
       }
       const result = await adapter.send(chatId, segment, undefined, true);
+      if (!result.success) this.sealBroken = true;
       return result.success;
     } catch {
+      this.sealBroken = true;
       return false;
     }
   }
@@ -610,15 +616,6 @@ export class StreamConsumer {
     if (this.config.deliveryMode === 'off') return false;
     const segment = this.lastSourceText.slice(this.sealedSourceLen);
     if (!segment.trim()) return false;
-    // Segment content only becomes a permanent message when it was visible (a
-    // bubble or draft exists) or is substantial enough to have earned one.
-    if (
-      !this.messageId &&
-      !(this.draftMode && this.lastText.length > 0) &&
-      segment.length < MIN_PREVIEW_CHARS
-    ) {
-      return false;
-    }
     this.sealedSourceLen = this.lastSourceText.length;
     this.pendingText = null;
     this.enqueueSeal(segment);
@@ -892,6 +889,7 @@ export class StreamConsumer {
         .catch(() => {})
         .then(async () => {
           await this.sendOrEdit(text, generation);
+          if (generation !== this.streamGeneration) return;
           this.lastAnswerFlushAt = Date.now();
           if (
             !this.editFloodDisabled &&
@@ -1215,13 +1213,23 @@ export class StreamConsumer {
       this.deliveredPreviewMessageIds.add(this.messageId);
     }
     for (const messageId of this.deliveredPreviewMessageIds) {
+      let retracted = false;
       try {
         await this.config.adapter.deleteMessage(this.config.chatId, messageId);
+        retracted = true;
       } catch {
-        continue;
+        try {
+          const result = await this.config.adapter.editMessage(
+            this.config.chatId,
+            messageId,
+            OUTBOUND_DUMP_FALLBACK,
+            true,
+          );
+          retracted = result.success;
+        } catch {}
       }
+      if (retracted) this.deliveredPreviewMessageIds.delete(messageId);
     }
-    this.deliveredPreviewMessageIds.clear();
     this.messageId = null;
     this.lastText = '';
   }

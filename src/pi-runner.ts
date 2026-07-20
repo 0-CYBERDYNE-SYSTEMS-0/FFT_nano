@@ -2090,11 +2090,6 @@ export async function runContainerAgent(
               toolName: toolDelta.toolName,
               status: toolDelta.status,
             });
-            // When a tool starts before any assistant text exists, emit a
-            // placeholder draft so the user sees activity immediately.
-            if (toolDelta.status === 'start' && !assistantSoFar) {
-              publishDraftPreview('Working on your reply...', false);
-            }
           }
           if (input.showReasoning) {
             const thinkingDelta = extractThinkingDeltaFromPiEvent(event);

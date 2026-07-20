@@ -4,7 +4,7 @@ Use `/delivery` or `/settings` to choose the mode for the current chat.
 
 | Mode     | Behavior                                                                                                                                                         |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stream` | Edits one answer message as text arrives. Status and tool activity use a separate temporary Activity message.                                                    |
+| `stream` | Edits the live answer as text arrives. Long replies continue in permanent bubbles; tool boundaries add a compact permanent start line. Other status activity uses a separate temporary Activity message. |
 | `append` | Sends durable answer blocks without editing previous blocks. Status uses a separate Activity message.                                                            |
 | `off`    | Sends no preview. Only the final answer is delivered.                                                                                                            |
 | `draft`  | Uses Telegram's ephemeral native draft API in private chats, then sends the final answer normally. Groups and unsupported Bot API servers fall back to `stream`. |
