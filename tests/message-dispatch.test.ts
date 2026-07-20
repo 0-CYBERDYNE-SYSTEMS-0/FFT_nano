@@ -159,6 +159,80 @@ test('finalizeCompletedRun skips duplicate send when Telegram delivery already c
   assert.equal(emitter.events.at(-1)?.kind, 'agent');
 });
 
+test('finalizeCompletedRun retracts an exact Telegram silence marker', async () => {
+  const emitter = createEmitter();
+  const persisted: string[] = [];
+  const sent: string[] = [];
+  const deleted: number[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:1',
+    runId: 'run-silent',
+    sessionKey: 'telegram:1',
+    result: 'NO_REPLY',
+    streamed: true,
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: {
+      messageId: 456,
+      lastText: 'NO',
+      updatedAt: 1000,
+    },
+    updateChatUsage: () => {},
+    persistAssistantHistory: (_chatJid, text) => {
+      persisted.push(text);
+    },
+    deleteTelegramPreviewMessage: async (_chatJid, messageId) => {
+      deleted.push(messageId);
+    },
+    finalizeTelegramPreviewMessage: async () => {
+      throw new Error('should not finalize a silence marker');
+    },
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(deleted, [456]);
+  assert.deepEqual(persisted, []);
+  assert.deepEqual(sent, []);
+  assert.equal(
+    emitter.events.some((event) => event.kind === 'chat'),
+    false,
+  );
+});
+
+test('finalizeCompletedRun sends a fresh final after preview state is disabled', async () => {
+  const emitter = createEmitter();
+  const sent: string[] = [];
+
+  await finalizeCompletedRun({
+    chatJid: 'telegram:-1',
+    runId: 'run-flood-final',
+    sessionKey: 'telegram:-1',
+    result: 'Complete answer after flood control.',
+    streamed: true,
+    abortSignal: new AbortController().signal,
+    externallyCompleted: false,
+    telegramPreviewState: null,
+    updateChatUsage: () => {},
+    persistAssistantHistory: () => {},
+    deleteTelegramPreviewMessage: async () => {},
+    finalizeTelegramPreviewMessage: async () => false,
+    sendAgentResultMessage: async (_chatJid, text) => {
+      sent.push(text);
+      return true;
+    },
+    emitTuiChatEvent: emitter.emitTuiChatEvent,
+    emitTuiAgentEvent: emitter.emitTuiAgentEvent,
+  });
+
+  assert.deepEqual(sent, ['Complete answer after flood control.']);
+});
+
 test('finalizeCompletedRun sends plain language for empty final output', async () => {
   const emitter = createEmitter();
   const persisted: string[] = [];
@@ -500,7 +574,10 @@ test('processMessage continues runner timeout as exactly one durable long run', 
     /Continuing as long run <id>/i,
   );
   assert.match(longRuns[0]?.options?.startNotice || '', /\(ref: [a-f0-9]{6}\)/);
-  assert.doesNotMatch(longRuns[0]?.options?.startNotice || '', /Pi runner|\bms\b/i);
+  assert.doesNotMatch(
+    longRuns[0]?.options?.startNotice || '',
+    /Pi runner|\bms\b/i,
+  );
   // First timeout continues via startNotice (service-owned). Second attempt is a
   // plain timeout failure without starting another long run.
   assert.equal(sent.length, 1);

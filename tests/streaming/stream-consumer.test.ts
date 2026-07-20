@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { StreamConsumer } from '../../src/streaming/stream-consumer.js';
+import { STREAM_CURSOR } from '../../src/streaming/stream-filter.js';
 import type { PlatformAdapter } from '../../src/streaming/platform-adapter.js';
 
 function createMockAdapter(
@@ -10,6 +11,8 @@ function createMockAdapter(
   edits: Array<{ chatId: string; messageId: string; content: string }>;
   deletes: Array<{ chatId: string; messageId: string }>;
   drafts: Array<{ chatId: string; draftId: number; content: string }>;
+  sentFinalize: boolean[];
+  editFinalize: boolean[];
 } {
   let messageCounter = 0;
   const sent: Array<{ chatId: string; content: string }> = [];
@@ -18,19 +21,25 @@ function createMockAdapter(
   const deletes: Array<{ chatId: string; messageId: string }> = [];
   const drafts: Array<{ chatId: string; draftId: number; content: string }> =
     [];
+  const sentFinalize: boolean[] = [];
+  const editFinalize: boolean[] = [];
 
   return {
     sent,
     edits,
     deletes,
     drafts,
-    async send(chatId, content) {
+    sentFinalize,
+    editFinalize,
+    async send(chatId, content, _replyTo?, finalize?) {
       sent.push({ chatId, content });
+      sentFinalize.push(finalize === true);
       messageCounter++;
       return { success: true, messageId: String(messageCounter) };
     },
-    async editMessage(chatId, messageId, content) {
+    async editMessage(chatId, messageId, content, finalize?) {
       edits.push({ chatId, messageId, content });
+      editFinalize.push(finalize === true);
       return { success: true, messageId };
     },
     async deleteMessage(chatId, messageId) {
@@ -76,7 +85,7 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.sent.length, 1);
     assert.equal(
       adapter.sent[0].content,
-      'Hello, this is a long enough message to pass threshold',
+      `Hello, this is a long enough message to pass threshold${STREAM_CURSOR}`,
     );
 
     await consumer.onDelta(
@@ -214,12 +223,12 @@ describe('StreamConsumer', () => {
       {
         chatId: 'telegram:1',
         draftId: 321,
-        content: 'This is a native draft preview with enough text',
+        content: `This is a native draft preview with enough text${STREAM_CURSOR}`,
       },
       {
         chatId: 'telegram:1',
         draftId: 321,
-        content: 'This is an updated native draft preview with enough text',
+        content: `This is an updated native draft preview with enough text${STREAM_CURSOR}`,
       },
     ]);
 
@@ -492,7 +501,7 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.edits[0].messageId, '1');
     assert.equal(
       adapter.edits[0].content,
-      'This is the updated streamed answer content after activity failed',
+      `This is the updated streamed answer content after activity failed${STREAM_CURSOR}`,
     );
     consumer.stop();
   });
@@ -524,7 +533,7 @@ describe('StreamConsumer', () => {
     assert.match(adapter.sent[0].content, /Bash/);
     assert.equal(
       adapter.sent[1].content,
-      'This is the real streamed answer content here\n\nTools: 🔥 Bash',
+      `This is the real streamed answer content here\n\nTools: 🔥 Bash${STREAM_CURSOR}`,
     );
     assert.equal(adapter.edits.length, 0);
     consumer.stop();
@@ -647,7 +656,7 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.sent.length, 1, 'should send exactly one message');
     assert.equal(
       adapter.sent[0].content,
-      'Second text that is also long enough',
+      `Second text that is also long enough${STREAM_CURSOR}`,
       'should send the latest text',
     );
     consumer.stop();
@@ -671,7 +680,7 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.sent.length, 1);
     assert.equal(
       adapter.sent[0].content,
-      'Second text that is also long enough',
+      `Second text that is also long enough${STREAM_CURSOR}`,
     );
     assert.ok(
       !adapter.sent.some((s) => s.content.includes('First')),
@@ -702,8 +711,32 @@ describe('StreamConsumer', () => {
     assert.ok(adapter.sent.length + adapter.edits.length >= 2);
     assert.equal(
       adapter.edits.at(-1)?.content || adapter.sent.at(-1)?.content,
-      'Continuous answer frame 7 with enough text to send',
+      `Continuous answer frame 7 with enough text to send${STREAM_CURSOR}`,
     );
+    consumer.stop();
+  });
+
+  test('W2 flushes after 24 new chars without waiting for the full cadence', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-fast-trigger',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 800,
+    });
+
+    const initial = 'Initial streamed answer long enough to display.';
+    await consumer.onDelta(initial);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(adapter.sent.length, 1);
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await consumer.onDelta(`${initial}${'x'.repeat(24)}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(adapter.edits.length, 1);
     consumer.stop();
   });
 
@@ -731,7 +764,7 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.sent.length, 1);
     assert.equal(
       adapter.sent[0].content,
-      'Pending answer content that must still be delivered',
+      `Pending answer content that must still be delivered${STREAM_CURSOR}`,
     );
     consumer.stop();
   });
@@ -761,7 +794,7 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.sent.length, 1);
     assert.equal(
       adapter.sent[0].content,
-      'Draft fallback answer with enough content to send',
+      `Draft fallback answer with enough content to send${STREAM_CURSOR}`,
     );
     assert.equal(consumer.getPreviewState()?.messageId, '1');
     consumer.stop();
@@ -866,7 +899,7 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
-  test('VAL-STREAM-005 private chat uses 1s interval', async () => {
+  test('VAL-STREAM-005 private chat uses 800ms interval', async () => {
     const adapter = createMockAdapter();
     // Positive chatId = private
     const consumer = new StreamConsumer({
@@ -879,11 +912,7 @@ describe('StreamConsumer', () => {
 
     // Access private field for testing via any cast (test-only)
     const draftInterval = (consumer as any).draftMinIntervalMs;
-    assert.equal(
-      draftInterval,
-      1000,
-      'private chat should use 1000ms interval',
-    );
+    assert.equal(draftInterval, 800, 'private chat should use 800ms interval');
     consumer.stop();
   });
 
@@ -920,5 +949,211 @@ describe('StreamConsumer', () => {
     assert.equal(adapter.drafts.length, 0);
     assert.equal(adapter.sent.length, 1);
     consumer.stop();
+  });
+
+  test('W6 12,000-char overflow seals three chunks and streams the complete tail', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run-overflow',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const line = 'x'.repeat(79);
+    const lines = Array.from({ length: 150 }, () => line);
+    const bigText = `${lines.join('\n')}x`;
+    assert.equal(bigText.length, 12_000);
+    await consumer.onDelta(bigText);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(adapter.sent.length, 4);
+    assert.deepEqual(adapter.sentFinalize, [true, true, true, false]);
+    const tail = adapter.sent[3].content;
+    assert.ok(tail.endsWith(STREAM_CURSOR), 'tail bubble carries the cursor');
+    const reconstructed = [
+      ...adapter.sent.slice(0, 3).map((message) => message.content),
+      tail.slice(0, -STREAM_CURSOR.length),
+    ].join('\n');
+    assert.equal(reconstructed, bigText, 'no content lost or duplicated');
+    for (const s of adapter.sent.slice(0, 3)) {
+      assert.ok(s.content.length <= 4096);
+      assert.ok(!s.content.includes(STREAM_CURSOR));
+    }
+
+    assert.equal(consumer.hasSealedContent(), true);
+    const finalized = await consumer.finalizeTail();
+    assert.equal(finalized, true);
+    const lastEdit = adapter.edits.at(-1);
+    assert.ok(lastEdit, 'finalizeTail finalizes the tail bubble');
+    assert.equal(lastEdit?.content, tail.slice(0, -STREAM_CURSOR.length));
+    assert.equal(adapter.editFinalize.at(-1), true);
+  });
+
+  test('W7 two tool boundaries produce three ordered content bubbles', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run-boundary',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const segmentA = 'First segment content long enough to show.';
+    await consumer.onDelta(segmentA);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(adapter.sent.length, 1);
+
+    consumer.onToolEvent({ toolName: 'Bash', status: 'start' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The bubble was finalized in place with the clean segment text.
+    assert.equal(adapter.edits.length, 1);
+    assert.equal(adapter.edits[0].messageId, '1');
+    assert.equal(adapter.edits[0].content, segmentA);
+    assert.equal(adapter.editFinalize[0], true);
+    assert.equal(consumer.hasSealedContent(), true);
+
+    const segmentB = 'Second segment answer text here also long.';
+    await consumer.onDelta(`${segmentA}\n${segmentB}`);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(adapter.sent.length, 2, 'new bubble opens below tool line');
+    assert.equal(adapter.sent[1].content, `${segmentB}${STREAM_CURSOR}`);
+
+    consumer.onToolEvent({ toolName: 'read', status: 'start' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const segmentC = 'Third segment follows the second tool boundary.';
+    await consumer.onDelta(`${segmentA}\n${segmentB}\n${segmentC}`);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(adapter.edits.at(-1)?.content, segmentB);
+    assert.equal(adapter.sent.length, 3);
+    assert.equal(adapter.sent[2].content, `${segmentC}${STREAM_CURSOR}`);
+  });
+
+  test('W5 three consecutive flood-control edit failures stop preview edits', async () => {
+    let editAttempts = 0;
+    const adapter = createMockAdapter({
+      async editMessage(_chatId, messageId) {
+        editAttempts++;
+        return {
+          success: false,
+          messageId,
+          error: 'Too Many Requests: retry after 1',
+          floodControl: true,
+        };
+      },
+    });
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:-1',
+      runId: 'run-flood-strikes',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('Initial preview content long enough to display.');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    for (let strike = 1; strike <= 3; strike++) {
+      await consumer.onDelta(
+        `Initial preview content long enough to display.${'x'.repeat(strike)}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+
+    assert.equal(editAttempts, 3);
+    assert.equal(consumer.getPreviewState(), null);
+
+    await consumer.onDelta(
+      'Initial preview content long enough to display after disable.',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(editAttempts, 3);
+    consumer.stop();
+  });
+
+  test('replace-style shrink after a seal starts a fresh segment', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run-shrink',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('First segment content long enough to show.');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    consumer.onToolEvent({ toolName: 'read', status: 'start' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const replacement = 'Fresh reply after the tool ran replaces the buffer.';
+    await consumer.onDelta(replacement);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(adapter.sent.length, 2);
+    assert.equal(adapter.sent[1].content, `${replacement}${STREAM_CURSOR}`);
+  });
+
+  test('W4 partial and exact silence markers never reach the preview', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'chat1',
+      runId: 'run-silence',
+      adapter,
+      deliveryMode: 'stream',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    await consumer.onDelta('NO');
+    await consumer.onDelta('NO_REPLY');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(adapter.sent.length, 0);
+
+    await consumer.onDelta('North star answer with sufficient length here');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(adapter.sent.length, 1);
+    consumer.stop();
+  });
+
+  test('draft mode seals overflow as real messages while the draft streams on', async () => {
+    const adapter = createMockAdapter();
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-draft-overflow',
+      adapter,
+      draftId: 111,
+      deliveryMode: 'draft',
+      verboseMode: 'off',
+      draftMinIntervalMs: 10,
+    });
+
+    const line = 'y'.repeat(79);
+    const bigText = Array.from({ length: 60 }, () => line).join('\n'); // ~4800
+    await consumer.onDelta(bigText);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(adapter.sent.length, 1, 'sealed head is a real message');
+    assert.equal(adapter.sentFinalize[0], true);
+    assert.equal(adapter.drafts.length, 1, 'draft continues with the tail');
+    assert.ok(adapter.drafts[0].content.endsWith(STREAM_CURSOR));
+
+    assert.equal(consumer.hasSealedContent(), true);
+    const finalized = await consumer.finalizeTail();
+    assert.equal(finalized, true);
+    assert.equal(adapter.sent.length, 2, 'tail lands as a real final message');
+    assert.equal(adapter.sentFinalize[1], true);
+    const reconstructed = `${adapter.sent[0].content}\n${adapter.sent[1].content}`;
+    assert.equal(reconstructed, bigText);
   });
 });

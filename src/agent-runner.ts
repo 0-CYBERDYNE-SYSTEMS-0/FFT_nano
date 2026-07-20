@@ -721,6 +721,12 @@ export async function runAgent(
               ? 'stream'
               : runPrefs.telegramDeliveryMode || 'status',
           verboseMode: runPrefs.verboseMode || 'off',
+          // Streamed reasoning mutates the preview prefix non-monotonically,
+          // which segment sealing cannot track.
+          sealingEnabled: !(
+            runPrefs.showReasoning === true ||
+            runPrefs.reasoningLevel === 'stream'
+          ),
         });
         registerActiveStreamConsumer(chatJid, consumerRunId, streamConsumer);
       } else {
@@ -772,7 +778,11 @@ export async function runAgent(
           },
         );
       } catch (err) {
-        streamConsumer?.stop();
+        // abort() (not stop()) so a thrown run still collapses the activity
+        // bubble and strips the streaming cursor from the content bubble.
+        if (streamConsumer) {
+          await streamConsumer.abort().catch(() => {});
+        }
         if (streamConsumer && streamConsumerRunId) {
           unregisterActiveStreamConsumer(
             chatJid,
@@ -790,19 +800,30 @@ export async function runAgent(
       // Bridge: write StreamConsumer preview state into the registry
       if (streamConsumer && isTelegramJid(chatJid)) {
         if (attemptRequestId) {
-          const preview = streamConsumer.getPreviewState();
-          if (preview) {
-            const streamKey = getTelegramPreviewRunKey(
-              chatJid,
-              attemptRequestId,
-            );
-            telegramPreviewRegistry.setPreviewState(streamKey, {
-              messageId: Number(preview.messageId),
-              messageIds: [Number(preview.messageId)],
-              bubbleTexts: [preview.lastText],
-              lastText: preview.lastText,
-              updatedAt: Date.now(),
-            });
+          const streamKey = getTelegramPreviewRunKey(chatJid, attemptRequestId);
+          if (streamConsumer.hasSealedContent()) {
+            // Sealed runs already delivered permanent chunks; finalize the
+            // live tail in place and mark the run externally completed so the
+            // host does not re-send the full result (it would duplicate the
+            // sealed heads). Never bridge preview state for sealed runs — a
+            // host finalize edit would overwrite the tail bubble. If tail
+            // finalization failed, the host's fresh full send restores
+            // completeness. See telegram-spec §9.2.
+            const finalized = await streamConsumer.finalizeTail();
+            if (finalized && output.status !== 'error') {
+              telegramPreviewRegistry.noteCompleted(streamKey);
+            }
+          } else {
+            const preview = streamConsumer.getPreviewState();
+            if (preview) {
+              telegramPreviewRegistry.setPreviewState(streamKey, {
+                messageId: Number(preview.messageId),
+                messageIds: [Number(preview.messageId)],
+                bubbleTexts: [preview.lastText],
+                lastText: preview.lastText,
+                updatedAt: Date.now(),
+              });
+            }
           }
         }
         // Collapse the ephemeral Activity bubble to a one-line receipt so the

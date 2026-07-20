@@ -9,6 +9,8 @@ import type { NewMessage } from '../types.js';
 import type { CodingWorkerResult } from '../coding-orchestrator.js';
 import { mintRunAuthority, deriveEffectiveToolSet } from '../run-authority.js';
 import { runSampledChatEvaluation } from '../evaluator.js';
+import { isTelegramJid } from '../telegram.js';
+import { isSilenceMarker } from '../streaming/stream-filter.js';
 import {
   cancelActiveMaintenance,
   cancelPendingGraceTimer,
@@ -824,7 +826,11 @@ export async function finalizeCompletedRun(
     return;
   }
 
-  if (params.suppressUserDelivery) {
+  const suppressTelegramSilenceMarker =
+    isTelegramJid(params.chatJid) &&
+    typeof params.result === 'string' &&
+    isSilenceMarker(params.result);
+  if (params.suppressUserDelivery || suppressTelegramSilenceMarker) {
     if (params.telegramPreviewState) {
       await params.deleteTelegramPreviewMessage(
         params.chatJid,

@@ -75,6 +75,14 @@ class TelegramApiError extends Error {
   }
 }
 
+export function isTelegramFloodControlError(error: unknown): boolean {
+  if (error instanceof TelegramApiError) {
+    return error.statusCode === 429 || error.retryAfterSeconds !== undefined;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b429\b|too many requests|retry after/i.test(message);
+}
+
 // Methods that create a new user-visible message. Telegram's Bot API has no
 // idempotency key for these, so retrying one after a response-uncertain
 // failure can deliver the same content twice. Edit/delete/no-op calls are
@@ -1435,16 +1443,45 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (!chatId) {
       throw new Error(`Invalid Telegram chat JID: ${chatJid}`);
     }
+    const thread =
+      typeof opts.messageThreadId === 'number' &&
+      Number.isFinite(opts.messageThreadId)
+        ? { message_thread_id: Math.trunc(opts.messageThreadId) }
+        : {};
+
+    // rich: formatted one-shot send for sealed/finalized stream content. A 400
+    // BadRequest (parse failure, over-limit render) was not delivered, so the
+    // plain path below is a safe resend; other errors propagate.
+    if (opts.rich) {
+      const normalized = text.replace(/\r\n/g, '\n');
+      try {
+        const richResult = await apiPostWithRetry<{ message_id?: number }>(
+          'sendMessage',
+          {
+            chat_id: chatId,
+            text: renderTelegramHtmlText(normalized, { textMode: 'markdown' }),
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            ...thread,
+          },
+        );
+        const richMessageId = Number(richResult?.message_id);
+        if (Number.isInteger(richMessageId) && richMessageId > 0) {
+          pulseTypingIfActive(chatId);
+          return richMessageId;
+        }
+      } catch (err) {
+        if (!isRichFallbackError(err)) throw err;
+      }
+    }
+
     const result = await apiPostWithRetry<{ message_id?: number }>(
       'sendMessage',
       {
         chat_id: chatId,
         text: normalizeTelegramPreviewText(text),
         disable_web_page_preview: true,
-        ...(typeof opts.messageThreadId === 'number' &&
-        Number.isFinite(opts.messageThreadId)
-          ? { message_thread_id: Math.trunc(opts.messageThreadId) }
-          : {}),
+        ...thread,
       },
     );
     const messageId = Number(result?.message_id);

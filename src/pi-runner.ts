@@ -37,7 +37,6 @@ import {
   type SkillSyncResult,
 } from './pi-skills.js';
 import { noteSkillCatalogUse } from './skill-lifecycle.js';
-import { normalizeTelegramPreviewText } from './telegram.js';
 import { ensureMemoryScaffold } from './memory-paths.js';
 import { ensureMainWorkspaceBootstrap } from './workspace-bootstrap.js';
 import { auditToolExecution } from './bash-guard.js';
@@ -1743,8 +1742,11 @@ export async function runContainerAgent(
       const publishDraftPreview = (text: string, force = false) => {
         if (runFinalized || localSettled) return;
         if (!canStreamTelegramDraft) return;
-        const normalized = normalizeTelegramPreviewText(text);
-        if (!normalized) return;
+        // No 4096 truncation here: the StreamConsumer seals overflow into
+        // permanent chunks, and the Telegram send/edit layer keeps its own
+        // last-resort length guard.
+        const normalized = text.replace(/\r\n/g, '\n');
+        if (!normalized.trim()) return;
         const now = Date.now();
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) {
           // Fast trigger: ≥24 new chars may flush early, but never faster
