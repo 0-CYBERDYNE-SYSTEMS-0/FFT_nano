@@ -121,3 +121,55 @@ test('aborted empty-output retry does not synthesize fallback response', async (
   assert.equal(outcome.finalRun.result, null);
   assert.equal(outcome.finalRun.ok, true);
 });
+
+test('non-heartbeat HEARTBEAT_OK ack is treated as empty and retried', async () => {
+  let retries = 0;
+  const outcome = await applyNonHeartbeatEmptyOutputPolicy({
+    isHeartbeatRun: false,
+    firstRun: { result: 'HEARTBEAT_OK', streamed: false, ok: true },
+    retryRun: async () => {
+      retries += 1;
+      return {
+        result: 'Here is the real answer.',
+        streamed: false,
+        ok: true,
+      };
+    },
+  });
+
+  assert.equal(retries, 1);
+  assert.equal(outcome.retried, true);
+  assert.equal(outcome.finalRun.result, 'Here is the real answer.');
+});
+
+test('non-heartbeat heartbeat okay ack retries and falls back when still ack-only', async () => {
+  const outcome = await applyNonHeartbeatEmptyOutputPolicy({
+    isHeartbeatRun: false,
+    firstRun: { result: 'heartbeat okay', streamed: false, ok: true },
+    retryRun: async () => ({
+      result: 'HEARTBEAT_OK',
+      streamed: false,
+      ok: true,
+    }),
+  });
+
+  assert.equal(outcome.retried, true);
+  assert.equal(outcome.finalRun.result, 'HEARTBEAT_OK');
+  assert.equal(outcome.finalRun.emptyOutputFallback, true);
+});
+
+test('heartbeat run that returns HEARTBEAT_OK does not retry', async () => {
+  let retries = 0;
+  const outcome = await applyNonHeartbeatEmptyOutputPolicy({
+    isHeartbeatRun: true,
+    firstRun: { result: 'HEARTBEAT_OK', streamed: false, ok: true },
+    retryRun: async () => {
+      retries += 1;
+      return { result: 'should not run', streamed: false, ok: true };
+    },
+  });
+
+  assert.equal(retries, 0);
+  assert.equal(outcome.retried, false);
+  assert.equal(outcome.finalRun.result, 'HEARTBEAT_OK');
+});

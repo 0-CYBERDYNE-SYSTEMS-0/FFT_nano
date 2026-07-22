@@ -639,6 +639,10 @@ export async function runAgent(
       ),
       '```',
     ].join('\n');
+    const isHeartbeatTask = options.isHeartbeatTask === true;
+    // Heartbeat must not continue or persist the interactive pi session —
+    // otherwise HEARTBEAT_OK turns pollute chat history and the model starts
+    // answering real user queries with ack-only tokens.
     const input = {
       prompt,
       groupFolder: group.folder,
@@ -664,6 +668,7 @@ export async function runAgent(
         options.isHeartbeatTask === true ||
         runtimePrefs.nextRunNoContinue === true,
       suppressPreviewStreaming:
+        isHeartbeatTask ||
         options.suppressPreviewStreaming === true ||
         runtimePrefs.telegramDeliveryMode === 'off',
       lifecyclePolicyOverride: options.lifecyclePolicyOverride,
@@ -924,7 +929,9 @@ export async function runAgent(
       return { result: msg, streamed: false, ok: true };
     }
 
-    const isHeartbeatRun = requestId?.startsWith('heartbeat-') === true;
+    const isHeartbeatRun =
+      options.isHeartbeatTask === true ||
+      requestId?.startsWith('heartbeat-') === true;
     const emptyOutputPolicy = await applyNonHeartbeatEmptyOutputPolicy({
       isHeartbeatRun,
       firstRun: {
