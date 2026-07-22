@@ -391,7 +391,12 @@ export async function runHeartbeatTurn(reason = 'interval'): Promise<void> {
           'auto',
           requestId,
           state.chatRunPreferences[mainChatJid] || {},
-          { suppressErrorReply: true, isHeartbeatTask: true },
+          {
+            suppressErrorReply: true,
+            isHeartbeatTask: true,
+            // Never stream heartbeat drafts into the user chat.
+            suppressPreviewStreaming: true,
+          },
           abortController.signal,
         ),
       attempts: FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS,

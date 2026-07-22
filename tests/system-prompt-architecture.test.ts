@@ -594,6 +594,48 @@ test('buildSystemPrompt injects HEARTBEAT.md only for scheduled or heartbeat run
   assert.match(heartbeat.text, /## \/workspace\/group\/HEARTBEAT\.md/);
 });
 
+test('buildSystemPrompt gates HEARTBEAT_OK contract by run type in ephemeral layer', () => {
+  const files = new Map<string, string>([
+    ['/workspace/group/NANO.md', '# NANO\n'],
+    ['/workspace/group/SOUL.md', '# SOUL\n'],
+    ['/workspace/group/TODOS.md', '# TODOS\n'],
+  ]);
+  const opts = {
+    readFileIfExists: (filePath: string) => files.get(filePath) ?? null,
+  };
+
+  const interactive = buildSystemPrompt(
+    makeInput({ codingHint: 'none', requestId: 'chat-1' }),
+    DEFAULT_PATHS,
+    opts,
+  );
+  const interactiveEphemeral =
+    interactive.report.layers.find((l) => l.id === 'ephemeral')?.content || '';
+  const interactiveStable =
+    interactive.report.layers.find((l) => l.id === 'stable')?.content || '';
+  assert.match(interactiveEphemeral, /This run is NOT a heartbeat poll/);
+  assert.doesNotMatch(
+    interactiveEphemeral,
+    /This run IS a heartbeat poll/,
+  );
+  // Stable layer must not teach HEARTBEAT_OK as a universal reply.
+  assert.doesNotMatch(interactiveStable, /reply exactly HEARTBEAT_OK/);
+
+  const heartbeat = buildSystemPrompt(
+    makeInput({
+      codingHint: 'none',
+      isHeartbeatTask: true,
+      requestId: 'heartbeat-1',
+    }),
+    DEFAULT_PATHS,
+    opts,
+  );
+  const heartbeatEphemeral =
+    heartbeat.report.layers.find((l) => l.id === 'ephemeral')?.content || '';
+  assert.match(heartbeatEphemeral, /This run IS a heartbeat poll/);
+  assert.match(heartbeatEphemeral, /reply exactly HEARTBEAT_OK/);
+});
+
 // ---------------------------------------------------------------------------
 // VAL-TIME-012: Invalid timezone does not break prompt assembly
 // ---------------------------------------------------------------------------
