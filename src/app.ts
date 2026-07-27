@@ -163,8 +163,10 @@ export interface AppRuntimeDeps {
   migrateCompactionSummariesFromSoul?: () => void;
   maybePromoteConfiguredTelegramMain?: () => void;
   startTuiGatewayService?: () => Promise<boolean>;
+  startAcpGatewayService?: () => Promise<boolean>;
   startWebControlCenterService?: () => Promise<void>;
   stopTuiGatewayService?: () => Promise<void>;
+  stopAcpGatewayService?: () => Promise<void>;
   stopWebControlCenterService?: () => Promise<void>;
   startFarmStateCollector?: () => void;
   stopFarmStateCollector?: () => void;
@@ -578,6 +580,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     stopFarmServicesForShutdown(signal);
     await deps.stopWebControlCenterService?.();
     await deps.stopTuiGatewayService?.();
+    await deps.stopAcpGatewayService?.();
     process.exit(exitCode);
   }
 
@@ -643,6 +646,7 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
     deps.migrateLegacyClaudeMemoryFiles?.();
     deps.migrateCompactionSummariesFromSoul?.();
     deps.maybePromoteConfiguredTelegramMain?.();
+    const acpAvailable = (await deps.startAcpGatewayService?.()) === true;
     const tuiAvailable = (await deps.startTuiGatewayService?.()) === true;
     await deps.startWebControlCenterService?.();
     deps.logger.info?.(
@@ -674,14 +678,20 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       deps.constants.whatsappEnabled === false &&
       !telegramEnabled &&
       tuiAvailable;
+    const acpOnlyMode =
+      !farmOnlyMode &&
+      deps.constants.whatsappEnabled === false &&
+      !telegramEnabled &&
+      acpAvailable;
     if (
       deps.constants.whatsappEnabled === false &&
       !telegramEnabled &&
       !farmOnlyMode &&
-      !tuiOnlyMode
+      !tuiOnlyMode &&
+      !acpOnlyMode
     ) {
       throw new Error(
-        'No channels enabled and TUI gateway is unavailable. Set WHATSAPP_ENABLED=1, TELEGRAM_BOT_TOKEN, or enable a working TUI gateway.',
+        'No channels enabled and TUI gateway is unavailable; ACP gateway is also unavailable. Set WHATSAPP_ENABLED=1, TELEGRAM_BOT_TOKEN, or enable a working TUI or ACP gateway.',
       );
     }
     // SPEC-03 fix #3 — boot witness for implicit evaluator config.
@@ -697,9 +707,11 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
         'Evaluator chatSampleRate is running on the code default (config file has no `evaluator` block); add an explicit `evaluator.chatSampleRate` to silence this',
       );
     }
-    if (tuiOnlyMode) {
+    if (acpOnlyMode || tuiOnlyMode) {
       deps.logger.info?.(
-        'Running in TUI-only mode (messaging channels and delivery loops disabled)',
+        acpOnlyMode
+          ? 'Running in ACP-only mode (messaging channels and delivery loops disabled)'
+          : 'Running in TUI-only mode (messaging channels and delivery loops disabled)',
       );
       deps.maybeRunBootMdOnce?.();
       return;

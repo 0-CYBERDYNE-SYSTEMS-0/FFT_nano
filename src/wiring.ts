@@ -16,6 +16,8 @@ import {
   FEATURE_FARM,
   FARM_STATE_ENABLED,
   FFT_NANO_CODER_GATE_MODE,
+  FFT_NANO_ACP_ENABLED,
+  FFT_NANO_ACP_STDIO,
   FFT_NANO_ONBOARDING_MODE,
   FFT_NANO_TUI_AUTH_TOKEN,
   FFT_NANO_TUI_ENABLED,
@@ -309,6 +311,11 @@ import {
   wrapLegacyMessageEnvelope,
 } from './runtime/boundary-ipc.js';
 import { createAppRuntime, runLearningPauseBootWitness } from './app.js';
+import {
+  createAcpAgentApp,
+  routePermissionRequestToAcp,
+} from './acp/acp-gateway.js';
+import { connectAcpStdio } from './acp/acp-stdio-transport.js';
 import {
   consumeTelegramHostCompletedRun as hcConsumeHostCompletedRun,
   consumeTelegramHostStreamState as hcConsumeHostStreamState,
@@ -1968,9 +1975,11 @@ const appRuntime = createAppRuntime({
   migrateLegacyClaudeMemoryFiles,
   migrateCompactionSummariesFromSoul,
   maybePromoteConfiguredTelegramMain,
+  startAcpGatewayService,
   startTuiGatewayService,
   startWebControlCenterService,
   stopTuiGatewayService,
+  stopAcpGatewayService,
   stopWebControlCenterService,
   startFarmStateCollector,
   stopFarmStateCollector,
@@ -2071,6 +2080,66 @@ async function runAgent(
 
 function createTuiGatewayAdapters(): TuiGatewayAdapters {
   return tuiCreateGatewayAdapters(hostEventBus, getTuiCoordinationDeps());
+}
+
+let acpConnection: ReturnType<typeof connectAcpStdio> | null = null;
+
+async function startAcpGatewayService(): Promise<boolean> {
+  if (!FFT_NANO_ACP_ENABLED) return false;
+  if (!FFT_NANO_ACP_STDIO) {
+    throw new Error('Stable ACP currently requires FFT_NANO_ACP_STDIO=1');
+  }
+  if (acpConnection) return true;
+
+  const tuiAdapters = createTuiGatewayAdapters();
+  const agent = createAcpAgentApp(
+    {
+      findMainChatJid,
+      sendPrompt: async ({ chatJid, text, requestId }) => {
+        state.lastInboundAt = Date.now();
+        await tuiAdapters.sendChat({
+          chatJid,
+          sessionKey: getSessionKeyForChat(chatJid),
+          message: text,
+          runId: requestId,
+          deliver: false,
+        });
+      },
+      abortChat: ({ chatJid, runId }) => {
+        const active = activeChatRunsById.get(runId);
+        if (!active || active.chatJid !== chatJid) return false;
+        active.abortController.abort(new Error('Aborted via ACP'));
+        return true;
+      },
+      getHistory: async (chatJid) => {
+        const history = getTuiSessionHistory(chatJid, 200);
+        const messages: Array<{
+          role: 'user' | 'assistant';
+          text: string;
+        }> = [];
+        for (const message of history) {
+          if (message.role === 'system') continue;
+          messages.push({ role: message.role, text: message.text });
+        }
+        return messages;
+      },
+    },
+    hostEventBus,
+  );
+  acpConnection = connectAcpStdio(agent);
+  void acpConnection.closed.catch((err) => {
+    logger.error({ err }, 'ACP stdio connection closed with an error');
+  });
+  logger.info('ACP stdio gateway started');
+  return true;
+}
+
+async function stopAcpGatewayService(): Promise<void> {
+  if (!acpConnection) return;
+  const connection = acpConnection;
+  acpConnection = null;
+  connection.close();
+  await connection.closed;
 }
 
 function getWebControlCenterDeps(): WebControlCenterDeps {
@@ -2223,6 +2292,8 @@ async function dispatchExtensionUIRequest(
   chatJid: string,
   request: ExtensionUIRequest,
 ): Promise<ExtensionUIResponse> {
+  const acpResponse = await routePermissionRequestToAcp(chatJid, request);
+  if (acpResponse) return acpResponse;
   if (request.method === 'select') {
     return tdHandleAskUserRequest(chatJid, request);
   }
@@ -2337,14 +2408,20 @@ function registerShutdownHandlers(): void {
 export async function main(): Promise<void> {
   await appRuntime.main();
   // Emit ready signal for CLI fft start command
-  console.log(`FFT_NANO_READY port=${FFT_NANO_TUI_PORT}`);
-  startUpdateNotificationLoop({ sendMessage });
+  const readyMessage = `FFT_NANO_READY port=${FFT_NANO_TUI_PORT}`;
+  if (FFT_NANO_ACP_ENABLED && FFT_NANO_ACP_STDIO) {
+    console.error(readyMessage);
+  } else {
+    console.log(readyMessage);
+    startUpdateNotificationLoop({ sendMessage });
+  }
 }
 
 export async function handleStartupFailure(err: unknown): Promise<never> {
   stopFarmServicesForShutdown('startup_error');
   await stopWebControlCenterService();
   await stopTuiGatewayService();
+  await stopAcpGatewayService();
   logger.error({ err }, 'Failed to start FFT_nano');
   process.exit(1);
 }

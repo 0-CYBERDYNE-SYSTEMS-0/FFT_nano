@@ -1,6 +1,6 @@
 # ACP Integration Spec — fft_nano
 
-> Status: FINAL
+> Status: Phase 2 implemented (stable ACP v1 stdio); Phase 3 remains planned
 > Branch: `feat/telegram-hermes-streaming` (to be moved to `feat/acp-gateway`)
 > Restore point: `3e79d0e`
 > Review pass: 2 (cross-referenced against codebase)
@@ -161,9 +161,12 @@ instance (or a future multi-tenant mode).
 ### 3.5 Process model
 
 fft_nano runs `pi` as a **native subprocess** (not Docker) via
-`platformAdapter.spawnDetached()` (pi-runner.ts:1645). The ACP gateway runs
-**inside the same Node.js process** as the host (same as TUI gateway and Web
-control center). There is no separate ACP process.
+`platformAdapter.spawnDetached()` (pi-runner.ts:1645). The stable v1 transport
+is stdio, so the ACP client spawns `fft-acp` as the FFT_nano host process. It
+uses the same pipeline and persisted state as the normal host, but it cannot
+run alongside another host that owns the same singleton lock. WebSocket
+attachment to an already-running service remains a Phase 3 capability because
+WebSocket transport is not part of stable ACP v1.
 
 ```
 ┌─────────────────────────────────────┐
@@ -190,19 +193,11 @@ control center). There is no separate ACP process.
 ### 3.6 Inbound message flow (ACP → agent)
 
 1. ACP client sends `session/prompt` with user text
-2. ACP gateway constructs `NewMessage`:
-   ```typescript
-   const msg: NewMessage = {
-     id: requestId,
-     chat_jid: mainChatJid,  // from findMainChatJid()
-     sender: 'acp-client',
-     sender_name: 'ACP Client',
-     content: userText,
-     timestamp: new Date().toISOString(),
-   };
-   ```
-3. Route via `processMessage(msg)` (message-dispatch-pipeline.ts:1986)
-4. Pipeline queues, dispatches to `runAgent()`, spawns `pi` subprocess
+2. ACP gateway resolves `mainChatJid` via `findMainChatJid()`
+3. Route through the existing `runDirectSessionTurn()` queue with the ACP
+   request ID and `deliver: false`
+4. Pipeline persists user history, queues or dispatches to `runAgent()`, and
+   spawns the `pi` subprocess
 5. `pi` streams NDJSON events → host translates to `HostEvent`s
 6. ACP gateway subscribes to `HostEventBus`, projects events to ACP notifications
 7. ACP client receives `session/update` notifications in real-time
@@ -464,10 +459,10 @@ New env vars (added to `src/app-config.ts`):
 | Env var | Default | Description |
 |---|---|---|
 | `FFT_NANO_ACP_ENABLED` | `0` | Enable ACP gateway |
-| `FFT_NANO_ACP_STDIO` | `1` | Use stdio transport (vs WebSocket) |
-| `FFT_NANO_ACP_PORT` | `28991` | WebSocket port (when stdio=0) |
-| `FFT_NANO_ACP_HOST` | `127.0.0.1` | Bind address |
-| `FFT_NANO_ACP_TOKEN` | (generated) | Auth token for WS transport |
+| `FFT_NANO_ACP_STDIO` | `1` | Use stable v1 stdio transport |
+
+Phase 3 will add `FFT_NANO_ACP_PORT`, `FFT_NANO_ACP_HOST`, and
+`FFT_NANO_ACP_TOKEN` with the WebSocket transport.
 
 ---
 
@@ -511,14 +506,14 @@ the Telegram inline keyboard.
 
 **Scope:** Full fft_nano ACP gateway with stdio transport.
 
-- [ ] Create `src/acp/` module (gateway, adapters, event projector)
-- [ ] Implement `initialize`, `session/new`, `session/prompt`, `session/cancel`
-- [ ] Implement `projectEventToAcpNotification()` for streaming
-- [ ] Add `acp-stdio.ts` entry point (separate bin in package.json)
-- [ ] Wire adapters in `wiring.ts` with `buildAcpGatewayAdapters()`
-- [ ] Add config env vars to `app-config.ts`
-- [ ] Map permission gate to `session/request_permission`
-- [ ] Tests: unit tests for event projector, integration test for session flow
+- [x] Create `src/acp/` module (gateway, adapters, event projector)
+- [x] Implement `initialize`, `session/new`, `session/load`, `session/prompt`, `session/cancel`
+- [x] Implement HostEvent projection for streamed assistant/tool updates
+- [x] Add `acp-stdio.ts` entry point (separate bin in package.json)
+- [x] Wire adapters in `wiring.ts`
+- [x] Add config env vars to `app-config.ts`
+- [x] Map permission gate to `session/request_permission`
+- [x] Tests: unit tests for event projector, integration test for session flow
 - [ ] Verify with Zed / ACP Inspector / neovim CodeCompanion
 
 **Deliverable:** `node dist/acp-stdio.js` works as an ACP agent with full
@@ -561,13 +556,13 @@ fft_nano pipeline.
 | Permission gate latency over ACP | ACP `session/request_permission` is async; editor shows non-blocking approval UI. Timeout after 60s defaults to deny. |
 | Kernel surface pressure | Design explicitly avoids new kernel primitives (§3.3). |
 | Port conflicts with TUI (28989) / Web (28990) | ACP WS defaults to 28991. |
-| Singleton lock contention (data/fft_nano.lock) | ACP gateway runs inside the existing host process, not a second instance. |
+| Singleton lock contention (data/fft_nano.lock) | Stable stdio ACP runs as the host process; stop an installed service using the same checkout/data directory before the editor spawns it. Phase 3 WebSocket will attach ACP to an existing host. |
 | Session model mismatch | ACP sessions map to existing main chat identity, not new session namespace (§3.4). |
 | Evaluator loop interference | Event projector filters by `run_origin` to exclude evaluator runs (§3.8). |
 | Heartbeat/curator interaction | ACP activity updates `state.lastInboundAt`, preventing idle curation (§3.9). |
 | Multi-user ACP concurrency | Single-user design: all ACP clients share main chat session (§3.4). |
 | `processMessage` queue blocking | ACP sessions use same queue as Telegram; no bypass needed (§3.6). |
-| `runDirectSessionTurn` vs `processMessage` | Use `processMessage` for ACP (queued, async); `runDirectSessionTurn` is for synchronous TUI turns only (§3.6). |
+| `runDirectSessionTurn` vs `processMessage` | ACP uses the existing direct-session queue so user history, queueing, run IDs, and no-delivery behavior match the TUI surface while completion is observed through HostEvent. |
 
 ---
 
@@ -578,16 +573,13 @@ fft_nano pipeline.
 | File | Purpose |
 |---|---|
 | `src/acp/acp-gateway.ts` | ACP JSON-RPC server + method dispatch |
-| `src/acp/acp-adapters.ts` | `AcpGatewayAdapters` interface |
 | `src/acp/acp-event-projector.ts` | HostEvent → ACP notification mapping |
-| `src/acp/acp-transport-stdio.ts` | Stdio transport entry point |
-| `src/acp/acp-transport-ws.ts` | WebSocket transport (phase 3) |
-| `src/acp/acp-types.ts` | ACP protocol type definitions |
-| `src/acp/acp-session-map.ts` | ACP session → chatJid mapping |
+| `src/acp/acp-stdio-transport.ts` | Stdio stream adapter |
 | `src/acp-stdio.ts` | Bin entry point for stdio mode |
 | `tests/acp-event-projector.test.ts` | Unit tests for event projection |
 | `tests/acp-gateway.test.ts` | Integration tests for gateway |
-| `tests/acp-session-map.test.ts` | Unit tests for session mapping |
+
+`src/acp/acp-transport-ws.ts` remains a Phase 3 planned file.
 
 ### Modified files
 
@@ -596,7 +588,7 @@ fft_nano pipeline.
 | `src/wiring.ts` | Wire ACP gateway alongside TUI gateway |
 | `src/app-config.ts` | Add ACP config env vars |
 | `src/agent-runner.ts` | ACP-aware permission gate routing |
-| `src/pi-runner.ts` | Pass ACP session flag to `onExtensionUIRequest` |
+| `src/pi-runner.ts` | Publish accumulated assistant deltas independent of Telegram |
 | `package.json` | Add `@agentclientprotocol/sdk` dep, `acp-stdio` bin |
 | `AGENTS.md` | Document ACP usage |
 | `scripts/start.sh` | Add `acp` command |

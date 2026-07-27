@@ -14,10 +14,18 @@ import pino from 'pino';
 import { MOUNT_ALLOWLIST_PATH } from './config.js';
 import { AdditionalMount, AllowedRoot, MountAllowlist } from './types.js';
 
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  transport: { target: 'pino-pretty', options: { colorize: true } },
-});
+const acpStdioMode =
+  process.env.FFT_NANO_ACP_ENABLED === '1' &&
+  process.env.FFT_NANO_ACP_STDIO !== '0';
+const logger = acpStdioMode
+  ? pino(
+      { level: process.env.LOG_LEVEL || 'info' },
+      pino.destination({ dest: 2, sync: false }),
+    )
+  : pino({
+      level: process.env.LOG_LEVEL || 'info',
+      transport: { target: 'pino-pretty', options: { colorize: true } },
+    });
 
 // Cache the allowlist in memory - only reloads on process restart
 let cachedAllowlist: MountAllowlist | null = null;

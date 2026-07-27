@@ -55,6 +55,7 @@ import {
 } from './app-state.js';
 import { MAIN_ONBOARDING_COMPLETION_TOKEN } from './onboarding-completion.js';
 import type { RegisteredGroup } from './types.js';
+import type { HostEvent } from './runtime/host-events.js';
 import type { CodingHint } from './coding-delegation.js';
 import type { ExtensionUIRequest, ExtensionUIResponse } from './pi-runner.js';
 import type { PiToolExecution } from './pi-json-parser.js';
@@ -776,6 +777,22 @@ export async function runAgent(
           (request) => deps.handlePermissionGateRequest(chatJid, request),
           (event) => {
             if (streamConsumer) streamConsumer.handleProgress(event);
+            if (
+              event.kind === 'delta' &&
+              attemptRequestId &&
+              _hostEventBusPublish
+            ) {
+              _hostEventBusPublish({
+                kind: 'run_state',
+                id: `delta-${attemptRequestId}-${event.at}`,
+                createdAt: new Date(event.at).toISOString(),
+                source: 'agent-runner',
+                runId: attemptRequestId,
+                sessionKey,
+                state: 'delta',
+                message: { role: 'assistant', content: event.text },
+              } satisfies HostEvent);
+            }
             options.onProgressEvent?.(event);
           },
         );

@@ -335,6 +335,80 @@ test('main allows TUI-only mode without starting channel delivery loops', async 
   assert.equal(longRunsResumed, 0);
 });
 
+test('main allows ACP-only mode without starting channel delivery loops', async () => {
+  let schedulerStarted = 0;
+  let messageLoopStarted = 0;
+  let heartbeatStarted = 0;
+  let outboxFlushed = 0;
+  let longRunsResumed = 0;
+
+  const runtime = createAppRuntime({
+    state: {
+      telegramBot: undefined,
+      registeredGroups: {},
+    },
+    constants: {
+      telegramBotToken: undefined,
+      assistantName: 'FarmFriend',
+      triggerPattern: /@FarmFriend/i,
+      featureFarm: false,
+      farmStateEnabled: false,
+      whatsappEnabled: false,
+      onboardingMode: false,
+    },
+    createTelegramBot: () => ({ startPolling: () => {} }),
+    refreshTelegramCommandMenus: async () => {},
+    handleTelegramCallbackQuery: async () => {},
+    handleTelegramSetupInput: async () => false,
+    handleTelegramCommand: async () => false,
+    storeChatMetadata: () => {},
+    maybeRegisterTelegramChat: () => false,
+    isMainChat: () => false,
+    persistTelegramMedia: async (event) => event.content,
+    storeTextMessage: () => {},
+    logger: {
+      info: () => {},
+      warn: () => {},
+    },
+    ensureContainerSystemRunning: () => {},
+    initDatabase: () => {},
+    loadState: () => {},
+    migrateLegacyClaudeMemoryFiles: () => {},
+    migrateCompactionSummariesFromSoul: () => {},
+    maybePromoteConfiguredTelegramMain: () => {},
+    acquireSingletonLock: () => {},
+    startAcpGatewayService: async () => true,
+    startTuiGatewayService: async () => false,
+    startWebControlCenterService: async () => {},
+    startSchedulerLoop: () => {
+      schedulerStarted += 1;
+    },
+    startMessageLoop: async () => {
+      messageLoopStarted += 1;
+    },
+    startHeartbeatLoop: () => {
+      heartbeatStarted += 1;
+    },
+    flushDeliveryOutbox: async () => {
+      outboxFlushed += 1;
+      return { delivered: 0, stillPending: 0 };
+    },
+    resumeRecoverableLongRuns: async () => {
+      longRunsResumed += 1;
+      return { resumed: 0, abandoned: 0 };
+    },
+    maybeRunBootMdOnce: () => {},
+  });
+
+  await runtime.main();
+
+  assert.equal(schedulerStarted, 0);
+  assert.equal(messageLoopStarted, 0);
+  assert.equal(heartbeatStarted, 0);
+  assert.equal(outboxFlushed, 0);
+  assert.equal(longRunsResumed, 0);
+});
+
 test('main rejects channel-free startup when the TUI gateway is unavailable', async () => {
   const runtime = createAppRuntime({
     state: {

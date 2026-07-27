@@ -382,6 +382,23 @@ TUI gateway env:
 - `FFT_NANO_TUI_ENABLED` (`1` default, set `0` to disable)
 - `FFT_NANO_TUI_AUTH_TOKEN` (optional, defaults to `FFT_NANO_WEB_AUTH_TOKEN` when set)
 
+ACP agent:
+
+- Build once with `npm run build`, then configure an ACP-compatible editor to
+  spawn `fft-acp` (installed package) or `node /absolute/path/to/dist/acp-stdio.js`.
+- The stable ACP v1 surface supports `initialize`, `session/new`,
+  `session/load`, `session/prompt`, `session/cancel`, streamed assistant/tool
+  updates, history replay, and native permission requests.
+- ACP maps to the registered FFT_nano `main` chat and uses the same agent
+  pipeline, workspace, session state, and permission gates.
+- Stdio reserves stdout for newline-delimited ACP JSON-RPC; host logs go to
+  stderr.
+- Stop the installed FFT_nano service before an editor spawns `fft-acp` from
+  the same checkout/data directory. The singleton lock intentionally prevents
+  a second host process.
+- `FFT_NANO_ACP_ENABLED` defaults to `0`; the `fft-acp` entry point enables it
+  automatically. `FFT_NANO_ACP_STDIO` defaults to `1`.
+
 FFT CONTROL CENTER env:
 
 - `FFT_NANO_WEB_ENABLED` (`1` default)
