@@ -375,6 +375,11 @@ export const FFT_NANO_TUI_HOST = resolveTuiHost(FFT_NANO_WEB_ACCESS_MODE);
 export const FFT_NANO_TUI_AUTH_TOKEN = (
   process.env.FFT_NANO_TUI_AUTH_TOKEN || FFT_NANO_WEB_AUTH_TOKEN
 ).trim();
+export const FFT_NANO_ACP_ENABLED = envFlag(
+  process.env.FFT_NANO_ACP_ENABLED,
+  false,
+);
+export const FFT_NANO_ACP_STDIO = envFlag(process.env.FFT_NANO_ACP_STDIO, true);
 export const FFT_NANO_ONBOARDING_MODE = envFlag(
   process.env.FFT_NANO_ONBOARDING_MODE,
   false,

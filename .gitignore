@@ -90,6 +90,9 @@ fft-experience/
 # Claude Code planning artifacts (local only)
 docs/superpowers/
 
+# Auto-Claude tool artifacts (contains .env, tool caches)
+.auto-claude/
+
 # Local runtime lock (not for VCS)
 .claude/scheduled_tasks.lock
 

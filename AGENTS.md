@@ -151,6 +151,17 @@ These are **not** agent skills. They are step-by-step operator guides for one-ti
 installation and configuration tasks (Gmail setup, Docker conversion, etc.). They are
 human-facing documentation, not tools the agent invokes.
 
+## Agent Client Protocol (ACP)
+
+After `npm run build`, ACP-compatible clients can spawn `fft-acp` or
+`node dist/acp-stdio.js`. This exposes the registered `main` session over
+stable ACP v1 stdio, including streaming, tool progress, cancellation, history,
+and native permission prompts.
+
+ACP stdio runs as the FFT_nano host process. Stop the installed service first
+if it uses the same checkout/data directory; the singleton lock prevents both
+hosts from running together. Protocol JSON-RPC uses stdout and logs use stderr.
+
 ## Debugging / Tracing
 
 Useful env vars on the host:

@@ -1739,15 +1739,20 @@ export async function runContainerAgent(
       );
       let lastDraftSentAt = 0;
       let lastDraftText = '';
+      let lastProgressText = '';
       const publishDraftPreview = (text: string, force = false) => {
         if (runFinalized || localSettled) return;
-        if (!canStreamTelegramDraft) return;
         // No 4096 truncation here: the StreamConsumer seals overflow into
         // permanent chunks, and the Telegram send/edit layer keeps its own
         // last-resort length guard.
         const normalized = text.replace(/\r\n/g, '\n');
         if (!normalized.trim()) return;
         const now = Date.now();
+        if (normalized !== lastProgressText) {
+          onProgressEvent?.({ kind: 'delta', at: now, text: normalized });
+          lastProgressText = normalized;
+        }
+        if (!canStreamTelegramDraft) return;
         if (!force && now - lastDraftSentAt < draftMinIntervalMs) {
           // Fast trigger: ≥24 new chars may flush early, but never faster
           // than the 400ms floor (telegram-spec W2).
@@ -1755,7 +1760,6 @@ export async function runContainerAgent(
           if (newChars < 24 || now - lastDraftSentAt < 400) return;
         }
         if (normalized === lastDraftText) return;
-        onProgressEvent?.({ kind: 'delta', at: now, text: normalized });
         streamedDraft = true;
         lastDraftSentAt = now;
         lastDraftText = normalized;

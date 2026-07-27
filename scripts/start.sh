@@ -9,6 +9,7 @@ usage() {
 Usage:
   ./scripts/start.sh [start] [telegram-only]
   ./scripts/start.sh dev [telegram-only]
+  ./scripts/start.sh acp
   ./scripts/start.sh tui [--url ws://127.0.0.1:28989] [--session main] [--deliver] [--no-open]
   ./scripts/start.sh web [--open]
 
@@ -16,6 +17,8 @@ Notes:
 - Sources .env if present.
 - Defaults to start mode when mode is omitted.
 - telegram-only sets WHATSAPP_ENABLED=0.
+- acp starts the stable ACP v1 stdio agent. Stop an installed FFT_nano service
+  first because both processes use the same singleton lock.
 - tui is attach-client mode. If the host is not running, it is started in
   the background first. The web control center is then opened in the default
   browser unless --no-open is passed.
@@ -37,9 +40,9 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    start|dev|tui|web)
+    start|dev|acp|tui|web)
       if [[ "$mode_set" -eq 1 ]]; then
-        echo "ERROR: multiple modes supplied (use one of: start|dev|tui|web)" >&2
+        echo "ERROR: multiple modes supplied (use one of: start|dev|acp|tui|web)" >&2
         usage
         exit 2
       fi
@@ -233,6 +236,9 @@ fi
 case "$mode" in
   dev)
     exec npm run dev
+    ;;
+  acp)
+    exec npm run acp
     ;;
   tui)
     # Bring up the host if it isn't already running so the webui is available,
