@@ -2134,12 +2134,32 @@ async function startAcpGatewayService(): Promise<boolean> {
     },
     hostEventBus,
   );
-  acpConnection = connectAcpStdio(agent);
-  void acpConnection.closed.catch((err) => {
-    logger.error({ err }, 'ACP stdio connection closed with an error');
-  });
+  const connection = connectAcpStdio(agent);
+  acpConnection = connection;
+  void connection.closed.then(
+    () => handleAcpConnectionClosed(connection),
+    (err) => handleAcpConnectionClosed(connection, err),
+  );
   logger.info('ACP stdio gateway started');
   return true;
+}
+
+function handleAcpConnectionClosed(
+  connection: NonNullable<typeof acpConnection>,
+  error?: unknown,
+): void {
+  if (acpConnection !== connection) return;
+  acpConnection = null;
+  if (error) {
+    logger.error({ err: error }, 'ACP stdio connection closed with an error');
+  }
+  if (state.shuttingDown) return;
+  void shutdownAndExit('ACP_STDIO_CLOSED', error ? 1 : 0).catch(
+    (shutdownError) => {
+      logger.error({ err: shutdownError }, 'ACP stdio shutdown failed');
+      process.exit(1);
+    },
+  );
 }
 
 async function stopAcpGatewayService(): Promise<void> {
