@@ -1,8 +1,9 @@
 # ACP Integration Spec — fft_nano
 
-> Status: DRAFT
+> Status: FINAL
 > Branch: `feat/telegram-hermes-streaming` (to be moved to `feat/acp-gateway`)
 > Restore point: `3e79d0e`
+> Review pass: 2 (cross-referenced against codebase)
 
 ---
 
@@ -126,6 +127,151 @@ review. This design complies:
 - **Growth policy:** ACP is product surface (a gateway), not a kernel change.
   Same category as the TUI gateway and Web control center.
 
+### 3.4 Session model — how ACP sessions map to fft_nano
+
+**Critical:** fft_nano does not have a standalone "session" concept. Sessions
+are identified by `chatJid` (Telegram JID, WhatsApp JID, or TUI session key).
+The function `getSessionKeyForChat(chatJid)` (tui-coordination.ts:60) returns:
+
+- `'main'` — for the main/admin chat (identified by `isMainChat()`)
+- `chatJid` — for all other registered groups
+
+**ACP session mapping:**
+
+| ACP concept | fft_nano equivalent |
+|---|---|
+| `session/new` | Map to main chat (`chatJid = findMainChatJid()`), session key = `'main'` |
+| `session/prompt` | Construct `NewMessage` with `chat_jid = mainChatJid`, route via `processMessage()` |
+| `session/cancel` | Call `abortChat(mainChatJid)` (same as TUI `chat.abort`) |
+| `session/list` | Return all registered groups as sessions (same as TUI `sessions.list`) |
+| `session/load` | Resume main chat session (fft_nano does not persist per-ACP-session state) |
+| `session/delete` | Reset main chat session (same as TUI `sessions.reset`) |
+
+**Why not `acp:<uuid>` session keys?** fft_nano's run pipeline, permission
+gate, memory injection, and evaluator all key off `chatJid`. Introducing a
+parallel session namespace would require changes to `run-authority.ts`,
+`agent-runner.ts`, `pi-runner.ts`, and the kernel surface. Mapping to the
+existing main chat avoids all of this.
+
+**Multi-user ACP:** If multiple ACP clients connect simultaneously, they all
+share the main chat session. This is intentional — fft_nano is designed as a
+single-user assistant. For true multi-user, each user needs their own fft_nano
+instance (or a future multi-tenant mode).
+
+### 3.5 Process model
+
+fft_nano runs `pi` as a **native subprocess** (not Docker) via
+`platformAdapter.spawnDetached()` (pi-runner.ts:1645). The ACP gateway runs
+**inside the same Node.js process** as the host (same as TUI gateway and Web
+control center). There is no separate ACP process.
+
+```
+┌─────────────────────────────────────┐
+│  fft_nano host process (Node.js)    │
+│  ┌─────────────────────────────┐    │
+│  │  ACP gateway (stdio or WS)  │    │
+│  │  TUI gateway (WS)           │    │
+│  │  Web control center (HTTP)  │    │
+│  │  Telegram bot               │    │
+│  │  WhatsApp (baileys)         │    │
+│  └─────────────────────────────┘    │
+│              │                      │
+│  ┌───────────▼───────────┐          │
+│  │  HostEventBus         │          │
+│  └───────────┬───────────┘          │
+│              │                      │
+│  ┌───────────▼───────────┐          │
+│  │  pi subprocess        │          │
+│  │  (native, spawnDetached)         │
+│  └───────────────────────┘          │
+└─────────────────────────────────────┘
+```
+
+### 3.6 Inbound message flow (ACP → agent)
+
+1. ACP client sends `session/prompt` with user text
+2. ACP gateway constructs `NewMessage`:
+   ```typescript
+   const msg: NewMessage = {
+     id: requestId,
+     chat_jid: mainChatJid,  // from findMainChatJid()
+     sender: 'acp-client',
+     sender_name: 'ACP Client',
+     content: userText,
+     timestamp: new Date().toISOString(),
+   };
+   ```
+3. Route via `processMessage(msg)` (message-dispatch-pipeline.ts:1986)
+4. Pipeline queues, dispatches to `runAgent()`, spawns `pi` subprocess
+5. `pi` streams NDJSON events → host translates to `HostEvent`s
+6. ACP gateway subscribes to `HostEventBus`, projects events to ACP notifications
+7. ACP client receives `session/update` notifications in real-time
+
+### 3.7 Outbound event flow (agent → ACP)
+
+**Events that MUST be projected to ACP:**
+
+| HostEvent | ACP notification | Priority |
+|---|---|---|
+| `run_state` (state=`delta`) | `session/update` message chunk | P0 |
+| `run_state` (state=`message`) | `session/update` complete message | P0 |
+| `run_state` (state=`final`) | End `session/prompt` with stop reason | P0 |
+| `run_state` (state=`error`) | `session/update` error content | P0 |
+| `run_state` (phase=`start`) | `session/update` status (run started) | P1 |
+| `run_state` (phase=`end`) | `session/update` status (run completed) | P1 |
+| `run_state` (phase=`error`) | `session/update` status (run failed) | P1 |
+| `tool_progress` (status=`start`) | `session/update` tool call block | P0 |
+| `tool_progress` (status=`ok`) | `session/update` tool call result | P0 |
+| `tool_progress` (status=`error`) | `session/update` tool call error | P0 |
+| `run_progress` (phase=`thinking`) | `session/update` thought indicator | P1 |
+| `run_progress` (phase=`spawn`) | `session/update` status notification | P1 |
+| `run_progress` (phase=`completed`) | `session/update` final status | P1 |
+| `run_progress` (phase=`failed`) | `session/update` error status | P1 |
+
+**Events that MUST NOT be projected to ACP:**
+
+| HostEvent | Reason |
+|---|---|
+| `chat_delivery_requested` | ACP uses its own delivery mechanism; Telegram/WhatsApp only |
+| `file_transfer` | ACP file operations use `fs/*` methods, not file transfer |
+| `ipc_request` / `ipc_result` | Internal IPC; not user-facing |
+| `host_error` (scope=ipc) | Internal errors; only scope=runtime errors are user-facing |
+
+### 3.8 Evaluator loop interaction
+
+The evaluator (`evaluator.ts`) runs a second `pi` pass after agent completion
+to score output quality. This MUST NOT interfere with ACP streaming:
+
+- Evaluator runs are tagged with `run_origin: 'evaluator'` (kernel-surface.ts:38)
+- ACP event projector MUST filter out events where `runId` belongs to an
+  evaluator run (check `run_origin` in `RunAuthority`)
+- Evaluator verdicts are persisted to `evaluator_verdicts` table but never
+  sent to users (boundary-ipc.ts:isInternalEvaluatorVerdictText)
+
+### 3.9 Heartbeat and curator interaction
+
+- Heartbeat service runs periodically regardless of ACP sessions; ACP clients
+  do not see heartbeat events (they are `run_origin: 'maintenance'`)
+- Idle curator runs only after `minIdleHours` of inactivity; ACP activity
+  updates `state.lastInboundAt` (same as Telegram/WhatsApp), so ACP sessions
+  correctly prevent idle curation
+
+### 3.10 Permission gate interaction
+
+The permission gate (`permission-gate-policy.ts`) blocks destructive bash
+commands via `ExtensionUIRequest` prompts. For ACP sessions:
+
+1. `pi` subprocess writes `extension_ui_request` to stdout
+2. Host `onExtensionUIRequest` callback receives the request
+3. If session is ACP (check `chatJid` or `runId` prefix), send
+   `session/request_permission` to ACP client
+4. ACP client (editor) shows native approval UI
+5. User approves/denies → ACP response → host writes `extension_ui_response`
+   to `pi` stdin
+6. `pi` continues or aborts
+
+**Timeout:** If no response within 60s, default to deny (same as Telegram).
+
 ---
 
 ## 4. Protocol Mapping
@@ -135,13 +281,13 @@ review. This design complies:
 | ACP Method | Direction | fft_nano mapping |
 |---|---|---|
 | `initialize` | Client→Agent | Return capabilities, protocol version, agent info |
-| `session/new` | Client→Agent | Create session key `acp:<uuid>`, register in session map |
-| `session/prompt` | Client→Agent | Route to `processMessage()` / `runDirectSessionTurn()` |
+| `session/new` | Client→Agent | Resolve main chat via `findMainChatJid()`, return session key `'main'` |
+| `session/prompt` | Client→Agent | Construct `NewMessage` with `chat_jid = mainChatJid`, call `processMessage()` |
 | `session/update` | Agent→Client | Project from `HostEventBus` (see §4.2) |
-| `session/cancel` | Client→Agent | Call `abortChat()` adapter (same as TUI `chat.abort`) |
-| `session/list` | Client→Agent | Return active ACP sessions |
-| `session/load` | Client→Agent | Resume session from history (P1) |
-| `session/delete` | Client→Agent | Remove session (P1) |
+| `session/cancel` | Client→Agent | Call `abortChat(mainChatJid)` (same as TUI `chat.abort`) |
+| `session/list` | Client→Agent | Return all registered groups as sessions (via `buildTuiSessionList`) |
+| `session/load` | Client→Agent | Resume main chat session (fft_nano sessions are persistent) |
+| `session/delete` | Client→Agent | Reset main chat session (same as TUI `sessions.reset`) |
 | `session/request_permission` | Agent→Client | Map from `ExtensionUIRequest` permission gate |
 | `fs/read_text_file` | Agent→Client | Optional: delegate to client FS (P2) |
 | `terminal/create` | Agent→Client | Optional: delegate to client terminal (P2) |
@@ -157,6 +303,9 @@ modeled on `projectEventToGatewayFrame()` (host-events.ts:217):
 | `run_state` (state=`message`) | Complete message block |
 | `run_state` (state=`final`) | End-turn with stop reason |
 | `run_state` (state=`error`) | Error content block |
+| `run_state` (phase=`start`) | Status: "Run started" |
+| `run_state` (phase=`end`) | Status: "Run completed" |
+| `run_state` (phase=`error`) | Status: "Run failed" |
 | `tool_progress` (status=`start`) | Tool call block (status: `running`) |
 | `tool_progress` (status=`ok`) | Tool call update (status: `completed`, output) |
 | `tool_progress` (status=`error`) | Tool call update (status: `error`) |
@@ -164,6 +313,14 @@ modeled on `projectEventToGatewayFrame()` (host-events.ts:217):
 | `run_progress` (phase=`spawn`) | Status notification |
 | `run_progress` (phase=`completed`) | Final status |
 | `run_progress` (phase=`failed`) | Error status |
+
+**Filtering rules:**
+
+- Only project events where `runId` matches an active ACP run (not evaluator,
+  heartbeat, or maintenance runs — check `run_origin` in `RunAuthority`)
+- Do NOT project `chat_delivery_requested`, `file_transfer`, `ipc_request`,
+  or `ipc_result` events (internal or channel-specific)
+- Do NOT project `host_error` events with `scope=ipc` (internal errors)
 
 ### 4.3 Capability negotiation (`initialize` response)
 
@@ -203,13 +360,18 @@ export interface AcpGatewayAdapters {
   getStatus: () => { runtime: string; sessions: number; activeRuns: number };
   listSessions: () => AcpSessionSummary[];
   sendChat: (params: {
-    sessionKey: string;
+    chatJid: string;        // NOT sessionKey — use chatJid directly
     text: string;
     requestId: string;
   }) => Promise<void>;
-  abortChat: (sessionKey: string) => { ok: boolean };
-  getHistory: (sessionKey: string, limit: number) => Promise<AcpHistoryMessage[]>;
-  resetSession: (sessionKey: string) => { ok: boolean };
+  abortChat: (chatJid: string) => { ok: boolean };
+  getHistory: (chatJid: string, limit: number) => Promise<AcpHistoryMessage[]>;
+  resetSession: (chatJid: string) => { ok: boolean };
+  // Additional adapters needed for ACP
+  findMainChatJid: () => string | null;
+  resolveChatJidForSessionKey: (sessionKey: string) => string | null;
+  getSessionKeyForChat: (chatJid: string) => string;
+  getGroupForChat: (chatJid: string) => RegisteredGroup | undefined;
 }
 ```
 
@@ -265,7 +427,14 @@ WebSocket transport for remote access (phase 3):
 ```typescript
 // Alongside TUI gateway startup (~line 2073):
 if (config.acpEnabled) {
-  const acpAdapters = buildAcpGatewayAdapters(deps);
+  const acpAdapters = buildAcpGatewayAdapters({
+    hostEventBus,
+    findMainChatJid,
+    resolveChatJidForSessionKey,
+    getSessionKeyForChat,
+    getGroupForChat: (chatJid) => state.registeredGroups[chatJid],
+    // ... other deps
+  });
   acpGateway = startAcpGateway(acpAdapters, {
     stdio: config.acpStdio,
     port: config.acpPort,
@@ -274,6 +443,19 @@ if (config.acpEnabled) {
   });
 }
 ```
+
+**Dependencies injected into `buildAcpGatewayAdapters`:**
+
+- `hostEventBus` — for event subscription
+- `findMainChatJid` — to resolve main chat identity
+- `resolveChatJidForSessionKey` — to map session keys to chat JIDs
+- `getSessionKeyForChat` — to map chat JIDs to session keys
+- `getGroupForChat` — to check if a chat is registered
+- `sendChat` — to route `session/prompt` to `processMessage()`
+- `abortChat` — to handle `session/cancel`
+- `getHistory` — to provide session history
+- `resetSession` — to handle `session/delete`
+- `activeChatRuns` — to check run status and abort runs
 
 ### 5.6 Configuration
 
@@ -302,8 +484,11 @@ pi subprocess → extension_ui_request → host permission gate
 ```
 
 The `onExtensionUIRequest` callback (agent-runner.ts:89) gains an ACP-aware
-branch: if the run's session key starts with `acp:`, route the permission
-prompt through the ACP connection instead of the Telegram inline keyboard.
+branch: if the run's `chatJid` matches the main chat (ACP sessions always map
+to main), route the permission prompt through the ACP connection instead of
+the Telegram inline keyboard.
+
+**Timeout:** If no response within 60s, default to deny (same as Telegram).
 
 ---
 
@@ -373,10 +558,16 @@ fft_nano pipeline.
 |---|---|
 | ACP v2 introduces breaking changes | v2 is in draft; v1 is stable. SDK abstracts wire format. |
 | `pi-acp` adapter diverges from fft_nano's pi usage | Phase 1 spike validates compatibility before committing to Phase 2. |
-| Permission gate latency over ACP | ACP `session/request_permission` is async; editor shows non-blocking approval UI. |
+| Permission gate latency over ACP | ACP `session/request_permission` is async; editor shows non-blocking approval UI. Timeout after 60s defaults to deny. |
 | Kernel surface pressure | Design explicitly avoids new kernel primitives (§3.3). |
 | Port conflicts with TUI (28989) / Web (28990) | ACP WS defaults to 28991. |
-| Singleton lock contention (data/fft_nano.lock) | ACP stdio mode runs inside the existing host process, not a second instance. |
+| Singleton lock contention (data/fft_nano.lock) | ACP gateway runs inside the existing host process, not a second instance. |
+| Session model mismatch | ACP sessions map to existing main chat identity, not new session namespace (§3.4). |
+| Evaluator loop interference | Event projector filters by `run_origin` to exclude evaluator runs (§3.8). |
+| Heartbeat/curator interaction | ACP activity updates `state.lastInboundAt`, preventing idle curation (§3.9). |
+| Multi-user ACP concurrency | Single-user design: all ACP clients share main chat session (§3.4). |
+| `processMessage` queue blocking | ACP sessions use same queue as Telegram; no bypass needed (§3.6). |
+| `runDirectSessionTurn` vs `processMessage` | Use `processMessage` for ACP (queued, async); `runDirectSessionTurn` is for synchronous TUI turns only (§3.6). |
 
 ---
 
@@ -392,9 +583,11 @@ fft_nano pipeline.
 | `src/acp/acp-transport-stdio.ts` | Stdio transport entry point |
 | `src/acp/acp-transport-ws.ts` | WebSocket transport (phase 3) |
 | `src/acp/acp-types.ts` | ACP protocol type definitions |
+| `src/acp/acp-session-map.ts` | ACP session → chatJid mapping |
 | `src/acp-stdio.ts` | Bin entry point for stdio mode |
 | `tests/acp-event-projector.test.ts` | Unit tests for event projection |
 | `tests/acp-gateway.test.ts` | Integration tests for gateway |
+| `tests/acp-session-map.test.ts` | Unit tests for session mapping |
 
 ### Modified files
 
@@ -403,6 +596,7 @@ fft_nano pipeline.
 | `src/wiring.ts` | Wire ACP gateway alongside TUI gateway |
 | `src/app-config.ts` | Add ACP config env vars |
 | `src/agent-runner.ts` | ACP-aware permission gate routing |
+| `src/pi-runner.ts` | Pass ACP session flag to `onExtensionUIRequest` |
 | `package.json` | Add `@agentclientprotocol/sdk` dep, `acp-stdio` bin |
 | `AGENTS.md` | Document ACP usage |
 | `scripts/start.sh` | Add `acp` command |
