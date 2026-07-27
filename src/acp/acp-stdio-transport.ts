@@ -5,6 +5,7 @@ import type { AgentApp, AnyMessage, Stream } from '@agentclientprotocol/sdk';
 interface AcpStdioStream {
   readonly stream: Stream;
   readonly getError: () => Error | null;
+  readonly fail: (error: unknown) => void;
 }
 
 export interface AcpStdioConnection {
@@ -18,13 +19,28 @@ export function connectAcpStdio(agent: AgentApp): AcpStdioConnection {
     Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
     Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
   );
+  const handleOutputError = (error: Error) => transport.fail(error);
+  const handleOutputClose = () =>
+    transport.fail(new Error('ACP stdout closed'));
+  process.stdout.once('error', handleOutputError);
+  process.stdout.once('close', handleOutputClose);
+
   const connection = agent.connect(transport.stream);
+  const cleanup = () => {
+    process.stdout.off('error', handleOutputError);
+    process.stdout.off('close', handleOutputClose);
+  };
+  void connection.closed.then(cleanup, cleanup);
+
   return {
     closed: connection.closed,
     get transportError() {
       return transport.getError();
     },
-    close: () => connection.close(),
+    close: () => {
+      cleanup();
+      connection.close();
+    },
   };
 }
 
@@ -115,5 +131,6 @@ export function createAcpStdioStream(
   return {
     stream: { readable, writable },
     getError: () => transportError,
+    fail,
   };
 }
