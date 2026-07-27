@@ -2107,8 +2107,16 @@ async function startAcpGatewayService(): Promise<boolean> {
       },
       abortChat: ({ chatJid, runId }) => {
         const active = activeChatRunsById.get(runId);
-        if (!active || active.chatJid !== chatJid) return false;
-        active.abortController.abort(new Error('Aborted via ACP'));
+        if (active?.chatJid === chatJid) {
+          active.abortController.abort(new Error('Aborted via ACP'));
+          return true;
+        }
+        const queue = tuiMessageQueue.get(chatJid);
+        const queuedIndex =
+          queue?.findIndex((item) => item.runId === runId) ?? -1;
+        if (!queue || queuedIndex < 0) return false;
+        queue.splice(queuedIndex, 1);
+        if (queue.length === 0) tuiMessageQueue.delete(chatJid);
         return true;
       },
       getHistory: async (chatJid) => {
@@ -2292,8 +2300,15 @@ async function dispatchExtensionUIRequest(
   chatJid: string,
   request: ExtensionUIRequest,
 ): Promise<ExtensionUIResponse> {
-  const acpResponse = await routePermissionRequestToAcp(chatJid, request);
-  if (acpResponse) return acpResponse;
+  const activeRunId = activeChatRuns.get(chatJid)?.requestId;
+  if (activeRunId) {
+    const acpResponse = await routePermissionRequestToAcp(
+      chatJid,
+      activeRunId,
+      request,
+    );
+    if (acpResponse) return acpResponse;
+  }
   if (request.method === 'select') {
     return tdHandleAskUserRequest(chatJid, request);
   }

@@ -109,7 +109,17 @@ test('routes permission decisions through the active ACP client', async () => {
     {
       findMainChatJid: () => 'telegram:42',
       sendPrompt: async ({ chatJid, requestId }) => {
-        const response = await routePermissionRequestToAcp(chatJid, {
+        const unrelated = await routePermissionRequestToAcp(
+          chatJid,
+          'another-run',
+          {
+            id: 'permission-unrelated',
+            method: 'confirm',
+            title: 'Wrong run',
+          },
+        );
+        assert.equal(unrelated, null);
+        const response = await routePermissionRequestToAcp(chatJid, requestId, {
           id: 'permission-1',
           method: 'confirm',
           title: 'Run command',
@@ -213,4 +223,179 @@ test('cancels the active host run from an ACP cancellation', async () => {
     const result = await prompt;
     assert.equal(result.stopReason, 'cancelled');
   });
+});
+
+test('rejects a failed host run after projecting its error', async () => {
+  // Given
+  const events = new HostEventBus();
+  const updates: acp.SessionNotification[] = [];
+  let failedRunId = '';
+  const agent = createAcpAgentApp(
+    {
+      findMainChatJid: () => 'telegram:42',
+      sendPrompt: async ({ requestId }) => {
+        failedRunId = requestId;
+        events.publish({
+          kind: 'run_state',
+          id: 'evt-error',
+          createdAt: new Date().toISOString(),
+          source: 'test',
+          runId: requestId,
+          sessionKey: 'main',
+          state: 'error',
+          errorMessage: 'Provider failed',
+        });
+      },
+      abortChat: () => true,
+    },
+    events,
+  );
+  const client = acp
+    .client({ name: 'test-client' })
+    .onNotification('session/update', ({ params }) => {
+      updates.push(params);
+    });
+
+  // When
+  await client.connectWith(agent, async (context) => {
+    await context.request('initialize', {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    const session = await context.request('session/new', {
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
+
+    // Then
+    await assert.rejects(
+      context.request('session/prompt', {
+        sessionId: session.sessionId,
+        prompt: [{ type: 'text', text: 'Fail this run' }],
+      }),
+      /Provider failed/,
+    );
+  });
+  assert.deepEqual(updates[0]?.update, {
+    sessionUpdate: 'agent_message_chunk',
+    messageId: `${failedRunId}:error`,
+    content: { type: 'text', text: 'Error: Provider failed' },
+  });
+});
+
+test('restricts loading to the canonical main session', async () => {
+  // Given
+  const events = new HostEventBus();
+  const agent = createAcpAgentApp(
+    {
+      findMainChatJid: () => 'telegram:42',
+      sendPrompt: async () => {},
+      abortChat: () => true,
+    },
+    events,
+  );
+
+  // When
+  await acp
+    .client({ name: 'test-client' })
+    .connectWith(agent, async (context) => {
+      await context.request('initialize', {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+
+      // Then
+      await assert.rejects(
+        context.request('session/load', {
+          sessionId: 'main-alias',
+          cwd: process.cwd(),
+          mcpServers: [],
+        }),
+        /Unknown ACP session/,
+      );
+    });
+});
+
+test('rejects slash commands instead of leaving an ACP prompt pending', async () => {
+  // Given
+  const events = new HostEventBus();
+  let sent = false;
+  const agent = createAcpAgentApp(
+    {
+      findMainChatJid: () => 'telegram:42',
+      sendPrompt: async () => {
+        sent = true;
+      },
+      abortChat: () => true,
+    },
+    events,
+  );
+
+  // When
+  await acp
+    .client({ name: 'test-client' })
+    .connectWith(agent, async (context) => {
+      await context.request('initialize', {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const session = await context.request('session/new', {
+        cwd: process.cwd(),
+        mcpServers: [],
+      });
+
+      // Then
+      await assert.rejects(
+        context.request('session/prompt', {
+          sessionId: session.sessionId,
+          prompt: [{ type: 'text', text: '/gateway status' }],
+        }),
+        /Slash commands are not supported through ACP/,
+      );
+    });
+  assert.equal(sent, false);
+});
+
+test('settles a queued ACP prompt when cancellation removes it', async () => {
+  // Given
+  const events = new HostEventBus();
+  let queuedRunId = '';
+  let promptQueued: (() => void) | null = null;
+  const queued = new Promise<void>((resolve) => {
+    promptQueued = resolve;
+  });
+  const agent = createAcpAgentApp(
+    {
+      findMainChatJid: () => 'telegram:42',
+      sendPrompt: async ({ requestId }) => {
+        queuedRunId = requestId;
+        promptQueued?.();
+      },
+      abortChat: ({ runId }) => runId === queuedRunId,
+    },
+    events,
+  );
+
+  // When
+  await acp
+    .client({ name: 'test-client' })
+    .connectWith(agent, async (context) => {
+      await context.request('initialize', {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const session = await context.request('session/new', {
+        cwd: process.cwd(),
+        mcpServers: [],
+      });
+      const prompt = context.request('session/prompt', {
+        sessionId: session.sessionId,
+        prompt: [{ type: 'text', text: 'Queue this' }],
+      });
+      await queued;
+      await context.notify('session/cancel', { sessionId: session.sessionId });
+
+      // Then
+      assert.equal((await prompt).stopReason, 'cancelled');
+    });
 });

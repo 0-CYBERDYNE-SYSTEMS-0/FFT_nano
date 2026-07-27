@@ -277,15 +277,16 @@ commands via `ExtensionUIRequest` prompts. For ACP sessions:
 |---|---|---|
 | `initialize` | Client→Agent | Return capabilities, protocol version, agent info |
 | `session/new` | Client→Agent | Resolve main chat via `findMainChatJid()`, return session key `'main'` |
-| `session/prompt` | Client→Agent | Construct `NewMessage` with `chat_jid = mainChatJid`, call `processMessage()` |
+| `session/prompt` | Client→Agent | Route through the existing direct-session queue with `deliver: false` |
 | `session/update` | Agent→Client | Project from `HostEventBus` (see §4.2) |
 | `session/cancel` | Client→Agent | Call `abortChat(mainChatJid)` (same as TUI `chat.abort`) |
-| `session/list` | Client→Agent | Return all registered groups as sessions (via `buildTuiSessionList`) |
-| `session/load` | Client→Agent | Resume main chat session (fft_nano sessions are persistent) |
-| `session/delete` | Client→Agent | Reset main chat session (same as TUI `sessions.reset`) |
+| `session/load` | Client→Agent | Resume only the canonical `main` session and replay history |
 | `session/request_permission` | Agent→Client | Map from `ExtensionUIRequest` permission gate |
 | `fs/read_text_file` | Agent→Client | Optional: delegate to client FS (P2) |
 | `terminal/create` | Agent→Client | Optional: delegate to client terminal (P2) |
+
+Stable ACP v1 does not define `session/list` or `session/delete`; any future
+equivalent belongs in the Phase 3 session-management surface as an extension.
 
 ### 4.2 HostEvent → ACP notification projection
 
@@ -344,47 +345,27 @@ modeled on `projectEventToGatewayFrame()` (host-events.ts:217):
 The ACP server. Follows the TUI gateway pattern (gateway-server.ts):
 
 ```typescript
-export interface AcpGatewayServer {
-  port?: number;          // WebSocket mode
-  stdio?: boolean;        // stdio mode (mutually exclusive)
-  close: () => Promise<void>;
-}
-
 export interface AcpGatewayAdapters {
-  // Mirrors TuiGatewayAdapters (gateway-server.ts:60)
-  getStatus: () => { runtime: string; sessions: number; activeRuns: number };
-  listSessions: () => AcpSessionSummary[];
-  sendChat: (params: {
-    chatJid: string;        // NOT sessionKey — use chatJid directly
+  findMainChatJid: () => string | null;
+  sendPrompt: (params: {
+    chatJid: string;
     text: string;
     requestId: string;
   }) => Promise<void>;
-  abortChat: (chatJid: string) => { ok: boolean };
-  getHistory: (chatJid: string, limit: number) => Promise<AcpHistoryMessage[]>;
-  resetSession: (chatJid: string) => { ok: boolean };
-  // Additional adapters needed for ACP
-  findMainChatJid: () => string | null;
-  resolveChatJidForSessionKey: (sessionKey: string) => string | null;
-  getSessionKeyForChat: (chatJid: string) => string;
-  getGroupForChat: (chatJid: string) => RegisteredGroup | undefined;
+  abortChat: (params: { chatJid: string; runId: string }) => boolean;
+  getHistory?: (chatJid: string) => Promise<AcpHistoryMessage[]>;
 }
 ```
 
-JSON-RPC dispatch:
+The stable SDK owns JSON-RPC parsing and dispatch:
 
 ```typescript
-function handleRequest(method: string, params: unknown): Promise<unknown> {
-  switch (method) {
-    case 'initialize':        return handleInitialize(params);
-    case 'session/new':       return handleSessionNew(params);
-    case 'session/prompt':    return handleSessionPrompt(params);
-    case 'session/cancel':    return handleSessionCancel(params);
-    case 'session/list':      return handleSessionList(params);
-    case 'session/load':      return handleSessionLoad(params);
-    case 'session/delete':    return handleSessionDelete(params);
-    default:                  throw jsonRpcError(-32601, `Method not found: ${method}`);
-  }
-}
+acp.agent({ name: 'fft_nano' })
+  .onRequest('initialize', handleInitialize)
+  .onRequest('session/new', handleSessionNew)
+  .onRequest('session/load', handleSessionLoad)
+  .onRequest('session/prompt', handleSessionPrompt)
+  .onNotification('session/cancel', handleSessionCancel);
 ```
 
 ### 5.2 `src/acp/acp-event-projector.ts`

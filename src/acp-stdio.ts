@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 
 import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-if (existsSync('.env')) {
-  process.loadEnvFile('.env');
+const runtimeRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+process.chdir(runtimeRoot);
+
+const envPath = resolve(runtimeRoot, '.env');
+if (existsSync(envPath)) {
+  process.loadEnvFile(envPath);
 }
 
 process.env.FFT_NANO_ACP_ENABLED = '1';

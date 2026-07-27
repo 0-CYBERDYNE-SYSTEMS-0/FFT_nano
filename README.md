@@ -391,8 +391,14 @@ ACP agent:
   updates, history replay, and native permission requests.
 - ACP maps to the registered FFT_nano `main` chat and uses the same agent
   pipeline, workspace, session state, and permission gates.
+- `fft-acp` resolves the package/repository root from its own executable path,
+  so editor launch directories do not change which `.env`, `data/`, `groups/`,
+  or `store/` it uses.
 - Stdio reserves stdout for newline-delimited ACP JSON-RPC; host logs go to
   stderr.
+- Treat the local ACP client as fully trusted: it receives main-chat history,
+  assistant reasoning, and tool inputs/outputs, and it can approve tool
+  permissions. Slash-command prompts are rejected on this surface.
 - Stop the installed FFT_nano service before an editor spawns `fft-acp` from
   the same checkout/data directory. The singleton lock intentionally prevents
   a second host process.

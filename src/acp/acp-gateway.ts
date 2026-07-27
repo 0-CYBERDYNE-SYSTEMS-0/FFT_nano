@@ -43,6 +43,8 @@ export function createAcpAgentApp(
       readonly chatJid: string;
       readonly runId: string;
       cancelled: boolean;
+      failure: string | null;
+      settle: () => void;
     }
   >();
 
@@ -68,8 +70,14 @@ export function createAcpAgentApp(
       return { sessionId: 'main' };
     })
     .onRequest('session/load', async ({ params, client }) => {
+      if (params.sessionId !== 'main') {
+        throw acp.RequestError.invalidParams(
+          { sessionId: params.sessionId },
+          'Unknown ACP session',
+        );
+      }
       const chatJid = requireMainChat(adapters);
-      sessions.set(params.sessionId, { chatJid, cwd: params.cwd });
+      sessions.set('main', { chatJid, cwd: params.cwd });
       const history = await adapters.getHistory?.(chatJid);
       if (history) {
         let messageIndex = 0;
@@ -105,23 +113,39 @@ export function createAcpAgentApp(
         );
       }
 
+      const promptText = promptToText(context.params.prompt);
+      if (promptText.trimStart().startsWith('/')) {
+        throw acp.RequestError.invalidRequest(
+          { sessionId: context.params.sessionId },
+          'Slash commands are not supported through ACP',
+        );
+      }
       const runId = `acp-${String(context.requestId ?? randomUUID())}`;
-      const active = {
+      let settlePrompt: () => void = () => {};
+      const promptSettled = new Promise<void>((resolve) => {
+        settlePrompt = resolve;
+      });
+      const active: {
+        readonly chatJid: string;
+        readonly runId: string;
+        cancelled: boolean;
+        failure: string | null;
+        settle: () => void;
+      } = {
         chatJid: session.chatJid,
         runId,
         cancelled: false,
+        failure: null,
+        settle: settlePrompt,
       };
       activePrompts.set(context.params.sessionId, active);
       activePermissionContexts.set(session.chatJid, {
         sessionId: context.params.sessionId,
+        runId,
         client: context.client,
       });
       const projectionState = createAcpProjectionState();
       let notificationTail = Promise.resolve();
-      let settlePrompt: (() => void) | null = null;
-      const promptSettled = new Promise<void>((resolve) => {
-        settlePrompt = resolve;
-      });
       const unsubscribe = events.subscribe((event) => {
         const notifications = projectEventToAcpNotifications(
           event,
@@ -142,19 +166,25 @@ export function createAcpAgentApp(
             event.state === 'aborted' ||
             event.state === 'error')
         ) {
-          active.cancelled = event.state === 'aborted';
-          settlePrompt?.();
+          if (event.state === 'aborted') active.cancelled = true;
+          if (event.state === 'error') {
+            active.failure = event.errorMessage || 'Agent run failed';
+          }
+          active.settle();
         }
       });
 
       try {
         await adapters.sendPrompt({
           chatJid: session.chatJid,
-          text: promptToText(context.params.prompt),
+          text: promptText,
           requestId: runId,
         });
         await promptSettled;
         await notificationTail;
+        if (active.failure) {
+          throw acp.RequestError.internalError({ runId }, active.failure);
+        }
         return { stopReason: active.cancelled ? 'cancelled' : 'end_turn' };
       } finally {
         unsubscribe();
@@ -168,20 +198,26 @@ export function createAcpAgentApp(
     .onNotification('session/cancel', ({ params }) => {
       const active = activePrompts.get(params.sessionId);
       if (!active) return;
-      active.cancelled = adapters.abortChat({
-        chatJid: active.chatJid,
-        runId: active.runId,
-      });
+      if (
+        adapters.abortChat({
+          chatJid: active.chatJid,
+          runId: active.runId,
+        })
+      ) {
+        active.cancelled = true;
+        active.settle();
+      }
     });
 }
 
 export async function routePermissionRequestToAcp(
   chatJid: string,
+  runId: string,
   request: ExtensionUIRequest,
 ): Promise<ExtensionUIResponse | null> {
   if (request.method !== 'confirm') return null;
   const active = activePermissionContexts.get(chatJid);
-  if (!active) return null;
+  if (!active || active.runId !== runId) return null;
 
   const timeoutController = new AbortController();
   const timeout = setTimeout(
@@ -241,6 +277,7 @@ export async function routePermissionRequestToAcp(
 
 interface ActivePermissionContext {
   readonly sessionId: string;
+  readonly runId: string;
   readonly client: acp.AgentContext;
 }
 

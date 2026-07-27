@@ -118,6 +118,80 @@ test('projects tool lifecycle updates for the active ACP run', () => {
   });
 });
 
+test('projects message, error, and lifecycle status events', () => {
+  // Given
+  const state = createAcpProjectionState();
+  const message = event({
+    kind: 'run_state',
+    runId: 'run-1',
+    sessionKey: 'main',
+    state: 'message',
+    message: { role: 'assistant', content: 'Complete response' },
+  });
+  const error = event({
+    kind: 'run_state',
+    runId: 'run-1',
+    sessionKey: 'main',
+    state: 'error',
+    errorMessage: 'Provider failed',
+  });
+  const started = event({
+    kind: 'run_state',
+    runId: 'run-1',
+    sessionKey: 'main',
+    phase: 'start',
+    detail: 'running',
+  });
+  const spawned = event({
+    kind: 'run_progress',
+    runId: 'run-1',
+    sessionKey: 'main',
+    phase: 'spawn',
+    text: 'Starting agent',
+  });
+
+  // When
+  const messageUpdates = projectEventToAcpNotifications(
+    message,
+    'main',
+    'run-1',
+    state,
+  );
+  const errorUpdates = projectEventToAcpNotifications(
+    error,
+    'main',
+    'run-1',
+    state,
+  );
+  const statusUpdates = [
+    ...projectEventToAcpNotifications(started, 'main', 'run-1', state),
+    ...projectEventToAcpNotifications(spawned, 'main', 'run-1', state),
+  ];
+
+  // Then
+  assert.equal(messageUpdates[0]?.update.sessionUpdate, 'agent_message_chunk');
+  assert.deepEqual(errorUpdates[0]?.update, {
+    sessionUpdate: 'agent_message_chunk',
+    messageId: 'run-1:error',
+    content: { type: 'text', text: 'Error: Provider failed' },
+  });
+  assert.deepEqual(
+    statusUpdates.map((notification) => notification.update),
+    [
+      {
+        sessionUpdate: 'agent_thought_chunk',
+        messageId: 'run-1:status',
+        content: { type: 'text', text: 'Run started: running' },
+      },
+      {
+        sessionUpdate: 'agent_thought_chunk',
+        messageId: 'run-1:status',
+        content: { type: 'text', text: 'Starting agent' },
+      },
+    ],
+  );
+});
+
 test('does not project events from another run or channel-only events', () => {
   // Given
   const state = createAcpProjectionState();

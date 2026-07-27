@@ -24,15 +24,34 @@ export function projectEventToAcpNotifications(
   switch (event.kind) {
     case 'run_state':
       if (event.runId !== activeRunId) return [];
-      if ('phase' in event) return [];
+      if ('phase' in event) {
+        const label =
+          event.phase === 'start'
+            ? 'Run started'
+            : event.phase === 'end'
+              ? 'Run completed'
+              : 'Run failed';
+        return projectStatus(
+          event.runId,
+          event.detail ? `${label}: ${event.detail}` : label,
+          sessionId,
+        );
+      }
+      if (event.state === 'error') {
+        const detail =
+          event.errorMessage ||
+          (event.message?.role === 'assistant'
+            ? event.message.content
+            : 'Agent run failed');
+        return projectError(event.runId, detail, sessionId);
+      }
       if (!event.message || event.message.role !== 'assistant') return [];
       if (
         event.state !== 'delta' &&
-        event.state !== 'final' &&
-        event.state !== 'error'
-      ) {
+        event.state !== 'message' &&
+        event.state !== 'final'
+      )
         return [];
-      }
       return projectAssistantText(
         event.runId,
         event.message.content,
@@ -65,22 +84,23 @@ export function projectEventToAcpNotifications(
         },
       ];
     case 'run_progress':
-      if (event.runId !== activeRunId || event.phase !== 'thinking') return [];
-      return [
-        {
-          sessionId,
-          update: {
-            sessionUpdate: 'agent_thought_chunk',
-            messageId: `${event.runId}:thought`,
-            content: { type: 'text', text: event.text },
-          },
-        },
-      ];
+      if (event.runId !== activeRunId) return [];
+      if (
+        event.phase !== 'thinking' &&
+        event.phase !== 'spawn' &&
+        event.phase !== 'completed' &&
+        event.phase !== 'failed'
+      )
+        return [];
+      return projectStatus(event.runId, event.text, sessionId);
+    case 'host_error':
+      if (event.scope !== 'runtime' || event.requestId !== activeRunId)
+        return [];
+      return projectError(event.requestId, event.errorMessage, sessionId);
     case 'chat_delivery_requested':
     case 'ipc_request':
     case 'ipc_result':
     case 'file_transfer':
-    case 'host_error':
       return [];
   }
 }
@@ -104,6 +124,40 @@ function projectAssistantText(
         sessionUpdate: 'agent_message_chunk',
         messageId: runId,
         content: { type: 'text', text: nextChunk },
+      },
+    },
+  ];
+}
+
+function projectStatus(
+  runId: string,
+  text: string,
+  sessionId: string,
+): SessionNotification[] {
+  return [
+    {
+      sessionId,
+      update: {
+        sessionUpdate: 'agent_thought_chunk',
+        messageId: `${runId}:status`,
+        content: { type: 'text', text },
+      },
+    },
+  ];
+}
+
+function projectError(
+  runId: string,
+  detail: string,
+  sessionId: string,
+): SessionNotification[] {
+  return [
+    {
+      sessionId,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: `${runId}:error`,
+        content: { type: 'text', text: `Error: ${detail}` },
       },
     },
   ];
