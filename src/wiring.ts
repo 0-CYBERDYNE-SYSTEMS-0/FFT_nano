@@ -2137,8 +2137,9 @@ async function startAcpGatewayService(): Promise<boolean> {
   const connection = connectAcpStdio(agent);
   acpConnection = connection;
   void connection.closed.then(
-    () => handleAcpConnectionClosed(connection),
-    (err) => handleAcpConnectionClosed(connection, err),
+    () => handleAcpConnectionClosed(connection, connection.transportError),
+    (err) =>
+      handleAcpConnectionClosed(connection, connection.transportError || err),
   );
   logger.info('ACP stdio gateway started');
   return true;
