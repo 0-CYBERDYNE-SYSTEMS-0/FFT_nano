@@ -16,7 +16,8 @@ const execAsync = promisify(exec);
 
 const SERVICE_NAME = 'fft-nano';
 const TERMUX_PREFIX = process.env.PREFIX || '/data/data/com.termux/files/usr';
-const SERVICE_DIR = `${TERMUX_PREFIX}/var/service/${SERVICE_NAME}`;
+const TERMUX_SERVICE_DIR = `${TERMUX_PREFIX}/var/service`;
+const SERVICE_DIR = `${TERMUX_SERVICE_DIR}/${SERVICE_NAME}`;
 const CREDENTIALS_DIR = `${TERMUX_PREFIX}/etc/fft-nano-credentials`;
 
 export class AndroidAdapter implements PlatformAdapter {
@@ -84,7 +85,9 @@ export class AndroidAdapter implements PlatformAdapter {
 
   async stopService(): Promise<void> {
     try {
-      await execAsync(`sv down ${SERVICE_NAME} 2>/dev/null || true`);
+      await execAsync(`sv down ${SERVICE_NAME} 2>/dev/null || true`, {
+        env: { ...process.env, SVDIR: TERMUX_SERVICE_DIR },
+      });
     } catch {
       // Ignore
     }
@@ -104,6 +107,7 @@ export class AndroidAdapter implements PlatformAdapter {
     try {
       const { stdout } = await execAsync(
         `sv status ${SERVICE_NAME} 2>/dev/null || echo "down"`,
+        { env: { ...process.env, SVDIR: TERMUX_SERVICE_DIR } },
       );
       return stdout.trim().includes('run') ? 'running' : 'stopped';
     } catch {
