@@ -18,6 +18,7 @@ function completeRecord(
   ok: boolean,
   text: string,
   progress?: UpdateProgressEvent[],
+  outcome?: UpdateNotificationRecord['outcome'],
 ): UpdateNotificationRecord {
   const completedAt = new Date().toISOString();
   return {
@@ -28,6 +29,7 @@ function completeRecord(
     completedAt,
     updatedAt: completedAt,
     progress,
+    outcome,
   };
 }
 
@@ -104,6 +106,7 @@ try {
         result.ok,
         result.text,
         progressEvents,
+        result.outcome,
       ),
     );
   };

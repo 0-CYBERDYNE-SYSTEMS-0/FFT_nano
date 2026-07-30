@@ -12,6 +12,7 @@ import {
   writeUpdateNotification,
 } from './update-command.js';
 import {
+  getTelegramPreviewRunKey,
   TelegramPreviewRegistry,
   updateTelegramPreview,
 } from './telegram-streaming.js';
@@ -50,10 +51,18 @@ function buildStartedPreviewText(record: UpdateNotificationRecord): string {
 
 function buildCompletionText(record: UpdateNotificationRecord): string {
   if (record.ok === true) {
+    if (record.outcome === 'updated') {
+      return 'Update complete — code updated and service restarted.';
+    }
+    if (record.outcome === 'up-to-date') {
+      return 'No update available — service rebuilt and restarted.';
+    }
     return 'Update complete — service restarted.';
   }
-  const firstLine = (record.text || '').split('\n')[0] || 'Unknown error';
-  return `Update failed — ${firstLine}`;
+  const failureLine = [...(record.text || '').split('\n')]
+    .reverse()
+    .find((line) => line.trim().length > 0 && !line.startsWith('---'));
+  return `Update failed — ${failureLine || 'Unknown error'}`;
 }
 
 function formatEventLine(event: UpdateProgressEvent): string {
@@ -90,19 +99,20 @@ export const FORMAT_EVENT_LINE_MESSAGE_LIMIT = 500;
 async function ensurePreview(
   reportFile: string,
   record: UpdateNotificationRecord,
+  serviceDeps: UpdateServiceDeps,
 ): Promise<UpdateNotificationRecord> {
   if (record.previewMessageId || record.previewFailed) return record;
-  if (!state.telegramBot || !deps) return record;
+  if (!state.telegramBot) return record;
   const bot = state.telegramBot;
-  const registry = deps.previewRegistry;
+  const registry = serviceDeps.previewRegistry;
   if (!registry) {
-    deps.previewRegistry = new TelegramPreviewRegistry(300_000);
+    serviceDeps.previewRegistry = new TelegramPreviewRegistry(300_000);
   }
 
   try {
     const result = await updateTelegramPreview({
       bot,
-      registry: deps.previewRegistry!,
+      registry: serviceDeps.previewRegistry!,
       chatJid: record.chatJid,
       requestId: record.id,
       text: buildStartedPreviewText(record),
@@ -171,13 +181,14 @@ async function ensurePreview(
 async function processReport(
   reportFile: string,
   record: UpdateNotificationRecord,
+  serviceDeps: UpdateServiceDeps,
 ): Promise<void> {
-  if (!state.telegramBot || !deps) return;
+  if (!state.telegramBot) return;
   if (!record.chatJid) return;
 
   const bot = state.telegramBot;
-  const registry = deps.previewRegistry;
-  const sendMessage = deps.sendMessage;
+  const registry = serviceDeps.previewRegistry;
+  const sendMessage = serviceDeps.sendMessage;
   const now = new Date();
   const startedAt = new Date(record.startedAt);
 
@@ -215,8 +226,7 @@ async function processReport(
       // Always send the terminal message. This is the user-visible "your
       // update finished" message — it must reach the chat no matter what.
       try {
-        await sendMessage(record.chatJid, completionText);
-        delivered = true;
+        delivered = await sendMessage(record.chatJid, completionText);
       } catch (err) {
         logger.error(
           { err, reportId: record.id, chatJid: record.chatJid },
@@ -259,14 +269,26 @@ async function processReport(
   }
 
   // 2. Mid-run: ensure we have a preview message first, then walk new events.
-  const seeded = await ensurePreview(reportFile, record);
+  const seeded = await ensurePreview(reportFile, record, serviceDeps);
 
   const progress = seeded.progress || [];
   const lastIndex = seeded.lastProgressIndex ?? -1;
   const newEvents = progress.slice(lastIndex + 1);
   if (newEvents.length === 0) return;
 
-  let lastDeliveredIndex = lastIndex;
+  if (seeded.previewMessageId && registry) {
+    const runKey = getTelegramPreviewRunKey(record.chatJid, record.id);
+    if (!registry.getPreviewState(runKey)) {
+      registry.setPreviewState(runKey, {
+        messageId: seeded.previewMessageId,
+        messageIds: [seeded.previewMessageId],
+        bubbleTexts: [buildStartedPreviewText(seeded)],
+        lastText: buildStartedPreviewText(seeded),
+        updatedAt: Date.now(),
+      });
+    }
+  }
+
   for (const event of newEvents) {
     const eventIndex = progress.indexOf(event);
     if (eventIndex < 0) continue;
@@ -285,14 +307,20 @@ async function processReport(
     let delivered = false;
     if (seeded.previewMessageId && registry) {
       try {
-        await updateTelegramPreview({
+        const preview = await updateTelegramPreview({
           bot,
           registry,
           chatJid: record.chatJid,
           requestId: record.id,
           text: previewText,
         });
-        delivered = true;
+        delivered = Boolean(preview.messageId) && !preview.error && !preview.disabled;
+        if (!delivered) {
+          logger.warn(
+            { reportId: record.id, event, preview },
+            'Update preview was not delivered; using fallback message',
+          );
+        }
       } catch (err) {
         logger.warn(
           { err, reportId: record.id, event },
@@ -305,7 +333,7 @@ async function processReport(
       // (started + completed + failed) so the user sees real progress even
       // when preview editing is unavailable.
       try {
-        await sendMessage(record.chatJid, formatEventLine(event));
+        delivered = await sendMessage(record.chatJid, formatEventLine(event));
       } catch (err) {
         logger.warn(
           { err, reportId: record.id, event },
@@ -314,7 +342,14 @@ async function processReport(
       }
     }
 
-    lastDeliveredIndex = eventIndex;
+    if (!delivered) {
+      logger.warn(
+        { reportId: record.id, event },
+        'Update progress delivery failed; leaving event pending for retry',
+      );
+      break;
+    }
+
     withUpdateReportLock(
       reportFile,
       () => {
@@ -332,16 +367,17 @@ async function processReport(
   // the completion text (it will arrive as soon as status flips to complete).
 }
 
-async function processPendingUpdateNotifications(): Promise<void> {
+export async function processPendingUpdateNotifications(
+  serviceDeps: UpdateServiceDeps,
+  reportDir = getUpdateNotificationsDir(process.cwd()),
+): Promise<void> {
   if (!state.telegramBot) return;
-  if (!deps) return;
 
   // If no previewRegistry is configured, create a default one
-  if (!deps.previewRegistry) {
-    deps.previewRegistry = new TelegramPreviewRegistry(300_000);
+  if (!serviceDeps.previewRegistry) {
+    serviceDeps.previewRegistry = new TelegramPreviewRegistry(300_000);
   }
 
-  const reportDir = getUpdateNotificationsDir(process.cwd());
   if (!fs.existsSync(reportDir)) return;
 
   let entries: string[] = [];
@@ -376,7 +412,7 @@ async function processPendingUpdateNotifications(): Promise<void> {
       continue;
     }
 
-    await processReport(reportFile, record);
+    await processReport(reportFile, record, serviceDeps);
   }
 }
 
@@ -385,10 +421,10 @@ export function startUpdateNotificationLoop(
 ): void {
   if (updateNotificationTimer !== null) return;
   deps = serviceDeps;
-  void processPendingUpdateNotifications();
+  void processPendingUpdateNotifications(serviceDeps);
   updateNotificationTimer = setInterval(() => {
     if (state.shuttingDown) return;
-    void processPendingUpdateNotifications();
+    if (deps) void processPendingUpdateNotifications(deps);
   }, UPDATE_NOTIFICATION_POLL_MS);
   updateNotificationTimer.unref?.();
 }

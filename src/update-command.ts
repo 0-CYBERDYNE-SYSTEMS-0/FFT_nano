@@ -26,6 +26,7 @@ export interface UpdateProgressEvent {
 export interface UpdateCommandResult {
   ok: boolean;
   text: string;
+  outcome?: 'updated' | 'up-to-date';
 }
 
 export interface UpdateCommandStartResult extends UpdateCommandResult {
@@ -43,6 +44,7 @@ export interface UpdateNotificationRecord {
   completedAt?: string;
   sentAt?: string;
   ok?: boolean;
+  outcome?: 'updated' | 'up-to-date';
   text?: string;
   progress?: UpdateProgressEvent[];
   /** Index into the progress array that the update service has already processed */
@@ -459,6 +461,7 @@ export function runUpdateCommand(
   const outputLines: string[] = [];
   let stashRef: string | null = null;
   let lockFile: string | null = null;
+  let outcome: 'updated' | 'up-to-date' = 'updated';
 
   // SAFETY: refuse to run an update from a "dev" worktree. The runtime
   // worktree (e.g. ~/fft_nano, ~/FFT_nano) is the only place that owns the
@@ -729,6 +732,7 @@ export function runUpdateCommand(
     const behindCount =
       behind.status === 0 ? Number((behind.stdout || '').trim()) : NaN;
     const alreadyUpToDate = Number.isFinite(behindCount) && behindCount === 0;
+    if (alreadyUpToDate) outcome = 'up-to-date';
     if (alreadyUpToDate) {
       outputLines.push(
         'Already up to date. No new commits on origin; rebuilding generated assets and restarting service.',
@@ -1190,7 +1194,11 @@ export function runUpdateCommand(
     if (restart.restarting) {
       // The restart terminated this caller; the new process is coming up and we
       // cannot verify health from a dead process. Report success optimistically.
-      outputLines.push('Update complete. Service restarting.');
+      outputLines.push(
+        outcome === 'updated'
+          ? 'Code updated. Service restarting.'
+          : 'No update available. Service rebuilt and restarting.',
+      );
       emit(
         'complete',
         'update complete',
@@ -1199,7 +1207,7 @@ export function runUpdateCommand(
         undefined,
         true,
       );
-      return { ok: true, text: outputLines.join('\n') };
+      return { ok: true, text: outputLines.join('\n'), outcome };
     }
     if (!restart.ok) {
       return rollbackToKnownGood(`service restart failed: ${restart.detail}.`);
@@ -1212,7 +1220,9 @@ export function runUpdateCommand(
     }
 
     outputLines.push(
-      `Update complete. Service restarted and verified ${health.detail}.`,
+      outcome === 'updated'
+        ? `Code updated. Service restarted and verified ${health.detail}.`
+        : `No update available. Service rebuilt and restarted; verified ${health.detail}.`,
     );
     emit(
       'complete',
@@ -1222,7 +1232,7 @@ export function runUpdateCommand(
       undefined,
       true,
     );
-    return { ok: true, text: outputLines.join('\n') };
+    return { ok: true, text: outputLines.join('\n'), outcome };
   } finally {
     if (lockFile) releaseUpdateLock(lockFile);
   }

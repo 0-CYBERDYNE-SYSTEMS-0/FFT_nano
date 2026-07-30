@@ -134,7 +134,7 @@ test('runUpdateCommand updates a clean checkout and verifies health', () => {
   assert.equal(result.ok, true);
   assert.match(
     result.text,
-    /Update complete\. Service restarted and verified healthy \(pid 4242\)/,
+    /Code updated\. Service restarted and verified healthy \(pid 4242\)/,
   );
   assert.equal(remaining.length, 0);
 });
@@ -198,7 +198,7 @@ test('runUpdateCommand stashes dirty changes, reapplies after pull, drops after 
 
   assert.equal(result.ok, true);
   assert.match(result.text, /Saved local changes as stash@\{0\}/);
-  assert.match(result.text, /Update complete\. Service restarting\./);
+  assert.match(result.text, /Code updated\. Service restarting\./);
   assert.equal(remaining.length, 0);
   // stash drop must happen AFTER build, not before
   const dropIdx = calls.findIndex(
@@ -276,6 +276,7 @@ test('runUpdateCommand rebuilds and restarts when origin has no new commits', ()
 
   assert.equal(result.ok, true);
   assert.match(result.text, /Already up to date/);
+  assert.equal(result.outcome, 'up-to-date');
   assert.equal(remaining.length, 0);
   assert.equal(
     calls.some((c) => c.command === 'npm'),
@@ -739,7 +740,7 @@ test('runUpdateCommand returns the exact UpdateCommandResult shape without onPro
   assert.equal(result.ok, true);
   assert.equal(typeof result.ok, 'boolean');
   assert.equal(typeof result.text, 'string');
-  assert.equal(Object.keys(result).length, 2);
+  assert.equal(Object.keys(result).length, 3);
   assert.equal(remaining.length, 0);
 });
 
