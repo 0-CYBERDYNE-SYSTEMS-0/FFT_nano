@@ -201,6 +201,16 @@ test('installer-update-e2e: runUpdateCommand progress stream contains phases in 
   });
 
   assert.equal(result.ok, true, `update should succeed: ${result.text}`);
+  const updatedSha = execSync('git rev-parse HEAD', {
+    cwd: fixturePath,
+    encoding: 'utf8',
+  }).trim();
+  const originSha = execSync('git rev-parse FETCH_HEAD', {
+    cwd: fixturePath,
+    encoding: 'utf8',
+  }).trim();
+  assert.equal(updatedSha, originSha, 'the checkout must advance to the fetched revision');
+  assert.equal(result.outcome, 'updated');
 
   // Phase sequence: starting, fetching, pulling, installing, building, restarting, verifying, complete
   const phases = events.map((e) => e.phase);
@@ -284,7 +294,7 @@ test('installer-update-e2e: progress stream ends with completed event matching o
   assert.equal(lastEvent.ok, true);
 
   // Result text must indicate success
-  assert.match(result.text, /Update complete/);
+  assert.match(result.text, /Code updated/);
 });
 
 test('installer-update-e2e: progress stream ends with failed event when git fetch fails', { skip: isWindows }, () => {

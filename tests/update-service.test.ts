@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { state } from '../src/app-state.js';
 import {
   readUpdateNotification,
   withUpdateReportLock,
@@ -12,6 +13,8 @@ import {
   writeUpdateNotification,
   getUpdateNotificationsDir,
 } from '../src/update-command.js';
+import { processPendingUpdateNotifications } from '../src/update-service.js';
+import type { TelegramBot } from '../src/telegram.js';
 
 // We test the update service by driving it with fake report files
 // and stubbing the Telegram bot.
@@ -89,6 +92,228 @@ async function withFakeReportDir(
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
+
+test('update-service persists an immediate acknowledgement before progress arrives', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-ack-'));
+  const reportDir = path.join(workspace, 'update-notifications');
+  const originalBot = state.telegramBot;
+  const acknowledgements: string[] = [];
+  state.telegramBot = {
+    sendStreamMessage: async (_chatJid: string, text: string) => {
+      acknowledgements.push(text);
+      return 456;
+    },
+    editStreamMessage: async () => {},
+  } as TelegramBot;
+  fs.mkdirSync(reportDir, { recursive: true });
+  try {
+    const record: UpdateNotificationRecord = {
+      id: 'immediate-ack',
+      chatJid: 'telegram:12345',
+      cwd: workspace,
+      status: 'started',
+      startedAt: '2026-07-30T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:00.000Z',
+    };
+    const reportFile = path.join(reportDir, `${record.id}.json`);
+    writeUpdateNotification(reportFile, record);
+
+    await processPendingUpdateNotifications(
+      { sendMessage: async () => true },
+      reportDir,
+    );
+
+    assert.equal(readUpdateNotification(reportFile)?.previewMessageId, 456);
+    assert.deepEqual(acknowledgements, ['Update started ▸ starting']);
+  } finally {
+    state.telegramBot = originalBot;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('update-service preserves a failed progress delivery for a restart retry', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-retry-'));
+  const reportDir = path.join(workspace, 'update-notifications');
+  const originalBot = state.telegramBot;
+  const messages: string[] = [];
+  let shouldDeliver = false;
+  state.telegramBot = {} as TelegramBot;
+  fs.mkdirSync(reportDir, { recursive: true });
+  try {
+    const record: UpdateNotificationRecord = {
+      id: 'retry-after-restart',
+      chatJid: 'telegram:12345',
+      cwd: workspace,
+      status: 'started',
+      startedAt: '2026-07-30T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:00.000Z',
+      previewFailed: true,
+      progress: [
+        createProgressEvent(
+          'fetching',
+          'started',
+          'git fetch origin main',
+          '2026-07-30T00:00:01.000Z',
+        ),
+      ],
+    };
+    const reportFile = path.join(reportDir, `${record.id}.json`);
+    writeUpdateNotification(reportFile, record);
+
+    const sendMessage = async (_chatJid: string, text: string): Promise<boolean> => {
+      messages.push(text);
+      return shouldDeliver;
+    };
+
+    await processPendingUpdateNotifications({ sendMessage }, reportDir);
+    assert.equal(
+      readUpdateNotification(reportFile)?.lastProgressIndex,
+      undefined,
+      'a rejected fallback delivery must remain pending',
+    );
+
+    shouldDeliver = true;
+    await processPendingUpdateNotifications({ sendMessage }, reportDir);
+    assert.equal(readUpdateNotification(reportFile)?.lastProgressIndex, 0);
+    assert.equal(messages.length, 2, 'the same event must be retried after restart');
+  } finally {
+    state.telegramBot = originalBot;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('update-service retries a terminal update after preview failure', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-terminal-'));
+  const reportDir = path.join(workspace, 'update-notifications');
+  const originalBot = state.telegramBot;
+  const messages: string[] = [];
+  let shouldDeliver = false;
+  state.telegramBot = {} as TelegramBot;
+  fs.mkdirSync(reportDir, { recursive: true });
+  try {
+    const record: UpdateNotificationRecord = {
+      id: 'terminal-after-preview-failure',
+      chatJid: 'telegram:12345',
+      cwd: workspace,
+      status: 'complete',
+      startedAt: '2026-07-30T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:01.000Z',
+      ok: true,
+      text: 'Update complete.',
+      previewFailed: true,
+    };
+    const reportFile = path.join(reportDir, `${record.id}.json`);
+    writeUpdateNotification(reportFile, record);
+    const sendMessage = async (_chatJid: string, text: string): Promise<boolean> => {
+      messages.push(text);
+      return shouldDeliver;
+    };
+
+    await processPendingUpdateNotifications({ sendMessage }, reportDir);
+    assert.equal(readUpdateNotification(reportFile)?.sentAt, undefined);
+
+    shouldDeliver = true;
+    await processPendingUpdateNotifications({ sendMessage }, reportDir);
+    assert.ok(readUpdateNotification(reportFile)?.sentAt);
+    assert.deepEqual(messages, [
+      'Update complete — service restarted.',
+      'Update complete — service restarted.',
+    ]);
+  } finally {
+    state.telegramBot = originalBot;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('update-service sends the actionable failure reason instead of report headings', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-failure-reason-'));
+  const reportDir = path.join(workspace, 'update-notifications');
+  const originalBot = state.telegramBot;
+  const messages: string[] = [];
+  state.telegramBot = {} as TelegramBot;
+  fs.mkdirSync(reportDir, { recursive: true });
+  try {
+    const record: UpdateNotificationRecord = {
+      id: 'actionable-failure',
+      chatJid: 'telegram:12345',
+      cwd: workspace,
+      status: 'complete',
+      startedAt: '2026-07-30T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:01.000Z',
+      ok: false,
+      text: '--- git fetch ---\nUpdate aborted: git authentication failed — check credentials or SSH key.',
+      previewFailed: true,
+    };
+    writeUpdateNotification(path.join(reportDir, `${record.id}.json`), record);
+
+    await processPendingUpdateNotifications(
+      {
+        sendMessage: async (_chatJid, text) => {
+          messages.push(text);
+          return true;
+        },
+      },
+      reportDir,
+    );
+
+    assert.deepEqual(messages, [
+      'Update failed — Update aborted: git authentication failed — check credentials or SSH key.',
+    ]);
+  } finally {
+    state.telegramBot = originalBot;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('update-service falls back when a restored preview cannot be edited', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-update-preview-retry-'));
+  const reportDir = path.join(workspace, 'update-notifications');
+  const originalBot = state.telegramBot;
+  state.telegramBot = {
+    sendStreamMessage: async () => {
+      throw new Error('preview unavailable');
+    },
+    editStreamMessage: async () => {
+      throw new Error('preview unavailable');
+    },
+  } as TelegramBot;
+  fs.mkdirSync(reportDir, { recursive: true });
+  try {
+    const record: UpdateNotificationRecord = {
+      id: 'restored-preview',
+      chatJid: 'telegram:12345',
+      cwd: workspace,
+      status: 'started',
+      startedAt: '2026-07-30T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:00.000Z',
+      previewMessageId: 123,
+      progress: [
+        createProgressEvent(
+          'pulling',
+          'started',
+          'git pull --ff-only',
+          '2026-07-30T00:00:01.000Z',
+        ),
+      ],
+    };
+    const reportFile = path.join(reportDir, `${record.id}.json`);
+    writeUpdateNotification(reportFile, record);
+
+    await processPendingUpdateNotifications(
+      { sendMessage: async () => false },
+      reportDir,
+    );
+
+    assert.equal(
+      readUpdateNotification(reportFile)?.lastProgressIndex,
+      undefined,
+      'a preview failure and fallback failure must keep the event pending',
+    );
+  } finally {
+    state.telegramBot = originalBot;
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 test('update-service seeds a preview when a new started report is detected', async () => {
   await withFakeReportDir(async (reportDir) => {
