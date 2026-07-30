@@ -23,6 +23,26 @@ interface ProviderOption {
   docsUrl?: string;
 }
 
+interface OnboardingBootstrap {
+  device: { hostname: string; platform: string; runtime: 'docker' | 'host' };
+  web: { accessMode: 'localhost' | 'lan' | 'remote'; authRequired: boolean; phoneHandoff: 'local_only' | 'protected_network' };
+  channels: {
+    telegram: { configured: boolean; claimReady: boolean; nextStep: string };
+    whatsapp: { enabled: boolean; linked: boolean; nextStep: string };
+  };
+  networkDiscovery: { intrusiveScanRun: false; cachedHomeAssistantInventory: boolean };
+  homeAssistant: {
+    credentialsConfigured: boolean;
+    validation: 'missing' | 'pending' | 'pass' | 'fail';
+    cachedEntityCount: number;
+    proposal: {
+      state: 'needs_setup' | 'ready_for_approval';
+      requiresExplicitApproval: true;
+      suggestedViews: Array<{ id: string; title: string; entityCount: number }>;
+    };
+  };
+}
+
 const DISMISSED_KEY = 'fft.onboarding.dismissed';
 const LAST_SEEN_KEY = 'fft.onboarding.lastSeenComplete';
 const PROVIDER_KEY = 'fft.onboarding.draft.provider';
@@ -30,6 +50,13 @@ const MODEL_KEY = 'fft.onboarding.draft.model';
 
 export function isOnboardingHandoff(search: string): boolean {
   return new URLSearchParams(search).get('onboarding') === '1';
+}
+
+export function getOnboardingResumeStage(status: Pick<OnboardingStatus, 'apiKeyConfigured' | 'telegramBotConfigured' | 'configComplete'>): string {
+  if (status.configComplete) return 'Ready';
+  if (!status.apiKeyConfigured) return 'Provider setup';
+  if (!status.telegramBotConfigured) return 'Channel setup';
+  return 'Final review';
 }
 
 function readBool(key: string): boolean {
@@ -95,6 +122,7 @@ export function OnboardingGate({ token, children }: OnboardingGateProps): JSX.El
   const [submitting, setSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState('');
   const [adminSecret, setAdminSecret] = useState('');
+  const [bootstrap, setBootstrap] = useState<OnboardingBootstrap | null>(null);
 
   const [dismissed, setDismissed] = useState<boolean>(() => readBool(DISMISSED_KEY));
   const [showModal, setShowModal] = useState(false);
@@ -107,6 +135,11 @@ export function OnboardingGate({ token, children }: OnboardingGateProps): JSX.El
   }, []);
 
   useEffect(() => {
+    writeString(PROVIDER_KEY, provider);
+    writeString(MODEL_KEY, model);
+  }, [provider, model]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
@@ -116,13 +149,20 @@ export function OnboardingGate({ token, children }: OnboardingGateProps): JSX.El
         const statusJson = (await statusRes.json()) as { ok: boolean; onboarding: OnboardingStatus };
         const providerRes = await fetch('/api/settings/providers', { headers });
         if (!providerRes.ok) throw new Error(`providers HTTP ${providerRes.status}`);
+        const bootstrapRes = await fetch('/api/onboarding/bootstrap', { headers });
+        if (!bootstrapRes.ok) throw new Error(`bootstrap HTTP ${bootstrapRes.status}`);
         const providerJson = (await providerRes.json()) as {
           ok: boolean;
           providers: ProviderOption[];
         };
+        const bootstrapJson = (await bootstrapRes.json()) as {
+          ok: boolean;
+          bootstrap: OnboardingBootstrap;
+        };
         if (cancelled) return;
         setStatus(statusJson.onboarding);
         setProviders(providerJson.providers || []);
+        setBootstrap(bootstrapJson.bootstrap);
         if (!provider && statusJson.onboarding.providerPreset) {
           setProvider(statusJson.onboarding.providerPreset);
         }
@@ -292,9 +332,7 @@ export function OnboardingGate({ token, children }: OnboardingGateProps): JSX.El
               <div>
                 <h2>First-run onboarding</h2>
                 <p>
-                  Configure the LLM provider, the bot token, and how you want
-                  the host to talk to you. You can change all of this later
-                  from the Setup tab.
+                  Resume from {getOnboardingResumeStage(status).toLowerCase()}. This browser keeps only your non-secret setup choices; credentials stay on this device.
                 </p>
               </div>
               <button
@@ -306,6 +344,39 @@ export function OnboardingGate({ token, children }: OnboardingGateProps): JSX.El
                 Later
               </button>
             </div>
+
+            {bootstrap ? (
+              <section className="onboarding-bootstrap" aria-label="Device readiness">
+                <div className="onboarding-bootstrap__head">
+                  <h3>Device readiness</h3>
+                  <span>{bootstrap.device.hostname} · {bootstrap.device.runtime} runtime</span>
+                </div>
+                <ul>
+                  <li>
+                    Phone handoff: {bootstrap.web.phoneHandoff === 'protected_network'
+                      ? 'protected network access; enter the existing bearer token in this browser.'
+                      : 'local-only; use an explicitly configured reachable URL before scanning from a phone.'}
+                  </li>
+                  <li>Telegram: {bootstrap.channels.telegram.nextStep}</li>
+                  <li>WhatsApp: {bootstrap.channels.whatsapp.nextStep}</li>
+                  <li>
+                    Home Assistant: {bootstrap.homeAssistant.proposal.state === 'ready_for_approval'
+                      ? `cached discovery found ${bootstrap.homeAssistant.cachedEntityCount} entities; a dashboard proposal is ready for explicit approval.`
+                      : 'no dashboard will be created until credentials are validated, discovery is available, and you approve it.'}
+                  </li>
+                </ul>
+                {bootstrap.homeAssistant.proposal.suggestedViews.length > 0 ? (
+                  <p className="onboarding-bootstrap__proposal">
+                    Proposed read-only views: {bootstrap.homeAssistant.proposal.suggestedViews
+                      .map((view) => `${view.title} (${view.entityCount})`)
+                      .join(', ')}.
+                  </p>
+                ) : null}
+                <p className="onboarding-bootstrap__note">
+                  No LAN scan was run. This report only uses existing local configuration and any cached Home Assistant discovery.
+                </p>
+              </section>
+            ) : null}
 
             <div className="onboarding-modal__grid">
               <label className="field">
