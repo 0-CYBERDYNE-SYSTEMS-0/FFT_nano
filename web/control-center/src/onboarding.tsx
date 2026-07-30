@@ -28,6 +28,10 @@ const LAST_SEEN_KEY = 'fft.onboarding.lastSeenComplete';
 const PROVIDER_KEY = 'fft.onboarding.draft.provider';
 const MODEL_KEY = 'fft.onboarding.draft.model';
 
+export function isOnboardingHandoff(search: string): boolean {
+  return new URLSearchParams(search).get('onboarding') === '1';
+}
+
 function readBool(key: string): boolean {
   if (typeof window === 'undefined') return false;
   try {
@@ -95,6 +99,12 @@ export function OnboardingGate({ token, children }: OnboardingGateProps): JSX.El
   const [dismissed, setDismissed] = useState<boolean>(() => readBool(DISMISSED_KEY));
   const [showModal, setShowModal] = useState(false);
   const [showBanner, setShowBanner] = useState(false);
+
+  useEffect(() => {
+    if (!isOnboardingHandoff(window.location.search)) return;
+    writeBool(DISMISSED_KEY, false);
+    setDismissed(false);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
