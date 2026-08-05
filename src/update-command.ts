@@ -707,6 +707,71 @@ export function runUpdateCommand(
       return fail('Update aborted: scripts/service.sh not found.');
     }
 
+    // `npm run build` shells out to `npm --prefix web/control-center run
+    // build` (vite). That subpackage has its own package.json/node_modules,
+    // separate from the root install above, so it needs its own ci/install
+    // or the build fails with "vite: command not found" whenever this
+    // checkout has never had web/control-center's deps installed.
+    const installWebDeps = (tag: string): boolean => {
+      const webDir = path.join(cwd, 'web', 'control-center');
+      if (!existsSync(path.join(webDir, 'package.json'))) return true;
+      const hasLock = existsSync(path.join(webDir, 'package-lock.json'));
+      const label = `${hasLock ? 'npm ci' : 'npm install'} (web/control-center)${tag}`;
+      emit('installing', label, 'started');
+      const start = Date.now();
+      const prefixArgs = ['--prefix', 'web/control-center'];
+      const primary = hasLock
+        ? runStep('npm ci (web)', 'npm', ['ci', ...prefixArgs])
+        : runStep('npm install (web)', 'npm', ['install', ...prefixArgs]);
+      if (primary.ok) {
+        emit(
+          'installing',
+          label,
+          'completed',
+          primary.result.stdout || undefined,
+          Date.now() - start,
+          true,
+        );
+        return true;
+      }
+      if (hasLock) {
+        outputLines.push(
+          'npm ci (web/control-center) failed; falling back to npm install.',
+        );
+        const fb = runStep('npm install (web)', 'npm', [
+          'install',
+          ...prefixArgs,
+        ]);
+        if (fb.ok) {
+          emit(
+            'installing',
+            `npm install (web/control-center)${tag}`,
+            'completed',
+            fb.result.stdout || undefined,
+            Date.now() - start,
+            true,
+          );
+          return true;
+        }
+        emit(
+          'installing',
+          `npm install (web/control-center)${tag}`,
+          'failed',
+          fb.result.stderr || 'failed',
+          Date.now() - start,
+        );
+        return false;
+      }
+      emit(
+        'installing',
+        label,
+        'failed',
+        primary.result.stderr || 'failed',
+        Date.now() - start,
+      );
+      return false;
+    };
+
     const installDeps = (tag: string): boolean => {
       const hasLock = existsSync(path.join(cwd, 'package-lock.json'));
       const label = `${hasLock ? 'npm ci' : 'npm install'}${tag}`;
@@ -724,7 +789,7 @@ export function runUpdateCommand(
           Date.now() - start,
           true,
         );
-        return true;
+        return installWebDeps(tag);
       }
       if (hasLock) {
         outputLines.push('npm ci failed; falling back to npm install.');
@@ -738,7 +803,7 @@ export function runUpdateCommand(
             Date.now() - start,
             true,
           );
-          return true;
+          return installWebDeps(tag);
         }
         emit(
           'installing',
