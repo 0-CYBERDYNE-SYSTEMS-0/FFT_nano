@@ -50,6 +50,15 @@ if [[ -z "${NODE_BIN}" ]]; then
   exit 1
 fi
 
+# recover_incomplete_update() below shells out to bare `npm`/`node`. Put
+# NODE_BIN's directory ahead of everything else (including the
+# Homebrew/Docker paths exported above) so those calls resolve to the same
+# node/npm pair the app is actually launched with. Otherwise a second Node
+# install earlier in PATH (e.g. Homebrew's) can silently rebuild native
+# modules like better-sqlite3 against the wrong ABI, and the app then
+# crash-loops on dlopen every time it launches under NODE_BIN.
+export PATH="$(dirname "$NODE_BIN"):$PATH"
+
 # Prefer TELEGRAM_BOT_TOKEN from .env, else fall back to macOS Keychain.
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   ACCOUNT="$(id -un 2>/dev/null || true)"
