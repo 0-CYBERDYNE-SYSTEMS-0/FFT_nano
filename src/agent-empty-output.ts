@@ -1,3 +1,5 @@
+import { isHeartbeatAckOnly } from './heartbeat-output.js';
+
 const EMPTY_FINAL_OUTPUT_LOG_MESSAGE =
   'LLM produced no user-visible final response. Please retry or switch model if this repeats.';
 
@@ -22,6 +24,14 @@ export interface AgentRunResult {
 
 export function hasUserVisibleText(text: string | null | undefined): boolean {
   return typeof text === 'string' && text.trim().length > 0;
+}
+
+/** Interactive-visible text: non-empty and not a heartbeat ack-only token. */
+export function hasInteractiveUserVisibleText(
+  text: string | null | undefined,
+): boolean {
+  if (!hasUserVisibleText(text)) return false;
+  return !isHeartbeatAckOnly(text as string);
 }
 
 export function formatEmptyFinalOutputDiagnostic(params: {
@@ -74,7 +84,7 @@ export async function applyNonHeartbeatEmptyOutputPolicy(params: {
   if (
     isHeartbeatRun ||
     !firstRun.ok ||
-    hasUserVisibleText(firstRun.result) ||
+    hasInteractiveUserVisibleText(firstRun.result) ||
     isAborted?.()
   ) {
     return { finalRun: firstRun, retried: false };
@@ -84,7 +94,7 @@ export async function applyNonHeartbeatEmptyOutputPolicy(params: {
   if (isAborted?.()) {
     return { finalRun: secondRun, retried: true };
   }
-  if (secondRun.ok && !hasUserVisibleText(secondRun.result)) {
+  if (secondRun.ok && !hasInteractiveUserVisibleText(secondRun.result)) {
     return {
       finalRun: {
         ...secondRun,

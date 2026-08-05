@@ -86,6 +86,8 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   isSubagent?: boolean;
+  /** True only for host heartbeat polls. Must not be set for interactive turns. */
+  isHeartbeatTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
   codingHint?:
@@ -1241,6 +1243,7 @@ export async function runContainerAgent(
     chatJid: input.chatJid,
     isMain,
     isScheduledTask: input.isScheduledTask,
+    isHeartbeatTask: input.isHeartbeatTask === true,
     isEvaluatorRun: input.isEvaluatorRun,
     assistantName: input.assistantName,
     provider: input.provider,

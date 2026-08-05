@@ -1041,12 +1041,9 @@ function renderBasePrompt(params: {
   lines.push(
     'For tabular or comparison data, use GitHub-style markdown tables (| col | col | with a |---|---| separator row); the chat renders them as native tables.',
   );
-  lines.push('');
-
-  lines.push('## Heartbeats');
-  lines.push(
-    'If this run is a heartbeat poll and nothing needs attention, reply exactly HEARTBEAT_OK. If something needs attention, send alert text without HEARTBEAT_OK.',
-  );
+  // Heartbeat reply contracts are per-turn (see renderEphemeralPrompt). Do not
+  // put HEARTBEAT_OK instructions in the stable layer — that pollutes every
+  // interactive session and trains the model to answer real queries with an ack.
   return lines.join('\n').trim();
 }
 
@@ -1114,6 +1111,23 @@ function renderEphemeralPrompt(params: {
   // as bullets added weight without adding information.
   lines.push('## Runtime Hints');
   lines.push(`- prompt_mode: ${params.promptMode}`);
+  lines.push('');
+
+  // Per-turn heartbeat contract. Must live in the ephemeral layer so interactive
+  // turns never inherit HEARTBEAT_OK instructions from the stable cache.
+  const isHeartbeatRun =
+    params.input.isHeartbeatTask === true ||
+    (params.input.requestId || '').startsWith('heartbeat-');
+  lines.push('## Heartbeats');
+  if (isHeartbeatRun) {
+    lines.push(
+      'This run IS a heartbeat poll (is_heartbeat_task=true). If nothing needs attention, reply exactly HEARTBEAT_OK and nothing else. If something needs attention, reply with a single line beginning HEARTBEAT_ALERT: followed by a one-sentence summary. Do not narrate the checks you performed.',
+    );
+  } else {
+    lines.push(
+      'This run is NOT a heartbeat poll. Answer the user normally. Never reply with only HEARTBEAT_OK, heartbeat okay, or any heartbeat ack token.',
+    );
+  }
   lines.push('');
 
   if (
