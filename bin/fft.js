@@ -510,6 +510,21 @@ async function main() {
       process.stderr.write('Desktop app not found. Run from FFT_nano source directory.\n');
       process.exit(1);
     }
+    const viteBinName = process.platform === 'win32' ? 'vite.cmd' : 'vite';
+    const viteBinPath = path.join(desktopAppDir, 'node_modules', '.bin', viteBinName);
+    if (!fs.existsSync(viteBinPath)) {
+      process.stderr.write('Desktop dependencies not installed. Running npm install...\n');
+      const install = spawnSync('npm', ['install', '--no-audit', '--no-fund'], {
+        cwd: desktopAppDir,
+        env: process.env,
+        stdio: 'inherit',
+      });
+      if (install.error) throw install.error;
+      if (install.status !== 0) {
+        process.stderr.write('npm install failed in apps/desktop. Fix the error above and retry.\n');
+        process.exit(install.status ?? 1);
+      }
+    }
     const result = spawnSync('npm', ['run', 'dev'], {
       cwd: desktopAppDir,
       env: process.env,

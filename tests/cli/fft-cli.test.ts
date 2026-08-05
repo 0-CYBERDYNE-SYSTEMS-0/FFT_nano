@@ -12,6 +12,9 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const realFftJs = fileURLToPath(new URL('../../bin/fft.js', import.meta.url));
 
 function writeExecutable(filePath: string, body: string): void {
   writeFileSync(filePath, body, 'utf8');
@@ -498,6 +501,75 @@ process.exit(0);
 
   assert.equal(result.status, 0, 'fft desktop should exit 0');
   assert.match(result.stdout, /fft desktop launched/i, 'Should show desktop launched');
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+function createDesktopRepo(repoRoot: string): void {
+  createMockRepo(repoRoot);
+  mkdirSync(path.join(repoRoot, 'apps/desktop'), { recursive: true });
+  writeFileSync(
+    path.join(repoRoot, 'apps/desktop/package.json'),
+    JSON.stringify({ name: 'fft-desktop', version: '0.1.0', scripts: { dev: 'vite' } }, null, 2),
+    'utf8',
+  );
+}
+
+function createFakeNpm(repoRoot: string): { callLog: string; env: Record<string, string> } {
+  const fakeBin = path.join(repoRoot, 'fake-bin');
+  mkdirSync(fakeBin, { recursive: true });
+  const callLog = path.join(repoRoot, 'npm-calls.log');
+  writeFileSync(
+    path.join(fakeBin, 'npm'),
+    `#!/usr/bin/env bash\necho "$@" >> "${callLog}"\nexit 0\n`,
+    'utf8',
+  );
+  chmodSync(path.join(fakeBin, 'npm'), 0o755);
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') env[key] = value;
+  }
+  env.PATH = `${fakeBin}${path.delimiter}${env.PATH ?? ''}`;
+  return { callLog, env };
+}
+
+test('fft desktop installs missing dependencies before launching', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'fft-cli-desktop-autoinstall-'));
+  createDesktopRepo(repoRoot);
+  const { callLog, env } = createFakeNpm(repoRoot);
+
+  const result = spawnSync('node', [realFftJs, 'desktop'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env,
+  });
+
+  assert.equal(result.status, 0, `fft desktop should exit 0: ${result.stderr}`);
+  const calls = readFileSync(callLog, 'utf8').trim().split('\n');
+  assert.equal(calls.length, 2, 'Should call npm twice (install then run dev)');
+  assert.match(calls[0], /^install/, 'First npm call should be install');
+  assert.match(calls[1], /^run dev$/, 'Second npm call should be run dev');
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+test('fft desktop skips install when vite binary is present', () => {
+  const repoRoot = mkdtempSync(path.join(tmpdir(), 'fft-cli-desktop-skipinstall-'));
+  createDesktopRepo(repoRoot);
+  const binDir = path.join(repoRoot, 'apps/desktop/node_modules/.bin');
+  mkdirSync(binDir, { recursive: true });
+  for (const name of ['vite', 'vite.cmd']) {
+    writeFileSync(path.join(binDir, name), '', 'utf8');
+  }
+  const { callLog, env } = createFakeNpm(repoRoot);
+
+  const result = spawnSync('node', [realFftJs, 'desktop'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env,
+  });
+
+  assert.equal(result.status, 0, `fft desktop should exit 0: ${result.stderr}`);
+  const calls = readFileSync(callLog, 'utf8').trim().split('\n');
+  assert.deepEqual(calls, ['run dev'], 'Should only call npm run dev');
   rmSync(repoRoot, { recursive: true, force: true });
 });
 
