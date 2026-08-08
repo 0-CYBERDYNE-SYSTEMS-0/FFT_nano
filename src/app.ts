@@ -11,6 +11,7 @@ import {
 import { GIT_INFO } from './state-persistence.js';
 import { findMainChatJid as findMainChatJidImpl } from './telegram-group-mgmt.js';
 import { shouldRunCommandOnEdit } from './telegram.js';
+import { runBootPreflight } from './boot-preflight.js';
 import { runDriftWitnessBootWithDb } from './drift-witness-service.js';
 
 // ---------------------------------------------------------------------------
@@ -640,6 +641,15 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
       );
     }
     deps.ensureContainerSystemRunning?.();
+    const preflight = runBootPreflight();
+    if (!preflight.ok) {
+      deps.logger.fatal?.(
+        { failures: preflight.failures },
+        'Boot preflight failed \u2014 fix dependencies (npm rebuild / npm install) before starting',
+      );
+      process.exit(1);
+    }
+    deps.logger.info?.('Boot preflight passed');
     deps.initDatabase?.();
     deps.logger.info?.('Database initialized');
     deps.loadState?.();
