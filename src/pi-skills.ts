@@ -62,6 +62,7 @@ const FRONTMATTER_OPTIONAL_FIELDS = [
   'author',
   'dependencies',
   'category',
+  'tags',
   'disable-model-invocation',
   'provenance', // WS3.3: operator-requested | agent-inferred | third-party-suggested
 ] as const;
@@ -392,6 +393,20 @@ function validateSkillMarkdown(
       file: skillMarkdownPath,
       message: `Frontmatter contains unsupported field: ${key}`,
     });
+  }
+
+  if (frontmatter.tags !== undefined) {
+    if (!Array.isArray(frontmatter.tags)) {
+      issues.push({
+        file: skillMarkdownPath,
+        message: 'Frontmatter field "tags" must be an array of strings',
+      });
+    } else if (!frontmatter.tags.every((t) => typeof t === 'string')) {
+      issues.push({
+        file: skillMarkdownPath,
+        message: 'Frontmatter field "tags" must be an array of strings',
+      });
+    }
   }
 
   // WS3.3: validate provenance value if present
