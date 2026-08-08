@@ -10,6 +10,7 @@ import {
 } from './parity-config.js';
 import { GIT_INFO } from './state-persistence.js';
 import { findMainChatJid as findMainChatJidImpl } from './telegram-group-mgmt.js';
+import { shouldRunCommandOnEdit } from './telegram.js';
 import { runDriftWitnessBootWithDb } from './drift-witness-service.js';
 
 // ---------------------------------------------------------------------------
@@ -278,8 +279,16 @@ export function createAppRuntime(deps: AppRuntimeDeps): {
         if (didRegister && deps.isMainChat(m.chatJid)) {
           await deps.refreshTelegramCommandMenus();
         }
-        if (await deps.handleTelegramSetupInput(m)) return;
-        if (await deps.handleTelegramCommand(m)) return;
+        const isEdited =
+          m.kind === 'message' && !!m.isEdited;
+        const isCommand =
+          m.kind === 'message' &&
+          typeof m.content === 'string' &&
+          m.content.trimStart().startsWith('/');
+        if (shouldRunCommandOnEdit({ isEdited, isCommand })) {
+          if (await deps.handleTelegramSetupInput(m)) return;
+          if (await deps.handleTelegramCommand(m)) return;
+        }
         if (!deps.state.registeredGroups[m.chatJid]) {
           await deps.handleTelegramUnknownGroup?.(m);
           return;

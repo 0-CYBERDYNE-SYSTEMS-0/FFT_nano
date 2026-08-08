@@ -2,6 +2,8 @@ export interface TelegramCommandMessage {
   chatJid: string;
   chatName: string;
   content: string;
+  updateId?: number;
+  messageId?: number;
 }
 
 export interface TelegramSetupInputMessage {
@@ -389,6 +391,8 @@ export interface TelegramCommandDeps {
     command: string,
     allowed: boolean,
     reason: string,
+    updateId?: number,
+    messageId?: number,
   ) => void;
   whatsappEnabled?: boolean;
   hasWhatsAppSocket?: () => boolean;
@@ -1966,7 +1970,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     const isMainGroup = deps.isMainChat(m.chatJid);
 
     if (cmd === '/start') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       const name = deps.constants.assistantName;
       const registered = !!deps.state.registeredGroups[m.chatJid];
       const mainExists = deps.hasMainGroup();
@@ -2001,7 +2005,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/id') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       const chatId = deps.parseTelegramChatId(m.chatJid);
       const responseText = chatId
         ? `Chat id: ${chatId}`
@@ -2017,7 +2021,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/help') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       const helpArg = rest[0]?.toLowerCase() || 'default';
       const helpType =
         helpArg === 'all' || helpArg === 'admin' ? helpArg : 'default';
@@ -2033,7 +2037,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/status') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       const responseText = deps.formatStatusText(m.chatJid);
       deps.emitTuiChatEvent({
         runId: `cmd-${cmd.slice(1)}-${Date.now()}`,
@@ -2051,7 +2055,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         deps.state.chatRunPreferences[m.chatJid]?.sessionTitle || ''
       ).trim();
       if (!argText) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           currentTitle
@@ -2067,7 +2071,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           delete prefs.sessionTitle;
           return prefs;
         });
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, 'Session title cleared.');
         return true;
       }
@@ -2085,13 +2089,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         prefs.sessionTitle = bounded;
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set', m.updateId, m.messageId);
       await deps.sendMessage(m.chatJid, `Session title set: ${bounded}`);
       return true;
     }
 
     if (cmd === '/models') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       const searchText = rest.join(' ');
 
       if (!searchText && deps.state.telegramBot) {
@@ -2114,11 +2118,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/refresh-models' || cmd === '/refresh_models') {
       if (!isMainGroup) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, 'Admin-only command.');
         return true;
       }
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       await deps.sendMessage(m.chatJid, 'Refreshing model list from providers...');
       const refreshed = deps.loadPiModels(true);
       if (!refreshed.ok) {
@@ -2158,7 +2162,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/model') {
       const argText = rest.join(' ').trim();
       if (!argText) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
         if (deps.state.telegramBot) {
           await deps.sendTelegramSettingsPanel(m.chatJid, {
             kind: 'show-model-providers',
@@ -2183,7 +2187,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           delete prefs.model;
           return prefs;
         });
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `Model override cleared. Active model: ${deps.getEffectiveModelLabel(m.chatJid)}`,
@@ -2203,7 +2207,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             cmd,
             false,
             'invalid model ref',
-          );
+          m.updateId, m.messageId);
           await deps.sendMessage(
             m.chatJid,
             'Usage: /model <provider/model> or /model reset',
@@ -2224,7 +2228,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'missing provider context',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Please specify provider/model explicitly. Usage: /model <provider/model> or /model reset',
@@ -2245,7 +2249,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'invalid model override',
-        );
+        m.updateId, m.messageId);
         return true;
       }
       nextProvider = resolvedProvider;
@@ -2255,7 +2259,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         if (nextModel) prefs.model = nextModel;
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         `Model set for this chat: ${deps.getEffectiveModelLabel(m.chatJid)}`,
@@ -2268,7 +2272,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       if (!argText) {
         const current =
           deps.state.chatRunPreferences[m.chatJid]?.thinkLevel || 'off';
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
         if (deps.state.telegramBot) {
           await deps.sendTelegramSettingsPanel(m.chatJid, {
             kind: 'show-think',
@@ -2289,7 +2293,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'invalid think level',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized thinking level. Valid: off, minimal, low, medium, high, xhigh',
@@ -2302,7 +2306,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         else prefs.thinkLevel = normalized;
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         normalized === 'off'
@@ -2317,7 +2321,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       if (!argText) {
         const current =
           deps.state.chatRunPreferences[m.chatJid]?.reasoningLevel || 'off';
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
         if (deps.state.telegramBot) {
           await deps.sendTelegramSettingsPanel(m.chatJid, {
             kind: 'show-reasoning',
@@ -2338,7 +2342,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'invalid reasoning level',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized reasoning level. Valid: off, on, stream',
@@ -2356,7 +2360,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         }
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         normalized === 'off'
@@ -2374,7 +2378,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         deps.state.chatRunPreferences[m.chatJid]?.telegramDeliveryMode ||
         'status';
       if (!argText) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
         if (deps.state.telegramBot) {
           await deps.sendTelegramSettingsPanel(m.chatJid, {
             kind: 'show-delivery',
@@ -2398,7 +2402,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'invalid delivery mode',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized delivery mode. Valid: status, stream, append, off, draft',
@@ -2410,7 +2414,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         prefs.telegramDeliveryMode = normalized;
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         `Delivery mode set to ${normalized} for this chat.`,
@@ -2426,7 +2430,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'invalid verbose mode',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Unrecognized tool progress mode. Valid: off, new, all, verbose. `/verbose` cycles modes.',
@@ -2435,7 +2439,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
 
       if (parsed.kind === 'cycle') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
         if (deps.state.telegramBot) {
           await deps.sendTelegramSettingsPanel(m.chatJid, {
             kind: 'show-verbose',
@@ -2457,7 +2461,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         else prefs.verboseMode = normalized;
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set', m.updateId, m.messageId);
       await deps.sendMessage(m.chatJid, deps.describeVerboseMode(normalized));
       return true;
     }
@@ -2468,7 +2472,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         delete prefs.sessionTitle;
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         'New session requested. The next model run will start fresh (no /continue). Session title was cleared for this chat.',
@@ -2479,12 +2483,12 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/stop') {
       const activeRun = deps.activeChatRuns.get(m.chatJid);
       if (!activeRun) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'no active run');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'no active run', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, 'No active run to stop.');
         return true;
       }
       activeRun.abortController.abort(new Error('Stopped by user via /stop'));
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'aborted');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'aborted', m.updateId, m.messageId);
       await deps.sendMessage(m.chatJid, 'Stopping current run...');
       return true;
     }
@@ -2494,7 +2498,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       if (arg === 'reset' || arg === 'clear') {
         delete deps.state.chatUsageStats[m.chatJid];
         deps.saveState?.();
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Usage counters reset for this chat.',
@@ -2502,14 +2506,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       if (arg === 'all') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'all');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'all', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           deps.formatUsageText(m.chatJid, 'all'),
         );
         return true;
       }
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         deps.formatUsageText(m.chatJid, 'chat'),
@@ -2521,7 +2525,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const argText = rest.join(' ').trim();
       if (!argText) {
         const prefs = deps.state.chatRunPreferences[m.chatJid] || {};
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'show', m.updateId, m.messageId);
         if (deps.state.telegramBot) {
           await deps.sendTelegramSettingsPanel(m.chatJid, {
             kind: 'show-queue',
@@ -2552,7 +2556,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           delete prefs.queueDrop;
           return prefs;
         });
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'reset', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, 'Queue settings reset to defaults.');
         return true;
       }
@@ -2563,7 +2567,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         parsed.cap === undefined &&
         parsed.drop === undefined
       ) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid args');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid args', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Invalid /queue args. Example: /queue mode=followup debounce=2s cap=20 drop=old',
@@ -2580,7 +2584,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return prefs;
       });
       const prefs = deps.state.chatRunPreferences[m.chatJid] || {};
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'set', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         [
@@ -2596,7 +2600,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
 
     if (cmd === '/compact') {
       const instructions = rest.join(' ').trim();
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'run');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'run', m.updateId, m.messageId);
       const response = await deps.runCompactionForChat(m.chatJid, instructions);
       await deps.sendMessage(m.chatJid, response);
       return true;
@@ -2616,7 +2620,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         cmd,
         handled === true,
         handled ? 'long-run' : 'not configured',
-      );
+      m.updateId, m.messageId);
       if (!handled) {
         await deps.sendMessage(m.chatJid, 'Long runs are not configured.');
       }
@@ -2632,7 +2636,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       cmd === '/coder_create_project'
     ) {
       if (!isMainGroup) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `${deps.constants.assistantName}: coder delegation is only available in the main/admin chat for safety.`,
@@ -2645,18 +2649,18 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'blocked by onboarding gate',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, deps.onboardingCommandBlockedText());
         return true;
       }
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'pass-through');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'pass-through', m.updateId, m.messageId);
       return false;
     }
 
     if (cmd === '/main') {
       const chatId = deps.parseTelegramChatId(m.chatJid);
       if (!chatId) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Could not parse chat id for this chat.',
@@ -2674,7 +2678,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'main already configured; recovery: edit or delete data/registered_groups.json to re-bootstrap',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           "This assistant already has an owner chat, so I can't switch from here. The owner can transfer control from the machine where I'm installed.",
@@ -2696,7 +2700,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           true,
           'first-claim without secret',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           [
@@ -2712,7 +2716,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'missing TELEGRAM_ADMIN_SECRET',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           "This needs the setup code from installation: /main <code>. You'll find it in the setup summary or the .env file on the machine running me.",
@@ -2726,7 +2730,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'invalid admin secret',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           "This needs the setup code from installation: /main <code>. You'll find it in the setup summary or the .env file on the machine running me.",
@@ -2738,7 +2742,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         m.chatName || `${deps.constants.assistantName} (main)`,
       );
       await deps.refreshTelegramCommandMenus();
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         "You're set — this chat is now the owner chat. I'll take instructions from you here.",
@@ -2752,7 +2756,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const sub = (rest[0] || '').toLowerCase();
       // Main-chat only for all /learning commands (VAL-WS6-008)
       if (!isMainGroup) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `${deps.constants.assistantName}: /learning is only available in the main/admin chat.`,
@@ -2767,7 +2771,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             cmd,
             true,
             `already ${sub}ed`,
-          );
+          m.updateId, m.messageId);
           await deps.sendMessage(
             m.chatJid,
             `Learning is already ${newState ? 'paused' : 'active'}.`,
@@ -2777,7 +2781,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         deps.state.learningPaused = newState;
         deps.state.learningPausedAt = newState ? new Date().toISOString() : null;
         deps.saveState?.();
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, sub);
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, sub, m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           newState
@@ -2787,19 +2791,19 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       // Digest view
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'digest');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'digest', m.updateId, m.messageId);
       await deps.sendMessage(m.chatJid, deps.formatLearningDigest());
       return true;
     }
 
     if (cmd === '/settings') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-home' });
       return true;
     }
 
     if (!isMainGroup) {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         `${deps.constants.assistantName}: this command is only available in the main/admin chat.`,
@@ -2808,7 +2812,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/restart') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         'Restarting gateway service. Expect a brief disconnect while the host restarts.',
@@ -2834,7 +2838,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               ? 'doctor'
               : null;
       if (!action) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Usage: /gateway <status|restart|doctor>',
@@ -2842,7 +2846,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       if (action === 'restart') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'restart requested', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Restarting gateway service. Expect a brief disconnect while the host restarts.',
@@ -2862,7 +2866,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         cmd,
         result.ok,
         result.ok ? action : `${action} failed`,
-      );
+      m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         result.ok
@@ -2875,7 +2879,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/reflect') {
       const first = (rest[0] || '').trim().toLowerCase();
       if (first === 'help') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           [
@@ -2897,7 +2901,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'blocked: learning paused',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Learning is paused — run /learning resume first, or use /reflect dry-run.',
@@ -2910,7 +2914,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         cmd,
         true,
         focus ? `${action}: ${focus}` : action,
-      );
+      m.updateId, m.messageId);
       await startMaintenanceAgentRun({
         chatJid: m.chatJid,
         command: cmd,
@@ -2939,7 +2943,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const isDeprecatedCurator = cmd === '/curator';
 
       if (!isMainGroup) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'not main/admin', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `${deps.constants.assistantName}: ${isLibrarian ? 'librarian' : 'skill-manager'} controls are only available in the main/admin chat.`,
@@ -2952,7 +2956,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const auditAction = isDeprecatedCurator
         ? `${action} (deprecated /curator)`
         : action;
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, auditAction);
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, auditAction, m.updateId, m.messageId);
 
       if (isDeprecatedCurator) {
         await deps.sendMessage(
@@ -2984,7 +2988,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           : deps.handleSkillManagerCommand; // curator routes to skill-manager
 
       if (!handler) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'unavailable');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'unavailable', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `${isLibrarian ? 'Librarian' : 'Skill Manager'} controls are not available in this runtime.`,
@@ -3005,11 +3009,11 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       const arg = rest.join(' ').trim().toLowerCase();
       if (arg === 'cancel') {
         deps.clearTelegramSetupInputState(m.chatJid);
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'cancel');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'cancel', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, 'Setup prompt cancelled.');
         return true;
       }
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'panel', m.updateId, m.messageId);
       await deps.sendTelegramSettingsPanel(m.chatJid, {
         kind: 'show-setup-home',
       });
@@ -3019,7 +3023,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/freechat') {
       const action = (rest[0] || '').toLowerCase();
       if (!action || action === 'help') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'help', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           [
@@ -3042,7 +3046,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             return `- ${jid} -> ${name}${mainTag}`;
           })
           .sort();
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'list', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           entries.length > 0
@@ -3052,7 +3056,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         return true;
       }
       if (action !== 'add' && action !== 'remove') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid action', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Usage: /freechat add <chatId> | /freechat remove <chatId> | /freechat list',
@@ -3061,7 +3065,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
       const targetJid = deps.parseTelegramTargetJid(rest[1] || '');
       if (!targetJid) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'invalid chat id', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Invalid chat id. Use /id in that chat, then pass the numeric id (or telegram:<id>).',
@@ -3070,7 +3074,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
       }
       const targetGroup = deps.state.registeredGroups[targetJid];
       if (targetGroup?.folder === deps.constants.mainGroupFolder) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'target is main');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'target is main', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Main chat already runs without trigger prefix; free chat setting is unnecessary there.',
@@ -3082,7 +3086,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           prefs.freeChat = true;
           return prefs;
         });
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'add');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'add', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `Free chat enabled for ${targetJid}${targetGroup ? ` (${targetGroup.name})` : ''}.`,
@@ -3093,7 +3097,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         delete prefs.freeChat;
         return prefs;
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'remove');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'remove', m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         `Free chat disabled for ${targetJid}${targetGroup ? ` (${targetGroup.name})` : ''}.`,
@@ -3102,7 +3106,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/tasks') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       const sub = (rest[0] || '').toLowerCase();
       if (!sub || sub === 'list') {
         await deps.sendMessage(m.chatJid, deps.formatTasksText('list'));
@@ -3176,7 +3180,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'handler unavailable',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           'Knowledge wiki subsystem is unavailable in this runtime.',
@@ -3190,7 +3194,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         input,
         chatJid: m.chatJid,
       });
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, action);
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, action, m.updateId, m.messageId);
       await deps.sendMessage(m.chatJid, response);
       return true;
     }
@@ -3202,49 +3206,49 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     ) {
       const taskId = rest[0];
       if (!taskId) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'missing task id');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'missing task id', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, `Usage: ${cmd} <taskId>`);
         return true;
       }
       if (!deps.getTaskById(taskId)) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'task not found');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'task not found', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, `Task not found: ${taskId}`);
         return true;
       }
       if (cmd === '/task_pause') {
         deps.updateTask(taskId, { status: 'paused' });
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, `Paused task: ${taskId}`);
         return true;
       }
       if (cmd === '/task_resume') {
         deps.updateTask(taskId, { status: 'active' });
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, `Resumed task: ${taskId}`);
         return true;
       }
       deps.deleteTask(taskId);
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       await deps.sendMessage(m.chatJid, `Canceled task: ${taskId}`);
       return true;
     }
 
     if (cmd === '/groups') {
       if (!deps.isMainChat(m.chatJid)) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, false, 'non-main chat', m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `${deps.constants.assistantName}: group management is only available in the main/admin chat.`,
         );
         return true;
       }
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-groups' });
       return true;
     }
 
     if (cmd === '/reload') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       if (deps.whatsappEnabled && deps.hasWhatsAppSocket?.()) {
         await deps.syncGroupMetadata?.(true);
       }
@@ -3257,13 +3261,13 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     }
 
     if (cmd === '/panel') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'ok', m.updateId, m.messageId);
       await deps.sendTelegramSettingsPanel(m.chatJid, { kind: 'show-home' });
       return true;
     }
 
     if (cmd === '/update') {
-      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'update started');
+      deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'update started', m.updateId, m.messageId);
       const result = deps.startUpdateCommand(m.chatJid);
       if (!result.ok) {
         deps.logTelegramCommandAudit(
@@ -3271,7 +3275,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           cmd,
           false,
           'update start failed',
-        );
+        m.updateId, m.messageId);
         await deps.sendMessage(
           m.chatJid,
           `Update failed to start:\n${result.text}`,
@@ -3285,7 +3289,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         result.reportId
           ? `update worker started ${result.reportId}`
           : 'update worker started',
-      );
+      m.updateId, m.messageId);
       await deps.sendMessage(
         m.chatJid,
         [
@@ -3303,14 +3307,14 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
     if (cmd === '/subagents') {
       const action = (rest[0] || 'list').toLowerCase();
       if (!rest[0] && deps.state.telegramBot) {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'panel');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'panel', m.updateId, m.messageId);
         await deps.sendTelegramSettingsPanel(m.chatJid, {
           kind: 'show-subagents',
         });
         return true;
       }
       if (action === 'list') {
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'list');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'list', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, deps.formatActiveSubagentsText());
         return true;
       }
@@ -3322,7 +3326,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
               new Error('Stopped via /subagents stop all'),
             );
           }
-          deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop all');
+          deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop all', m.updateId, m.messageId);
           await deps.sendMessage(
             m.chatJid,
             'Stopping all active subagent runs...',
@@ -3340,7 +3344,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
           run.abortController?.abort(
             new Error('Stopped via /subagents stop current'),
           );
-          deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop current');
+          deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop current', m.updateId, m.messageId);
           await deps.sendMessage(m.chatJid, 'Stopping current chat run...');
           return true;
         }
@@ -3355,7 +3359,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
         matched.abortController?.abort(
           new Error('Stopped via /subagents stop <id>'),
         );
-        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop id');
+        deps.logTelegramCommandAudit(m.chatJid, cmd, true, 'stop id', m.updateId, m.messageId);
         await deps.sendMessage(m.chatJid, `Stopping run ${target}...`);
         return true;
       }
@@ -3377,7 +3381,7 @@ export function createTelegramCommandHandlers(deps: TelegramCommandDeps): {
             cmd,
             false,
             'spawn blocked: active run',
-          );
+          m.updateId, m.messageId);
           await deps.sendMessage(
             m.chatJid,
             `Cannot spawn while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
