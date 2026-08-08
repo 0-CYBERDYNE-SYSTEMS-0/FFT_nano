@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { FFT_NANO_HEARTBEAT_CHECKS_KEEP } from './app-config.js';
+import { logger } from './logger.js';
 import { isHeartbeatFileEffectivelyEmpty } from './heartbeat-policy.js';
 import { extractHeartbeatAlert } from './heartbeat-policy.js';
 import { verifySkillCleanupMemoryClaim } from './memory-claim-verifier.js';
@@ -138,5 +140,37 @@ export function writeHeartbeatChecklist(
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, `${input.requestId}.json`);
   fs.writeFileSync(outPath, `${JSON.stringify(checklist, null, 2)}\n`, 'utf-8');
+  pruneHeartbeatChecklists(outDir, outPath);
   return outPath;
+}
+
+export function pruneHeartbeatChecklists(
+  outDir: string,
+  keepPath: string,
+  keep: number = FFT_NANO_HEARTBEAT_CHECKS_KEEP,
+): void {
+  try {
+    const entries = fs
+      .readdirSync(outDir)
+      .filter((name) => name.endsWith('.json'))
+      // requestId embeds Date.now -> lex order ~ time order; newest first.
+      .sort((a, b) => b.localeCompare(a));
+    const keepBase = path.basename(keepPath);
+    let kept = 0;
+    for (const name of entries) {
+      // The just-written outPath is always retained and does not consume a
+      // keep slot for the other checklist files.
+      if (name === keepBase) continue;
+      if (kept < keep) {
+        kept += 1;
+        continue;
+      }
+      fs.unlinkSync(path.join(outDir, name));
+    }
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Failed to prune heartbeat checklists; retaining all files',
+    );
+  }
 }

@@ -493,6 +493,15 @@ export const FFT_NANO_HEARTBEAT_RETRY_ATTEMPTS = envInt(
   10,
 );
 
+// SPEC: max heartbeat checklist files retained per run directory. Newest
+// KEEP are kept; older pruned. Bounded at ~50 by default.
+export const FFT_NANO_HEARTBEAT_CHECKS_KEEP = envInt(
+  process.env.FFT_NANO_HEARTBEAT_CHECKS_KEEP,
+  50,
+  1,
+  10000,
+);
+
 // SPEC-09: scheduled workspace-hygiene retention. All three flags default
 // to safe values: the master switch is off, retention windows are operator
 // tunables. Trash moves into `~/nano/memory/trash-archive-YYYY-MM/`; old

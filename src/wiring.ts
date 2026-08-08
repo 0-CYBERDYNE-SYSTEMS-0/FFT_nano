@@ -1648,8 +1648,10 @@ function logTelegramCommandAudit(
   command: string,
   allowed: boolean,
   reason: string,
+  updateId?: number,
+  messageId?: number,
 ): void {
-  tdLogTelegramCommandAudit(chatJid, command, allowed, reason);
+  tdLogTelegramCommandAudit(chatJid, command, allowed, reason, updateId, messageId);
 }
 
 async function handleSkillManagerCommand(params: {
@@ -1818,6 +1820,8 @@ async function handleTelegramCommand(m: {
   chatJid: string;
   chatName: string;
   content: string;
+  updateId?: number;
+  messageId?: number;
 }): Promise<boolean> {
   return telegramCommandHandlers.handleTelegramCommand(m);
 }

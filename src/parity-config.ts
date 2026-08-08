@@ -178,7 +178,7 @@ const DEFAULTS: ParityConfig = {
     ackMaxChars: 300,
     activeHours: null,
     activeHoursRaw: null,
-    visibility: { showOk: true, showAlerts: true, useIndicator: true },
+    visibility: { showOk: false, showAlerts: true, useIndicator: true },
   },
   cron: {
     isolatedDefaultDelivery: 'announce',

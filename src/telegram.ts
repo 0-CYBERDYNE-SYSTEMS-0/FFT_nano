@@ -172,6 +172,8 @@ export type TelegramInboundMessageType =
 
 export interface TelegramInboundMessage {
   kind: 'message';
+  updateId: number;
+  isEdited?: boolean;
   id: string;
   messageId: number;
   chatJid: string;
@@ -474,6 +476,37 @@ function buildMessageType(msg: TelegramMessage): TelegramInboundMessageType {
   if (msg.location) return 'location';
   if (msg.contact) return 'contact';
   return 'unknown';
+}
+
+export interface UpdateIdTracker {
+  has: (updateId: number) => boolean;
+  mark: (updateId: number) => void;
+}
+
+export function shouldRunCommandOnEdit(params: {
+  isEdited: boolean;
+  isCommand: boolean;
+}): boolean {
+  return !(params.isEdited && params.isCommand);
+}
+
+export function createUpdateIdTracker(cap: number): UpdateIdTracker {
+  const seen = new Set<number>();
+  const queue: number[] = [];
+  return {
+    has(updateId: number): boolean {
+      return seen.has(updateId);
+    },
+    mark(updateId: number): void {
+      if (seen.has(updateId)) return;
+      seen.add(updateId);
+      queue.push(updateId);
+      while (queue.length > cap) {
+        const evicted = queue.shift();
+        if (evicted !== undefined) seen.delete(evicted);
+      }
+    },
+  };
 }
 
 function buildMessageContent(
@@ -1157,6 +1190,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     msg: TelegramMessage,
     isEdited: boolean,
     onEvent: (event: TelegramInboundEvent) => Promise<void>,
+    updateId: number,
   ): Promise<void> {
     const chatId = String(msg.chat.id);
     const chatJid = `${TELEGRAM_JID_PREFIX}${chatId}`;
@@ -1217,6 +1251,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
     await onEvent({
       kind: 'message',
+      updateId,
+      isEdited,
       id: `${chatJid}:${msg.message_id}${isEdited ? ':edited' : ''}`,
       messageId: msg.message_id,
       chatJid,
@@ -1252,13 +1288,14 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       caption: combined.caption || firstMsg.caption,
     };
 
-    await processMessageEvent(syntheticMsg, false, onEvent);
+    await processMessageEvent(syntheticMsg, false, onEvent, 0);
     pendingMediaGroups.delete(groupId);
   }
 
   async function startPolling(
     onEvent: (event: TelegramInboundEvent) => Promise<void>,
   ): Promise<void> {
+    const processedUpdateIds = createUpdateIdTracker(1000);
     try {
       const me = await apiGet<{ username?: string }>('getMe', {});
       botUsername = me.username?.toLowerCase() || null;
@@ -1279,6 +1316,14 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
         });
 
         for (const u of updates) {
+          if (processedUpdateIds.has(u.update_id)) {
+            logger.warn(
+              { updateId: u.update_id },
+              'Skipped duplicate Telegram update',
+            );
+            continue;
+          }
+          processedUpdateIds.mark(u.update_id);
           offset = Math.max(offset, u.update_id + 1);
           persistOffset();
 
@@ -1343,7 +1388,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
             continue;
           }
 
-          await processMessageEvent(msg, !!u.edited_message, onEvent);
+          await processMessageEvent(msg, !!u.edited_message, onEvent, u.update_id);
         }
 
         persistOffset();

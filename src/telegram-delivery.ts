@@ -755,8 +755,10 @@ export function logTelegramCommandAudit(
   command: string,
   allowed: boolean,
   reason: string,
+  updateId?: number,
+  messageId?: number,
 ): void {
-  logger.info({ chatJid, command, allowed, reason }, 'Telegram command audit');
+  logger.info({ chatJid, command, allowed, reason, updateId, messageId }, 'Telegram command audit');
 }
 
 // --- Permission gate ---

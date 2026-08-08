@@ -9,6 +9,7 @@ import {
   REQUIRED_PROJECT_PI_SKILLS,
   resolveProjectRuntimeSkillsDir,
   syncProjectPiSkillsToGroupPiHome,
+  validatePiSkillsSourceDir,
   validateProjectPiSkills,
 } from '../src/pi-skills.js';
 
@@ -1054,6 +1055,78 @@ test('VAL-WS3-014: invalid provenance value fails validation with clear message'
       i.message.includes('provenance') && i.message.includes('who-dis'),
     );
     assert.notEqual(provenanceIssue, undefined, JSON.stringify(result.issues));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+
+test('tags in skill frontmatter: top-level array is valid', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+  try {
+    const skillDir = path.join(tempRoot, 'tagged-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: tagged-skill',
+        'description: test',
+        'tags:',
+        '  - alpha',
+        '  - beta',
+        '---',
+        '',
+        '# Tagged Skill',
+        '',
+        '## When to use this skill',
+        '',
+        '- Use for test coverage.',
+        '',
+        '## When not to use this skill',
+        '',
+        '- Do not use outside test coverage.',
+        '',
+        '## Guardrails',
+        '',
+        '- Never run destructive git commands unless explicitly requested.',
+        '- Preserve unrelated worktree changes.',
+        '- Main/admin chat only for privileged actions.',
+      ].join('\n'),
+    );
+    const result = validatePiSkillsSourceDir(tempRoot);
+    assert.equal(
+      result.issues.length,
+      0,
+      result.issues.map((i) => i.message).join('; '),
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('tags in skill frontmatter: non-array is invalid', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-pi-skills-'));
+  try {
+    const skillDir = path.join(tempRoot, 'bad-tags-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: bad-tags-skill',
+        'description: test',
+        'tags: nope',
+        '---',
+        '',
+        '# Bad Tags Skill',
+      ].join('\n'),
+    );
+    const result = validatePiSkillsSourceDir(tempRoot);
+    const tagIssue = result.issues.find((i) =>
+      i.message.includes('"tags"'),
+    );
+    assert.ok(tagIssue, 'expected a tags validation issue');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

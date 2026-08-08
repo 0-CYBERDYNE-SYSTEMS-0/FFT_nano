@@ -21,7 +21,7 @@
     "activeHours": null,
     "activeHoursRaw": null,
     "visibility": {
-      "showOk": true,
+      "showOk": false,
       "showAlerts": true,
       "useIndicator": true
     }
