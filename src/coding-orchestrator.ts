@@ -181,6 +181,17 @@ function summarizeText(text: string): string {
   return firstParagraph.slice(0, 280);
 }
 
+function parseRuntimeMs(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
 function sanitizePathToken(value: string): string {
   return (
     value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'run'
@@ -1149,6 +1160,20 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           thinkLevel: request.runtimePrefs?.thinkLevel,
           reasoningLevel: request.runtimePrefs?.reasoningLevel,
           verboseMode: request.runtimePrefs?.verboseMode,
+          lifecyclePolicyOverride: {
+            hardTimeoutMs: parseRuntimeMs(
+              process.env.FFT_NANO_TIMEOUT_CODER,
+              60 * 60 * 1000,
+              1_000,
+              24 * 60 * 60 * 1000,
+            ),
+            // Coding workers run detached for long stretches; the interactive
+            // stale detector would kill them mid-tool. Only the hard timeout
+            // bounds this run.
+            staleAfterMs: null,
+            toolActiveStaleMs: null,
+            waitStateStaleMs: null,
+          },
           extraSystemPrompt: [
             '## Coding Worker Metadata',
             '```json',
