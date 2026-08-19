@@ -118,6 +118,8 @@ export interface ContainerInput {
     waitStateStaleMs?: number | null;
     allowFreshSessionFallback?: boolean;
   };
+  // Internal absolute deadline shared by coding workers and provider fallbacks.
+  lifecycleDeadlineMs?: number;
   effectiveTimezone?: string;
   // Internal guardrail for provider fallback sequencing.
   attemptedProviders?: string[];
@@ -353,7 +355,7 @@ function isInteractivePiRun(params: {
   );
 }
 
-function resolvePiRunLifecyclePolicy(params: {
+export function resolvePiRunLifecyclePolicy(params: {
   input: ContainerInput;
   codingHint: CodingHint;
   groupTimeoutMs: number;
@@ -370,22 +372,37 @@ function resolvePiRunLifecyclePolicy(params: {
     toolActiveStaleMs: number | null;
     waitStateStaleMs: number | null;
     allowFreshSessionFallback: boolean;
-  }) => ({
-    hardTimeoutMs:
-      params.input.lifecyclePolicyOverride?.hardTimeoutMs ??
-      policy.hardTimeoutMs,
-    staleAfterMs:
-      params.input.lifecyclePolicyOverride?.staleAfterMs ?? policy.staleAfterMs,
-    toolActiveStaleMs:
-      params.input.lifecyclePolicyOverride?.toolActiveStaleMs ??
-      policy.toolActiveStaleMs,
-    waitStateStaleMs:
-      params.input.lifecyclePolicyOverride?.waitStateStaleMs ??
-      policy.waitStateStaleMs,
-    allowFreshSessionFallback:
-      params.input.lifecyclePolicyOverride?.allowFreshSessionFallback ??
-      policy.allowFreshSessionFallback,
-  });
+  }) => {
+    const override = params.input.lifecyclePolicyOverride;
+    const remainingDeadlineMs =
+      params.input.lifecycleDeadlineMs === undefined
+        ? undefined
+        : Math.max(1_000, params.input.lifecycleDeadlineMs - Date.now());
+    const requestedHardTimeoutMs =
+      override?.hardTimeoutMs ?? policy.hardTimeoutMs;
+    return {
+      hardTimeoutMs:
+        remainingDeadlineMs === undefined
+          ? requestedHardTimeoutMs
+          : Math.min(requestedHardTimeoutMs, remainingDeadlineMs),
+      // A key present but null means "disable this detector", not "fall back".
+      // `??` cannot express that, so check ownership explicitly.
+      staleAfterMs:
+        override && 'staleAfterMs' in override
+          ? override.staleAfterMs ?? null
+          : policy.staleAfterMs,
+      toolActiveStaleMs:
+        override && 'toolActiveStaleMs' in override
+          ? override.toolActiveStaleMs ?? null
+          : policy.toolActiveStaleMs,
+      waitStateStaleMs:
+        override && 'waitStateStaleMs' in override
+          ? override.waitStateStaleMs ?? null
+          : policy.waitStateStaleMs,
+      allowFreshSessionFallback:
+        override?.allowFreshSessionFallback ?? policy.allowFreshSessionFallback,
+    };
+  };
 
   if (isHeartbeatRequest(params.input.requestId)) {
     return applyOverride({
@@ -419,7 +436,7 @@ function resolvePiRunLifecyclePolicy(params: {
 
   const defaultInteractiveTimeoutMs = parseRuntimeMs(
     process.env.FFT_NANO_INTERACTIVE_TIMEOUT_MS,
-    10 * 60 * 1000,
+    20 * 60 * 1000,
     1_000,
     CONTAINER_TIMEOUT,
   );
@@ -427,30 +444,61 @@ function resolvePiRunLifecyclePolicy(params: {
     params.groupTimeoutMs > 0
       ? Math.min(params.groupTimeoutMs, defaultInteractiveTimeoutMs)
       : defaultInteractiveTimeoutMs;
-  const staleAfterMs = parseRuntimeMs(
-    process.env.FFT_NANO_INTERACTIVE_STALE_MS,
-    90_000,
-    100,
-    Math.max(100, hardTimeoutMs - 100),
-  );
-  const toolActiveStaleMs = parseRuntimeMs(
-    process.env.FFT_NANO_INTERACTIVE_TOOL_STALE_MS,
-    Math.min(
-      Math.max(100, hardTimeoutMs - 100),
-      Math.max(staleAfterMs, 5 * 60 * 1000),
-    ),
-    100,
-    Math.max(100, hardTimeoutMs - 100),
-  );
-  const waitStateStaleMs = parseRuntimeMs(
-    process.env.FFT_NANO_INTERACTIVE_WAIT_STALE_MS,
-    Math.min(
-      Math.max(100, hardTimeoutMs - 100),
-      Math.max(staleAfterMs, 3 * 60 * 1000),
-    ),
-    100,
-    Math.max(100, hardTimeoutMs - 100),
-  );
+  // Stale detection is opt-in for interactive runs. A long LLM reasoning
+  // pause or slow tool wait otherwise reads as "stalled" and kills turns the
+  // user expected to finish. Set FFT_NANO_INTERACTIVE_STALE_MS to re-enable.
+  const staleEnabled = process.env.FFT_NANO_INTERACTIVE_STALE_MS !== undefined;
+  const override = params.input.lifecyclePolicyOverride;
+  const policyStaleAfterMs = staleEnabled
+    ? parseRuntimeMs(
+        process.env.FFT_NANO_INTERACTIVE_STALE_MS,
+        90_000,
+        100,
+        Math.max(100, hardTimeoutMs - 100),
+      )
+    : null;
+  // Effective stale budget after explicit override (null = detector disabled).
+  const staleAfterMs =
+    override && 'staleAfterMs' in override
+      ? override.staleAfterMs ?? null
+      : policyStaleAfterMs;
+  // Tool/wait budgets derive from the effective stale budget unless the
+  // override pins them, so a run that keeps stale detection on still gets the
+  // generous tool/wait windows instead of inheriting a stale-timer kill.
+  const derivedToolStaleMs = staleAfterMs
+    ? Math.min(
+        Math.max(100, hardTimeoutMs - 100),
+        Math.max(staleAfterMs, 5 * 60 * 1000),
+      )
+    : null;
+  const derivedWaitStaleMs = staleAfterMs
+    ? Math.min(
+        Math.max(100, hardTimeoutMs - 100),
+        Math.max(staleAfterMs, 3 * 60 * 1000),
+      )
+    : null;
+  const toolActiveStaleMs =
+    override && 'toolActiveStaleMs' in override
+      ? override.toolActiveStaleMs ?? null
+      : staleEnabled
+        ? parseRuntimeMs(
+            process.env.FFT_NANO_INTERACTIVE_TOOL_STALE_MS,
+            derivedToolStaleMs ?? 0,
+            100,
+            Math.max(100, hardTimeoutMs - 100),
+          ) || null
+        : null;
+  const waitStateStaleMs =
+    override && 'waitStateStaleMs' in override
+      ? override.waitStateStaleMs ?? null
+      : staleEnabled
+        ? parseRuntimeMs(
+            process.env.FFT_NANO_INTERACTIVE_WAIT_STALE_MS,
+            derivedWaitStaleMs ?? 0,
+            100,
+            Math.max(100, hardTimeoutMs - 100),
+          ) || null
+        : null;
 
   return applyOverride({
     hardTimeoutMs,
@@ -1793,8 +1841,11 @@ export async function runContainerAgent(
       const armStaleTimer = (
         delayMs: number | null = lifecyclePolicy.staleAfterMs,
       ) => {
-        if (!delayMs) return;
         if (staleTimer) clearTimeout(staleTimer);
+        staleTimer = null;
+        // null means "no stale limit for this phase": disarm, don't fall back
+        // to a stale timer armed for a previous phase.
+        if (!delayMs) return;
         staleTimer = setTimeout(() => {
           if (runFinalized || localSettled) return;
           const now = Date.now();
@@ -2386,8 +2437,7 @@ export async function runContainerAgent(
           });
 
           if (fallbackProviders.length > 0) {
-            // Stop the parent timer — each recursive fallback call gets its own
-            // fresh timeout, preventing the parent clock from killing the fallback child.
+            // The recursive fallback receives the same absolute deadline.
             if (timeoutHandle) clearTimeout(timeoutHandle);
             if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
 

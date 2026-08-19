@@ -181,6 +181,17 @@ function summarizeText(text: string): string {
   return firstParagraph.slice(0, 280);
 }
 
+function parseRuntimeMs(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
 function sanitizePathToken(value: string): string {
   return (
     value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'run'
@@ -986,6 +997,22 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       ),
       emit: (event) => deps.publishEvent(event),
     });
+    const coderTimeoutMs = parseRuntimeMs(
+      process.env.FFT_NANO_TIMEOUT_CODER,
+      60 * 60 * 1000,
+      1_000,
+      24 * 60 * 60 * 1000,
+    );
+    const coderDeadlineMs = Date.now() + coderTimeoutMs;
+    const buildCoderLifecyclePolicy = () => ({
+      hardTimeoutMs: Math.max(
+        1_000,
+        Math.min(coderTimeoutMs, coderDeadlineMs - Date.now()),
+      ),
+      staleAfterMs: null,
+      toolActiveStaleMs: null,
+      waitStateStaleMs: null,
+    });
 
     const activeRun: ActiveCodingRunState = {
       requestId: request.requestId,
@@ -1149,6 +1176,16 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           thinkLevel: request.runtimePrefs?.thinkLevel,
           reasoningLevel: request.runtimePrefs?.reasoningLevel,
           verboseMode: request.runtimePrefs?.verboseMode,
+          lifecyclePolicyOverride: {
+            ...buildCoderLifecyclePolicy(),
+            // Coding workers run detached for long stretches; the interactive
+            // stale detector would kill them mid-tool. Only the hard timeout
+            // bounds this run.
+            staleAfterMs: null,
+            toolActiveStaleMs: null,
+            waitStateStaleMs: null,
+          },
+          lifecycleDeadlineMs: coderDeadlineMs,
           extraSystemPrompt: [
             '## Coding Worker Metadata',
             '```json',
@@ -1334,8 +1371,36 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
               workspaceDirOverride,
               provider: request.runtimePrefs?.provider,
               model: request.runtimePrefs?.model,
+              lifecyclePolicyOverride: {
+                ...buildCoderLifecyclePolicy(),
+                staleAfterMs: null,
+                toolActiveStaleMs: null,
+                waitStateStaleMs: null,
+              },
+              lifecycleDeadlineMs: coderDeadlineMs,
             },
             request.abortController?.signal,
+            (event) => {
+              deps.publishEvent({
+                kind: 'tool_progress',
+                id: createHostEventId('tool'),
+                createdAt: new Date().toISOString(),
+                source: 'coding-orchestrator',
+                runId: request.requestId,
+                sessionKey: request.sessionKey,
+                chatJid: request.originChatJid,
+                index: event.index,
+                toolName: event.toolName,
+                status: event.status,
+                ...(event.args ? { args: event.args } : {}),
+                ...(event.output ? { output: event.output } : {}),
+                ...(event.error ? { error: event.error } : {}),
+              });
+            },
+            undefined,
+            (event) => {
+              runProgress.handle(event);
+            },
           );
 
           if (refinedOutput.status === 'success' && refinedOutput.result) {

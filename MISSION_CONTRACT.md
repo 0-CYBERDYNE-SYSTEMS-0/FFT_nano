@@ -126,3 +126,56 @@ release-check + secret-scan green):
 **Contract status: COMPLETE.** Scoped pass (§1, §2, §6, §7) shipped + verified
 live; all deferred follow-ups (resume, §3, §4a, §4b, §5) implemented + gated on
 the follow-up branch, pending deploy + live verification.
+
+---
+
+## Mission Contract — Worker Visibility & Timeout Architecture (this pass)
+
+**Branch:** `feat/worker-visibility-timeouts`
+**Baseline:** `main` @ `b5e1c32` (typecheck + tests green).
+
+### Problem statement
+
+Two user-facing defects, both traced to the same two-path asymmetry in the
+runtime:
+
+1. **The intermediary disappears.** `/coder`, `/coding`, and subagent runs go
+   through `coding-orchestrator.ts`, which never attaches a Telegram
+   `StreamConsumer`. All intermediate progress (`tool_progress`, `run_progress`
+   heartbeats) is published to the host bus and then dropped:
+   `host-coordination.ts` routes `tool_progress` to TUI only, and the
+   `run_progress` handler returns early for the default `status` delivery mode
+   when no active consumer exists. The user sees "Starting coder run…" then
+   silence for up to 30 minutes, then the final blob.
+2. **Wrong timeout applies to workers.** `timeoutSeconds: 1800` on
+   `CodingWorkerRequest` is metadata only — never enforced. Coder workers
+   actually run under the *interactive* lifecycle policy: 10-minute hard
+   timeout plus a 90-second stale detector (`FFT_NANO_INTERACTIVE_STALE_MS`).
+   The stale detector kills long thinking pauses and slow tool waits, producing
+   "That took longer than I'm allowed to spend" on legitimate work.
+
+### Contract
+
+| # | Commitments | Mechanism |
+|---|---|---|
+| V1 | Coder/subagent runs stream live status to Telegram | `runCodingTask` (agent-runner.ts) attaches a `StreamConsumer` (label `Coder`, `status` delivery, sealing disabled) registered in the active-consumer map so host `run_progress` events route to the chat |
+| V2 | Interactive hard timeout raised 10m → 20m | `FFT_NANO_INTERACTIVE_TIMEOUT_MS` default changed in `resolvePiRunLifecyclePolicy` |
+| V3 | Interactive stale detection off by default | `staleAfterMs`/`toolActiveStaleMs`/`waitStateStaleMs` resolve to `null` unless `FFT_NANO_INTERACTIVE_STALE_MS` is explicitly set; opt-in, not opt-out |
+| V4 | Coder runs bounded by their own 60m budget | Orchestrator now sets `lifecyclePolicyOverride` with `hardTimeoutMs` from `FFT_NANO_TIMEOUT_CODER` (default 60m) and all stale detectors null |
+| V5 | Explicit `null` overrides disable detectors | `applyOverride` in `resolvePiRunLifecyclePolicy` checks key ownership (`'staleAfterMs' in override`) instead of `??`, so `null` means "disabled" not "fall back" |
+| V6 | Policy resolver exported + unit-tested | `resolvePiRunLifecyclePolicy` exported from pi-runner.ts; new `tests/pi-runner-lifecycle-policy.test.ts` covers defaults, env overrides, opt-in stale, null-disables-detector |
+
+### Acceptance gate
+
+1. `npm run typecheck` clean.
+2. `npm test` green (existing + new lifecycle-policy tests).
+3. `npm run release-check` + `npm run secret-scan` green.
+4. PR to `origin/main`, no direct pushes.
+
+### Out of scope this pass
+
+- Evaluator QA sub-budget (evaluator already skips on error/timeout; its own
+  `hardTimeoutMs: 90_000` remains).
+- Single consolidated run registry (C5 from the architecture review).
+- Delivery-mode semantics beyond attaching the consumer (the consumer honors
+  the chat's existing `status`/`off` preference).
