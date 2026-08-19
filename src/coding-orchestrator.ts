@@ -1359,6 +1359,17 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
               workspaceDirOverride,
               provider: request.runtimePrefs?.provider,
               model: request.runtimePrefs?.model,
+              lifecyclePolicyOverride: {
+                hardTimeoutMs: parseRuntimeMs(
+                  process.env.FFT_NANO_TIMEOUT_CODER,
+                  60 * 60 * 1000,
+                  1_000,
+                  24 * 60 * 60 * 1000,
+                ),
+                staleAfterMs: null,
+                toolActiveStaleMs: null,
+                waitStateStaleMs: null,
+              },
             },
             request.abortController?.signal,
           );

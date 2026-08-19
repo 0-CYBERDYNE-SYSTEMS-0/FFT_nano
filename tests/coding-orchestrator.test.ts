@@ -156,6 +156,7 @@ test('execute mode returns structured worker result with changed files', async (
 test('execute mode refines against the execution contract and records QA verdict', async () => {
   let runCalls = 0;
   const evaluatorCalls: string[] = [];
+  const lifecyclePolicies: Array<Record<string, unknown> | undefined> = [];
   const orchestrator = createCodingOrchestrator({
     activeRuns: new Map(),
     createEphemeralWorktree: async () => ({
@@ -166,6 +167,7 @@ test('execute mode refines against the execution contract and records QA verdict
     }),
     runContainerAgent: async (_group, input) => {
       runCalls += 1;
+      lifecyclePolicies.push(input.lifecyclePolicyOverride);
       assert.match(input.prompt, /Host Execution Contract/);
       return {
         status: 'success',
@@ -212,6 +214,11 @@ test('execute mode refines against the execution contract and records QA verdict
 
   assert.equal(result.ok, true);
   assert.equal(runCalls, 2);
+  assert.equal(lifecyclePolicies.length, 2);
+  assert.equal(lifecyclePolicies[0]?.hardTimeoutMs, 60 * 60 * 1000);
+  assert.equal(lifecyclePolicies[1]?.hardTimeoutMs, 60 * 60 * 1000);
+  assert.equal(lifecyclePolicies[0]?.staleAfterMs, null);
+  assert.equal(lifecyclePolicies[1]?.staleAfterMs, null);
   assert.equal(result.workerResult?.qaVerdict?.pass, true);
   assert.equal(result.workerResult?.qaVerdict?.refinements, 1);
   assert.ok(evaluatorCalls[0]?.includes('# Coder Execution Contract'));

@@ -78,6 +78,26 @@ test('interactive policy honors FFT_NANO_INTERACTIVE_TIMEOUT_MS', () => {
   );
 });
 
+test('tool and wait stale timers stay disabled without the main stale switch', () => {
+  withEnv(
+    {
+      FFT_NANO_INTERACTIVE_STALE_MS: undefined,
+      FFT_NANO_INTERACTIVE_TOOL_STALE_MS: '120000',
+      FFT_NANO_INTERACTIVE_WAIT_STALE_MS: '120000',
+    },
+    () => {
+      const policy = resolvePiRunLifecyclePolicy({
+        input: makeInput({ requestId: 'chat-1' }),
+        codingHint: 'none',
+        groupTimeoutMs: 0,
+      });
+      assert.equal(policy.staleAfterMs, null);
+      assert.equal(policy.toolActiveStaleMs, null);
+      assert.equal(policy.waitStateStaleMs, null);
+    },
+  );
+});
+
 test('interactive stale detection re-enables when FFT_NANO_INTERACTIVE_STALE_MS is set', () => {
   withEnv(
     {

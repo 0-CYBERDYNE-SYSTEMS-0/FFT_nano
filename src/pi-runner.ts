@@ -469,21 +469,25 @@ export function resolvePiRunLifecyclePolicy(params: {
   const toolActiveStaleMs =
     override && 'toolActiveStaleMs' in override
       ? override.toolActiveStaleMs ?? null
-      : parseRuntimeMs(
-          process.env.FFT_NANO_INTERACTIVE_TOOL_STALE_MS,
-          derivedToolStaleMs ?? 0,
-          100,
-          Math.max(100, hardTimeoutMs - 100),
-        ) || null;
+      : staleEnabled
+        ? parseRuntimeMs(
+            process.env.FFT_NANO_INTERACTIVE_TOOL_STALE_MS,
+            derivedToolStaleMs ?? 0,
+            100,
+            Math.max(100, hardTimeoutMs - 100),
+          ) || null
+        : null;
   const waitStateStaleMs =
     override && 'waitStateStaleMs' in override
       ? override.waitStateStaleMs ?? null
-      : parseRuntimeMs(
-          process.env.FFT_NANO_INTERACTIVE_WAIT_STALE_MS,
-          derivedWaitStaleMs ?? 0,
-          100,
-          Math.max(100, hardTimeoutMs - 100),
-        ) || null;
+      : staleEnabled
+        ? parseRuntimeMs(
+            process.env.FFT_NANO_INTERACTIVE_WAIT_STALE_MS,
+            derivedWaitStaleMs ?? 0,
+            100,
+            Math.max(100, hardTimeoutMs - 100),
+          ) || null
+        : null;
 
   return applyOverride({
     hardTimeoutMs,
