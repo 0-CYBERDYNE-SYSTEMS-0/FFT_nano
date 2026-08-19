@@ -770,6 +770,7 @@ main() {
 
   # Android/Termux uses termux-services
   if [[ "${platform}" == "Linux" ]] && is_termux; then
+    export SVDIR="${TERMUX_PREFIX}/var/service"
     "termux_${action}"
     return
   fi

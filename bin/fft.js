@@ -188,6 +188,7 @@ async function main() {
 
   // Handle service commands with platformAdapter
   if (command === 'service') {
+    process.chdir(repoRoot);
     const [serviceAction, ...serviceActionArgs] = commandArgs;
     const platformAdapter = await getPlatformAdapter();
 
