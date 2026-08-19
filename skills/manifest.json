@@ -10,6 +10,7 @@
   ],
   "bundled": [
     "agent-browser",
+    "agent-harness-engineer",
     "autoresearch-create",
     "autoresearch-finalize",
     "fft-coder-ops",
@@ -23,7 +24,12 @@
     "fft-telegram-ops",
     "loops",
     "rapid-research",
+    "skill-mechanic",
     "web-search"
   ],
-  "setupOnly": ["customize", "debug", "setup"]
+  "setupOnly": [
+    "customize",
+    "debug",
+    "setup"
+  ]
 }
