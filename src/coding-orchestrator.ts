@@ -1185,6 +1185,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
             toolActiveStaleMs: null,
             waitStateStaleMs: null,
           },
+          lifecycleDeadlineMs: coderDeadlineMs,
           extraSystemPrompt: [
             '## Coding Worker Metadata',
             '```json',
@@ -1376,6 +1377,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
                 toolActiveStaleMs: null,
                 waitStateStaleMs: null,
               },
+              lifecycleDeadlineMs: coderDeadlineMs,
             },
             request.abortController?.signal,
             (event) => {

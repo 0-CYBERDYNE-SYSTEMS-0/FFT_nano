@@ -118,6 +118,8 @@ export interface ContainerInput {
     waitStateStaleMs?: number | null;
     allowFreshSessionFallback?: boolean;
   };
+  // Internal absolute deadline shared by coding workers and provider fallbacks.
+  lifecycleDeadlineMs?: number;
   effectiveTimezone?: string;
   // Internal guardrail for provider fallback sequencing.
   attemptedProviders?: string[];
@@ -372,8 +374,17 @@ export function resolvePiRunLifecyclePolicy(params: {
     allowFreshSessionFallback: boolean;
   }) => {
     const override = params.input.lifecyclePolicyOverride;
+    const remainingDeadlineMs =
+      params.input.lifecycleDeadlineMs === undefined
+        ? undefined
+        : Math.max(1_000, params.input.lifecycleDeadlineMs - Date.now());
+    const requestedHardTimeoutMs =
+      override?.hardTimeoutMs ?? policy.hardTimeoutMs;
     return {
-      hardTimeoutMs: override?.hardTimeoutMs ?? policy.hardTimeoutMs,
+      hardTimeoutMs:
+        remainingDeadlineMs === undefined
+          ? requestedHardTimeoutMs
+          : Math.min(requestedHardTimeoutMs, remainingDeadlineMs),
       // A key present but null means "disable this detector", not "fall back".
       // `??` cannot express that, so check ownership explicitly.
       staleAfterMs:
@@ -2426,8 +2437,7 @@ export async function runContainerAgent(
           });
 
           if (fallbackProviders.length > 0) {
-            // Stop the parent timer — each recursive fallback call gets its own
-            // fresh timeout, preventing the parent clock from killing the fallback child.
+            // The recursive fallback receives the same absolute deadline.
             if (timeoutHandle) clearTimeout(timeoutHandle);
             if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
 
