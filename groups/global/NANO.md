@@ -28,7 +28,7 @@ This keeps users informed instead of waiting in silence.
 
 When you run as a scheduled task (no direct user message), use IPC messaging if needed to communicate with the user. Your return value is only logged internally - it won't be sent to the user.
 
-Example: If your task is "Share the weather forecast", you should:
+Example: If the task is "Share the weather forecast", you should:
 1. Get the weather data
 2. Write an IPC message JSON file with the formatted forecast
 3. Return a brief summary for the logs

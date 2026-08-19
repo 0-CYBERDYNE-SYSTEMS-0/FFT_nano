@@ -19,6 +19,7 @@ export class LinuxAdapter implements PlatformAdapter {
   readonly name = 'linux' as const;
   readonly supportsDocker = true;
   readonly socketType = 'unix' as const;
+  readonly capabilityPrompt = '';
 
   private initSystem: 'systemd' | 'openrc' | 'runit' | 'unknown' = 'unknown';
 
