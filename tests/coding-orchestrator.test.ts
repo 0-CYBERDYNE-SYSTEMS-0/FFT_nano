@@ -224,8 +224,14 @@ test('execute mode refines against the execution contract and records QA verdict
   assert.equal(result.ok, true);
   assert.equal(runCalls, 2);
   assert.equal(lifecyclePolicies.length, 2);
-  assert.equal(lifecyclePolicies[0]?.hardTimeoutMs, 60 * 60 * 1000);
-  assert.equal(lifecyclePolicies[1]?.hardTimeoutMs, 60 * 60 * 1000);
+  assert.ok(
+    Number(lifecyclePolicies[0]?.hardTimeoutMs) <= 60 * 60 * 1000 &&
+      Number(lifecyclePolicies[0]?.hardTimeoutMs) > 59 * 60 * 1000,
+  );
+  assert.ok(
+    Number(lifecyclePolicies[1]?.hardTimeoutMs) <= 60 * 60 * 1000 &&
+      Number(lifecyclePolicies[1]?.hardTimeoutMs) > 59 * 60 * 1000,
+  );
   assert.equal(lifecyclePolicies[0]?.staleAfterMs, null);
   assert.equal(lifecyclePolicies[1]?.staleAfterMs, null);
   assert.deepEqual(progressCallbacks, [true, true]);

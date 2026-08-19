@@ -470,7 +470,10 @@ export class StreamConsumer {
 
   handleExternalProgress(phase: string, text: string, detail?: string): void {
     if (this.completed) return;
-    this.emitStatusText(phase, text, detail);
+    const statusPhase = /^.*Still (?:running|reasoning|waiting)/.test(text)
+      ? 'heartbeat'
+      : phase;
+    this.emitStatusText(statusPhase, text, detail);
   }
 
   async finish(finalText?: string): Promise<FinishResult> {

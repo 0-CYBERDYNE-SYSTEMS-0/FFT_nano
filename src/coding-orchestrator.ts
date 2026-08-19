@@ -997,6 +997,22 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
       ),
       emit: (event) => deps.publishEvent(event),
     });
+    const coderTimeoutMs = parseRuntimeMs(
+      process.env.FFT_NANO_TIMEOUT_CODER,
+      60 * 60 * 1000,
+      1_000,
+      24 * 60 * 60 * 1000,
+    );
+    const coderDeadlineMs = Date.now() + coderTimeoutMs;
+    const buildCoderLifecyclePolicy = () => ({
+      hardTimeoutMs: Math.max(
+        1_000,
+        Math.min(coderTimeoutMs, coderDeadlineMs - Date.now()),
+      ),
+      staleAfterMs: null,
+      toolActiveStaleMs: null,
+      waitStateStaleMs: null,
+    });
 
     const activeRun: ActiveCodingRunState = {
       requestId: request.requestId,
@@ -1161,12 +1177,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
           reasoningLevel: request.runtimePrefs?.reasoningLevel,
           verboseMode: request.runtimePrefs?.verboseMode,
           lifecyclePolicyOverride: {
-            hardTimeoutMs: parseRuntimeMs(
-              process.env.FFT_NANO_TIMEOUT_CODER,
-              60 * 60 * 1000,
-              1_000,
-              24 * 60 * 60 * 1000,
-            ),
+            ...buildCoderLifecyclePolicy(),
             // Coding workers run detached for long stretches; the interactive
             // stale detector would kill them mid-tool. Only the hard timeout
             // bounds this run.
@@ -1360,12 +1371,7 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
               provider: request.runtimePrefs?.provider,
               model: request.runtimePrefs?.model,
               lifecyclePolicyOverride: {
-                hardTimeoutMs: parseRuntimeMs(
-                  process.env.FFT_NANO_TIMEOUT_CODER,
-                  60 * 60 * 1000,
-                  1_000,
-                  24 * 60 * 60 * 1000,
-                ),
+                ...buildCoderLifecyclePolicy(),
                 staleAfterMs: null,
                 toolActiveStaleMs: null,
                 waitStateStaleMs: null,
