@@ -157,6 +157,7 @@ test('execute mode refines against the execution contract and records QA verdict
   let runCalls = 0;
   const evaluatorCalls: string[] = [];
   const lifecyclePolicies: Array<Record<string, unknown> | undefined> = [];
+  const progressCallbacks: boolean[] = [];
   const orchestrator = createCodingOrchestrator({
     activeRuns: new Map(),
     createEphemeralWorktree: async () => ({
@@ -165,9 +166,17 @@ test('execute mode refines against the execution contract and records QA verdict
       listChangedFiles: () => ['src/feature.ts'],
       getDiffSummary: () => '1 file changed',
     }),
-    runContainerAgent: async (_group, input) => {
+    runContainerAgent: async (
+      _group,
+      input,
+      _abortSignal,
+      _onRuntimeEvent,
+      _onExtensionUIRequest,
+      onProgressEvent,
+    ) => {
       runCalls += 1;
       lifecyclePolicies.push(input.lifecyclePolicyOverride);
+      progressCallbacks.push(typeof onProgressEvent === 'function');
       assert.match(input.prompt, /Host Execution Contract/);
       return {
         status: 'success',
@@ -219,6 +228,7 @@ test('execute mode refines against the execution contract and records QA verdict
   assert.equal(lifecyclePolicies[1]?.hardTimeoutMs, 60 * 60 * 1000);
   assert.equal(lifecyclePolicies[0]?.staleAfterMs, null);
   assert.equal(lifecyclePolicies[1]?.staleAfterMs, null);
+  assert.deepEqual(progressCallbacks, [true, true]);
   assert.equal(result.workerResult?.qaVerdict?.pass, true);
   assert.equal(result.workerResult?.qaVerdict?.refinements, 1);
   assert.ok(evaluatorCalls[0]?.includes('# Coder Execution Contract'));

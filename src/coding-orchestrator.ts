@@ -1372,6 +1372,27 @@ export function createCodingOrchestrator(deps: CodingOrchestratorDeps): {
               },
             },
             request.abortController?.signal,
+            (event) => {
+              deps.publishEvent({
+                kind: 'tool_progress',
+                id: createHostEventId('tool'),
+                createdAt: new Date().toISOString(),
+                source: 'coding-orchestrator',
+                runId: request.requestId,
+                sessionKey: request.sessionKey,
+                chatJid: request.originChatJid,
+                index: event.index,
+                toolName: event.toolName,
+                status: event.status,
+                ...(event.args ? { args: event.args } : {}),
+                ...(event.output ? { output: event.output } : {}),
+                ...(event.error ? { error: event.error } : {}),
+              });
+            },
+            undefined,
+            (event) => {
+              runProgress.handle(event);
+            },
           );
 
           if (refinedOutput.status === 'success' && refinedOutput.result) {
