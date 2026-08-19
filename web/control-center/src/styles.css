@@ -1313,6 +1313,47 @@ textarea {
   gap: 0.55rem;
 }
 
+.onboarding-bootstrap {
+  border: 2px solid var(--border);
+  background: #fff;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.73rem;
+  line-height: 1.4;
+}
+
+.onboarding-bootstrap__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-family: "Menlo", "SFMono-Regular", "IBM Plex Mono", monospace;
+}
+
+.onboarding-bootstrap__head h3,
+.onboarding-bootstrap__head span {
+  margin: 0;
+  font-size: 0.7rem;
+}
+
+.onboarding-bootstrap__head span,
+.onboarding-bootstrap__note {
+  color: var(--muted);
+}
+
+.onboarding-bootstrap ul {
+  margin: 0.45rem 0 0;
+  padding-left: 1rem;
+}
+
+.onboarding-bootstrap li + li {
+  margin-top: 0.22rem;
+}
+
+.onboarding-bootstrap__proposal,
+.onboarding-bootstrap__note {
+  margin-top: 0.45rem;
+}
+
 .onboarding-modal__checkbox {
   grid-column: 1 / -1;
   flex-direction: row !important;

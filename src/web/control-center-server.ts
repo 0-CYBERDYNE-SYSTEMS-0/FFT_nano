@@ -57,6 +57,30 @@ interface OnboardingConfigPayload {
   whatsappEnabled?: boolean;
 }
 
+interface OnboardingBootstrapPayload {
+  device: { hostname: string; platform: string; runtime: 'docker' | 'host' };
+  web: {
+    accessMode: 'localhost' | 'lan' | 'remote';
+    authRequired: boolean;
+    phoneHandoff: 'local_only' | 'protected_network';
+  };
+  channels: {
+    telegram: { configured: boolean; claimReady: boolean; nextStep: string };
+    whatsapp: { enabled: boolean; linked: boolean; nextStep: string };
+  };
+  networkDiscovery: { intrusiveScanRun: false; cachedHomeAssistantInventory: boolean };
+  homeAssistant: {
+    credentialsConfigured: boolean;
+    validation: 'missing' | 'pending' | 'pass' | 'fail';
+    cachedEntityCount: number;
+    proposal: {
+      state: 'needs_setup' | 'ready_for_approval';
+      requiresExplicitApproval: true;
+      suggestedViews: Array<{ id: string; title: string; entityCount: number }>;
+    };
+  };
+}
+
 interface ProviderSetupLink {
   id: string;
   label: string;
@@ -185,6 +209,7 @@ export interface WebControlCenterAdapters {
   getBuildInfo: () => BuildInfoPayload;
   getGatewayStatus: () => GatewayStatusPayload;
   getOnboardingStatus?: () => OnboardingStatusPayload;
+  getOnboardingBootstrap?: () => OnboardingBootstrapPayload;
   applyOnboardingConfig?: (
     payload: OnboardingConfigPayload,
   ) => Promise<{ ok: boolean; requiresRestart: boolean; adminSecret?: string }>;
@@ -797,6 +822,19 @@ export async function startWebControlCenterServer(
           const message = err instanceof Error ? err.message : String(err);
           sendJson(res, 400, { ok: false, error: message });
         }
+        return;
+      }
+
+      if (requestPath === '/api/onboarding/bootstrap') {
+        if (method !== 'GET') {
+          sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+          return;
+        }
+        if (!adapters.getOnboardingBootstrap) {
+          sendJson(res, 404, { ok: false, error: 'Onboarding bootstrap API unavailable' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, bootstrap: adapters.getOnboardingBootstrap() });
         return;
       }
 
