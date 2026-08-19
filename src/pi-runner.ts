@@ -535,6 +535,8 @@ export function collectRuntimeSecrets(
     'MINIMAX_CN_BASE_URL',
     'STEPFUN_API_KEY',
     'STEPFUN_BASE_URL',
+    'QWEN_TOKEN_PLAN_API_KEY',
+    'QWEN_TOKEN_PLAN_BASE_URL',
     'OPENCODE_GO_BASE_URL',
     'OPENCODE_ZEN_BASE_URL',
     'KIMI_API_KEY',
