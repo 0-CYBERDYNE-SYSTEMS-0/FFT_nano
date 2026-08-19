@@ -14,6 +14,7 @@ export type RuntimeProviderPreset =
   | 'minimax-cn'
   | 'kimi-coding'
   | 'ollama'
+  | 'qwen-token-plan'
   | 'stepfun';
 
 export const RUNTIME_PROVIDER_PRESET_ENV = 'FFT_NANO_RUNTIME_PROVIDER_PRESET';
@@ -185,6 +186,19 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
       signupUrl: 'https://platform.stepfun.ai/step-plan',
       docsUrl: 'https://platform.stepfun.ai/docs/en/step-plan/overview',
       note: 'Subscription ($6.99-$99/mo). Uses the dedicated /step_plan/v1 endpoint, NOT the standard /v1.',
+    },
+  },
+  {
+    id: 'qwen-token-plan',
+    label: 'Qwen Token Plan',
+    piApi: 'qwen-token-plan',
+    defaultModel: 'qwen3.8-max-preview',
+    apiKeyEnv: 'QWEN_TOKEN_PLAN_API_KEY',
+    endpointEnv: 'QWEN_TOKEN_PLAN_BASE_URL',
+    defaultEndpointValue:
+      'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+    setupUrls: {
+      docsUrl: 'https://help.aliyun.com/en/model-studio/more-tools',
     },
   },
   {
