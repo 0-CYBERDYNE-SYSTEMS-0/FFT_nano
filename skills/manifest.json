@@ -10,6 +10,7 @@
   ],
   "bundled": [
     "agent-browser",
+    "agent-harness-engineer",
     "autoresearch-create",
     "autoresearch-finalize",
     "fft-coder-ops",
