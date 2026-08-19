@@ -74,6 +74,16 @@ export interface PlatformAdapter {
   // Platform capabilities
   readonly supportsDocker: boolean;
   readonly socketType: 'unix' | 'named_pipe' | 'tcp';
+
+  /**
+   * Platform-specific capability awareness injected into the agent's system
+   * prompt at runtime. Empty string on platforms with no special primitives
+   * to advertise; non-empty (e.g. Termux device primitives) on platforms
+   * where the agent must be told what it can directly do. Keeping this out of
+   * the static SOUL.md template is what lets one universal SOUL.md ship to
+   * every platform while Termux-only guidance reaches only Termux hosts.
+   */
+  readonly capabilityPrompt: string;
 }
 
 export type { Server as LocalSocketServer, Socket as LocalSocketClient };

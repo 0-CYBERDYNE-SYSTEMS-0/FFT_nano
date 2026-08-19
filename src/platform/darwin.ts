@@ -17,6 +17,7 @@ export class DarwinAdapter implements PlatformAdapter {
   readonly name = 'darwin' as const;
   readonly supportsDocker = true;
   readonly socketType = 'unix' as const;
+  readonly capabilityPrompt = '';
 
   async installService(): Promise<void> {
     const plistContent = `<?xml version="1.0" encoding="UTF-8"?>

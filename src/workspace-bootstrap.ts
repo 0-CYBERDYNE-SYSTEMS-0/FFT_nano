@@ -2,22 +2,29 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 
-import { MAIN_GROUP_FOLDER, PARITY_CONFIG } from './config.js';
-import {
-  KERNEL_REQUIRED_WORKSPACE_FILES,
-  KERNEL_WORKSPACE_FILES,
-} from './kernel-surface.js';
+import { MAIN_GROUP_FOLDER, PARITY_CONFIG, buildDefaultSoul } from './config.js';
 import { ensureKnowledgeWikiScaffold } from './knowledge-wiki.js';
 import { ensureDailyMemoryJournal } from './memory-paths.js';
 
-/** @see KERNEL_WORKSPACE_FILES — workspace contract is frozen in kernel-surface. */
-export const WORKSPACE_TEMPLATE_FILENAMES = KERNEL_WORKSPACE_FILES;
+export const WORKSPACE_TEMPLATE_FILENAMES = [
+  'NANO.md',
+  'SOUL.md',
+  'TODOS.md',
+  'HEARTBEAT.md',
+  'BOOT.md',
+  'BOOTSTRAP.md',
+  'MEMORY.md',
+] as const;
 
 export type WorkspaceTemplateFileName =
   (typeof WORKSPACE_TEMPLATE_FILENAMES)[number];
 
 const REQUIRED_BASE_FILES: WorkspaceTemplateFileName[] = [
-  ...KERNEL_REQUIRED_WORKSPACE_FILES,
+  'NANO.md',
+  'SOUL.md',
+  'TODOS.md',
+  'HEARTBEAT.md',
+  'MEMORY.md',
 ];
 
 const WORKSPACE_STATE_DIRNAME = '.fft_nano';
@@ -70,67 +77,8 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '  `$PREFIX/var/service/fft-nano/run`. The run script',
     '  `exec`s `scripts/start.sh start` so the same .env, TUI',
     '  defaults, and runtime selection apply on every platform.',
-    '',
-    '## Android / Termux Device Primitives',
-    '',
-    'When the host is running inside Termux on Android, the',
-    'following tools are first-class and MUST be used directly when',
-    'the user asks for files, photos, audio, video, or device actions:',
-    '',
-    '- Files: `termux-storage-get`, `termux-storage-write` (the',
-    '  official SAF picker), plus direct paths under `/sdcard/`,',
-    '  `/storage/emulated/0/`, and the Termux home at',
-    '  `/data/data/com.termux/files/home`. The agent has the same',
-    '  filesystem authority as the user did when they granted',
-    '  Termux:API storage permission via `termux-setup-storage`.',
-    '- Camera: `termux-camera-photo` for stills,',
-    '  `termux-camera-video` for video, `termux-camera-info` to',
-    '  enumerate cameras. Use these for image / video analysis.',
-    '- Microphone: `termux-microphone-record` and',
-    '  `termux-microphone-list` for transcriptions and audio capture.',
-    '- Share / handoff: `termux-share` to hand a file or URL to any',
-    '  other Android app the user has installed.',
-    '- Clipboard: `termux-clipboard-get` / `termux-clipboard-set`.',
-    '- Notifications: `termux-notification` (already wired into the',
-    '  platform adapter).',
-    '- Activity Manager: `am start -a android.intent.action.VIEW -d <uri>`',
-    '  to launch any installed app by intent. `am start -n <pkg>/<activity>`',
-    '  for a specific component. `am broadcast -a <action>` to send',
-    '  system-wide broadcasts.',
-    '- Sensors, location, contacts, SMS, telephony: each has a',
-    '  matching `termux-*` CLI. The full set is part of the',
-    '  `termux-api` package and the Termux:API companion app.',
-    '- Power-user escape hatch: `cmd <service> <args>` for',
-    '  Android system services (e.g. `cmd statusbar expand-settings`).',
-    '',
-    'Trust model:',
-    '- The agent is fully authenticated to operate the device on the',
-    "  user's behalf inside Termux:API's permission envelope. Do not",
-    '  refuse routine file, camera, or microphone operations on this',
-    '  platform; they are core primitives.',
-    '- For Android intents, prefer the existing app on the device',
-    '  over a hand-rolled implementation (e.g. use the system Camera',
-    '  via `am` rather than building a custom capture path).',
-    '- The agent does NOT need root for these primitives; everything',
-    '  above works in an unrooted Termux install with Termux:API',
-    '  permissions granted.',
   ].join('\n'),
-  'SOUL.md': [
-    '# SOUL',
-    '',
-    'You are concise, practical, and technically rigorous.',
-    '',
-    '## Capability Awareness (Android / Termux)',
-    '',
-    'When running on Android/Termux you have complete and total access',
-    'to the device file system, camera, microphone, location, sensors,',
-    'clipboard, notifications, and the full Android intent surface via',
-    'Activity Manager (`am`) and the `termux-*` CLI tools provided by',
-    'the Termux:API companion app. You use these directly, not through',
-    'a sandbox or wrapper, because they are core primitives. You are',
-    "fully authenticated for these operations under the user's",
-    'Termux:API permission grant — no root is required.',
-  ].join('\n'),
+  'SOUL.md': buildDefaultSoul(),
   'TODOS.md': [
     '# TODOS.md = MISSION CONTROL: Initial Mission',
     '',
