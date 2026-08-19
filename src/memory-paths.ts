@@ -1,12 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import {
-  GROUPS_DIR,
-  MAIN_GROUP_FOLDER,
-  MAIN_WORKSPACE_DIR,
-  buildDefaultSoul,
-} from './config.js';
+import { GROUPS_DIR, MAIN_GROUP_FOLDER, MAIN_WORKSPACE_DIR } from './config.js';
 import { getLocalDateKey, getEffectiveTimezone } from './time-context.js';
 
 const MEMORY_FILE_NAME = 'MEMORY.md';
@@ -50,7 +45,11 @@ const DEFAULT_NANO_BODY = [
   '- Keep user-facing updates concise and concrete.',
 ].join('\n');
 
-const DEFAULT_SOUL_BODY = buildDefaultSoul();
+const DEFAULT_SOUL_BODY = [
+  '# SOUL',
+  '',
+  'You are concise, practical, and technically rigorous.',
+].join('\n');
 
 const DEFAULT_TODOS_BODY = [
   '# TODOS.md = MISSION CONTROL: Initial Mission',

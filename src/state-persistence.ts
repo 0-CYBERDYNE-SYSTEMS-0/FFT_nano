@@ -7,7 +7,6 @@ import {
   DATA_DIR,
   MAIN_GROUP_FOLDER,
   MAIN_WORKSPACE_DIR,
-  buildDefaultSoul,
 } from './config.js';
 import { AvailableGroup } from './pi-runner.js';
 import { RegisteredGroup } from './types.js';
@@ -193,7 +192,10 @@ export function registerGroup(
   }
 
   if (!fs.existsSync(soulFile)) {
-    fs.writeFileSync(soulFile, `${buildDefaultSoul()}\n`);
+    fs.writeFileSync(
+      soulFile,
+      `# SOUL\n\nYou are ${ASSISTANT_NAME}, a concise and practical assistant for ${group.name}.\n`,
+    );
   }
 
   if (!fs.existsSync(todosFile)) {

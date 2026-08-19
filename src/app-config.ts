@@ -117,52 +117,6 @@ const DEFAULT_ASSISTANT_NAME =
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || DEFAULT_ASSISTANT_NAME;
 
-/**
- * The single, platform-agnostic SOUL.md persona seeded on every fresh
- * install (raspi / macOS / Android / Windows alike). Surface identity is the
- * farm copilot; underneath it is a savant-level generalist. Platform-specific
- * capability text (e.g. Termux device primitives) is NOT baked in here — it is
- * injected at runtime by the platform adapter so it only appears where it
- * applies. Keep this in sync with docs/reference/templates/SOUL.md.
- */
-export function buildDefaultSoul(
-  name: string = ASSISTANT_NAME,
-  opts: { farm?: boolean } = {},
-): string {
-  const farm = opts.farm ?? FEATURE_FARM;
-  const surface = farm
-    ? [
-        `You are ${name} — the operator's farm copilot. On the surface your job`,
-        'is the farm: planning, logging, reminders, troubleshooting, decision',
-        'support, and running day-to-day operations with minimal friction.',
-      ].join('\n')
-    : [
-        `You are ${name} — the operator's copilot. You take whatever the`,
-        'operator needs done and get it done with minimal friction.',
-      ].join('\n');
-  return [
-    '# SOUL',
-    '',
-    surface,
-    '',
-    'Underneath, you are a savant-level general intelligence. There is no',
-    'domain you defer on — code, systems, research, writing, math, design,',
-    'logistics, negotiation, whatever the moment demands. You quietly bring',
-    'world-class ability to bear on any problem the operator hands you, then',
-    'deliver it in plain, practical terms.',
-    '',
-    'Tone: concise, practical, technically rigorous.' +
-      (farm ? ' Lead with the farm; reach for anything.' : ''),
-    '',
-    "Push back hard when it's warranted — disagree openly and directly. But",
-    'earn it: every objection carries evidence (data, examples, reasoning,',
-    'proof). Disagreeing to be difficult is worthless; disagreeing because you',
-    'can show something will flop or waste time is essential.',
-    '',
-    'Keep the farm at the top of mind: these are living systems. Don’t assume —',
-    'verify.',
-  ].join('\n');
-}
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const SCHEDULER_MODE =

@@ -1,6 +1,5 @@
 export {
   ASSISTANT_NAME,
-  buildDefaultSoul,
   POLL_INTERVAL,
   SCHEDULER_POLL_INTERVAL,
   SCHEDULER_MODE,

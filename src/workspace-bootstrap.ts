@@ -2,29 +2,22 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 
-import { MAIN_GROUP_FOLDER, PARITY_CONFIG, buildDefaultSoul } from './config.js';
+import { MAIN_GROUP_FOLDER, PARITY_CONFIG } from './config.js';
+import {
+  KERNEL_REQUIRED_WORKSPACE_FILES,
+  KERNEL_WORKSPACE_FILES,
+} from './kernel-surface.js';
 import { ensureKnowledgeWikiScaffold } from './knowledge-wiki.js';
 import { ensureDailyMemoryJournal } from './memory-paths.js';
 
-export const WORKSPACE_TEMPLATE_FILENAMES = [
-  'NANO.md',
-  'SOUL.md',
-  'TODOS.md',
-  'HEARTBEAT.md',
-  'BOOT.md',
-  'BOOTSTRAP.md',
-  'MEMORY.md',
-] as const;
+/** @see KERNEL_WORKSPACE_FILES — workspace contract is frozen in kernel-surface. */
+export const WORKSPACE_TEMPLATE_FILENAMES = KERNEL_WORKSPACE_FILES;
 
 export type WorkspaceTemplateFileName =
   (typeof WORKSPACE_TEMPLATE_FILENAMES)[number];
 
 const REQUIRED_BASE_FILES: WorkspaceTemplateFileName[] = [
-  'NANO.md',
-  'SOUL.md',
-  'TODOS.md',
-  'HEARTBEAT.md',
-  'MEMORY.md',
+  ...KERNEL_REQUIRED_WORKSPACE_FILES,
 ];
 
 const WORKSPACE_STATE_DIRNAME = '.fft_nano';
@@ -78,7 +71,22 @@ const DEFAULT_TEMPLATE_BODIES: Record<WorkspaceTemplateFileName, string> = {
     '  `exec`s `scripts/start.sh start` so the same .env, TUI',
     '  defaults, and runtime selection apply on every platform.',
   ].join('\n'),
-  'SOUL.md': buildDefaultSoul(),
+  'SOUL.md': [
+    '# SOUL',
+    '',
+    'You are concise, practical, and technically rigorous.',
+    '',
+    '## Capability Awareness (Android / Termux)',
+    '',
+    'When running on Android/Termux you have complete and total access',
+    'to the device file system, camera, microphone, location, sensors,',
+    'clipboard, notifications, and the full Android intent surface via',
+    'Activity Manager (`am`) and the `termux-*` CLI tools provided by',
+    'the Termux:API companion app. You use these directly, not through',
+    'a sandbox or wrapper, because they are core primitives. You are',
+    "fully authenticated for these operations under the user's",
+    'Termux:API permission grant — no root is required.',
+  ].join('\n'),
   'TODOS.md': [
     '# TODOS.md = MISSION CONTROL: Initial Mission',
     '',
