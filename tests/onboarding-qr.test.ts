@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import { buildOnboardingHandoffUrl } from '../scripts/print-onboarding-qr.mjs';
 import { buildOnboardingBootstrap } from '../src/onboarding-bootstrap.ts';
-import { getOnboardingResumeStage, isOnboardingHandoff } from '../web/control-center/src/onboarding.tsx';
+import {
+  getOnboardingResumeStage,
+  isOnboardingHandoff,
+} from '../web/control-center/src/onboarding-logic.ts';
 
 test('buildOnboardingHandoffUrl adds the wizard handoff without exposing credentials', () => {
   const result = buildOnboardingHandoffUrl('http://farm-nano.local:28990/setup?source=installer');
