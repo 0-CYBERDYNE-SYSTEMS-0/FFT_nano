@@ -170,7 +170,7 @@ export class CodingPipeline implements RunPipeline {
         originChatJid: request.chatJid,
         originGroupFolder: request.groupFolder,
         taskText: request.taskText || '',
-        timeoutSeconds: 1800,
+        timeoutSeconds: 3600,
         allowFanout: request.allowFanout || false,
         sessionContext: request.prompt || '',
         assistantName: this.deps.constants.assistantName,

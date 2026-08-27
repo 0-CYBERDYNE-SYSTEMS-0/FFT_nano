@@ -52,6 +52,7 @@ import {
   telegramPreviewRegistry,
   type ActiveChatRun,
   type ChatRunPreferences,
+  type TelegramDeliveryMode,
 } from './app-state.js';
 import { MAIN_ONBOARDING_COMPLETION_TOKEN } from './onboarding-completion.js';
 import type { RegisteredGroup } from './types.js';
@@ -365,10 +366,66 @@ export async function runCodingTask(
     (params.group.folder === MAIN_GROUP_FOLDER
       ? MAIN_WORKSPACE_DIR
       : resolveGroupFolderPath(params.group.folder));
-  return getCodingOrchestrator().runTask({
-    ...params,
-    workspaceRoot,
-  });
+  const chatJid = params.originChatJid;
+  const runId = params.requestId;
+  // Coding workers run detached, so without an attached consumer the chat sees
+  // only the start notice and the final blob. Attach the same StreamConsumer
+  // the interactive path uses so status milestones and tool activity stream
+  // to Telegram during the run instead of going dark for minutes.
+  let streamConsumer: StreamConsumer | null = null;
+  const bot = state.telegramBot;
+  const shouldStream = !!bot && isTelegramJid(chatJid);
+  const cleanupStreamConsumer = () => {
+    if (streamConsumer && shouldStream) {
+      unregisterActiveStreamConsumer(chatJid, runId, streamConsumer);
+    }
+    streamConsumer = null;
+  };
+  if (shouldStream && bot) {
+    const chatPrefs = state.chatRunPreferences[chatJid] || {};
+    const deliveryMode: TelegramDeliveryMode =
+      chatPrefs.telegramDeliveryMode === 'off' ? 'off' : 'status';
+    streamConsumer = new StreamConsumer({
+      chatId: chatJid,
+      runId,
+      adapter: createTelegramAdapter(bot),
+      label: 'Coder',
+      heartbeatMs: FFT_NANO_TELEGRAM_HEARTBEAT_MS,
+      deliveryMode,
+      verboseMode: chatPrefs.verboseMode || 'off',
+      // Coder output is non-monotonic (worker edits files, then summarizes),
+      // so sealing the streamed preview is unsafe.
+      sealingEnabled: false,
+    });
+    registerActiveStreamConsumer(chatJid, runId, streamConsumer);
+  }
+
+  try {
+    const result = await getCodingOrchestrator().runTask({
+      ...params,
+      workspaceRoot,
+    });
+    if (streamConsumer && isTelegramJid(chatJid)) {
+      if (!result.ok) {
+        await streamConsumer
+          .collapseActivity('⚠️ Stopped')
+          .catch(() => {});
+      } else if (result.result) {
+        await streamConsumer
+          .collapseActivity('✓ Done')
+          .catch(() => {});
+      }
+      streamConsumer.stop();
+    }
+    return result;
+  } catch (err) {
+    if (streamConsumer) {
+      await streamConsumer.abort().catch(() => {});
+    }
+    throw err;
+  } finally {
+    cleanupStreamConsumer();
+  }
 }
 
 // ---------------------------------------------------------------------------

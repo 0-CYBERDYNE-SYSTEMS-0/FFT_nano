@@ -138,6 +138,27 @@ describe('StreamConsumer', () => {
     consumer.stop();
   });
 
+  test('status mode forwards external worker heartbeats', () => {
+    const adapter = createMockAdapter();
+    const tuiEvents: Array<{ phase?: string; text?: string }> = [];
+    const consumer = new StreamConsumer({
+      chatId: 'telegram:1',
+      runId: 'run-heartbeat',
+      adapter,
+      deliveryMode: 'status',
+      verboseMode: 'off',
+      onTuiEvent: (event) => tuiEvents.push(event),
+    });
+
+    consumer.handleExternalProgress(
+      'thinking',
+      'Coder status: Still reasoning about the task (30s).',
+    );
+
+    assert.equal(tuiEvents.at(-1)?.phase, 'heartbeat');
+    consumer.stop();
+  });
+
   test('delivery mode append sends durable blocks without editing', async () => {
     const adapter = createMockAdapter();
     const consumer = new StreamConsumer({

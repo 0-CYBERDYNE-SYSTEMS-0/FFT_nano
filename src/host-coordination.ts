@@ -189,7 +189,7 @@ function spawnAgentSubagent(params: {
       originChatJid: targetJid,
       originGroupFolder: sourceGroup,
       taskText: task,
-      timeoutSeconds: 1800,
+      timeoutSeconds: 3600,
       allowFanout: false,
       sessionContext: `[SUBAGENT ${mode.toUpperCase()} REQUEST]\n${task}`,
       assistantName: ASSISTANT_NAME,

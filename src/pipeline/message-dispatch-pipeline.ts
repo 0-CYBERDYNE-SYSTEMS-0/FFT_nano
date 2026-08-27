@@ -1333,7 +1333,7 @@ export function createMessageDispatcher(deps: MessageDispatcherDeps): {
                 originChatJid: params.chatJid,
                 originGroupFolder: params.group.folder,
                 taskText: params.delegationInstruction || params.latestUserText,
-                timeoutSeconds: 1800,
+                timeoutSeconds: 3600,
                 allowFanout:
                   params.codingRoute === 'coder_execute' ||
                   params.codingRoute === 'auto_execute',
