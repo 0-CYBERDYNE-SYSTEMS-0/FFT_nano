@@ -860,6 +860,16 @@ export function runUpdateCommand(
     // separate from the root install above, so it needs its own ci/install
     // or the build fails with "vite: command not found" whenever this
     // checkout has never had web/control-center's deps installed.
+    //
+    // `--include=dev` is REQUIRED here, for the same reason the root install
+    // above passes it: the host service runs with NODE_ENV=production (set in
+    // the systemd unit / launchd plist), and npm omits devDependencies under
+    // that env. vite is a devDependency of web/control-center, so without this
+    // flag the install reports success while silently dropping vite, and
+    // `npm run build` then dies with `sh: 1: vite: not found` (exit 127).
+    // The rollback path reuses this function, so omitting the flag also breaks
+    // recovery: both the forward build and the rollback build fail the same
+    // way, leaving the update-incomplete marker behind.
     const installWebDeps = (tag: string): boolean => {
       const webDir = path.join(cwd, 'web', 'control-center');
       if (!existsSync(path.join(webDir, 'package.json'))) return true;
@@ -867,7 +877,7 @@ export function runUpdateCommand(
       const label = `${hasLock ? 'npm ci' : 'npm install'} (web/control-center)${tag}`;
       emit('installing', label, 'started');
       const start = Date.now();
-      const prefixArgs = ['--prefix', 'web/control-center'];
+      const prefixArgs = ['--include=dev', '--prefix', 'web/control-center'];
       const primary = hasLock
         ? runStep('npm ci (web)', 'npm', ['ci', ...prefixArgs])
         : runStep('npm install (web)', 'npm', ['install', ...prefixArgs]);

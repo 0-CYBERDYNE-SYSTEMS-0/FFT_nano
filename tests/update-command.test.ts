@@ -139,6 +139,76 @@ test('runUpdateCommand updates a clean checkout and verifies health', () => {
   assert.equal(remaining.length, 0);
 });
 
+// Regression: the host service runs with NODE_ENV=production (systemd unit /
+// launchd plist), and npm omits devDependencies under that env. vite is a
+// devDependency of web/control-center, so the web install must pass
+// --include=dev or it silently drops vite and `npm run build` dies with
+// `sh: 1: vite: not found` (exit 127). The rollback path reuses the same
+// install, so omitting the flag also broke recovery and stranded the
+// update-incomplete marker.
+test('installs web/control-center deps with --include=dev so vite reaches the build', () => {
+  const webPkg = '/tmp/fft_nano/web/control-center/package.json';
+  const webLock = '/tmp/fft_nano/web/control-center/package-lock.json';
+
+  const { run, remaining } = makeRunner([
+    ...cleanPrelude(),
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev', '--prefix', 'web/control-center'],
+      result: ok('installed web\n'),
+    },
+    { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
+    ...restartVerifyHealthy(),
+  ]);
+
+  const result = runUpdateCommand({
+    cwd,
+    run,
+    existsSync: (filePath) =>
+      lockAndScript(filePath) || filePath === webPkg || filePath === webLock,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(remaining.length, 0);
+});
+
+// Without a web/control-center package-lock.json the install falls back to
+// `npm install`, which must carry --include=dev for the same reason.
+test('falls back to npm install --include=dev for web deps without a lockfile', () => {
+  const webPkg = '/tmp/fft_nano/web/control-center/package.json';
+
+  const { run, remaining } = makeRunner([
+    ...cleanPrelude(),
+    {
+      command: 'npm',
+      args: ['ci', '--include=dev'],
+      result: ok('installed\n'),
+    },
+    {
+      command: 'npm',
+      args: ['install', '--include=dev', '--prefix', 'web/control-center'],
+      result: ok('installed web\n'),
+    },
+    { command: 'npm', args: ['run', 'build'], result: ok('built\n') },
+    ...restartVerifyHealthy(),
+  ]);
+
+  const result = runUpdateCommand({
+    cwd,
+    run,
+    existsSync: (filePath) =>
+      lockAndScript(filePath) || filePath === webPkg,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(remaining.length, 0);
+});
+
 test('runUpdateCommand stashes dirty changes, reapplies after pull, drops after build', () => {
   const { run, calls, remaining } = makeRunner([
     ...guard(),
