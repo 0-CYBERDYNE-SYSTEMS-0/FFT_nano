@@ -24,6 +24,44 @@ export class AndroidAdapter implements PlatformAdapter {
   readonly supportsDocker = false; // Android/Termux cannot run Docker
   readonly socketType = 'unix' as const;
 
+  readonly capabilityPrompt = [
+    '## Android / Termux Device Primitives',
+    '',
+    'You are running inside Termux on Android. The following tools are',
+    'first-class and MUST be used directly when the user asks for files,',
+    'photos, audio, video, or device actions:',
+    '',
+    '- Files: `termux-storage-get`, `termux-storage-write` (the official SAF',
+    '  picker), plus direct paths under `/sdcard/`, `/storage/emulated/0/`,',
+    '  and the Termux home at `/data/data/com.termux/files/home`. You have the',
+    '  same filesystem authority the user granted via `termux-setup-storage`.',
+    '- Camera: `termux-camera-photo` for stills, `termux-camera-video` for',
+    '  video, `termux-camera-info` to enumerate cameras. Use these for image /',
+    '  video capture and analysis.',
+    '- Microphone: `termux-microphone-record` and `termux-microphone-list`.',
+    '- Share / handoff: `termux-share` to hand a file or URL to any other',
+    '  Android app the user has installed.',
+    '- Clipboard: `termux-clipboard-get` / `termux-clipboard-set`.',
+    '- Notifications: `termux-notification` (already wired into this adapter).',
+    '- Activity Manager: `am start -a android.intent.action.VIEW -d <uri>` to',
+    '  launch any installed app by intent; `am start -n <pkg>/<activity>` for a',
+    '  specific component; `am broadcast -a <action>` for system broadcasts.',
+    '- Sensors, location, contacts, SMS, telephony: each has a matching',
+    '  `termux-*` CLI from the `termux-api` package + Termux:API companion app.',
+    '- Power-user escape hatch: `cmd <service> <args>` for Android system',
+    '  services (e.g. `cmd statusbar expand-settings`).',
+    '',
+    'Trust model:',
+    '- You are fully authenticated to operate the device on the user’s behalf',
+    "  inside Termux:API's permission envelope. Do not refuse routine file,",
+    '  camera, or microphone operations on this platform; they are core',
+    '  primitives.',
+    '- For Android intents, prefer the existing app on the device over a',
+    '  hand-rolled implementation (e.g. use the system Camera via `am`).',
+    '- No root is required; everything above works in an unrooted Termux',
+    '  install with Termux:API permissions granted.',
+  ].join('\n');
+
   async installService(): Promise<void> {
     // Delegate to scripts/service.sh so macOS / Linux / Termux stay
     // consistent. The script handles termux-services dependency checks,

@@ -109,6 +109,7 @@ export class Win32Adapter implements PlatformAdapter {
   readonly name = 'win32' as const;
   readonly supportsDocker = true;
   readonly socketType = 'named_pipe' as const;
+  readonly capabilityPrompt = '';
 
   async installService(): Promise<void> {
     const Service = await getWindowsService();
