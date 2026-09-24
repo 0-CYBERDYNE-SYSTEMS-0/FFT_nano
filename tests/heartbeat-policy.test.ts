@@ -14,6 +14,16 @@ import {
   stripHeartbeatToken,
 } from '../src/heartbeat-policy.ts';
 
+test('shipped runtime config disables heartbeat by default', () => {
+  const config = JSON.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), 'config', 'runtime.parity.json'),
+      'utf-8',
+    ),
+  ) as { heartbeat?: { enabled?: boolean } };
+  assert.equal(config.heartbeat?.enabled, false);
+});
+
 test('isHeartbeatContentEffectivelyEmpty treats comments and blank lines as empty', () => {
   assert.equal(
     isHeartbeatContentEffectivelyEmpty('# HEARTBEAT\n\n# comment\n- [ ]\n'),
