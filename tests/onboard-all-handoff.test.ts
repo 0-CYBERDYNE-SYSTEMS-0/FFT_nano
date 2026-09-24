@@ -106,6 +106,15 @@ echo "stub web open"
   chmodSync(path.join(scriptsDir, 'web.sh'), 0o755);
 
   writeFileSync(
+    path.join(scriptsDir, 'print-onboarding-qr.mjs'),
+    `import { writeFileSync } from 'node:fs';
+const logFile = process.env.FFT_TEST_QR_LOG;
+if (logFile) writeFileSync(logFile, process.argv[2] || '', 'utf8');
+`,
+    'utf8',
+  );
+
+  writeFileSync(
     path.join(fixtureRoot, '.env'),
     (
       options.envConfigured === false
@@ -135,7 +144,11 @@ echo "stub web open"
 
 function runOnboardAllFixture(
   fixtureRoot: string,
-  options: { runtime?: 'auto' | 'docker' | 'host'; skipSetup?: boolean } = {},
+  options: {
+    runtime?: 'auto' | 'docker' | 'host';
+    skipSetup?: boolean;
+    onboardingUrl?: string;
+  } = {},
 ): string {
   const serviceState = path.join(fixtureRoot, 'service.state');
   const serviceLog = path.join(fixtureRoot, 'service.log');
@@ -171,6 +184,9 @@ function runOnboardAllFixture(
   if (options.runtime) {
     args.push('--runtime', options.runtime);
   }
+  if (options.onboardingUrl) {
+    args.push('--onboarding-url', options.onboardingUrl);
+  }
 
   const result = spawnSync('bash', args, {
     cwd: fixtureRoot,
@@ -182,6 +198,7 @@ function runOnboardAllFixture(
       FFT_TEST_SETUP_LOG: setupLog,
       FFT_TEST_ONBOARD_LOG: onboardLog,
       FFT_TEST_WEB_LOG: webLog,
+      FFT_TEST_QR_LOG: path.join(fixtureRoot, 'qr.log'),
     },
     encoding: 'utf8',
   });
@@ -281,4 +298,19 @@ test('onboard-all launches browser-first onboarding handoff when env is incomple
   assert.doesNotMatch(output, /\[3\/5\] Running onboarding/);
   assert.match(output, /Launching first-run onboarding wizard/);
   assert.match(output, /Continue setup in FFT CONTROL CENTER/);
+});
+
+test('onboard-all prints a QR handoff only for an explicit operator URL', () => {
+  const fixtureRoot = setupOnboardAllFixture({
+    withMainChatId: false,
+    envConfigured: false,
+  });
+  runOnboardAllFixture(fixtureRoot, {
+    onboardingUrl: 'http://farm-nano.local:28990/setup',
+  });
+
+  assert.equal(
+    readFileSync(path.join(fixtureRoot, 'qr.log'), 'utf8'),
+    'http://farm-nano.local:28990/setup',
+  );
 });

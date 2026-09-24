@@ -453,6 +453,21 @@ test('web control center exposes onboarding status and accepts onboarding config
         whatsappEnabled: false,
         configComplete: false,
       }),
+      getOnboardingBootstrap: () => ({
+        device: { hostname: 'farm-nano', platform: 'linux', runtime: 'host' },
+        web: { accessMode: 'localhost', authRequired: false, phoneHandoff: 'local_only' },
+        channels: {
+          telegram: { configured: false, claimReady: false, nextStep: 'Configure Telegram.' },
+          whatsapp: { enabled: true, linked: false, nextStep: 'Link WhatsApp.' },
+        },
+        networkDiscovery: { intrusiveScanRun: false, cachedHomeAssistantInventory: false },
+        homeAssistant: {
+          credentialsConfigured: false,
+          validation: 'missing',
+          cachedEntityCount: 0,
+          proposal: { state: 'needs_setup', requiresExplicitApproval: true, suggestedViews: [] },
+        },
+      }),
       applyOnboardingConfig: async (payload) => {
         receivedConfig = payload;
         return { ok: true, requiresRestart: true };
@@ -486,6 +501,18 @@ test('web control center exposes onboarding status and accepts onboarding config
     assert.equal(statusJson.onboarding.active, true);
     assert.equal(statusJson.onboarding.providerPreset, 'openrouter');
     assert.equal(statusJson.onboarding.telegramBotConfigured, false);
+
+    const bootstrapRes = await fetch(
+      `http://127.0.0.1:${port}/api/onboarding/bootstrap`,
+    );
+    assert.equal(bootstrapRes.status, 200);
+    const bootstrapJson = (await bootstrapRes.json()) as {
+      ok: boolean;
+      bootstrap: { device: { runtime: string }; networkDiscovery: { intrusiveScanRun: boolean } };
+    };
+    assert.equal(bootstrapJson.ok, true);
+    assert.equal(bootstrapJson.bootstrap.device.runtime, 'host');
+    assert.equal(bootstrapJson.bootstrap.networkDiscovery.intrusiveScanRun, false);
 
     const configRes = await fetch(
       `http://127.0.0.1:${port}/api/onboarding/configure`,

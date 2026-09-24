@@ -29,6 +29,7 @@ Options:
   --install-daemon          Install/start service after onboarding
   --no-install-daemon       Skip service install/start
   --hatch <choice>          tui|web|later
+  --onboarding-url <url>    Print a QR code for this local/on-farm browser URL
   --skip-channels           Skip channel prompts in onboarding wizard
   --skip-skills             Skip skills prompts in onboarding wizard
   --skip-health             Skip health prompts/checks
@@ -87,6 +88,7 @@ TELEGRAM_TOKEN_ARG=""
 TELEGRAM_MAIN_CHAT_ID_ARG=""
 WHATSAPP_ENABLED_ARG=""
 HATCH_ARG=""
+ONBOARDING_URL_ARG=""
 SKIP_CHANNELS=0
 SKIP_SKILLS=0
 SKIP_HEALTH=0
@@ -185,6 +187,11 @@ while [[ $# -gt 0 ]]; do
     --hatch)
       [[ $# -ge 2 ]] || fail "--hatch requires a value"
       HATCH_ARG="$2"
+      shift 2
+      ;;
+    --onboarding-url)
+      [[ $# -ge 2 ]] || fail "--onboarding-url requires a value"
+      ONBOARDING_URL_ARG="$2"
       shift 2
       ;;
     --skip-channels)
@@ -395,6 +402,11 @@ launch_first_run_web_handoff() {
     :
   else
     ./scripts/web.sh
+  fi
+  if [[ -n "$ONBOARDING_URL_ARG" ]]; then
+    node ./scripts/print-onboarding-qr.mjs "$ONBOARDING_URL_ARG"
+  else
+    say "To continue on a phone, rerun with --onboarding-url http://<your-farm-host>:28990"
   fi
   say ""
   say "Continue setup in FFT CONTROL CENTER."
