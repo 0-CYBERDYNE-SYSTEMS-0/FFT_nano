@@ -15,6 +15,8 @@ type UserVisibleErrorInput =
       readonly ref?: string;
     };
 
+export const PROVIDER_EXHAUSTION_ERROR_PREFIX = 'FFT_NANO_PROVIDER_EXHAUSTED:';
+
 function assertNever(value: never): never {
   throw new Error(
     `Unexpected user-visible error kind: ${JSON.stringify(value)}`,
@@ -53,6 +55,12 @@ export function toUserVisibleErrorText(input: UserVisibleErrorInput): string {
       );
     case 'runner-error': {
       const detail = input.detail || '';
+      if (detail.startsWith(PROVIDER_EXHAUSTION_ERROR_PREFIX)) {
+        return withRef(
+          detail.slice(PROVIDER_EXHAUSTION_ERROR_PREFIX.length).trim(),
+          input.ref,
+        );
+      }
       if (isRateLimited(detail)) {
         return withRef(
           "I'm getting a lot of requests right now. Give me a minute and try again.",

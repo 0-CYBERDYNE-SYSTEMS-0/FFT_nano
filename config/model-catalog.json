@@ -236,6 +236,17 @@
         "openrouter/free"
       ]
     },
+    "clinepass": {
+      "apiKey": "CLINEPASS_API_KEY",
+      "curated": [
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash-0731",
+        "deepseek/deepseek-v4-pro",
+        "openai/gpt-5.4-mini",
+        "anthropic/claude-haiku-4.5",
+        "google/gemini-3.5-flash"
+      ]
+    },
     "moonshotai": {
       "curated": [
         "kimi-k2-0711-preview",
@@ -293,6 +304,12 @@
       "curated": [
         "kimi-for-coding",
         "kimi-k2-thinking"
+      ]
+    },
+    "ollama": {
+      "curated": [
+        "qwen3.5:0.8b",
+        "LiquidAI/lfm2.5-1.2b-instruct:latest"
       ]
     }
   }

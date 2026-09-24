@@ -549,6 +549,12 @@ export function ensureLocalProviderModels(
         defaultBaseUrl: 'https://openrouter.ai/api/v1',
         curated: getCuratedModels('openrouter'),
       },
+      {
+        providerId: 'clinepass',
+        baseUrlEnv: 'CLINEPASS_BASE_URL',
+        apiKeyEnv: 'CLINEPASS_API_KEY',
+        curated: getCuratedModels('clinepass'),
+      },
     ];
 
     for (const rp of remoteProviders) {

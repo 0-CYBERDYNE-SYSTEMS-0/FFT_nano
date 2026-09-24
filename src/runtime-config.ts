@@ -7,6 +7,7 @@ export type RuntimeProviderPreset =
   | 'anthropic'
   | 'gemini'
   | 'openrouter'
+  | 'clinepass'
   | 'opencode-go'
   | 'opencode-zen'
   | 'zai'
@@ -96,12 +97,25 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     id: 'openrouter',
     label: 'OpenRouter',
     piApi: 'openrouter',
-    defaultModel: 'anthropic/claude-3.5-sonnet',
+    defaultModel: 'openrouter/free',
     apiKeyEnv: 'OPENROUTER_API_KEY',
     setupUrls: {
       signupUrl: 'https://openrouter.ai/keys',
       docsUrl: 'https://openrouter.ai/docs',
       note: 'The `openrouter/free` model routes to a random free model per request. Some free models log your prompts for training — review before sharing sensitive data.',
+    },
+  },
+  {
+    id: 'clinepass',
+    label: 'ClinePass',
+    piApi: 'clinepass',
+    // ClinePass exposes deepseek/* IDs; the cline-pass/ namespace does not exist.
+    defaultModel: 'deepseek/deepseek-v4-flash',
+    apiKeyEnv: 'CLINEPASS_API_KEY',
+    endpointEnv: 'CLINEPASS_BASE_URL',
+    modelInputMode: 'picker',
+    setupUrls: {
+      note: 'OpenAI-compatible ClinePass API. Configure CLINEPASS_BASE_URL if it is not already present in the pi provider config.',
     },
   },
   {
@@ -206,7 +220,7 @@ export const RUNTIME_PROVIDER_DEFINITIONS: RuntimeProviderDefinition[] = [
     id: 'ollama',
     label: 'Ollama (local)',
     piApi: 'ollama',
-    defaultModel: 'qwen3.5:4b',
+    defaultModel: 'qwen3.5:0.8b',
     apiKeyEnv: 'PI_API_KEY',
     endpointEnv: 'OPENAI_BASE_URL',
     defaultEndpointValue: 'http://localhost:11434/v1',

@@ -68,6 +68,7 @@ import {
   hasMeaningfulSecret,
   RUNTIME_PROVIDER_DEFINITIONS,
 } from './runtime-config.js';
+import { PROVIDER_EXHAUSTION_ERROR_PREFIX } from './user-visible-errors.js';
 import { ensureOpenCodeGoModels } from './opencode-go-models.js';
 import { ensureLocalProviderModels } from './local-provider-models.js';
 import { buildSystemPrompt, type WorkspacePaths } from './system-prompt.js';
@@ -573,6 +574,8 @@ export function collectRuntimeSecrets(
     'ANTHROPIC_API_KEY',
     'GEMINI_API_KEY',
     'OPENROUTER_API_KEY',
+    'CLINEPASS_API_KEY',
+    'CLINEPASS_BASE_URL',
     'OPENCODE_API_KEY',
     'OPENCODE_API_KEY_FALLBACK',
     'GROQ_API_KEY',
@@ -978,6 +981,7 @@ export function getProviderFallbackCandidates(params: {
   configuredOrder: readonly string[];
   credentialedProviders?: readonly string[];
   attemptedProviders?: readonly string[];
+  lastResortProviders?: readonly string[];
 }): string[] {
   const attempted = new Set(
     [...(params.attemptedProviders ?? []), params.primaryProvider]
@@ -989,6 +993,7 @@ export function getProviderFallbackCandidates(params: {
   for (const provider of [
     ...params.configuredOrder,
     ...(params.credentialedProviders ?? []),
+    ...(params.lastResortProviders ?? []),
   ]) {
     const normalized = provider.trim().toLowerCase();
     if (!normalized || attempted.has(normalized) || seen.has(normalized)) {
@@ -998,6 +1003,24 @@ export function getProviderFallbackCandidates(params: {
     candidates.push(normalized);
   }
   return candidates;
+}
+
+function compactProviderFailureReason(reason: string): string {
+  const compact = reason.replace(/\s+/g, ' ').trim();
+  if (!compact) return 'no diagnostic was returned';
+  return compact.length > 240 ? `${compact.slice(0, 237)}...` : compact;
+}
+
+function formatProviderExhaustionError(
+  failures: readonly { provider: string; reason: string }[],
+): string {
+  const attempts = failures
+    .map(
+      ({ provider, reason }) =>
+        `${provider || '(unset)'}: ${compactProviderFailureReason(reason)}`,
+    )
+    .join('; ');
+  return `${PROVIDER_EXHAUSTION_ERROR_PREFIX} All configured AI providers failed. Attempts: ${attempts || 'none recorded'}. Check provider credentials or start Ollama.`;
 }
 
 function getCredentialBackedProviders(
@@ -2332,6 +2355,8 @@ export async function runContainerAgent(
         let exhausted = false;
         let finalError = '';
         let didFreshRetry = false;
+        const providerFailures: Array<{ provider: string; reason: string }> =
+          [];
 
         const readLastRunError = (): string => {
           parsedLastRun = null;
@@ -2426,14 +2451,29 @@ export async function runContainerAgent(
           if (settled) return;
         }
 
+        const primaryProvider =
+          input.provider || secrets.PI_API || process.env.PI_API || '';
+        if (exhausted) {
+          providerFailures.push({
+            provider: primaryProvider,
+            reason:
+              finalError ||
+              lastRunError ||
+              'provider failed without a diagnostic',
+          });
+        }
+
         if (exhausted && FFT_NANO_PROVIDER_FALLBACK_ENABLED) {
-          const primaryProvider =
-            input.provider || secrets.PI_API || process.env.PI_API || '';
           const fallbackProviders = getProviderFallbackCandidates({
             primaryProvider,
-            configuredOrder: FFT_NANO_PROVIDER_FALLBACK_ORDER,
+            // Ollama is always the final tier, even if an operator included
+            // it earlier in the configured cloud-provider order.
+            configuredOrder: FFT_NANO_PROVIDER_FALLBACK_ORDER.filter(
+              (provider) => provider.trim().toLowerCase() !== 'ollama',
+            ),
             credentialedProviders: getCredentialBackedProviders(secrets),
             attemptedProviders: input.attemptedProviders,
+            lastResortProviders: ['ollama'],
           });
 
           if (fallbackProviders.length > 0) {
@@ -2470,7 +2510,11 @@ export async function runContainerAgent(
                 onProgressEvent,
               );
 
-              if (fallbackResult.status === 'success') {
+              if (
+                fallbackResult.status === 'success' &&
+                typeof fallbackResult.result === 'string' &&
+                fallbackResult.result.trim()
+              ) {
                 if (timeoutHandle) clearTimeout(timeoutHandle);
                 if (abortSignal)
                   abortSignal.removeEventListener('abort', onAbort);
@@ -2478,10 +2522,28 @@ export async function runContainerAgent(
                 finish(fallbackResult);
                 return;
               }
-              // Try next fallback
-              finalError = fallbackResult.error || 'fallback provider failed';
+              const fallbackError =
+                fallbackResult.error ||
+                (fallbackResult.status === 'success'
+                  ? 'provider returned no user-visible reply'
+                  : 'fallback provider failed');
+              providerFailures.push({
+                provider: fallbackProvider,
+                reason: fallbackError,
+              });
+              finalError = fallbackError;
+              // A recursive fallback has already tried the remaining tiers.
+              if (fallbackError.startsWith(PROVIDER_EXHAUSTION_ERROR_PREFIX)) {
+                break;
+              }
             }
           }
+        }
+
+        if (exhausted && providerFailures.length > 0) {
+          finalError = finalError.startsWith(PROVIDER_EXHAUSTION_ERROR_PREFIX)
+            ? finalError
+            : formatProviderExhaustionError(providerFailures);
         }
 
         if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -2490,7 +2552,12 @@ export async function runContainerAgent(
 
         const duration = Date.now() - startTime;
 
-        if (lastRes && (lastRes.code !== 0 || lastRunError)) {
+        if (
+          lastRes &&
+          (lastRes.code !== 0 ||
+            lastRunError ||
+            (exhausted && providerFailures.length > 0))
+        ) {
           writeRawRunCapture({
             groupDir: wp.groupDir,
             requestId: input.requestId,
