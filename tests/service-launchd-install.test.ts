@@ -111,3 +111,60 @@ fi
   const bootoutWithPlist = new RegExp(`^bootout gui/\\d+ ${escapeRegExp(expectedPlist)}$`, 'm');
   assert.match(log, bootoutWithPlist);
 });
+
+test('service status uses the Termux service directory', () => {
+  const repoRoot = process.cwd();
+  const workDir = mkdtempSync(path.join(tmpdir(), 'fft-service-termux-'));
+  const fakeBinDir = path.join(workDir, 'bin');
+  const fakePrefix = path.join(workDir, 'usr');
+  const svLog = path.join(workDir, 'sv.log');
+
+  mkdirSync(fakeBinDir, { recursive: true });
+  mkdirSync(path.join(fakePrefix, 'var', 'service', 'fft-nano'), {
+    recursive: true,
+  });
+  const fakeSvPath = path.join(fakeBinDir, 'sv');
+  writeFileSync(
+    fakeSvPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+echo "SVDIR=$SVDIR" >> "$SV_LOG"
+echo "run: fft-nano: (pid 123) 1s"
+`,
+    'utf8',
+  );
+  chmodSync(fakeSvPath, 0o755);
+  const fakeUnamePath = path.join(fakeBinDir, 'uname');
+  writeFileSync(
+    fakeUnamePath,
+    `#!/usr/bin/env bash
+if [[ "$1" == "-s" ]]; then
+  echo "Linux"
+  exit 0
+fi
+/usr/bin/uname "$@"
+`,
+    'utf8',
+  );
+  chmodSync(fakeUnamePath, 0o755);
+
+  const result = spawnSync('bash', ['scripts/service.sh', 'status'], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+      PREFIX: fakePrefix,
+      TERMUX_VERSION: '0.118.0',
+      FFT_NANO_PROJECT_ROOT: repoRoot,
+      SV_LOG: svLog,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), 'running');
+  assert.equal(
+    readFileSync(svLog, 'utf8').trim(),
+    `SVDIR=${path.join(fakePrefix, 'var', 'service')}`,
+  );
+});
