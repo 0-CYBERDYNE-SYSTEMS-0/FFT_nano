@@ -32,6 +32,23 @@ test('resolveRuntimeConfigSnapshot supports minimax, kimi-coding, opencode-go, o
   assert.equal(kimi.apiKeyEnv, 'KIMI_API_KEY');
   assert.equal(kimi.apiKeyConfigured, true);
 
+  const qwenTokenPlan = resolveRuntimeConfigSnapshot({
+    [RUNTIME_PROVIDER_PRESET_ENV]: 'qwen-token-plan',
+    PI_API: 'qwen-token-plan',
+    PI_MODEL: 'qwen3.8-max-preview',
+    QWEN_TOKEN_PLAN_API_KEY: 'secret',
+    QWEN_TOKEN_PLAN_BASE_URL:
+      'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+  });
+  assert.equal(qwenTokenPlan.providerPreset, 'qwen-token-plan');
+  assert.equal(qwenTokenPlan.provider, 'qwen-token-plan');
+  assert.equal(qwenTokenPlan.apiKeyEnv, 'QWEN_TOKEN_PLAN_API_KEY');
+  assert.equal(qwenTokenPlan.apiKeyConfigured, true);
+  assert.equal(
+    qwenTokenPlan.endpointValue,
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+  );
+
   const opencodeGo = resolveRuntimeConfigSnapshot({
     PI_API: 'opencode-go',
     PI_MODEL: 'deepseek-v4-pro',

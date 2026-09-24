@@ -74,3 +74,18 @@ test('getPiApiKeyOverride uses STEPFUN_API_KEY for the stepfun preset', () => {
     'stepfun-key',
   );
 });
+
+test('getPiApiKeyOverride uses the Qwen Token Plan key for its custom provider', () => {
+  assert.equal(
+    getPiApiKeyOverride(
+      {},
+      {
+        PI_API: 'qwen-token-plan',
+        PI_API_KEY: 'stale-key',
+        QWEN_TOKEN_PLAN_API_KEY: 'qwen-token-plan-key',
+        FFT_NANO_RUNTIME_PROVIDER_PRESET: 'qwen-token-plan',
+      },
+    ),
+    'qwen-token-plan-key',
+  );
+});

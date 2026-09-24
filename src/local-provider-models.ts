@@ -43,6 +43,7 @@ interface RemoteProviderConfig {
   baseUrlEnv: string;
   apiKeyEnv: string;
   defaultBaseUrl?: string;
+  discoveryBaseUrl?: string;
   defaultApi?: string;
   perModelApi?: Record<string, string>;
   curated?: string[];
@@ -198,9 +199,17 @@ function discoverRemoteProviderModels(params: {
   baseUrlEnv: string;
   apiKeyEnv: string;
   defaultBaseUrl?: string;
+  discoveryBaseUrl?: string;
 }): DiscoverOpenAiCompatibleModelsResult {
-  const { env, providerId, baseUrlEnv, apiKeyEnv, defaultBaseUrl } = params;
-  const baseUrl = env[baseUrlEnv] || defaultBaseUrl || '';
+  const {
+    env,
+    providerId,
+    baseUrlEnv,
+    apiKeyEnv,
+    defaultBaseUrl,
+    discoveryBaseUrl,
+  } = params;
+  const baseUrl = discoveryBaseUrl || env[baseUrlEnv] || defaultBaseUrl || '';
   const apiKey = env[apiKeyEnv] || env.PI_API_KEY || '';
   if (!baseUrl || !apiKey) {
     return {
@@ -520,6 +529,17 @@ export function ensureLocalProviderModels(
         curated: getCuratedModels('stepfun'),
       },
       {
+        providerId: 'qwen-token-plan',
+        baseUrlEnv: 'QWEN_TOKEN_PLAN_BASE_URL',
+        apiKeyEnv: 'QWEN_TOKEN_PLAN_API_KEY',
+        defaultBaseUrl:
+          'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+        discoveryBaseUrl:
+          'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        defaultApi: 'anthropic-messages',
+        curated: getCuratedModels('qwen-token-plan'),
+      },
+      {
         providerId: 'zai',
         baseUrlEnv: 'ZAI_BASE_URL',
         apiKeyEnv: 'ZAI_API_KEY',
@@ -559,6 +579,7 @@ export function ensureLocalProviderModels(
           baseUrlEnv: rp.baseUrlEnv,
           apiKeyEnv: rp.apiKeyEnv,
           defaultBaseUrl: rp.defaultBaseUrl,
+          discoveryBaseUrl: rp.discoveryBaseUrl,
         });
         let modelIds: string[] = [];
         if (result.ok && result.models.length > 0) {

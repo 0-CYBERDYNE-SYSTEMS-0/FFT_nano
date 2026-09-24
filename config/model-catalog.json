@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-22T00:00:00Z",
+  "updated_at": "2026-07-20T00:00:00Z",
   "providers": {
     "stepfun": {
       "curated": [
@@ -293,6 +293,11 @@
       "curated": [
         "kimi-for-coding",
         "kimi-k2-thinking"
+      ]
+    },
+    "qwen-token-plan": {
+      "curated": [
+        "qwen3.8-max-preview"
       ]
     }
   }

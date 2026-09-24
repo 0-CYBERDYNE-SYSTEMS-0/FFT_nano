@@ -192,7 +192,7 @@ test('ensureLocalProviderModels removes the legacy Moonshot override for Kimi Co
 
 test('ensureLocalProviderModels seeds curated providers even when keys are missing (catalog.json version)', () => {
   // Verifies that the new entries added to config/model-catalog.json
-  // (anthropic, gemini, zai, kimi-coding, moonshotai, openai, stepfun)
+  // (anthropic, gemini, zai, kimi-coding, moonshotai, openai, qwen-token-plan, stepfun)
   // all surface in models.json even without any keys configured, and
   // that Stepfun's full 12-model catalog is included.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-catalog-nokey-'));
@@ -216,6 +216,7 @@ test('ensureLocalProviderModels seeds curated providers even when keys are missi
     'stepfun',
     'kimi-coding',
     'moonshotai',
+    'qwen-token-plan',
   ]) {
     assert.ok(
       result.unconfiguredProviders.includes(id),
@@ -235,6 +236,7 @@ test('ensureLocalProviderModels seeds curated providers even when keys are missi
     stepfun: '$STEPFUN_API_KEY',
     'kimi-coding': '$KIMI_API_KEY',
     moonshotai: '$MOONSHOT_API_KEY',
+    'qwen-token-plan': '$QWEN_TOKEN_PLAN_API_KEY',
   };
   for (const [id, env] of Object.entries(expected)) {
     const p = after.providers[id];
@@ -273,4 +275,16 @@ test('ensureLocalProviderModels seeds curated providers even when keys are missi
       `expected Stepfun model ${required} in seeded list: ${JSON.stringify(stepfunIds)}`,
     );
   }
+
+  const qwenTokenPlan = after.providers['qwen-token-plan'];
+  assert.equal(
+    qwenTokenPlan.baseUrl,
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+  );
+  assert.equal(qwenTokenPlan.api, 'anthropic-messages');
+  assert.ok(
+    qwenTokenPlan.models.some(
+      (model: { id: string }) => model.id === 'qwen3.8-max-preview',
+    ),
+  );
 });
