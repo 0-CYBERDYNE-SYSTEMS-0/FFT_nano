@@ -11,6 +11,7 @@ const API_KEY_ENV_BY_PROVIDER: Record<string, string> = {
   minimax: 'MINIMAX_API_KEY',
   'minimax-cn': 'MINIMAX_CN_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  'qwen-token-plan': 'QWEN_TOKEN_PLAN_API_KEY',
   stepfun: 'STEPFUN_API_KEY',
   zai: 'ZAI_API_KEY',
 };
