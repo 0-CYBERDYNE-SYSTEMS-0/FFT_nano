@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import fs from 'fs';
 
 import { DESTRUCTIVE_COMMAND_NAMES } from './bash-guard.js';
+import { getPlatformAdapter } from './platform/index.js';
 import {
   KERNEL_PER_TURN_CONTEXT_FILES,
   KERNEL_STABLE_CONTEXT_FILES,
@@ -1471,7 +1472,12 @@ export function buildSystemPrompt(
       contextEntries: stableContextEntries,
       fileMaxChars,
     });
-    stableText = [baseText, stableOverlay]
+    // Platform-specific capability awareness (e.g. Termux device primitives)
+    // is injected here at runtime rather than baked into the static SOUL.md,
+    // so one universal SOUL.md ships to every platform while this text reaches
+    // only the platforms it applies to. Empty on platforms with nothing extra.
+    const capabilityPrompt = getPlatformAdapter().capabilityPrompt;
+    stableText = [baseText, stableOverlay, capabilityPrompt]
       .filter((s) => s && s.length > 0)
       .join('\n\n')
       .trim();
