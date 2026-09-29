@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
@@ -13,6 +14,8 @@ import {
   FFT_NANO_TUI_HOST,
   FFT_NANO_TUI_PORT,
   FEATURE_FARM,
+  FARM_PROFILE_PATH,
+  FARM_STATE_DIR,
   FFT_PROFILE,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
@@ -32,6 +35,7 @@ import {
 } from './db.js';
 import { logger } from './logger.js';
 import { getContainerRuntime } from './container-runtime.js';
+import { buildOnboardingBootstrap, type OnboardingBootstrap } from './onboarding-bootstrap.js';
 import { startDetachedUpdateCommand } from './update-command.js';
 import {
   resolveRuntimeConfigSnapshot,
@@ -180,6 +184,42 @@ export function getControlCenterRuntimeSettings(
     heartbeatEnabled: PARITY_CONFIG.heartbeat.enabled,
     heartbeatEvery: PARITY_CONFIG.heartbeat.every,
   };
+}
+
+function readJsonFileIfPresent(filePath: string): unknown {
+  try {
+    return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf-8')) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readTextFileIfPresent(filePath: string): string | undefined {
+  try {
+    return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function getControlCenterOnboardingBootstrap(
+  deps: Pick<WebControlCenterDeps, 'getRuntimeConfigEnv'>,
+): OnboardingBootstrap {
+  const env = deps.getRuntimeConfigEnv();
+  const projectRoot = process.cwd();
+  return buildOnboardingBootstrap({
+    env,
+    hostname: os.hostname(),
+    platform: process.platform,
+    runtime: getContainerRuntime(),
+    accessMode: FFT_NANO_WEB_ACCESS_MODE,
+    authRequired: FFT_NANO_WEB_ACCESS_MODE !== 'localhost',
+    whatsappAuthStatus: readTextFileIfPresent(
+      path.join(projectRoot, 'store', 'auth-status.txt'),
+    ),
+    farmProfile: readJsonFileIfPresent(FARM_PROFILE_PATH),
+    cachedDiscovery: readJsonFileIfPresent(path.join(FARM_STATE_DIR, 'devices.json')),
+  });
 }
 
 export function applyControlCenterRuntimeSettings(
@@ -1101,6 +1141,7 @@ export function createWebControlCenterAdapters(
       authRequired: FFT_NANO_TUI_AUTH_TOKEN.length > 0,
     }),
     getOnboardingStatus: () => deps.buildOnboardingStatus(),
+    getOnboardingBootstrap: () => getControlCenterOnboardingBootstrap(deps),
     applyOnboardingConfig: async (payload) =>
       deps.applyWebOnboardingConfig(payload),
     hostUpdate: () =>
