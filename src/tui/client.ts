@@ -229,6 +229,9 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'sessions', description: 'List available sessions' },
   { name: 'session', description: 'Switch session key' },
   { name: 'history', description: 'Load recent session history' },
+  { name: 'title', description: 'Show or set session title' },
+  { name: 'models', description: 'List available models' },
+  { name: 'refresh_models', description: 'Refresh provider model cache' },
   { name: 'model', description: 'Set model (provider/model or model)' },
   { name: 'think', description: 'Set thinking level' },
   { name: 'reasoning', description: 'Set reasoning level' },
@@ -239,7 +242,12 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'queue', description: 'Show or set queue policy' },
   { name: 'compact', description: 'Compact session context' },
   { name: 'tasks', description: 'Inspect or manage scheduled tasks' },
+  { name: 'run', description: 'Start durable run' },
   { name: 'runs', description: 'Inspect durable runs' },
+  { name: 'run_status', description: 'Inspect durable run status' },
+  { name: 'cancel_run', description: 'Cancel durable run' },
+  { name: 'reflect', description: 'Run memory/skill reflection' },
+  { name: 'coder_plan', description: 'Run read-only coder plan' },
   { name: 'learning', description: 'Show learning controls' },
   { name: 'knowledge', description: 'Manage the knowledge wiki' },
   { name: 'subagents', description: 'Manage delegated workers' },
@@ -356,6 +364,9 @@ function helpText(): string {
     '/sessions',
     '/session <key>',
     '/history [limit]',
+    '/title [new title|clear]',
+    '/models [search]',
+    '/refresh_models',
     '/model <provider/model|model>',
     '/think <off|minimal|low|medium|high|xhigh>',
     '/reasoning <off|on|stream>',
@@ -366,7 +377,12 @@ function helpText(): string {
     '/queue [mode/debounce/cap/drop]',
     '/compact [instructions]',
     '/tasks [list|due|detail|runs|pause|resume|cancel]',
+    '/run <task>',
     '/runs',
+    '/run_status <id>',
+    '/cancel_run <id>',
+    '/reflect [dry-run] [focus]',
+    '/coder_plan <task>',
     '/learning',
     '/knowledge <action>',
     '/subagents <action>',
@@ -914,7 +930,19 @@ export async function runTuiClient(opts: CliOptions): Promise<void> {
       case 'queue':
       case 'compact':
       case 'tasks':
+      case 'run':
       case 'runs':
+      case 'run-status':
+      case 'run_status':
+      case 'cancel-run':
+      case 'cancel_run':
+      case 'reflect':
+      case 'coder-plan':
+      case 'coder_plan':
+      case 'title':
+      case 'models':
+      case 'refresh-models':
+      case 'refresh_models':
       case 'learning':
       case 'knowledge':
       case 'subagents':

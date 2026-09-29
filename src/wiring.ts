@@ -875,12 +875,504 @@ function getTuiCoordinationDeps(): TuiCoordinationDeps {
   };
 }
 
+function formatTuiSessionTitleCommand(chatJid: string, args: string): string {
+  const argText = args.trim();
+  const currentTitle = (
+    state.chatRunPreferences[chatJid]?.sessionTitle || ''
+  ).trim();
+  if (!argText) {
+    return currentTitle
+      ? `Session title: ${currentTitle}`
+      : 'Session title is not set for this chat.';
+  }
+
+  const lowered = argText.toLowerCase();
+  if (['reset', 'clear', 'default', 'off'].includes(lowered)) {
+    updateChatRunPreferences(chatJid, (prefs) => {
+      delete prefs.sessionTitle;
+      return prefs;
+    });
+    return 'Session title cleared.';
+  }
+
+  const normalized = argText.replace(/\s+/g, ' ').trim();
+  const maxSessionTitleLength = 120;
+  const truncationSuffix = '...';
+  const bounded =
+    normalized.length > maxSessionTitleLength
+      ? `${normalized
+          .slice(0, maxSessionTitleLength - truncationSuffix.length)
+          .trimEnd()}${truncationSuffix}`
+      : normalized;
+  updateChatRunPreferences(chatJid, (prefs) => {
+    prefs.sessionTitle = bounded;
+    return prefs;
+  });
+  return `Session title set: ${bounded}`;
+}
+
+function formatTuiRefreshModelsCommand(): { ok: boolean; text: string } {
+  const refreshed = loadPiModels(true);
+  if (!refreshed.ok) {
+    return { ok: false, text: `Refresh failed: ${refreshed.text}` };
+  }
+
+  const providerCounts = new Map<string, number>();
+  for (const entry of refreshed.entries) {
+    providerCounts.set(
+      entry.provider,
+      (providerCounts.get(entry.provider) || 0) + 1,
+    );
+  }
+  const providerSummary = Array.from(providerCounts.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([provider, count]) => `${provider}: ${count}`)
+    .join(', ');
+  const warningText = refreshed.warnings?.length
+    ? `\nWarnings:\n${refreshed.warnings.map((warning) => `- ${warning}`).join('\n')}`
+    : '';
+  return {
+    ok: true,
+    text: `Model list refreshed. ${refreshed.entries.length} models across ${providerCounts.size} providers.\n${providerSummary}${warningText}`,
+  };
+}
+
+async function handleTuiLongRunCommand(
+  chatJid: string,
+  normalized: string,
+  args: string,
+): Promise<{ ok: boolean; text: string }> {
+  if (!isMainChat(chatJid)) {
+    return {
+      ok: false,
+      text: 'Long runs are only available in the main/admin session.',
+    };
+  }
+
+  if (normalized === 'run') {
+    const task = args.trim();
+    if (!task) return { ok: false, text: 'Usage: /run <task>' };
+    try {
+      const run = await longRunService.startRun(chatJid, task);
+      return {
+        ok: true,
+        text: `Started long run ${run.id}. Use /run_status ${run.id} to inspect it.`,
+      };
+    } catch (err) {
+      const diagnostic = err instanceof Error ? err.message : String(err);
+      return { ok: false, text: `Could not start long run: ${diagnostic}` };
+    }
+  }
+
+  if (normalized === 'runs') {
+    const recent = longRunService.listRunsText(chatJid);
+    const active = listActiveAgentRuns(chatJid);
+    if (active.length === 0) return { ok: true, text: recent };
+    return {
+      ok: true,
+      text: [
+        recent,
+        '',
+        'Active durable runs:',
+        ...active.map(
+          (run) =>
+            `- ${run.id} [${run.status}] ${run.current_phase || 'running'}`,
+        ),
+      ].join('\n'),
+    };
+  }
+
+  if (normalized === 'run_status') {
+    const id = args.trim().split(/\s+/)[0];
+    return {
+      ok: Boolean(id),
+      text: id
+        ? longRunService.statusText(chatJid, id)
+        : 'Usage: /run_status <id>',
+    };
+  }
+
+  if (normalized === 'cancel_run') {
+    const id = args.trim().split(/\s+/)[0];
+    return {
+      ok: Boolean(id),
+      text: id
+        ? await longRunService.cancelRun(chatJid, id)
+        : 'Usage: /cancel_run <id>',
+    };
+  }
+
+  return { ok: false, text: `Unsupported long run command: /${normalized}` };
+}
+
+function buildTuiReflectionAgentPrompt(
+  action: 'run' | 'dry-run',
+  input: string,
+): string {
+  const dryRun = action === 'dry-run';
+  return [
+    dryRun
+      ? 'Operator-triggered self-reflection (dry-run). Review the recent conversation in this chat and report what - if anything - you would save as durable learning, but do not write memory or mutate any skill.'
+      : 'Operator-triggered self-reflection. Review the recent conversation in this chat and save only genuinely durable, reusable learning.',
+    '',
+    'Being asked to reflect is permission to look - it is NOT evidence that there is anything to save. Be exactly as selective as an automatic post-turn review. If there is no durable, reusable lesson, say so plainly and change nothing; a clean no-op is the correct and expected outcome.',
+    '',
+    'How to classify what you find:',
+    '- Durable facts, preferences, environment details, project/farm state -> write to memory (MEMORY.md / memory files).',
+    '- Reusable procedures, pitfalls with a reusable recovery, command sequences, troubleshooting recipes, or task-class behavior -> create or patch an agent-owned runtime skill via skill_action.',
+    '- Prefer patching an existing relevant agent-created skill over creating a near-duplicate. Create broad class-level skills, not narrow one-offs.',
+    '- A user correction that changes how future work should be done is durable - capture it as procedural guidance.',
+    '',
+    'Do NOT save:',
+    '- One-off task narratives, raw transcripts, or "remember that this happened" notes.',
+    '- Transient or environment outages without a reusable recovery path.',
+    '- Speculation or anything you are not confident is reusable.',
+    '',
+    'Safety:',
+    '- All skill writes go through skill_action. Never edit skill files directly.',
+    '- Never mutate source-owned project skills or personal override skills; report those gaps in your summary instead.',
+    dryRun
+      ? '- Dry-run: do not call mutating skill actions (skill_patch/skill_archive/skill_restore/skill_pin/skill_unpin) and do not write memory; describe what you would save and why.'
+      : '- Live: use memory writes and skill_action for anything genuinely durable, and summarize each write with its rationale.',
+    '',
+    'Final answer: a concise summary of what you saved and why, or an explicit "nothing durable to save" with a one-line reason.',
+    input ? ['', 'Operator focus:', input] : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function formatElapsedSeconds(startedAt: number): string {
+  return `${Math.max(0, Math.round((Date.now() - startedAt) / 1000))}s`;
+}
+
+function startTuiReflectionCommand(
+  chatJid: string,
+  args: string,
+): { ok: boolean; text: string } {
+  if (!isMainChat(chatJid)) {
+    return { ok: false, text: 'Reflection requires the main session.' };
+  }
+  const [firstRaw = '', ...rest] = args.trim().split(/\s+/);
+  const first = firstRaw.toLowerCase();
+  if (first === 'help') {
+    return {
+      ok: true,
+      text: [
+        'Usage: /reflect [dry-run] [focus]',
+        '',
+        'Runs deliberate self-reflection on recent conversation and saves only genuinely durable learning.',
+        '- /reflect',
+        '- /reflect <focus>',
+        '- /reflect dry-run [focus]',
+      ].join('\n'),
+    };
+  }
+
+  const isDryRun = first === 'dry-run' || first === 'dry';
+  const action: 'run' | 'dry-run' = isDryRun ? 'dry-run' : 'run';
+  if (action === 'run' && state.learningPaused) {
+    return {
+      ok: false,
+      text: 'Learning is paused. Run /learning resume first, or use /reflect dry-run.',
+    };
+  }
+  const focus = (isDryRun ? rest : args.trim().split(/\s+/)).join(' ').trim();
+  const group = state.registeredGroups[chatJid];
+  if (!group) return { ok: false, text: 'Chat is not registered.' };
+  const existingRun = activeChatRuns.get(chatJid);
+  if (existingRun) {
+    return {
+      ok: false,
+      text: `Cannot start reflection while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
+    };
+  }
+
+  const requestId = makeRunId('reflect');
+  const abortController = new AbortController();
+  const activeRun = {
+    chatJid,
+    startedAt: Date.now(),
+    requestId,
+    abortController,
+  };
+  activeChatRuns.set(chatJid, activeRun);
+  activeChatRunsById.set(requestId, activeRun);
+  const sessionKey = getSessionKeyForChat(chatJid);
+  emitTuiChatEvent({
+    runId: requestId,
+    sessionKey,
+    state: 'message',
+    message: {
+      role: 'system',
+      content: `Starting reflection ${action} (${requestId})...`,
+    },
+  });
+  emitTuiAgentEvent({
+    runId: requestId,
+    sessionKey,
+    phase: 'start',
+    detail: `reflection ${action}`,
+  });
+
+  void (async () => {
+    await setTyping(chatJid, true);
+    try {
+      const run = await runAgent(
+        group,
+        buildTuiReflectionAgentPrompt(action, focus),
+        chatJid,
+        'none',
+        requestId,
+        state.chatRunPreferences[chatJid] || {},
+        { dryRun: action === 'dry-run', suppressPreviewStreaming: true },
+        abortController.signal,
+      );
+      updateChatUsage(chatJid, run.usage);
+      const elapsed = formatElapsedSeconds(activeRun.startedAt);
+      if (!run.ok) {
+        emitTuiChatEvent({
+          runId: requestId,
+          sessionKey,
+          state: 'error',
+          errorMessage: `Reflection ${action} failed (${requestId}, ${elapsed}).`,
+        });
+        emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey,
+          phase: 'error',
+          detail: 'reflection failed',
+        });
+        return;
+      }
+      if (run.result) {
+        persistAssistantHistory(chatJid, run.result, requestId);
+        emitTuiChatEvent({
+          runId: requestId,
+          sessionKey,
+          state: 'final',
+          message: { role: 'assistant', content: run.result },
+          usage: run.usage,
+        });
+      } else {
+        emitTuiChatEvent({
+          runId: requestId,
+          sessionKey,
+          state: 'final',
+          message: {
+            role: 'system',
+            content: `Reflection ${action} complete (${requestId}, ${elapsed}) with no final text.`,
+          },
+          usage: run.usage,
+        });
+      }
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey,
+        phase: 'end',
+        detail: run.streamed ? 'streamed' : 'complete',
+      });
+    } catch (err) {
+      const diagnostic = err instanceof Error ? err.message : String(err);
+      emitTuiChatEvent({
+        runId: requestId,
+        sessionKey,
+        state: 'error',
+        errorMessage: `Reflection ${action} failed: ${diagnostic}`,
+      });
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey,
+        phase: 'error',
+        detail: diagnostic,
+      });
+    } finally {
+      if (activeChatRuns.get(chatJid) === activeRun) {
+        activeChatRuns.delete(chatJid);
+      }
+      activeChatRunsById.delete(requestId);
+      await setTyping(chatJid, false);
+    }
+  })();
+
+  return {
+    ok: true,
+    text: `Started reflection ${action} (${requestId}).`,
+  };
+}
+
+async function startTuiCoderPlanCommand(
+  chatJid: string,
+  args: string,
+): Promise<{ ok: boolean; text: string }> {
+  if (!isMainChat(chatJid)) {
+    return {
+      ok: false,
+      text: `${ASSISTANT_NAME}: coder delegation is only available in the main/admin session for safety.`,
+    };
+  }
+  if (resolveMainOnboardingGate(chatJid).active) {
+    return { ok: false, text: onboardingCommandBlockedText() };
+  }
+  const taskText = args.trim();
+  if (!taskText) return { ok: false, text: 'Usage: /coder_plan <task>' };
+  const existingRun = activeChatRuns.get(chatJid);
+  if (existingRun) {
+    return {
+      ok: false,
+      text: `Cannot start coder plan while another run is active (${existingRun.requestId || 'unknown'}). Use /stop first.`,
+    };
+  }
+  const group = state.registeredGroups[chatJid];
+  if (!group) return { ok: false, text: 'Chat is not registered.' };
+
+  const prepareRequestId = makeRunId('coder');
+  const prepared = await prepareCoderTarget({
+    chatJid,
+    mode: 'plan',
+    taskText,
+    requestId: prepareRequestId,
+  });
+  if (prepared.status === 'handled') {
+    return {
+      ok: true,
+      text: 'Coder plan needs a project selection before it can continue.',
+    };
+  }
+
+  const requestId = makeRunId('coder');
+  const abortController = new AbortController();
+  const activeRun = {
+    chatJid,
+    startedAt: Date.now(),
+    requestId,
+    abortController,
+  };
+  activeChatRuns.set(chatJid, activeRun);
+  activeChatRunsById.set(requestId, activeRun);
+  const sessionKey = getSessionKeyForChat(chatJid);
+  emitTuiChatEvent({
+    runId: requestId,
+    sessionKey,
+    state: 'message',
+    message: {
+      role: 'system',
+      content: `Starting coder plan run (${requestId}) for ${prepared.projectLabel}...`,
+    },
+  });
+  emitTuiAgentEvent({
+    runId: requestId,
+    sessionKey,
+    phase: 'start',
+    detail: 'coder plan',
+  });
+
+  void (async () => {
+    await setTyping(chatJid, true);
+    try {
+      const run = await runCodingTask({
+        requestId,
+        mode: 'plan',
+        config: {
+          toolMode: 'read_only',
+          isSubagent: false,
+          workspaceMode: 'read_only',
+        },
+        originChatJid: chatJid,
+        originGroupFolder: group.folder,
+        taskText: prepared.taskText,
+        timeoutSeconds: 1800,
+        allowFanout: false,
+        sessionContext: `[APPROVED CODER PLAN REQUEST]\n${prepared.taskText}`,
+        assistantName: ASSISTANT_NAME,
+        sessionKey,
+        group,
+        workspaceRoot: prepared.workspaceRoot,
+        runtimePrefs: state.chatRunPreferences[chatJid] || {},
+        abortController,
+      });
+      updateChatUsage(chatJid, run.usage);
+      if (!run.ok) {
+        emitTuiChatEvent({
+          runId: requestId,
+          sessionKey,
+          state: 'error',
+          errorMessage: run.result || 'Coder plan failed.',
+        });
+        emitTuiAgentEvent({
+          runId: requestId,
+          sessionKey,
+          phase: 'error',
+          detail: 'coder plan failed',
+        });
+        return;
+      }
+      if (run.result) {
+        persistAssistantHistory(chatJid, run.result, requestId);
+        emitTuiChatEvent({
+          runId: requestId,
+          sessionKey,
+          state: 'final',
+          message: { role: 'assistant', content: run.result },
+          usage: run.usage,
+        });
+      } else {
+        emitTuiChatEvent({
+          runId: requestId,
+          sessionKey,
+          state: 'final',
+          message: {
+            role: 'system',
+            content: `Coder plan complete (${requestId}, ${formatElapsedSeconds(activeRun.startedAt)}) with no final text.`,
+          },
+          usage: run.usage,
+        });
+      }
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey,
+        phase: 'end',
+        detail: run.streamed ? 'streamed' : 'complete',
+      });
+    } catch (err) {
+      const diagnostic = err instanceof Error ? err.message : String(err);
+      emitTuiChatEvent({
+        runId: requestId,
+        sessionKey,
+        state: 'error',
+        errorMessage: `Coder plan failed: ${diagnostic}`,
+      });
+      emitTuiAgentEvent({
+        runId: requestId,
+        sessionKey,
+        phase: 'error',
+        detail: diagnostic,
+      });
+    } finally {
+      if (activeChatRuns.get(chatJid) === activeRun) {
+        activeChatRuns.delete(chatJid);
+      }
+      activeChatRunsById.delete(requestId);
+      await setTyping(chatJid, false);
+    }
+  })();
+
+  return {
+    ok: true,
+    text: `Started coder plan run (${requestId}) for ${prepared.projectLabel}.`,
+  };
+}
+
 async function executeOperatorCommand(
   chatJid: string,
   command: string,
   args: string,
 ): Promise<{ ok: boolean; text: string }> {
-  const normalized = command.replace(/^\//, '').trim().toLowerCase();
+  const normalized = command
+    .replace(/^\//, '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
   if (normalized === 'settings') {
     return {
       ok: true,
@@ -892,6 +1384,19 @@ async function executeOperatorCommand(
   }
   if (normalized === 'status') {
     return { ok: true, text: formatStatusText(chatJid) };
+  }
+  if (normalized === 'title') {
+    return { ok: true, text: formatTuiSessionTitleCommand(chatJid, args) };
+  }
+  if (normalized === 'models') {
+    const listed = runPiListModels(args.trim());
+    return { ok: listed.ok, text: listed.text };
+  }
+  if (normalized === 'refresh_models') {
+    if (!isMainChat(chatJid)) {
+      return { ok: false, text: 'Model refresh requires the main session.' };
+    }
+    return formatTuiRefreshModelsCommand();
   }
   if (normalized === 'usage') {
     return {
@@ -973,21 +1478,19 @@ async function executeOperatorCommand(
     }
     return { ok: true, text: formatLearningDigest() };
   }
-  if (normalized === 'runs') {
-    const runs = listActiveAgentRuns(chatJid);
-    return {
-      ok: true,
-      text:
-        runs.length > 0
-          ? [
-              'Active durable runs:',
-              ...runs.map(
-                (run) =>
-                  `- ${run.id} [${run.status}] ${run.current_phase || 'running'}`,
-              ),
-            ].join('\n')
-          : 'No active durable runs.',
-    };
+  if (
+    normalized === 'run' ||
+    normalized === 'runs' ||
+    normalized === 'run_status' ||
+    normalized === 'cancel_run'
+  ) {
+    return handleTuiLongRunCommand(chatJid, normalized, args);
+  }
+  if (normalized === 'reflect') {
+    return startTuiReflectionCommand(chatJid, args);
+  }
+  if (normalized === 'coder_plan') {
+    return startTuiCoderPlanCommand(chatJid, args);
   }
   if (normalized === 'subagents') {
     return { ok: true, text: formatActiveSubagentsText() };
@@ -2067,6 +2570,7 @@ async function runAgent(
     skipSkillMaintenance?: boolean;
     lifecyclePolicyOverride?: ContainerInput['lifecyclePolicyOverride'];
     onProgressEvent?: (event: ContainerProgressEvent) => void;
+    dryRun?: boolean;
   } = {},
   abortSignal?: AbortSignal,
 ) {
