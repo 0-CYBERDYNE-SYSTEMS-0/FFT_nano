@@ -33,6 +33,7 @@ Then start the service and talk to it in Telegram or WhatsApp. There is also a c
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
 ## Key Capabilities
 
 | Persistent Memory | Equipment Control | Multi-Provider AI |
