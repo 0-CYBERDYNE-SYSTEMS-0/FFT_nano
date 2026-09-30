@@ -1,20 +1,38 @@
-![FFT_nano Logo](logo.png)
+<p align="center">
+  <img src="docs/readme/sample-text.png" alt="A sample exchange: the farmer asks whether to run the drip after the pump house lost power, and the agent answers with the rainfall reading behind it. The image is labelled as a sample." width="100%">
+</p>
 
 # FFT_nano
 
-[![Release](https://img.shields.io/github/v/release/0-CYBERDYNE-SYSTEMS-0/FFT_nano)](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/releases)
-[![Release Readiness](https://img.shields.io/github/actions/workflow/status/0-CYBERDYNE-SYSTEMS-0/FFT_nano/release-readiness.yml?branch=main&label=release%20readiness)](https://github.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/actions/workflows/release-readiness.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+It lives on your own machine and answers in your messages.
 
-An autonomous AI coworker that runs on your farm's hardware. It learns your operation, texts you updates, writes code to automate your equipment, and gets smarter every season. No subscriptions. No cloud dependency. MIT licensed.
+You text it from the field. It keeps what it learns about your operation, and it works through its own list of farm chores on the machine it runs on. No subscriptions, and no cloud unless you point it at one.
 
-## Quick Start
+## What you can do
 
-```bash
+- Text it on Telegram or WhatsApp, from the field or from the truck.
+- Let it work through the farm chores it ships with: bringing a new machine up, mapping your place into the agent, and the day-to-day farm operations.
+- Choose the model it thinks with, including one running on that same box.
+- Run it on a Raspberry Pi, a spare machine in the office, or your own server.
+
+## What it will not do
+
+- It will not run in somebody else's cloud. The model provider is your choice, and it can be one on that same machine.
+- It will not hide its work. What it ran and what it changed stays in the logs on that machine and in the chat you had with it.
+
+## Run it
+
+You need Node.js 20 or newer.
+
+```sh
 curl -fsSL https://raw.githubusercontent.com/0-CYBERDYNE-SYSTEMS-0/FFT_nano/main/scripts/install.sh | bash
 ```
 
-Runs on Raspberry Pi, your own server, or local hardware. Chat via Telegram or WhatsApp.
+Then start the service and talk to it in Telegram or WhatsApp. There is also a console on the machine at `http://127.0.0.1:28990` for the operator side, and a terminal UI on port `28989`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ## Key Capabilities
 
