@@ -110,3 +110,4 @@ temp/
 package-lock.json.orig
 *.swp
 *.swo
+.claude/
